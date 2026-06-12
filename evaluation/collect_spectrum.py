@@ -1,0 +1,409 @@
+#!/usr/bin/env python3
+"""
+Spectrum data acquisition script for POWDER, ARA, and COSMOS testbeds.
+
+Collects wideband PSD measurements using USRP B210 or N310,
+saves per-sweep raw data (.npz) and per-minute 200-column CSV files
+with 1 MHz resolution across one or more 200 MHz bands.
+"""
+
+import argparse
+import json
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+import numpy as np
+from scipy import signal
+
+_HAS_UHD = False
+try:
+    import uhd
+    from uhd import libpyuhd as lib
+    _HAS_UHD = True
+except ImportError:
+    pass
+
+
+def parse_band_spec(spec_str):
+    """Parse comma-separated band specs like '3400:3600,3600:3800'."""
+    bands = []
+    for part in spec_str.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            start_str, stop_str = part.split(":")
+            start_mhz = float(start_str)
+            stop_mhz = float(stop_str)
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                f"Invalid band spec '{part}'. Use start_mhz:stop_mhz"
+            )
+        width_mhz = stop_mhz - start_mhz
+        if abs(width_mhz - 200.0) > 1e-3:
+            raise argparse.ArgumentTypeError(
+                f"Band '{part}' is {width_mhz:.1f} MHz wide; must be exactly 200 MHz"
+            )
+        if start_mhz < 10 or stop_mhz > 7000:
+            print(f"  Warning: band {start_mhz:.0f}-{stop_mhz:.0f} MHz may exceed "
+                  f"SDR frequency range", file=sys.stderr)
+        bands.append((int(start_mhz), int(stop_mhz)))
+    return bands
+
+
+def build_tune_plan(band_start_hz, band_stop_hz, fs, fft_size, cutoff):
+    """Compute center frequencies and edge-bin trimming for a 200 MHz band sweep."""
+    N = int(np.floor(fft_size * cutoff))
+    if N % 2 != 0:
+        N -= 1
+    n_remove = (fft_size - N) // 2
+    effective_bw = N * (fs / fft_size)
+
+    band_width_hz = band_stop_hz - band_start_hz
+    n_tunes = int(np.ceil(band_width_hz / effective_bw))
+
+    half_bw = effective_bw / 2.0
+    centers = [band_start_hz + half_bw + i * effective_bw for i in range(n_tunes)]
+    return centers, n_remove, N
+
+
+def create_rx_streamer(usrp, channel):
+    """Create a single RX streamer to reuse across captures."""
+    st_args = lib.usrp.stream_args("fc32", "sc16")
+    st_args.channels = [channel]
+    return usrp.get_rx_stream(st_args)
+
+
+def capture_samples(rx_streamer, n_samples):
+    """Capture n_samples from USRP, return (samples_1d, timestamp)."""
+    n_channels = rx_streamer.get_num_channels()
+    if n_channels < 1:
+        return None, 0.0
+    buffer = np.zeros((n_channels, n_samples), dtype=np.complex64)
+    metadata = lib.types.rx_metadata()
+
+    stream_cmd = lib.types.stream_cmd(lib.types.stream_mode.num_done)
+    stream_cmd.num_samps = n_samples
+    stream_cmd.stream_now = True
+    rx_streamer.issue_stream_cmd(stream_cmd)
+
+    samps_recd = 0
+    while samps_recd < n_samples:
+        chunk = rx_streamer.recv(buffer[:, samps_recd:], metadata)
+        if chunk == 0:
+            print("  RX: recv returned 0 samples", file=sys.stderr)
+            break
+        if metadata.error_code != lib.types.rx_metadata_error_code.none:
+            err_str = metadata.strerror()
+            if "timeout" in err_str.lower():
+                print("  RX timeout, retrying...", file=sys.stderr)
+                continue
+            print(f"  RX warning: {err_str}", file=sys.stderr)
+        samps_recd += chunk
+
+    ts = metadata.time_spec.get_real_secs()
+    return buffer[0, :samps_recd], ts
+
+
+def compute_psd(samples, fs, fft_size):
+    """Compute Welch PSD, return (freq_offsets_hz, psd_db)."""
+    freqs, psd_lin = signal.welch(
+        samples, fs, nperseg=fft_size, return_onesided=False
+    )
+    psd_db = 10.0 * np.log10(np.maximum(psd_lin, 1e-30))
+    psd_db = np.fft.fftshift(psd_db)
+    freqs = np.fft.fftshift(freqs)
+    return freqs, psd_db
+
+
+def sweep_band(usrp, rx_streamer, band_start_mhz, band_stop_mhz, fs, fft_size,
+               cutoff, n_samples, raw_dir):
+    """Tune across one 200 MHz band and return per-tune PSD sweeps.
+
+    Each sweep is (freq_vector_hz, power_vector_db, timestamp).
+    Raw .npz files are saved to raw_dir along the way.
+    """
+    band_start_hz = band_start_mhz * 1e6
+    band_stop_hz = band_stop_mhz * 1e6
+
+    centers, n_remove, N = build_tune_plan(
+        band_start_hz, band_stop_hz, fs, fft_size, cutoff
+    )
+
+    sweeps = []
+    for i, fc in enumerate(centers):
+        tune_request = lib.types.tune_request(fc)
+        usrp.set_rx_freq(tune_request, 0)
+
+        samples, ts = capture_samples(rx_streamer, n_samples)
+        if samples is None or len(samples) < fft_size:
+            print(f"    Not enough samples, skipping tune {i}", file=sys.stderr)
+            continue
+
+        freq_offsets, psd_db = compute_psd(samples, fs, fft_size)
+
+        if n_remove > 0:
+            psd_db = psd_db[n_remove:-n_remove]
+            freq_offsets = freq_offsets[n_remove:-n_remove]
+
+        freqs_hz = freq_offsets + fc
+
+        # Save raw per-tune data
+        fc_mhz = int(round(fc / 1e6))
+        raw_path = raw_dir / f"tune_{i:02d}_fc_{fc_mhz}MHz.npz"
+        np.savez_compressed(
+            raw_path,
+            freq_hz=freqs_hz,
+            power_db=psd_db,
+            timestamp=ts,
+            center_freq_hz=fc,
+        )
+        print(f"    tune {i+1}/{len(centers)}: fc={fc_mhz} MHz "
+              f"-> {raw_path.name} ({len(freqs_hz)} bins)")
+
+        sweeps.append((freqs_hz, psd_db, ts))
+
+    return sweeps
+
+
+def aggregate_to_1mhz(sweeps, band_start_mhz, band_stop_mhz):
+    """Aggregate all sweeps in a band into 200 × 1 MHz bin values.
+
+    Returns (freq_centers_mhz, power_db_200) or (None, None) if no valid data.
+    """
+    bin_edges = np.arange(band_start_mhz, band_stop_mhz + 1)
+    bin_centers = bin_edges[:-1] + 0.5
+
+    bin_powers = []
+    for freqs_hz, psd_db, ts in sweeps:
+        freqs_mhz = freqs_hz / 1e6
+        bin_indices = np.digitize(freqs_mhz, bin_edges) - 1
+
+        valid = (bin_indices >= 0) & (bin_indices < 200)
+        if not np.any(valid):
+            continue
+
+        binned = np.full(200, np.nan)
+        for b in range(200):
+            mask = bin_indices == b
+            if np.any(mask):
+                lin = 10.0 ** (psd_db[mask] / 10.0)
+                binned[b] = 10.0 * np.log10(np.mean(lin))
+
+        bin_powers.append(binned)
+
+    if not bin_powers:
+        return None, None
+
+    bin_powers = np.array(bin_powers)
+    lin_all = 10.0 ** (bin_powers / 10.0)
+    mean_lin = np.nanmean(lin_all, axis=0)
+    mean_db = 10.0 * np.log10(np.maximum(mean_lin, 1e-30))
+    return bin_centers, mean_db
+
+
+def append_csv_row(csv_path, row_200, minute_idx, bin_centers):
+    """Append one 200-element row to the per-minute CSV, writing header first time."""
+    row_str = ",".join(f"{v:.4f}" for v in row_200)
+    if minute_idx == 0:
+        header = ",".join(
+            f"{int(bc)}" for bc in bin_centers
+        )
+        with open(csv_path, "w") as f:
+            f.write(header + "\n")
+    with open(csv_path, "a") as f:
+        f.write(row_str + "\n")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Acquire spectrum data from USRP for POWDER/ARA/COSMOS evaluation"
+    )
+    parser.add_argument("--site", required=True, help="Site/testbed name (e.g. POWDER, ARA, COSMOS)")
+    parser.add_argument(
+        "--sdr", default=None,
+        help="SDR model string for metadata (auto-detected from USRP if omitted)"
+    )
+    parser.add_argument(
+        "--device-args", default="",
+        help="UHD device arguments (e.g. 'mgmt_addr=10.37.2.1,addr=10.39.2.1' for N310)"
+    )
+    parser.add_argument("--rx-channel", type=int, default=0, help="RX channel index (default 0)")
+    parser.add_argument("--antenna", default="RX2", help="RX antenna port (default RX2)")
+    parser.add_argument("--gain", type=float, default=35.0, help="RX gain in dB (default 35)")
+    parser.add_argument("--sample-rate", type=float, default=30.72e6,
+                        help="Sample rate in Hz (default 30.72e6)")
+    parser.add_argument("--bandwidth", type=float, default=None,
+                        help="RX bandwidth in Hz (default = sample-rate)")
+    parser.add_argument("--fft-size", type=int, default=4096,
+                        help="FFT size for Welch PSD (default 4096)")
+    parser.add_argument("--cutoff", type=float, default=0.836,
+                        help="Fraction of FFT bins to retain per tune (default 0.836)")
+    parser.add_argument("--sample-seconds", type=float, default=0.2,
+                        help="Seconds of IQ data to capture per tune (default 0.2)")
+    parser.add_argument(
+        "--bands", required=True,
+        help="Comma-separated 200 MHz bands, e.g. '3400:3600' or '3400:3600,3600:3800'"
+    )
+    parser.add_argument("--duration-minutes", type=float, required=True,
+                        help="Total data collection duration in minutes")
+    parser.add_argument("--output-dir", required=True,
+                        help="Output directory for all data files")
+    args = parser.parse_args()
+
+    if not _HAS_UHD:
+        print("ERROR: uhd Python module not found.", file=sys.stderr)
+        print("Install UHD with Python bindings (e.g. 'apt install uhd-host' or compile from source).",
+              file=sys.stderr)
+        sys.exit(1)
+
+    bands = parse_band_spec(args.bands)
+    fs = args.sample_rate
+    fft_size = args.fft_size
+    cutoff = args.cutoff
+    bw = args.bandwidth if args.bandwidth is not None else fs
+    n_samples = max(fft_size * 2, int(fs * args.sample_seconds))
+    duration_sec = args.duration_minutes * 60.0
+    output_root = Path(args.output_dir)
+
+    print(f"Site:                     {args.site}")
+    print(f"SDR:                      {args.sdr or 'auto-detected'}")
+    print(f"Device args:              '{args.device_args}'")
+    print(f"Bands:                    {bands}")
+    print(f"Duration:                 {args.duration_minutes} min")
+    print(f"Output root:              {output_root}")
+    print(f"Sample rate:              {fs/1e6:.2f} MHz")
+    print(f"FFT size:                 {fft_size}")
+    print(f"Cutoff:                   {cutoff}")
+    print(f"Samples per tune:         {n_samples} ({args.sample_seconds} s)")
+    print(f"Gain:                     {args.gain} dB")
+    print(f"Antenna:                  {args.antenna}")
+    print()
+
+    # Create output directory structure
+    for start_mhz, stop_mhz in bands:
+        band_dir = output_root / f"{start_mhz}_{stop_mhz}"
+        band_dir.mkdir(parents=True, exist_ok=True)
+        (band_dir / "raw").mkdir(exist_ok=True)
+
+    # --- Connect USRP ---
+    print("Initializing USRP ...")
+    usrp = uhd.usrp.MultiUSRP(args.device_args)
+    mboard = usrp.get_mboard_name()
+    print(f"  Board: {mboard}")
+
+    ch = args.rx_channel
+    usrp.set_rx_rate(fs, ch)
+    usrp.set_rx_freq(lib.types.tune_request(3400e6), ch)
+    usrp.set_rx_gain(args.gain, ch)
+    usrp.set_rx_antenna(args.antenna, ch)
+    usrp.set_rx_bandwidth(bw, ch)
+
+    actual_rate = usrp.get_rx_rate(ch)
+    actual_gain = usrp.get_rx_gain(ch)
+    actual_antenna = usrp.get_rx_antenna(ch)
+    actual_bw = usrp.get_rx_bandwidth(ch)
+    print(f"  Actual sample rate:  {actual_rate/1e6:.2f} MHz")
+    print(f"  Actual gain:         {actual_gain:.1f} dB")
+    print(f"  Actual antenna:      {actual_antenna}")
+    print(f"  Actual bandwidth:    {actual_bw/1e6:.2f} MHz")
+    print()
+
+    # Create streamer
+    rx_streamer = create_rx_streamer(usrp, ch)
+
+    # Warm-up capture (discard first result)
+    print("Warming up USRP stream ...")
+    _ = capture_samples(rx_streamer, n_samples)
+    print()
+
+    # --- Per-minute collection loop ---
+    start_wall = time.time()
+    minute_count = int(np.ceil(args.duration_minutes))
+    print(f"Starting collection for {args.duration_minutes} min "
+          f"({minute_count} minute(s))")
+
+    for minute_idx in range(minute_count):
+        target_time = start_wall + minute_idx * 60.0
+
+        # Wait until this minute's target time
+        remaining = target_time - time.time()
+        if remaining > 0:
+            time.sleep(remaining)
+        elif remaining < -30.0:
+            print(f"\nMinute {minute_idx + 1}: skipping (too late)")
+            continue
+
+        now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        print(f"\n--- Minute {minute_idx + 1}/{minute_count} [{now_utc}] ---")
+
+        for start_mhz, stop_mhz in bands:
+            band_label = f"{start_mhz}_{stop_mhz}"
+            band_dir = output_root / band_label
+            raw_dir = band_dir / "raw"
+
+            print(f"  Band {start_mhz}-{stop_mhz} MHz")
+            sys.stdout.flush()
+
+            sweeps = sweep_band(
+                usrp, rx_streamer, start_mhz, stop_mhz,
+                fs, fft_size, cutoff, n_samples, raw_dir,
+            )
+
+            if not sweeps:
+                print(f"    No sweeps collected for this band", file=sys.stderr)
+                continue
+
+            bin_centers, mean_db = aggregate_to_1mhz(sweeps, start_mhz, stop_mhz)
+            if mean_db is None:
+                print(f"    Could not aggregate data", file=sys.stderr)
+                continue
+
+            csv_path = band_dir / "power_1mhz_avg_per_minute.csv"
+            append_csv_row(csv_path, mean_db, minute_idx, bin_centers)
+            print(f"    Wrote minute row to {csv_path.name}")
+
+        # Check if we've exceeded total duration
+        elapsed = time.time() - start_wall
+        if elapsed >= duration_sec:
+            print(f"\nReached {args.duration_minutes} min, stopping")
+            break
+
+    # --- Write per-band metadata ---
+    print("\n--- Writing metadata ---")
+    for start_mhz, stop_mhz in bands:
+        band_dir = output_root / f"{start_mhz}_{stop_mhz}"
+        metadata = {
+            "site": args.site,
+            "sdr": args.sdr or mboard,
+            "device_args": args.device_args,
+            "rx_channel": args.rx_channel,
+            "antenna": args.antenna,
+            "gain_db": args.gain,
+            "sample_rate_sps": fs,
+            "bandwidth_hz": bw,
+            "fft_size": fft_size,
+            "cutoff_factor": cutoff,
+            "sample_seconds_per_tune": args.sample_seconds,
+            "frequency_start_mhz": start_mhz,
+            "frequency_stop_mhz": stop_mhz,
+            "num_bins": 200,
+            "bin_resolution_mhz": 1.0,
+            "bin_semantics": "center frequencies of 1 MHz intervals "
+                             "(left-inclusive, right-exclusive)",
+            "time_resolution": "1 minute",
+            "power_unit": "dB (relative, uncalibrated PSD from Welch's method)",
+            "collection_duration_minutes": args.duration_minutes,
+        }
+        meta_path = band_dir / "metadata.json"
+        with open(meta_path, "w") as f:
+            json.dump(metadata, f, indent=2)
+        print(f"  {meta_path}")
+
+    print("\nDone.")
+
+
+if __name__ == "__main__":
+    main()
