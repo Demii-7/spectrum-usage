@@ -53,7 +53,7 @@ def parse_band_spec(spec_str):
     return bands
 
 
-def build_tune_plan(band_start_hz, band_stop_hz, fs, fft_size, cutoff):
+def build_tune_plan(band_start_hz, band_stop_hz, fs, fft_size, cutoff, tune_step_hz=None):
     """Compute center frequencies and edge-bin trimming for a 200 MHz band sweep."""
     N = int(np.floor(fft_size * cutoff))
     if N % 2 != 0:
@@ -62,10 +62,23 @@ def build_tune_plan(band_start_hz, band_stop_hz, fs, fft_size, cutoff):
     effective_bw = N * (fs / fft_size)
 
     band_width_hz = band_stop_hz - band_start_hz
-    n_tunes = int(np.ceil(band_width_hz / effective_bw))
 
     half_bw = effective_bw / 2.0
-    centers = [band_start_hz + half_bw + i * effective_bw for i in range(n_tunes)]
+    if tune_step_hz is None:
+        n_tunes = int(np.ceil(band_width_hz / effective_bw))
+        centers = [band_start_hz + half_bw + i * effective_bw for i in range(n_tunes)]
+    else:
+        if tune_step_hz <= 0:
+            raise ValueError("tune_step_hz must be positive")
+        if tune_step_hz > effective_bw:
+            raise ValueError("tune_step_hz must be <= retained per-tune bandwidth")
+
+        first_center = band_start_hz + half_bw
+        last_center = band_stop_hz - half_bw
+        centers = list(np.arange(first_center, last_center + tune_step_hz * 0.5, tune_step_hz))
+        if not centers or centers[-1] < last_center:
+            centers.append(last_center)
+        centers[-1] = min(centers[-1], last_center)
     return centers, n_remove, N
 
 
@@ -76,11 +89,12 @@ def create_rx_streamer(usrp, channel):
     return usrp.get_rx_stream(st_args)
 
 
-def capture_samples(rx_streamer, n_samples):
+def capture_samples(rx_streamer, n_samples, timeout=1.0, max_empty=20):
     """Capture n_samples from USRP, return (samples_1d, timestamp)."""
     n_channels = rx_streamer.get_num_channels()
     if n_channels < 1:
         return None, 0.0
+
     buffer = np.zeros((n_channels, n_samples), dtype=np.complex64)
     metadata = lib.types.rx_metadata()
 
@@ -90,22 +104,47 @@ def capture_samples(rx_streamer, n_samples):
     rx_streamer.issue_stream_cmd(stream_cmd)
 
     samps_recd = 0
+    empty_count = 0
+    first_ts = 0.0
+
     while samps_recd < n_samples:
-        chunk = rx_streamer.recv(buffer[:, samps_recd:], metadata)
-        if chunk == 0:
-            print("  RX: recv returned 0 samples", file=sys.stderr)
-            break
+        chunk = rx_streamer.recv(buffer[:, samps_recd:], metadata, timeout)
+
+        if metadata.error_code == lib.types.rx_metadata_error_code.timeout:
+            empty_count += 1
+            if empty_count >= max_empty:
+                print(f" RX timeout/empty too many times ({empty_count}), giving up", file=sys.stderr)
+                break
+            continue
+
+        if metadata.error_code == lib.types.rx_metadata_error_code.overflow:
+            print(f" RX overflow: {metadata.strerror()}", file=sys.stderr)
+            empty_count += 1
+            if empty_count >= max_empty:
+                break
+            continue
+
         if metadata.error_code != lib.types.rx_metadata_error_code.none:
-            err_str = metadata.strerror()
-            if "timeout" in err_str.lower():
-                print("  RX timeout, retrying...", file=sys.stderr)
-                continue
-            print(f"  RX warning: {err_str}", file=sys.stderr)
+            print(f" RX warning: {metadata.strerror()}", file=sys.stderr)
+            empty_count += 1
+            if empty_count >= max_empty:
+                break
+            continue
+
+        if chunk == 0:
+            empty_count += 1
+            if empty_count >= max_empty:
+                print(f" RX: recv returned 0 samples {empty_count} times, giving up", file=sys.stderr)
+                break
+            continue
+
+        if samps_recd == 0:
+            first_ts = metadata.time_spec.get_real_secs()
+
         samps_recd += chunk
+        empty_count = 0
 
-    ts = metadata.time_spec.get_real_secs()
-    return buffer[0, :samps_recd], ts
-
+    return buffer[0, :samps_recd], first_ts
 
 def compute_psd(samples, fs, fft_size):
     """Compute Welch PSD, return (freq_offsets_hz, psd_db)."""
@@ -119,7 +158,7 @@ def compute_psd(samples, fs, fft_size):
 
 
 def sweep_band(usrp, rx_streamer, channel, band_start_mhz, band_stop_mhz, fs,
-               fft_size, cutoff, n_samples, raw_dir=None):
+               fft_size, cutoff, n_samples, raw_dir=None, tune_step_hz=None):
     """Tune across one 200 MHz band and return per-tune PSD sweeps.
 
     Each sweep is (freq_vector_hz, power_vector_db, timestamp). If raw_dir is
@@ -129,14 +168,14 @@ def sweep_band(usrp, rx_streamer, channel, band_start_mhz, band_stop_mhz, fs,
     band_stop_hz = band_stop_mhz * 1e6
 
     centers, n_remove, N = build_tune_plan(
-        band_start_hz, band_stop_hz, fs, fft_size, cutoff
+        band_start_hz, band_stop_hz, fs, fft_size, cutoff, tune_step_hz
     )
 
     sweeps = []
     for i, fc in enumerate(centers):
         tune_request = lib.types.tune_request(fc)
         usrp.set_rx_freq(tune_request, channel)
-
+        time.sleep(0.10)
         samples, ts = capture_samples(rx_streamer, n_samples)
         if samples is None or len(samples) < fft_size:
             print(f"    Not enough samples, skipping tune {i}", file=sys.stderr)
@@ -166,7 +205,10 @@ def sweep_band(usrp, rx_streamer, channel, band_start_mhz, band_stop_mhz, fs,
             print(f"    tune {i+1}/{len(centers)}: fc={fc_mhz} MHz "
                   f"({len(freqs_hz)} bins)")
 
-        sweeps.append((freqs_hz, psd_db, ts))
+        if tune_step_hz is None:
+            sweeps.append((freqs_hz, psd_db, ts))
+        else:
+            sweeps.append((freqs_hz, psd_db, ts, fc))
 
     return sweeps
 
@@ -179,8 +221,18 @@ def aggregate_to_1mhz(sweeps, band_start_mhz, band_stop_mhz):
     bin_edges = np.arange(band_start_mhz, band_stop_mhz + 1)
     bin_centers = bin_edges[:-1] + 0.5
 
-    bin_powers = []
-    for freqs_hz, psd_db, ts in sweeps:
+    bin_weighted_powers = []
+    bin_weights = []
+    for sweep in sweeps:
+        if len(sweep) == 4:
+            freqs_hz, psd_db, ts, center_freq_hz = sweep
+            max_offset = np.nanmax(np.abs(freqs_hz - center_freq_hz))
+            weights = 1.0 - np.abs(freqs_hz - center_freq_hz) / max(max_offset, 1.0)
+            weights = np.clip(weights, 0.05, 1.0)
+        else:
+            freqs_hz, psd_db, ts = sweep
+            weights = np.ones_like(psd_db)
+
         freqs_mhz = freqs_hz / 1e6
         bin_indices = np.digitize(freqs_mhz, bin_edges) - 1
 
@@ -188,21 +240,25 @@ def aggregate_to_1mhz(sweeps, band_start_mhz, band_stop_mhz):
         if not np.any(valid):
             continue
 
-        binned = np.full(200, np.nan)
+        binned_power = np.full(200, np.nan)
+        binned_weight = np.full(200, np.nan)
         for b in range(200):
             mask = bin_indices == b
             if np.any(mask):
                 lin = 10.0 ** (psd_db[mask] / 10.0)
-                binned[b] = 10.0 * np.log10(np.mean(lin))
+                w = weights[mask]
+                binned_power[b] = np.average(lin, weights=w)
+                binned_weight[b] = np.mean(w)
 
-        bin_powers.append(binned)
+        bin_weighted_powers.append(binned_power)
+        bin_weights.append(binned_weight)
 
-    if not bin_powers:
+    if not bin_weighted_powers:
         return None, None
 
-    bin_powers = np.array(bin_powers)
-    lin_all = 10.0 ** (bin_powers / 10.0)
-    mean_lin = np.nanmean(lin_all, axis=0)
+    bin_weighted_powers = np.array(bin_weighted_powers)
+    bin_weights = np.array(bin_weights)
+    mean_lin = np.nansum(bin_weighted_powers * bin_weights, axis=0) / np.nansum(bin_weights, axis=0)
     mean_db = 10.0 * np.log10(np.maximum(mean_lin, 1e-30))
     return bin_centers, mean_db
 
@@ -243,6 +299,15 @@ def main():
                         help="FFT size for Welch PSD (default 4096)")
     parser.add_argument("--cutoff", type=float, default=0.836,
                         help="Fraction of FFT bins to retain per tune (default 0.836)")
+    parser.add_argument(
+        "--tune-step-mhz",
+        type=float,
+        default=None,
+        help=(
+            "Spacing between adjacent sweep center frequencies in MHz. "
+            "Set below sample-rate*cutoff to overlap tunes; default keeps existing non-overlap behavior."
+        ),
+    )
     parser.add_argument("--sample-seconds", type=float, default=0.2,
                         help="Seconds of IQ data to capture per tune (default 0.2)")
     parser.add_argument(
@@ -269,6 +334,7 @@ def main():
     fs = args.sample_rate
     fft_size = args.fft_size
     cutoff = args.cutoff
+    tune_step_hz = None if args.tune_step_mhz is None else args.tune_step_mhz * 1e6
     bw = args.bandwidth if args.bandwidth is not None else fs
     n_samples = max(fft_size * 2, int(fs * args.sample_seconds))
     duration_sec = args.duration_minutes * 60.0
@@ -302,6 +368,12 @@ def main():
     print(f"Sample rate:              {fs/1e6:.2f} MHz")
     print(f"FFT size:                 {fft_size}")
     print(f"Cutoff:                   {cutoff}")
+    if tune_step_hz is None:
+        print("Tune step:                non-overlap default")
+    else:
+        retained_mhz = fs * cutoff / 1e6
+        overlap_pct = max(0.0, 100.0 * (1.0 - args.tune_step_mhz / retained_mhz))
+        print(f"Tune step:                {args.tune_step_mhz:.3f} MHz ({overlap_pct:.1f}% overlap)")
     print(f"Samples per tune:         {n_samples} ({args.sample_seconds} s)")
     print(f"Gain:                     {args.gain} dB")
     print(f"Antenna:                  {args.antenna}")
@@ -330,6 +402,8 @@ def main():
     usrp.set_rx_bandwidth(bw, ch)
 
     actual_rate = usrp.get_rx_rate(ch)
+    fs = actual_rate
+    n_samples = max(fft_size * 2, int(fs * args.sample_seconds))
     actual_gain = usrp.get_rx_gain(ch)
     actual_antenna = usrp.get_rx_antenna(ch)
     actual_bw = usrp.get_rx_bandwidth(ch)
@@ -381,7 +455,7 @@ def main():
 
             sweeps = sweep_band(
                 usrp, rx_streamer, ch, start_mhz, stop_mhz,
-                fs, fft_size, cutoff, n_samples, raw_dir,
+                fs, fft_size, cutoff, n_samples, raw_dir, tune_step_hz,
             )
 
             if not sweeps:
@@ -418,6 +492,8 @@ def main():
             "bandwidth_hz": bw,
             "fft_size": fft_size,
             "cutoff_factor": cutoff,
+            "tune_step_mhz": args.tune_step_mhz,
+            "overlapped_tuning_enabled": args.tune_step_mhz is not None,
             "sample_seconds_per_tune": args.sample_seconds,
             "frequency_start_mhz": start_mhz,
             "frequency_stop_mhz": stop_mhz,
