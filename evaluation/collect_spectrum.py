@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Spectrum data acquisition script for POWDER, ARA, and COSMOS testbeds.
+Spectrum data acquisition script for POWDER, ARA, AERPAW, and COSMOS testbeds.
 
-Collects wideband PSD measurements using USRP B210 or N310,
-saves per-sweep raw data (.npz) and per-minute 200-column CSV files
-with 1 MHz resolution across one or more 200 MHz bands.
+Collects wideband PSD measurements using a UHD-supported USRP and saves
+per-minute 200-column CSV files with 1 MHz resolution across one or more
+200 MHz bands. Optional per-sweep raw PSD files can also be saved.
 """
 
 import argparse
@@ -118,12 +118,12 @@ def compute_psd(samples, fs, fft_size):
     return freqs, psd_db
 
 
-def sweep_band(usrp, rx_streamer, band_start_mhz, band_stop_mhz, fs, fft_size,
-               cutoff, n_samples, raw_dir):
+def sweep_band(usrp, rx_streamer, channel, band_start_mhz, band_stop_mhz, fs,
+               fft_size, cutoff, n_samples, raw_dir=None):
     """Tune across one 200 MHz band and return per-tune PSD sweeps.
 
-    Each sweep is (freq_vector_hz, power_vector_db, timestamp).
-    Raw .npz files are saved to raw_dir along the way.
+    Each sweep is (freq_vector_hz, power_vector_db, timestamp). If raw_dir is
+    provided, raw .npz files are saved there.
     """
     band_start_hz = band_start_mhz * 1e6
     band_stop_hz = band_stop_mhz * 1e6
@@ -135,7 +135,7 @@ def sweep_band(usrp, rx_streamer, band_start_mhz, band_stop_mhz, fs, fft_size,
     sweeps = []
     for i, fc in enumerate(centers):
         tune_request = lib.types.tune_request(fc)
-        usrp.set_rx_freq(tune_request, 0)
+        usrp.set_rx_freq(tune_request, channel)
 
         samples, ts = capture_samples(rx_streamer, n_samples)
         if samples is None or len(samples) < fft_size:
@@ -150,18 +150,21 @@ def sweep_band(usrp, rx_streamer, band_start_mhz, band_stop_mhz, fs, fft_size,
 
         freqs_hz = freq_offsets + fc
 
-        # Save raw per-tune data
         fc_mhz = int(round(fc / 1e6))
-        raw_path = raw_dir / f"tune_{i:02d}_fc_{fc_mhz}MHz.npz"
-        np.savez_compressed(
-            raw_path,
-            freq_hz=freqs_hz,
-            power_db=psd_db,
-            timestamp=ts,
-            center_freq_hz=fc,
-        )
-        print(f"    tune {i+1}/{len(centers)}: fc={fc_mhz} MHz "
-              f"-> {raw_path.name} ({len(freqs_hz)} bins)")
+        if raw_dir is not None:
+            raw_path = raw_dir / f"tune_{i:02d}_fc_{fc_mhz}MHz.npz"
+            np.savez_compressed(
+                raw_path,
+                freq_hz=freqs_hz,
+                power_db=psd_db,
+                timestamp=ts,
+                center_freq_hz=fc,
+            )
+            print(f"    tune {i+1}/{len(centers)}: fc={fc_mhz} MHz "
+                  f"-> {raw_path.name} ({len(freqs_hz)} bins)")
+        else:
+            print(f"    tune {i+1}/{len(centers)}: fc={fc_mhz} MHz "
+                  f"({len(freqs_hz)} bins)")
 
         sweeps.append((freqs_hz, psd_db, ts))
 
@@ -207,10 +210,9 @@ def aggregate_to_1mhz(sweeps, band_start_mhz, band_stop_mhz):
 def append_csv_row(csv_path, row_200, minute_idx, bin_centers):
     """Append one 200-element row to the per-minute CSV, writing header first time."""
     row_str = ",".join(f"{v:.4f}" for v in row_200)
-    if minute_idx == 0:
-        header = ",".join(
-            f"{int(bc)}" for bc in bin_centers
-        )
+    write_header = not csv_path.exists() or csv_path.stat().st_size == 0
+    if write_header:
+        header = ",".join(f"{bc:.1f}" for bc in bin_centers)
         with open(csv_path, "w") as f:
             f.write(header + "\n")
     with open(csv_path, "a") as f:
@@ -219,9 +221,9 @@ def append_csv_row(csv_path, row_200, minute_idx, bin_centers):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Acquire spectrum data from USRP for POWDER/ARA/COSMOS evaluation"
+        description="Acquire spectrum data from USRP for POWDER/ARA/AERPAW/COSMOS evaluation"
     )
-    parser.add_argument("--site", required=True, help="Site/testbed name (e.g. POWDER, ARA, COSMOS)")
+    parser.add_argument("--site", required=True, help="Site/testbed name (e.g. POWDER, ARA, AERPAW, COSMOS)")
     parser.add_argument(
         "--sdr", default=None,
         help="SDR model string for metadata (auto-detected from USRP if omitted)"
@@ -251,6 +253,10 @@ def main():
                         help="Total data collection duration in minutes")
     parser.add_argument("--output-dir", required=True,
                         help="Output directory for all data files")
+    parser.add_argument("--save-raw", action="store_true",
+                        help="Save raw per-tune PSD .npz files. Disabled by default.")
+    parser.add_argument("--overwrite", action="store_true",
+                        help="Allow overwriting existing output files in --output-dir")
     args = parser.parse_args()
 
     if not _HAS_UHD:
@@ -268,6 +274,25 @@ def main():
     duration_sec = args.duration_minutes * 60.0
     output_root = Path(args.output_dir)
 
+    existing_outputs = []
+    for start_mhz, stop_mhz in bands:
+        band_dir = output_root / f"{start_mhz}_{stop_mhz}"
+        csv_path = band_dir / "power_1mhz_avg_per_minute.csv"
+        meta_path = band_dir / "metadata.json"
+        raw_dir = band_dir / "raw"
+        if csv_path.exists():
+            existing_outputs.append(str(csv_path))
+        if meta_path.exists():
+            existing_outputs.append(str(meta_path))
+        if args.save_raw and raw_dir.exists() and any(raw_dir.iterdir()):
+            existing_outputs.append(str(raw_dir))
+    if existing_outputs and not args.overwrite:
+        print("ERROR: output files already exist and --overwrite was not set.", file=sys.stderr)
+        print("Use a new --output-dir or rerun with --overwrite.", file=sys.stderr)
+        for path in existing_outputs:
+            print(f"  existing: {path}", file=sys.stderr)
+        sys.exit(2)
+
     print(f"Site:                     {args.site}")
     print(f"SDR:                      {args.sdr or 'auto-detected'}")
     print(f"Device args:              '{args.device_args}'")
@@ -280,13 +305,16 @@ def main():
     print(f"Samples per tune:         {n_samples} ({args.sample_seconds} s)")
     print(f"Gain:                     {args.gain} dB")
     print(f"Antenna:                  {args.antenna}")
+    print(f"Save raw PSD files:       {args.save_raw}")
+    print(f"Overwrite existing files: {args.overwrite}")
     print()
 
     # Create output directory structure
     for start_mhz, stop_mhz in bands:
         band_dir = output_root / f"{start_mhz}_{stop_mhz}"
         band_dir.mkdir(parents=True, exist_ok=True)
-        (band_dir / "raw").mkdir(exist_ok=True)
+        if args.save_raw:
+            (band_dir / "raw").mkdir(exist_ok=True)
 
     # --- Connect USRP ---
     print("Initializing USRP ...")
@@ -342,13 +370,17 @@ def main():
         for start_mhz, stop_mhz in bands:
             band_label = f"{start_mhz}_{stop_mhz}"
             band_dir = output_root / band_label
-            raw_dir = band_dir / "raw"
+            raw_dir = None
+            if args.save_raw:
+                safe_ts = now_utc.replace(":", "").replace("-", "")
+                raw_dir = band_dir / "raw" / f"minute_{minute_idx:04d}_{safe_ts}"
+                raw_dir.mkdir(parents=True, exist_ok=True)
 
             print(f"  Band {start_mhz}-{stop_mhz} MHz")
             sys.stdout.flush()
 
             sweeps = sweep_band(
-                usrp, rx_streamer, start_mhz, stop_mhz,
+                usrp, rx_streamer, ch, start_mhz, stop_mhz,
                 fs, fft_size, cutoff, n_samples, raw_dir,
             )
 
@@ -396,6 +428,8 @@ def main():
             "time_resolution": "1 minute",
             "power_unit": "dB (relative, uncalibrated PSD from Welch's method)",
             "collection_duration_minutes": args.duration_minutes,
+            "save_raw": args.save_raw,
+            "overwrite_enabled": args.overwrite,
         }
         meta_path = band_dir / "metadata.json"
         with open(meta_path, "w") as f:
