@@ -263,6 +263,8 @@ def sweep_band(usrp, rx_streamer, channel, band_start_mhz, band_stop_mhz, fs,
             continue
 
         freq_offsets, psd_db = compute_psd(samples, fs, fft_size)
+        raw_freqs_hz = freq_offsets + fc
+        raw_psd_db = psd_db
 
         if n_remove > 0:
             psd_db = psd_db[n_remove:-n_remove]
@@ -279,6 +281,8 @@ def sweep_band(usrp, rx_streamer, channel, band_start_mhz, band_stop_mhz, fs,
             raw_path = raw_dir / f"tune_{i:02d}_fc_{fc_mhz}MHz.npz"
             np.savez_compressed(
                 raw_path,
+                raw_freq_hz=raw_freqs_hz,
+                raw_power_db=raw_psd_db,
                 freq_hz=freqs_hz,
                 power_db=psd_db,
                 timestamp=ts,
