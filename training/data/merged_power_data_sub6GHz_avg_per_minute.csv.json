@@ -1,0 +1,31 @@
+{
+  "created_utc": "2026-06-16T12:28:57.791833+00:00",
+  "band_start_mhz": 2813,
+  "band_width_mhz": 250,
+  "labels": [
+    "CC1",
+    "CC2",
+    "LW1"
+  ],
+  "row_count": 6839,
+  "archives": [
+    {
+      "label": "CC1",
+      "archive_path": "/home/cc/spectrum-usage/ResultsCC1Feb2022_SigMF.zip",
+      "minute_count": 10243,
+      "raw_bin_count": 98868
+    },
+    {
+      "label": "CC2",
+      "archive_path": "/home/cc/spectrum-usage/ResultsCC2Feb2022_SigMF.zip",
+      "minute_count": 10080,
+      "raw_bin_count": 98868
+    },
+    {
+      "label": "LW1",
+      "archive_path": "/home/cc/spectrum-usage/ResultsLW1Feb2022_SigMF.zip",
+      "minute_count": 9519,
+      "raw_bin_count": 98868
+    }
+  ]
+}

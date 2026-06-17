@@ -123,35 +123,31 @@ spectrum-usage/
    `.sigmf-meta` entries (filtering out macOS metadata like `__MACOSX/` or `._`
    files).
 
-2. **Frequency axis extraction** — The first metadata file is read to obtain the
-   frequency axis (MHz) for the sensor. This defines the mapping from raw
-   frequency bins to 1 MHz output bins.
-
-3. **Bin range construction** — The script identifies which raw frequency bins
-   fall within each 1 MHz interval of the target sub-band (e.g., 2813–3062 MHz).
-   This produces 250 ranges, each covering the raw bins in one 1 MHz slice.
-
-4. **Per-sweep aggregation** — For each SigMF sweep:
+2. **Per-sweep extraction** — For each SigMF sweep:
    - The `.sigmf-meta` JSON is parsed to extract the sweep's UTC datetime
    - The datetime is floored to the nearest minute (second=0, microsecond=0)
    - The `.sigmf-data` binary is read as 98,868 float32 values (dBm)
-   - Power values in the selected sub-band are converted to linear scale,
-     averaged within each 1 MHz bin, and accumulated by minute bucket
+   - **250 consecutive float32 values are sliced** starting at the node's
+     fixed raw bin offset (CC1=21000, CC2=33250, LW1=27500), selecting a
+     quiet noise-floor region of the spectrum (~1.3–2.1 GHz)
 
-5. **Per-minute averaging** — After all sweeps are processed, each minute
-   bucket's accumulated linear sum is divided by the sweep count for that minute
-   and converted back to dBm: `10 * log10(mean_linear)`.
+3. **Linear-domain accumulation** — The 250 dBm values are converted to linear
+   power (mW) via `10^(dBm/10)` and accumulated per minute bucket.
 
-6. **Cross-node merge** — Only minute buckets that exist in ALL provided archives
+4. **Per-minute averaging** — Each minute bucket's accumulated linear sum is
+   divided by the sweep count for that minute and converted back to dBm:
+   `10 * log10(mean_linear)`.
+
+5. **Cross-node merge** — Only minute buckets that exist in ALL provided archives
    are kept (set intersection). This ensures aligned time series across nodes.
 
-7. **CSV writing** — The merged rows are written in chronological order (sorted
+6. **CSV writing** — The merged rows are written in chronological order (sorted
    by UTC minute key). Each row is the concatenation of:
    `[CC1_250_bins, CC2_250_bins, LW1_250_bins]`
+   Written with 6 decimal places, **no header** (matching the repo CSV format).
 
-8. **Manifest writing** — A JSON manifest is written alongside the CSV recording
-   the creation time, band parameters, node labels, row count, and per-archive
-   statistics.
+7. **Manifest writing** — A JSON manifest is written alongside the CSV recording
+   the creation time, method, node labels, row count, and per-archive bin offsets.
 
 ### Intermediate outputs
 
@@ -209,18 +205,15 @@ Each SigMF pair consists of:
 
 The output CSV has the following structure:
 
-- **Header row** — Column names in the format `<NODE>_<FREQ_MHz>`:
-  ```
-  CC1_2813,CC1_2814,...,CC1_3062,CC2_2813,...,CC2_3062,LW1_2813,...,LW1_3062
-  ```
-
+- **No header row** — The CSV is pure data (matching the TSS-LCD repo format).
 - **Data rows** — One row per common minute bucket, in chronological order.
   Each value is averaged power in dBm, formatted to 6 decimal places:
   ```
   -133.475915,-133.518531,...,-131.902385
   ```
 
-- **Frequency range:** 2813–3062 MHz (250 bins at 1 MHz resolution)
+- **Frequency range:** Per-node noise-floor bands (CC1 ~1347–1362 MHz,
+  CC2 ~2082–2097 MHz, LW1 ~1737–1752 MHz)
 - **Number of bins:** 250 per node
 - **Node layout:** CC1 (columns 0–249), CC2 (columns 250–499), LW1 (columns 500–749)
 
@@ -306,19 +299,21 @@ python3 "training/build_training_csv.py" \
   --archive CC1="ResultsCC1Feb2022_SigMF.zip" \
   --archive CC2="ResultsCC2Feb2022_SigMF.zip" \
   --archive LW1="ResultsLW1Feb2022_SigMF.zip" \
-  --band-start-mhz 2813 \
-  --band-width-mhz 250 \
   --output "training/data/merged_power_data_sub6GHz_avg_per_minute.csv"
 ```
 
+This reads each ZIP archive, extracts 250 raw float32 bins at the node's
+reverse-engineered bin offset (CC1=21000, CC2=33250, LW1=27500), averages
+power per minute in the linear domain, and merges into a single CSV.
+
 ### 4. Verify outputs
 
-Check the CSV:
+Check the CSV (no header row):
 
 ```bash
-# Count rows (header + data)
+# Count rows (data only)
 wc -l training/data/merged_power_data_sub6GHz_avg_per_minute.csv
-# Expected: 6840 (1 header + 6839 data rows)
+# Expected: 6839
 
 # Count columns
 head -1 training/data/merged_power_data_sub6GHz_avg_per_minute.csv | tr ',' '\n' | wc -l
@@ -339,40 +334,36 @@ Expected manifest structure:
 ```json
 {
   "created_utc": "2026-...",
-  "band_start_mhz": 2813,
-  "band_width_mhz": 250,
-  "labels": ["CC1", "CC2", "LW1"],
+  "method": "per-node-raw-bin-offsets",
+  "n_bins_per_node": 250,
   "row_count": 6839,
   "archives": [
-    {"label": "CC1", "minute_count": 10243, "raw_bin_count": 98868},
-    {"label": "CC2", "minute_count": 10080, "raw_bin_count": 98868},
-    {"label": "LW1", "minute_count": 9519, "raw_bin_count": 98868}
+    {"label": "CC1", "archive_path": "ResultsCC1Feb2022_SigMF.zip", "raw_bin_offset": 21000},
+    {"label": "CC2", "archive_path": "ResultsCC2Feb2022_SigMF.zip", "raw_bin_offset": 33250},
+    {"label": "LW1", "archive_path": "ResultsLW1Feb2022_SigMF.zip", "raw_bin_offset": 27500}
   ]
 }
 ```
 
 ### 5. (Optional) Single-node processing
 
-To process only one node (e.g., LW1):
+To process only one node:
 
 ```bash
 python3 "training/build_training_csv.py" \
   --archive LW1="ResultsLW1Feb2022_SigMF.zip" \
-  --band-start-mhz 2813 \
-  --band-width-mhz 250 \
   --output "training/data/lw1_power_avg_per_minute.csv"
 ```
 
-This produces a CSV with 250 columns and 9519 rows.
+The script automatically uses the correct bin offset for the given label.
+This produces a CSV with 250 columns and the node's per-minute averages.
 
 ## Script Arguments
 
 | Argument | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `--archive LABEL=PATH` | Yes (repeatable) | — | SigMF zip archive path with a short label (e.g., `CC1=ResultsCC1Feb2022_SigMF.zip`). The label becomes part of the CSV column header. Repeat once per node. |
-| `--band-start-mhz` | Yes | — | Integer start frequency in MHz for the selected sub-band (e.g., `2813`). |
-| `--band-width-mhz` | No | `250` | Number of 1 MHz bins to extract from each archive. Must be ≤ available bins in the raw data. |
-| `--output` | No | `training/data/merged_power_data_sub6GHz_avg_per_minute.csv` | Output CSV path. A `.json` manifest is written alongside at `<output>.csv.json`. |
+| `--archive LABEL=PATH` | Yes (repeatable) | — | SigMF zip archive with label, e.g. `CC1=ResultsCC1Feb2022_SigMF.zip`. Known labels and their bin offsets: CC1=21000, CC2=33250, LW1=27500. |
+| `--output` | No | `training/data/merged_power_data_sub6GHz_avg_per_minute.csv` | Output CSV path (no header, 6 decimal places). A `.json` manifest is written alongside. |
 
 ## Troubleshooting
 
@@ -393,11 +384,10 @@ python3 -c "from zipfile import ZipFile; ZipFile('ResultsCC1Feb2022_SigMF.zip').
 An empty output means the archive is intact. Any output listing filenames
 indicates corruption.
 
-### --band-width-mhz too large
+### Unknown node label
 
-If `--band-width-mhz` exceeds the coverage of the raw frequency axis, the script
-will raise `ValueError: No source bins found for 1 MHz bin starting at ... MHz`.
-Reduce `--band-width-mhz` or check the raw frequency range.
+If a label passed to `--archive` is not in `NODE_RAW_BIN_OFFSETS`, the script
+raises `ValueError`. The only known labels are `CC1`, `CC2`, and `LW1`.
 
 ### No common minute buckets
 
@@ -491,10 +481,10 @@ Use this checklist to confirm the pipeline completed successfully:
 - [ ] `ResultsLW1Feb2022_SigMF.zip` exists and is ~12 GB
 - [ ] Each zip contains matching `.sigmf-meta` / `.sigmf-data` pairs
 - [ ] `training/data/merged_power_data_sub6GHz_avg_per_minute.csv` exists and is ~59 MB
-- [ ] CSV has 6840 lines (1 header + 6839 data rows)
+- [ ] CSV has 6839 lines (no header, all data rows)
 - [ ] CSV has 750 columns
 - [ ] CSV has 0 NaN and 0 Inf values
 - [ ] Manifest shows `row_count: 6839`
 - [ ] Manifest shows `labels: ["CC1", "CC2", "LW1"]`
-- [ ] Manifest shows `band_start_mhz: 2813` and `band_width_mhz: 250`
-- [ ] Each archive manifest has the correct `minute_count` and `raw_bin_count: 98868`
+- [ ] Manifest shows `method: "per-node-raw-bin-offsets"`
+- [ ] Manifest shows `raw_bin_offset: 21000` for CC1, `33250` for CC2, `27500` for LW1
