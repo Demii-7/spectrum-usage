@@ -158,7 +158,8 @@ def compute_psd(samples, fs, fft_size):
 
 
 def sweep_band(usrp, rx_streamer, channel, band_start_mhz, band_stop_mhz, fs,
-               fft_size, cutoff, n_samples, raw_dir=None, tune_step_hz=None):
+               fft_size, cutoff, n_samples, raw_dir=None, tune_step_hz=None,
+               center_notch_hz=0.0):
     """Tune across one 200 MHz band and return per-tune PSD sweeps.
 
     Each sweep is (freq_vector_hz, power_vector_db, timestamp). If raw_dir is
@@ -186,6 +187,11 @@ def sweep_band(usrp, rx_streamer, channel, band_start_mhz, band_stop_mhz, fs,
         if n_remove > 0:
             psd_db = psd_db[n_remove:-n_remove]
             freq_offsets = freq_offsets[n_remove:-n_remove]
+
+        if center_notch_hz > 0:
+            keep = np.abs(freq_offsets) >= center_notch_hz
+            psd_db = psd_db[keep]
+            freq_offsets = freq_offsets[keep]
 
         freqs_hz = freq_offsets + fc
 
@@ -308,6 +314,12 @@ def main():
             "Set below sample-rate*cutoff to overlap tunes; default keeps existing non-overlap behavior."
         ),
     )
+    parser.add_argument(
+        "--center-notch-mhz",
+        type=float,
+        default=0.0,
+        help="Discard bins within this many MHz of each tuned center frequency (default 0)",
+    )
     parser.add_argument("--sample-seconds", type=float, default=0.2,
                         help="Seconds of IQ data to capture per tune (default 0.2)")
     parser.add_argument(
@@ -334,7 +346,11 @@ def main():
     fs = args.sample_rate
     fft_size = args.fft_size
     cutoff = args.cutoff
+    if args.center_notch_mhz < 0:
+        print("ERROR: --center-notch-mhz must be non-negative.", file=sys.stderr)
+        sys.exit(1)
     tune_step_hz = None if args.tune_step_mhz is None else args.tune_step_mhz * 1e6
+    center_notch_hz = args.center_notch_mhz * 1e6
     bw = args.bandwidth if args.bandwidth is not None else fs
     n_samples = max(fft_size * 2, int(fs * args.sample_seconds))
     duration_sec = args.duration_minutes * 60.0
@@ -374,6 +390,7 @@ def main():
         retained_mhz = fs * cutoff / 1e6
         overlap_pct = max(0.0, 100.0 * (1.0 - args.tune_step_mhz / retained_mhz))
         print(f"Tune step:                {args.tune_step_mhz:.3f} MHz ({overlap_pct:.1f}% overlap)")
+    print(f"Center notch:             {args.center_notch_mhz:.3f} MHz")
     print(f"Samples per tune:         {n_samples} ({args.sample_seconds} s)")
     print(f"Gain:                     {args.gain} dB")
     print(f"Antenna:                  {args.antenna}")
@@ -456,6 +473,7 @@ def main():
             sweeps = sweep_band(
                 usrp, rx_streamer, ch, start_mhz, stop_mhz,
                 fs, fft_size, cutoff, n_samples, raw_dir, tune_step_hz,
+                center_notch_hz,
             )
 
             if not sweeps:
@@ -494,6 +512,7 @@ def main():
             "cutoff_factor": cutoff,
             "tune_step_mhz": args.tune_step_mhz,
             "overlapped_tuning_enabled": args.tune_step_mhz is not None,
+            "center_notch_mhz": args.center_notch_mhz,
             "sample_seconds_per_tune": args.sample_seconds,
             "frequency_start_mhz": start_mhz,
             "frequency_stop_mhz": stop_mhz,
