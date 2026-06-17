@@ -1,7 +1,7 @@
 # Training Data Pipeline
 
 This directory contains the pipeline for acquiring the AERPAW sub-6 GHz spectrum
-monitoring dataset and preprocessing it into the format used by the TSS-LCD
+monitoring dataset and preprocessing it into the format used by the TSS-LCD (https://github.com/Xlab2024/TSS-LCD)
 repository. The raw dataset consists of spectrum sweeps collected by three fixed
 sensor nodes (CC1, CC2, LW1) during February 2022 on the AERPAW testbed. Each
 sweep records power spectral density (PSD) across 87–6019 MHz with ~60 kHz
