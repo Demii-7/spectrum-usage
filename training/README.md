@@ -43,14 +43,14 @@ values in dBm).
 ### Prerequisites
 
 - Python 3.8+
-- The `datahugger` package
+- The `requests` package
 - ~52 GB of free disk space for the three zip archives
 - ~60 MB of additional free disk space for the output CSV and manifest
 
 ### Installation
 
 ```bash
-pip install datahugger
+pip install requests
 ```
 
 ### Download
@@ -58,14 +58,41 @@ pip install datahugger
 From the repository root:
 
 ```bash
-python -m datahugger 10.5061/dryad.hmgqnk9zn
+python3 training/data/download_dryad.py
 ```
 
-This will download the following three files into the current directory:
+This downloads the following three files into the current directory:
 
-- `ResultsCC1Feb2022_SigMF.zip`
-- `ResultsCC2Feb2022_SigMF.zip`
-- `ResultsLW1Feb2022_SigMF.zip`
+| File | Size |
+|------|------|
+| `ResultsCC1Feb2022_SigMF.zip` | ~19.08 GB |
+| `ResultsCC2Feb2022_SigMF.zip` | ~20.66 GB |
+| `ResultsLW1Feb2022_SigMF.zip` | ~12.50 GB |
+
+To download into a different directory, use `--dir`:
+
+```bash
+python3 training/data/download_dryad.py --dir /path/to/output
+```
+
+### How it works
+
+Dryad is protected by the **Anubis** anti-bot WAF (Web Application Firewall)
+that issues a SHA256 proof-of-work challenge before serving file downloads.
+Common tools like `datahugger`, `wget`, or `curl` cannot bypass this challenge.
+
+The bundled download script (`training/data/download_dryad.py`) handles it in
+three steps:
+
+1. Sends a GET request to the Dryad file stream URL
+2. If the Anubis challenge is present, parses the `randomData` and `difficulty`
+   from the HTML, then brute-forces a SHA256 nonce using all available CPU cores
+   (via `multiprocessing.Pool`)
+3. Submits the solution to receive temporary Anubis cookies and streams the
+   ZIP file through the same authenticated session
+
+The script retries automatically on rate limiting (HTTP 403) with a 60-second
+wait between attempts.
 
 ### Expected directory structure after download
 
@@ -78,15 +105,9 @@ spectrum-usage/
 │   ├── build_training_csv.py
 │   ├── README.md
 │   └── data/
+│       └── download_dryad.py
 └── ...
 ```
-
-### Notes on Dryad download behavior
-
-Dryad may present an AWS WAF challenge (Anubis PoW) that requires a proof-of-work
-solver. If you encounter HTTP 403 or SSL errors, the `datahugger` package should
-handle these automatically. If downloads fail due to rate limiting, wait
-approximately 50 minutes before retrying all three files.
 
 ## Dataset Processing Workflow
 
@@ -229,12 +250,18 @@ Complete step-by-step workflow to reproduce the dataset from scratch:
 ### 1. Download the dataset
 
 ```bash
-pip install datahugger
-python -m datahugger 10.5061/dryad.hmgqnk9zn
+pip install requests
+python3 training/data/download_dryad.py
 ```
 
-This downloads the three zip archives to the current directory. Verify they
-exist:
+This downloads the three zip archives to the current directory. To download
+to a different location:
+
+```bash
+python3 training/data/download_dryad.py --dir /path/to/output
+```
+
+Verify the files exist:
 
 ```bash
 ls -lh Results*Feb2022_SigMF.zip
@@ -242,9 +269,9 @@ ls -lh Results*Feb2022_SigMF.zip
 
 Expected output:
 ```
--rw-rw-r-- 1 user user 19G ResultsCC1Feb2022_SigMF.zip
+-rw-rw-r-- 1 user user 20G ResultsCC1Feb2022_SigMF.zip
 -rw-rw-r-- 1 user user 21G ResultsCC2Feb2022_SigMF.zip
--rw-rw-r-- 1 user user 12G ResultsLW1Feb2022_SigMF.zip
+-rw-rw-r-- 1 user user 13G ResultsLW1Feb2022_SigMF.zip
 ```
 
 ### 2. Verify download integrity
@@ -385,9 +412,10 @@ This can happen if:
 
 ### Interrupted downloads
 
-If downloads are interrupted, re-run the datahugger command. The Dryad servers
-may rate-limit repeated requests; wait ~50 minutes if you encounter HTTP 403
-errors.
+If downloads are interrupted, re-run the download script. It skips files that
+already exist (checked by file size > 1 MB), so it will resume where it left
+off. Dryad's servers may rate-limit repeated requests; the script waits 60
+seconds and retries automatically when it receives HTTP 403.
 
 ### Insufficient disk space
 
@@ -401,6 +429,33 @@ The script uses only Python standard library modules — no external dependencie
 If you encounter errors, ensure you are using Python 3.8+ and that the zip
 archives are not corrupted.
 
+## Assumptions and Limitations
+
+### Download script (`download_dryad.py`)
+
+- **File stream IDs are hardcoded**: The three Dryad file stream IDs (`4677590`,
+  `4677592`, `4677591`) were extracted from the dataset page's
+  `a.js-individual-dl` link hrefs at the time of download. If Dryad reorganizes
+  the dataset or replaces the files, these IDs will need updating.
+- **PoW solver is CPU-intensive**: The Anubis proof-of-work uses all available
+  CPU cores via `multiprocessing.Pool` and may take 30–120 seconds per file
+  depending on the difficulty level and core count.
+- **Resume by file size**: The script skips existing files if their size exceeds
+  1 MB. It does not verify checksums, so a partial or corrupted download could
+  be treated as complete. Delete the partial file and re-run to force a fresh
+  download.
+- **Anubis format may change**: If Dryad updates its WAF to use a different
+  challenge format (e.g., different HTML structure, different hash algorithm,
+  JavaScript-based challenges), the script would break and need updating.
+
+### Build script (`build_training_csv.py`)
+
+- **Per-node bin offsets were reverse-engineered**: The raw bin offsets for CC1
+  (21000), CC2 (33250), and LW1 (27500) were discovered by brute-force scanning
+  all possible 250-bin windows and matching the repo CSV's statistical profile.
+  These offsets are not documented in the original paper and may not generalize
+  to other dataset versions or nodes.
+
 ## Repository Structure
 
 ```
@@ -408,7 +463,8 @@ spectrum-usage/
 ├── training/                       # Training data pipeline
 │   ├── build_training_csv.py       # SigMF → per-minute averaged CSV
 │   ├── README.md                   # This file
-│   └── data/                       # Output directory
+│   └── data/                       # Data directory
+│       ├── download_dryad.py       # Dryad downloader (Anubis PoW solver)
 │       ├── merged_power_data_sub6GHz_avg_per_minute.csv      # Processed dataset
 │       └── merged_power_data_sub6GHz_avg_per_minute.csv.json # Processing manifest
 ├── evaluation/                     # Evaluation data collection
