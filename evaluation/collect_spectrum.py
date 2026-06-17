@@ -53,7 +53,8 @@ def parse_band_spec(spec_str):
     return bands
 
 
-def build_tune_plan(band_start_hz, band_stop_hz, fs, fft_size, cutoff, tune_step_hz=None):
+def build_tune_plan(band_start_hz, band_stop_hz, fs, fft_size, cutoff,
+                    tune_step_hz=None, overscan_hz=0.0):
     """Compute center frequencies and edge-bin trimming for a 200 MHz band sweep."""
     N = int(np.floor(fft_size * cutoff))
     if N % 2 != 0:
@@ -61,20 +62,22 @@ def build_tune_plan(band_start_hz, band_stop_hz, fs, fft_size, cutoff, tune_step
     n_remove = (fft_size - N) // 2
     effective_bw = N * (fs / fft_size)
 
-    band_width_hz = band_stop_hz - band_start_hz
+    plan_start_hz = band_start_hz - overscan_hz
+    plan_stop_hz = band_stop_hz + overscan_hz
+    band_width_hz = plan_stop_hz - plan_start_hz
 
     half_bw = effective_bw / 2.0
     if tune_step_hz is None:
         n_tunes = int(np.ceil(band_width_hz / effective_bw))
-        centers = [band_start_hz + half_bw + i * effective_bw for i in range(n_tunes)]
+        centers = [plan_start_hz + half_bw + i * effective_bw for i in range(n_tunes)]
     else:
         if tune_step_hz <= 0:
             raise ValueError("tune_step_hz must be positive")
         if tune_step_hz > effective_bw:
             raise ValueError("tune_step_hz must be <= retained per-tune bandwidth")
 
-        first_center = band_start_hz + half_bw
-        last_center = band_stop_hz - half_bw
+        first_center = plan_start_hz + half_bw
+        last_center = plan_stop_hz - half_bw
         centers = list(np.arange(first_center, last_center + tune_step_hz * 0.5, tune_step_hz))
         if not centers or centers[-1] < last_center:
             centers.append(last_center)
@@ -211,7 +214,8 @@ def tune_with_offset(usrp, channel, fc, dc_offset_hz):
 
 def sweep_band(usrp, rx_streamer, channel, band_start_mhz, band_stop_mhz, fs,
                fft_size, cutoff, n_samples, raw_dir=None, tune_step_hz=None,
-               center_notch_hz=0.0, dc_offset_hz=0.0, max_retries=3):
+               center_notch_hz=0.0, dc_offset_hz=0.0, max_retries=3,
+               overscan_hz=0.0):
     """Tune across one 200 MHz band and return per-tune PSD sweeps.
 
     Each sweep is (freq_vector_hz, power_vector_db, timestamp). If raw_dir is
@@ -225,7 +229,8 @@ def sweep_band(usrp, rx_streamer, channel, band_start_mhz, band_stop_mhz, fs,
     band_stop_hz = band_stop_mhz * 1e6
 
     centers, n_remove, N = build_tune_plan(
-        band_start_hz, band_stop_hz, fs, fft_size, cutoff, tune_step_hz
+        band_start_hz, band_stop_hz, fs, fft_size, cutoff, tune_step_hz,
+        overscan_hz,
     )
 
     sweeps = []
@@ -423,6 +428,15 @@ def main():
         ),
     )
     parser.add_argument(
+        "--overscan-mhz",
+        type=float,
+        default=0.0,
+        help=(
+            "Tune this many MHz past each band edge, then crop aggregation to the requested band. "
+            "Use with overlapped tuning for more uniform edge coverage (default 0)."
+        ),
+    )
+    parser.add_argument(
         "--center-notch-mhz",
         type=float,
         default=0.0,
@@ -476,7 +490,11 @@ def main():
     if args.dc_offset_mhz < 0:
         print("ERROR: --dc-offset-mhz must be non-negative.", file=sys.stderr)
         sys.exit(1)
+    if args.overscan_mhz < 0:
+        print("ERROR: --overscan-mhz must be non-negative.", file=sys.stderr)
+        sys.exit(1)
     tune_step_hz = None if args.tune_step_mhz is None else args.tune_step_mhz * 1e6
+    overscan_hz = args.overscan_mhz * 1e6
     center_notch_hz = args.center_notch_mhz * 1e6
     dc_offset_hz = args.dc_offset_mhz * 1e6
     bw = args.bandwidth if args.bandwidth is not None else fs
@@ -519,6 +537,7 @@ def main():
         overlap_pct = max(0.0, 100.0 * (1.0 - args.tune_step_mhz / retained_mhz))
         print(f"Tune step:                {args.tune_step_mhz:.3f} MHz ({overlap_pct:.1f}% overlap)")
     print(f"DC offset shift:          {args.dc_offset_mhz:.1f} MHz")
+    print(f"Overscan per band edge:   {args.overscan_mhz:.3f} MHz")
     print(f"Center notch:             {args.center_notch_mhz:.3f} MHz")
     print(f"Tune retries:             {args.tune_retries}")
     print(f"Samples per tune:         {n_samples} ({args.sample_seconds} s)")
@@ -610,6 +629,7 @@ def main():
                 usrp, rx_streamer, ch, start_mhz, stop_mhz,
                 fs, fft_size, cutoff, n_samples, raw_dir, tune_step_hz,
                 center_notch_hz, dc_offset_hz, args.tune_retries,
+                overscan_hz,
             )
 
             if not sweeps:
@@ -654,6 +674,7 @@ def main():
             "cutoff_factor": cutoff,
             "tune_step_mhz": args.tune_step_mhz,
             "overlapped_tuning_enabled": args.tune_step_mhz is not None,
+            "overscan_mhz": args.overscan_mhz,
             "dc_offset_shift_mhz": args.dc_offset_mhz,
             "center_notch_mhz": args.center_notch_mhz,
             "tune_retries": args.tune_retries,
