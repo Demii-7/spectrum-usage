@@ -89,11 +89,36 @@ def create_rx_streamer(usrp, channel):
     return usrp.get_rx_stream(st_args)
 
 
+def wait_for_lo_lock(usrp, channel, timeout=0.5, ringdown_s=0.02):
+    """Wait for LO lock on hardware that exposes the sensor (e.g. N310).
+
+    Falls back silently on hardware that does not (e.g. B2xx), sleeping a fixed
+    amount instead so the call is always safe regardless of board type.
+    """
+    try:
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            if usrp.get_rx_sensor("lo_locked", channel).to_bool():
+                time.sleep(ringdown_s)
+                return True
+            time.sleep(0.005)
+        print(f"  Warning: LO lock timeout after {timeout*1000:.0f} ms", file=sys.stderr)
+        return False
+    except RuntimeError:
+        # Sensor not available on this board (B2xx); fixed sleep is the only option.
+        time.sleep(0.10)
+        return True
+
+
 def capture_samples(rx_streamer, n_samples, timeout=1.0, max_empty=20):
-    """Capture n_samples from USRP, return (samples_1d, timestamp)."""
+    """Capture n_samples from USRP.
+
+    Returns (samples_1d, timestamp, clean) where clean=True means n_samples
+    were received without any overflow or timeout errors.
+    """
     n_channels = rx_streamer.get_num_channels()
     if n_channels < 1:
-        return None, 0.0
+        return None, 0.0, False
 
     buffer = np.zeros((n_channels, n_samples), dtype=np.complex64)
     metadata = lib.types.rx_metadata()
@@ -106,26 +131,31 @@ def capture_samples(rx_streamer, n_samples, timeout=1.0, max_empty=20):
     samps_recd = 0
     empty_count = 0
     first_ts = 0.0
+    had_error = False
 
     while samps_recd < n_samples:
         chunk = rx_streamer.recv(buffer[:, samps_recd:], metadata, timeout)
 
         if metadata.error_code == lib.types.rx_metadata_error_code.timeout:
             empty_count += 1
+            had_error = True
             if empty_count >= max_empty:
-                print(f" RX timeout/empty too many times ({empty_count}), giving up", file=sys.stderr)
+                print(f"  RX timeout/empty too many times ({empty_count}), giving up",
+                      file=sys.stderr)
                 break
             continue
 
         if metadata.error_code == lib.types.rx_metadata_error_code.overflow:
-            print(f" RX overflow: {metadata.strerror()}", file=sys.stderr)
+            print(f"  RX overflow: {metadata.strerror()}", file=sys.stderr)
+            had_error = True
             empty_count += 1
             if empty_count >= max_empty:
                 break
             continue
 
         if metadata.error_code != lib.types.rx_metadata_error_code.none:
-            print(f" RX warning: {metadata.strerror()}", file=sys.stderr)
+            print(f"  RX warning: {metadata.strerror()}", file=sys.stderr)
+            had_error = True
             empty_count += 1
             if empty_count >= max_empty:
                 break
@@ -133,8 +163,10 @@ def capture_samples(rx_streamer, n_samples, timeout=1.0, max_empty=20):
 
         if chunk == 0:
             empty_count += 1
+            had_error = True
             if empty_count >= max_empty:
-                print(f" RX: recv returned 0 samples {empty_count} times, giving up", file=sys.stderr)
+                print(f"  RX: recv returned 0 samples {empty_count} times, giving up",
+                      file=sys.stderr)
                 break
             continue
 
@@ -144,7 +176,9 @@ def capture_samples(rx_streamer, n_samples, timeout=1.0, max_empty=20):
         samps_recd += chunk
         empty_count = 0
 
-    return buffer[0, :samps_recd], first_ts
+    clean = (not had_error) and (samps_recd == n_samples)
+    return buffer[0, :samps_recd], first_ts, clean
+
 
 def compute_psd(samples, fs, fft_size):
     """Compute Welch PSD, return (freq_offsets_hz, psd_db)."""
@@ -157,13 +191,35 @@ def compute_psd(samples, fs, fft_size):
     return freqs, psd_db
 
 
+def tune_with_offset(usrp, channel, fc, dc_offset_hz):
+    """Set RX frequency, shifting the LO by dc_offset_hz so DC leakage lands
+    outside the retained band.  The DSP NCO corrects back so the baseband is
+    still centred on fc.
+
+    With dc_offset_hz=0 this behaves identically to the original tune_request(fc).
+    """
+    if dc_offset_hz == 0.0:
+        tune_request = lib.types.tune_request(fc)
+    else:
+        tune_request = lib.types.tune_request(fc)
+        tune_request.rf_freq = fc + dc_offset_hz
+        tune_request.rf_freq_policy = lib.types.tune_request_policy.manual
+        tune_request.dsp_freq = -dc_offset_hz
+        tune_request.dsp_freq_policy = lib.types.tune_request_policy.manual
+    usrp.set_rx_freq(tune_request, channel)
+
+
 def sweep_band(usrp, rx_streamer, channel, band_start_mhz, band_stop_mhz, fs,
                fft_size, cutoff, n_samples, raw_dir=None, tune_step_hz=None,
-               center_notch_hz=0.0):
+               center_notch_hz=0.0, dc_offset_hz=0.0, max_retries=3):
     """Tune across one 200 MHz band and return per-tune PSD sweeps.
 
     Each sweep is (freq_vector_hz, power_vector_db, timestamp). If raw_dir is
     provided, raw .npz files are saved there.
+
+    On overflow or timeout the tune is retried up to max_retries times before
+    being marked as failed.  Failed tunes are returned as NaN arrays so that
+    aggregate_to_1mhz can write NaN for those bins rather than dropping the row.
     """
     band_start_hz = band_start_mhz * 1e6
     band_stop_hz = band_stop_mhz * 1e6
@@ -174,12 +230,36 @@ def sweep_band(usrp, rx_streamer, channel, band_start_mhz, band_stop_mhz, fs,
 
     sweeps = []
     for i, fc in enumerate(centers):
-        tune_request = lib.types.tune_request(fc)
-        usrp.set_rx_freq(tune_request, channel)
-        time.sleep(0.10)
-        samples, ts = capture_samples(rx_streamer, n_samples)
+        fc_mhz = int(round(fc / 1e6))
+
+        samples = None
+        ts = 0.0
+        for attempt in range(1, max_retries + 1):
+            tune_with_offset(usrp, channel, fc, dc_offset_hz)
+            wait_for_lo_lock(usrp, channel)
+
+            raw_samples, raw_ts, clean = capture_samples(rx_streamer, n_samples)
+
+            if raw_samples is not None and len(raw_samples) >= fft_size and clean:
+                samples, ts = raw_samples, raw_ts
+                break
+
+            if attempt < max_retries:
+                print(f"    tune {i+1}/{len(centers)}: fc={fc_mhz} MHz "
+                      f"attempt {attempt} failed, retrying ...", file=sys.stderr)
+            else:
+                print(f"    tune {i+1}/{len(centers)}: fc={fc_mhz} MHz "
+                      f"all {max_retries} attempts failed, marking NaN", file=sys.stderr)
+
         if samples is None or len(samples) < fft_size:
-            print(f"    Not enough samples, skipping tune {i}", file=sys.stderr)
+            # All retries exhausted with too few samples — emit a NaN sweep so
+            # aggregate_to_1mhz fills those bins with NaN rather than leaving a gap.
+            nan_freqs = np.linspace(fc - fs / 2, fc + fs / 2, N)
+            nan_psd = np.full(N, np.nan)
+            if tune_step_hz is None:
+                sweeps.append((nan_freqs, nan_psd, 0.0))
+            else:
+                sweeps.append((nan_freqs, nan_psd, 0.0, fc))
             continue
 
         freq_offsets, psd_db = compute_psd(samples, fs, fft_size)
@@ -195,7 +275,6 @@ def sweep_band(usrp, rx_streamer, channel, band_start_mhz, band_stop_mhz, fs,
 
         freqs_hz = freq_offsets + fc
 
-        fc_mhz = int(round(fc / 1e6))
         if raw_dir is not None:
             raw_path = raw_dir / f"tune_{i:02d}_fc_{fc_mhz}MHz.npz"
             np.savez_compressed(
@@ -222,6 +301,10 @@ def sweep_band(usrp, rx_streamer, channel, band_start_mhz, band_stop_mhz, fs,
 def aggregate_to_1mhz(sweeps, band_start_mhz, band_stop_mhz):
     """Aggregate all sweeps in a band into 200 × 1 MHz bin values.
 
+    NaN bins from failed tunes propagate correctly — np.nansum/np.nanmean
+    ignores them, so only bins with zero coverage across all sweeps end up NaN
+    in the output.
+
     Returns (freq_centers_mhz, power_db_200) or (None, None) if no valid data.
     """
     bin_edges = np.arange(band_start_mhz, band_stop_mhz + 1)
@@ -239,6 +322,10 @@ def aggregate_to_1mhz(sweeps, band_start_mhz, band_stop_mhz):
             freqs_hz, psd_db, ts = sweep
             weights = np.ones_like(psd_db)
 
+        # Zero-weight NaN bins so they don't contaminate the weighted average
+        nan_mask = np.isnan(psd_db)
+        weights = np.where(nan_mask, 0.0, weights)
+
         freqs_mhz = freqs_hz / 1e6
         bin_indices = np.digitize(freqs_mhz, bin_edges) - 1
 
@@ -249,7 +336,7 @@ def aggregate_to_1mhz(sweeps, band_start_mhz, band_stop_mhz):
         binned_power = np.full(200, np.nan)
         binned_weight = np.full(200, np.nan)
         for b in range(200):
-            mask = bin_indices == b
+            mask = (bin_indices == b) & valid & (~nan_mask)
             if np.any(mask):
                 lin = 10.0 ** (psd_db[mask] / 10.0)
                 w = weights[mask]
@@ -264,14 +351,30 @@ def aggregate_to_1mhz(sweeps, band_start_mhz, band_stop_mhz):
 
     bin_weighted_powers = np.array(bin_weighted_powers)
     bin_weights = np.array(bin_weights)
-    mean_lin = np.nansum(bin_weighted_powers * bin_weights, axis=0) / np.nansum(bin_weights, axis=0)
-    mean_db = 10.0 * np.log10(np.maximum(mean_lin, 1e-30))
+
+    total_weight = np.nansum(bin_weights, axis=0)
+    # Bins with zero total weight (all tunes failed for that frequency) → NaN
+    with np.errstate(invalid="ignore", divide="ignore"):
+        mean_lin = np.nansum(bin_weighted_powers * bin_weights, axis=0) / total_weight
+    mean_lin = np.where(total_weight == 0, np.nan, mean_lin)
+    mean_db = np.where(
+        np.isnan(mean_lin),
+        np.nan,
+        10.0 * np.log10(np.maximum(mean_lin, 1e-30)),
+    )
     return bin_centers, mean_db
 
 
 def append_csv_row(csv_path, row_200, minute_idx, bin_centers):
-    """Append one 200-element row to the per-minute CSV, writing header first time."""
-    row_str = ",".join(f"{v:.4f}" for v in row_200)
+    """Append one 200-element row to the per-minute CSV, writing header first time.
+
+    NaN values are written as empty fields so they are unambiguously missing
+    rather than a numeric placeholder.
+    """
+    def fmt(v):
+        return "" if np.isnan(v) else f"{v:.4f}"
+
+    row_str = ",".join(fmt(v) for v in row_200)
     write_header = not csv_path.exists() or csv_path.stat().st_size == 0
     if write_header:
         header = ",".join(f"{bc:.1f}" for bc in bin_centers)
@@ -285,7 +388,8 @@ def main():
     parser = argparse.ArgumentParser(
         description="Acquire spectrum data from USRP for POWDER/ARA/AERPAW/COSMOS evaluation"
     )
-    parser.add_argument("--site", required=True, help="Site/testbed name (e.g. POWDER, ARA, AERPAW, COSMOS)")
+    parser.add_argument("--site", required=True,
+                        help="Site/testbed name (e.g. POWDER, ARA, AERPAW, COSMOS)")
     parser.add_argument(
         "--sdr", default=None,
         help="SDR model string for metadata (auto-detected from USRP if omitted)"
@@ -320,6 +424,22 @@ def main():
         default=0.0,
         help="Discard bins within this many MHz of each tuned center frequency (default 0)",
     )
+    parser.add_argument(
+        "--dc-offset-mhz",
+        type=float,
+        default=6.0,
+        help=(
+            "Shift the LO by this many MHz so DC leakage lands outside the retained "
+            "band; the DSP NCO corrects back to the requested centre frequency. "
+            "Default 6.0 MHz. Set to 0 to disable."
+        ),
+    )
+    parser.add_argument(
+        "--tune-retries",
+        type=int,
+        default=3,
+        help="Number of capture retries on overflow or timeout before marking bins NaN (default 3)",
+    )
     parser.add_argument("--sample-seconds", type=float, default=0.2,
                         help="Seconds of IQ data to capture per tune (default 0.2)")
     parser.add_argument(
@@ -349,8 +469,12 @@ def main():
     if args.center_notch_mhz < 0:
         print("ERROR: --center-notch-mhz must be non-negative.", file=sys.stderr)
         sys.exit(1)
+    if args.dc_offset_mhz < 0:
+        print("ERROR: --dc-offset-mhz must be non-negative.", file=sys.stderr)
+        sys.exit(1)
     tune_step_hz = None if args.tune_step_mhz is None else args.tune_step_mhz * 1e6
     center_notch_hz = args.center_notch_mhz * 1e6
+    dc_offset_hz = args.dc_offset_mhz * 1e6
     bw = args.bandwidth if args.bandwidth is not None else fs
     n_samples = max(fft_size * 2, int(fs * args.sample_seconds))
     duration_sec = args.duration_minutes * 60.0
@@ -390,7 +514,9 @@ def main():
         retained_mhz = fs * cutoff / 1e6
         overlap_pct = max(0.0, 100.0 * (1.0 - args.tune_step_mhz / retained_mhz))
         print(f"Tune step:                {args.tune_step_mhz:.3f} MHz ({overlap_pct:.1f}% overlap)")
+    print(f"DC offset shift:          {args.dc_offset_mhz:.1f} MHz")
     print(f"Center notch:             {args.center_notch_mhz:.3f} MHz")
+    print(f"Tune retries:             {args.tune_retries}")
     print(f"Samples per tune:         {n_samples} ({args.sample_seconds} s)")
     print(f"Gain:                     {args.gain} dB")
     print(f"Antenna:                  {args.antenna}")
@@ -418,6 +544,12 @@ def main():
     usrp.set_rx_antenna(args.antenna, ch)
     usrp.set_rx_bandwidth(bw, ch)
 
+    # Enable firmware DC offset and IQ imbalance correction.  These are one-time
+    # calls; the adaptive estimator runs continuously in the background and will
+    # have converged well before the first real sweep completes.
+    usrp.set_rx_dc_offset(True, ch)
+    usrp.set_rx_iq_balance(True, ch)
+
     actual_rate = usrp.get_rx_rate(ch)
     fs = actual_rate
     n_samples = max(fft_size * 2, int(fs * args.sample_seconds))
@@ -433,7 +565,7 @@ def main():
     # Create streamer
     rx_streamer = create_rx_streamer(usrp, ch)
 
-    # Warm-up capture (discard first result)
+    # Warm-up capture: discards transients and lets DC/IQ correction converge.
     print("Warming up USRP stream ...")
     _ = capture_samples(rx_streamer, n_samples)
     print()
@@ -473,7 +605,7 @@ def main():
             sweeps = sweep_band(
                 usrp, rx_streamer, ch, start_mhz, stop_mhz,
                 fs, fft_size, cutoff, n_samples, raw_dir, tune_step_hz,
-                center_notch_hz,
+                center_notch_hz, dc_offset_hz, args.tune_retries,
             )
 
             if not sweeps:
@@ -487,7 +619,13 @@ def main():
 
             csv_path = band_dir / "power_1mhz_avg_per_minute.csv"
             append_csv_row(csv_path, mean_db, minute_idx, bin_centers)
-            print(f"    Wrote minute row to {csv_path.name}")
+
+            nan_count = int(np.sum(np.isnan(mean_db)))
+            if nan_count:
+                print(f"    Wrote minute row to {csv_path.name} "
+                      f"({nan_count}/200 bins NaN due to failed tunes)")
+            else:
+                print(f"    Wrote minute row to {csv_path.name}")
 
         # Check if we've exceeded total duration
         elapsed = time.time() - start_wall
@@ -512,7 +650,9 @@ def main():
             "cutoff_factor": cutoff,
             "tune_step_mhz": args.tune_step_mhz,
             "overlapped_tuning_enabled": args.tune_step_mhz is not None,
+            "dc_offset_shift_mhz": args.dc_offset_mhz,
             "center_notch_mhz": args.center_notch_mhz,
+            "tune_retries": args.tune_retries,
             "sample_seconds_per_tune": args.sample_seconds,
             "frequency_start_mhz": start_mhz,
             "frequency_stop_mhz": stop_mhz,
@@ -522,6 +662,7 @@ def main():
                              "(left-inclusive, right-exclusive)",
             "time_resolution": "1 minute",
             "power_unit": "dB (relative, uncalibrated PSD from Welch's method)",
+            "nan_semantics": "empty CSV field; all capture retries failed for that bin",
             "collection_duration_minutes": args.duration_minutes,
             "save_raw": args.save_raw,
             "overwrite_enabled": args.overwrite,
