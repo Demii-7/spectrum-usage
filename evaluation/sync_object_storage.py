@@ -95,7 +95,8 @@ def remote_size_matches(fs, remote_path, local_size):
         info = fs.info(remote_path)
     except FileNotFoundError:
         return False
-    except OSError:
+    except Exception as exc:
+        log(f"could not check remote object s3://{remote_path}: {exc}")
         return False
     return info.get("size") == local_size
 
@@ -148,17 +149,21 @@ def run_fsspec_upload(args):
 
 
 def run_upload(args):
-    if args.tool == "fsspec":
-        return run_fsspec_upload(args)
+    try:
+        if args.tool == "fsspec":
+            return run_fsspec_upload(args)
 
-    cmd = build_upload_command(args)
-    log("running upload: " + " ".join(cmd))
-    completed = subprocess.run(cmd, check=False)
-    if completed.returncode != 0:
-        log(f"upload failed with exit code {completed.returncode}; skipping prune")
+        cmd = build_upload_command(args)
+        log("running upload: " + " ".join(cmd))
+        completed = subprocess.run(cmd, check=False)
+        if completed.returncode != 0:
+            log(f"upload failed with exit code {completed.returncode}; skipping prune")
+            return False
+        log("upload completed")
+        return True
+    except Exception as exc:
+        log(f"upload failed: {exc}; skipping prune")
         return False
-    log("upload completed")
-    return True
 
 
 def iter_prunable_minutes(source):

@@ -353,7 +353,7 @@ should match the firmware on the device reasonably well, or it will not work; we
 (On other COSMOS sites, e.g. `sb1`, use `ubuntu2204-uhd4.4-gr3.10.ndz` instead.)
 
 ```bash
-omf load -i ubuntu2404-uhd4.9-gr3.10.ndz -t sdr2-md1.bed.cosmos-lab.org,sdr2-s1-lg1.bed.cosmos-lab.org
+omf load -i ubuntu2404-uhd4.9-gr3.10.ndz -t sdr2-md1.bed.cosmos-lab.org,sdr2-s1-lg1.bed.cosmos-lab.org --resize 0
 omf tell -a on -t sdr2-md1.bed.cosmos-lab.org,sdr2-s1-lg1.bed.cosmos-lab.org
 ```
 
@@ -361,6 +361,7 @@ Then, you can SSH to the node as `root` user, from the `bed.cosmos-lab.org` cons
 
 ```
 ssh -J <cosmos-user>@bed.cosmos-lab.org root@sdr2-s1-lg1.bed.cosmos-lab.org
+ssh -J <cosmos-user>@bed.cosmos-lab.org root@sdr2-md1.bed.cosmos-lab.org
 ```
 
 
@@ -387,8 +388,8 @@ uhd_find_devices --args "type=n3xx"
 Optionally, you can explore the spectrum to visually identify interesting bands. Use
 
 ```bash
-/usr/local/lib/uhd/examples/rx_ascii_art_dft \
-  --gain 30 --ref-lvl -70  --dyn-rng 40 \
+/usr/lib/uhd/examples/rx_ascii_art_dft \
+  --gain 30 --ref-lvl -60  --dyn-rng 60 \
   --step 5000000 --freq 600e6 \
   --num-bins 1024 --rate 15.625e6 \
   --frame-rate 2 --ant RX2 --args "type=n3xx"
@@ -438,8 +439,17 @@ fill in the credentials, and save.
 Also run 
 
 ```bash
-python3 -m pip install fsspec s3fs
+python3 -m pip install fsspec s3fs --break-system-packages
 ```
+
+Test the connection to object store with
+
+```bash
+python3 verify_object_storage.py \
+  --env-file .env \
+  --bucket spectrum
+```
+
 
 Now you can 
 
