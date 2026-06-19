@@ -12,6 +12,8 @@ data:
   n_bins_per_node: 250
   # Number of sensor nodes
   n_nodes: 3
+  # Node names (used for plot labels and per-node metrics)
+  node_names: ["CC1", "CC2", "LW1"]
 
 preprocessing:
   # Normalization method: "zscore" or "minmax" or "none"
@@ -93,7 +95,7 @@ training:
   # Loss function: "mse" or "mae"
   loss: "mse"
   # Whether to use teacher forcing during training
-  teacher_forcing_ratio: 0.5
+  teacher_forcing_ratio: 1.0
   # Gaussian noise std added to training inputs (regularization, paper §III-B)
   noise_std: 0.2
 
