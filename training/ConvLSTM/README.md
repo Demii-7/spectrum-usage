@@ -743,7 +743,7 @@ Metrics are computed:
 
 ## References
 
-1. **Original paper:** B. S. Shawel, D. H. Woldegebreal, S. Pollin, "Convolutional LSTM-based Long-Term Spectrum Prediction for Dynamic Spectrum Access," EUSIPCO 2019. ([arXiv](https://arxiv.org/abs/1907.12372))
+1. **Original paper:** B. S. Shawel, D. H. Woldegebreal, S. Pollin, "Convolutional LSTM-based Long-Term Spectrum Prediction for Dynamic Spectrum Access," EUSIPCO 2019. ([link](https://new.eurasip.org/Proceedings/Eusipco/eusipco2019/Proceedings/papers/1570533330.pdf))
 2. **ConvLSTM paper:** X. Shi, Z. Chen, H. Wang, D.-Y. Yeung, W.-K. Wong, W.-C. Woo, "Convolutional LSTM Network: A Machine Learning Approach for Precipitation Nowcasting," NIPS 2015.
 3. **Reference implementation:** [ndrplz/ConvLSTM_pytorch](https://github.com/ndrplz/ConvLSTM_pytorch) — base for our `ConvLSTMCell` / `ConvLSTM` modules.
 4. **AERPAW dataset:** AERPAW sub-6 GHz spectrum monitoring dataset — Fixed nodes CC1, CC2, LW1 (Feb 2022). DOI: [10.5061/dryad.hmgqnk9zn](https://doi.org/10.5061/dryad.hmgqnk9zn).
