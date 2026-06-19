@@ -155,7 +155,7 @@ Input: (B, T_in, 1, 3, 250)
 │  ┌──────────────────────────────────┐       │
 │  │ ConvLSTM Layer 3                 │       │
 │  │  input_dim=64, hidden=32         │       │
-│  │  kernel=(3,3), padding=1         │       │
+│  │  kernel=(1,1), padding=0         │       │
 │  │  activation=ReLU                 │       │
 │  │  Dropout(p=0.3)                  │       │
 │  │  BatchNorm(32)                   │       │
@@ -190,8 +190,8 @@ Output: (B, T_out, 1, 3, 250)
 | Padding | `(1, 1)` (same convolution, preserves H×W) |
 | Bias | True |
 | Activation (gates) | Sigmoid |
-| Activation (cell input) | Tanh |
-| Activation (output) | Tanh |
+| Activation (cell candidate g) | ReLU (per paper §III-A, replaces tanh) |
+| Activation (output H) | ReLU (per paper §III-A, replaces tanh) |
 | Output shape | `(B, T_in, 32, 3, 250)` |
 
 **Role**: Learns low-level spatial-spectral features. The `3×3` kernel captures local correlations between adjacent nodes and adjacent frequency bins simultaneously. Padding of 1 preserves the `3×250` spatial dimensions.
@@ -210,7 +210,9 @@ Output: (B, T_out, 1, 3, 250)
 
 **Role**: Compresses the learned features into a higher-dimensional latent space. The `1×1` kernel performs pointwise convolution — it mixes information across channels at each spatial location without mixing adjacent spatial positions. This acts as a learned feature aggregation layer.
 
-#### State Transfer (Encoder → Decoder)
+#### State Transfer (Encoder → Decoder) — Implementation Choice
+
+> **Note:** The paper states there is *"an LSTM hidden layer that is used to capture memory and hidden states from the encoder output"* but does not specify its exact dimensionality or connectivity. The design below is our interpretation.
 
 The encoder's final hidden and cell states from ConvLSTM Layer 2 (`h_enc`, `c_enc` — each `(B, 64, 3, 250)`) are fed into a regular LSTM layer at the decoder:
 
@@ -220,7 +222,7 @@ The encoder's final hidden and cell states from ConvLSTM Layer 2 (`h_enc`, `c_en
    - `Linear(128 → 32 × 3 × 250)` → `(B, 32, 3, 250)`
    - This projected tensor initializes the decoder ConvLSTM's hidden state `h_dec_0` and cell state `c_dec_0`.
 
-This LSTM layer acts as the memory-capture mechanism described in the paper: it compresses the encoder's spatial-spectral representation into a compact code and initializes the decoder's generative process.
+This LSTM layer acts as the memory-capture mechanism referenced in the paper: it compresses the encoder's spatial-spectral representation into a compact code and initializes the decoder's generative process. Sizing (128, 48000) is empirical; tune as needed.
 
 #### Decoder — ConvLSTM Layer 3
 
@@ -229,22 +231,35 @@ This LSTM layer acts as the memory-capture mechanism described in the paper: it 
 | Type | `ConvLSTMCell` (2D convolutional LSTM cell) |
 | Input channels | 64 (learned "start" embedding projected from LSTM context) |
 | Hidden channels | 32 |
-| Kernel size | `(3, 3)` |
-| Padding | `(1, 1)` |
+| Kernel size | `(1, 1)` |
+| Padding | `(0, 0)` |
 | Bias | True |
 | Activation (gates) | Sigmoid |
-| Activation (output) | ReLU (instead of tanh, per paper §III-A) |
+| Activation (cell candidate g) | ReLU (per paper §III-A, replaces tanh) |
+| Activation (output H) | ReLU (per paper §III-A, replaces tanh) |
 | Dropout | `p = 0.3` (after hidden state, before output) |
 | Batch norm | Layer-wise batch normalization on hidden states |
 | Output shape | `(B, T_out, 32, 3, 250)` |
 
 **Role**: Generates the output sequence step by step. At each decoder time step:
 - **t=1**: Input is a learned "start" embedding (projected from the LSTM context vector), and states are initialized from the encoder via the LSTM.
-- **t>1**: Input is the previous step's hidden state (autoregressive decoding) OR the ground-truth frame (teacher forcing during training).
+- **t>1**: Input is the previous step's hidden state (autoregressive decoding). Optionally, ground-truth frames can be fed instead during training (teacher forcing — see §5.9; this is our implementation choice, not in the paper).
 
 #### Decoder — Fully Connected (Dense) Output Layer
 
-This implements the "fully connected (dense) layer" from the paper §III-A. Rather than a single projection, it uses a small two-layer MLP applied convolutionally (via 1×1 and 3×3 conv kernels) to map the decoder's hidden representation to the output:
+This implements the "fully connected (dense) layer" from the paper §III-A. The default is a single `1×1` convolution (equivalent to a per-location dense layer):
+
+| Layer | Type | Input → Output | Kernel | Padding |
+|-------|------|----------------|--------|---------|
+| FC | `Conv2d` | 32 → 1 | (1, 1) | (0, 0) |
+
+Input: `(B, 32, 3, 250)` — single time step of decoder ConvLSTM hidden state.
+
+Output: `(B, 1, 3, 250)` — squeezed to `(B, 3, 250)`.
+
+**Role**: Linearly projects the 32-channel hidden representation to a single normalized PSD value per (node, frequency bin) location. The `1×1` kernel ensures each spatial location is projected independently, exactly matching a fully-connected layer applied per position.
+
+**Optional alternative** (not in the paper): Replace the single `1×1` Conv2d with a small two-layer MLP convolution to add non-linearity:
 
 | Layer | Type | Input → Output | Kernel | Padding |
 |-------|------|----------------|--------|---------|
@@ -252,35 +267,28 @@ This implements the "fully connected (dense) layer" from the paper §III-A. Rath
 | Activation | ReLU | — | — | — |
 | FC2 | `Conv2d` | 16 → 1 | (1, 1) | (0, 0) |
 
-Input: `(B, 32, 3, 250)` — single time step of decoder ConvLSTM hidden state.
-
-Output: `(B, 1, 3, 250)` — squeezed to `(B, 3, 250)`.
-
-**Role**: Projects the 32-channel hidden representation through a non-linear transformation (FC1+ReLU) followed by a linear projection (FC2) to produce the final per-location, per-frequency-bin PSD prediction. The `3×3` kernel in FC1 allows the dense layer to incorporate local spatial-spectral context before the final linear projection — acting as a learned decoder that refines the ConvLSTM features into the output space.
+This version incorporates local spatial-spectral context (via the 3×3 kernel) before the final projection. Enabled by setting `fc_hidden_channels > 0` in config.yaml.
 
 ### 3.3 ConvLSTMCell Equations
 
-Each ConvLSTMCell follows the standard formulation from Shi et al. (2015):
+Each ConvLSTMCell follows the formulation from Shi et al. (2015), modified per paper §III-A to use ReLU instead of tanh for the output and cell candidate activations:
 
 ```
 i_t = σ(W_xi ∗ X_t + W_hi ∗ H_{t-1} + b_i)
 f_t = σ(W_xf ∗ X_t + W_hf ∗ H_{t-1} + b_f)
 o_t = σ(W_xo ∗ X_t + W_ho ∗ H_{t-1} + b_o)
-g_t = tanh(W_xg ∗ X_t + W_hg ∗ H_{t-1} + b_g)
+g_t = ReLU(W_xg ∗ X_t + W_hg ∗ H_{t-1} + b_g)
 C_t = f_t ⊙ C_{t-1} + i_t ⊙ g_t
-H_t = o_t ⊙ tanh(C_t)
+H_t = o_t ⊙ ReLU(C_t)
 ```
 
 where:
 - `∗` = 2D convolution
 - `⊙` = Hadamard (element-wise) product
 - `σ` = sigmoid gate activation
-- `tanh` = hyperbolic tangent (output and cell update)
+- `ReLU` = rectified linear unit (output and cell candidate, per paper §III-A)
 - `i, f, o, g` = input gate, forget gate, output gate, cell candidate
 - `C, H` = cell state, hidden state
-
-The paper replaces `tanh` with `ReLU` for the output activation `g_t` and `H_t`
-(since spectrum prediction is a real-valued regression, not a classification).
 
 ### 3.4 Prediction Target
 
@@ -455,11 +463,13 @@ NADAM (Nesterov-accelerated Adam) is preferred per the paper but requires a thir
 - Early stopping with patience of 20 epochs based on validation loss
 - Learning rate reduction on plateau (factor 0.5, patience 10)
 
-### 5.9 Teacher Forcing
+### 5.9 Teacher Forcing (Implementation Choice, Not in Paper)
 
-During training, the decoder receives ground-truth frames as input with probability `teacher_forcing_ratio = 0.5`. This:
+Optionally, the decoder can receive ground-truth frames as input during training with probability `teacher_forcing_ratio` (default 0.5). This:
 - Speeds up convergence (model sees real data during decoding)
 - Acts as regularization (randomly switches between ground-truth and model's own predictions)
+
+Set `teacher_forcing_ratio: 0` in config.yaml for pure autoregressive decoding (closer to the paper's described setup).
 
 ### 5.10 Regularization Techniques
 
@@ -551,12 +561,12 @@ All hyperparameters are in `config.yaml` (located in this directory). Key settin
 | Model | `hidden_channels` | [32, 64] | Encoder layer hidden sizes |
 | Model | `kernel_size` | [[3,3], [1,1]] | Encoder kernel sizes |
 | Model | `decoder_hidden_channels` | 32 | Decoder hidden size |
-| Model | `decoder_kernel_size` | [3,3] | Decoder kernel size |
+| Model | `decoder_kernel_size` | [1,1] | Decoder ConvLSTM kernel size (per paper §III-A) |
 | Model | `dropout` | 0.3 | Dropout probability |
 | Model | `use_batch_norm` | true | Use batch normalization |
 | Model | `decoder_lstm_hidden` | 128 | Regular LSTM hidden size in decoder |
-| Model | `fc_hidden_channels` | 16 | FC layer intermediate channels |
-| Model | `fc_kernel_size` | [3,3] | FC layer intermediate kernel |
+| Model | `fc_hidden_channels` | 0 | FC intermediate channels (0 = single 1×1 Conv2d) |
+| Model | `fc_kernel_size` | [3,3] | FC intermediate kernel (only if fc_hidden_channels > 0) |
 | Training | `batch_size` | 32 | Mini-batch size |
 | Training | `epochs` | 100 | Max training epochs |
 | Training | `learning_rate` | 0.0002 | Initial learning rate |
@@ -686,7 +696,7 @@ tensorboard --logdir training/ConvLSTM/logs
 
 2. **Single-channel input**: Power values are in dBm (scalar per node×frequency point). The channel dimension is 1.
 
-3. **Seq2seq with teacher forcing**: The decoder generates outputs autoregressively. Teacher forcing (50% probability during training) stabilizes early training.
+3. **Seq2seq with optional teacher forcing**: The decoder generates outputs autoregressively. Teacher forcing (default 0.5) is our addition, not in the paper; set to 0 for the paper's pure autoregressive setup.
 
 4. **No spatial interpolation**: The paper used IDW interpolation across 1600 grid points from 5 sensors. Our AERPAW dataset has 3 fixed nodes without a regular spatial grid. We preserve the raw per-node data as independent rows in the 2D map.
 
@@ -701,7 +711,7 @@ tensorboard --logdir training/ConvLSTM/logs
 | Input time steps | 120 (6 hours × 3 min resolution) | Configurable (e.g. 12) | Set in config; 1-min vs 3-min resolution |
 | Prediction horizon | 50 steps (150 min) | Configurable (e.g. 6) | Set in config.yaml |
 | Encoder layers | 2 ConvLSTM | 2 ConvLSTM | Same |
-| Decoder layers | LSTM + ConvLSTM + FC | LSTM + ConvLSTM + FC (2-layer MLP conv) | Same structure |
+| Decoder layers | LSTM + ConvLSTM + FC | LSTM + ConvLSTM + FC (1×1 Conv2d; 2-layer MLP optional) | Same structure; FC details are our interpretation |
 | Activation | ReLU (output, per §III-A) | ReLU (output) | Same |
 | Optimizer | NADAM | Adam | NADAM not in standard PyTorch |
 | Framework | R + TensorFlow | Python + PyTorch | Our stack |
