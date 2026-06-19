@@ -1,0 +1,106 @@
+# =============================================================================
+# ConvLSTM Spectrum Prediction — Configuration
+# =============================================================================
+# Reconstructed from: "ConvLSTM-based Long-Term Spectrum Prediction for DSA"
+#   Shawel, Woldegebreal, Pollin (EUSIPCO 2019)
+# =============================================================================
+
+data:
+  # Path to the processed AERPAW 5 CSV (6839 rows × 750 cols, no header, dBm)
+  dataset_path: "training/data/merged_power_data_sub6GHz_avg_per_minute.csv"
+  # Number of frequency bins per node
+  n_bins_per_node: 250
+  # Number of sensor nodes
+  n_nodes: 3
+
+preprocessing:
+  # Normalization method: "zscore" or "minmax" or "none"
+  normalization: "zscore"
+  # Fit normalization on training set only (true) or full dataset (false)
+  fit_on_train_only: true
+
+windowing:
+  # Number of past time steps (minutes) used as input
+  input_sequence_length: 12
+  # Number of future time steps (minutes) to predict
+  prediction_horizon: 6
+  # Stride between consecutive windows (1 = sliding window)
+  stride: 1
+
+split:
+  # Train/validation/test split ratios.
+  # Set val_ratio to 0 for train/test only (no validation set).
+  # If all three sum to 1.0, all data is used.
+  # If they sum to < 1.0, the remainder is unused.
+  train_ratio: 0.8
+  val_ratio: 0.1
+  test_ratio: 0.1
+  # If true, split chronologically (recommended for time series).
+  # If false, splits are random.
+  chronological_split: true
+
+model:
+  # Number of input channels (1 for single-channel power spectrogram)
+  input_channels: 1
+  # Hidden channels per ConvLSTM layer (encoder layers)
+  hidden_channels: [32, 64]
+  # Kernel size per ConvLSTM layer (encoder layers)
+  kernel_size: [[3, 3], [1, 1]]
+  # Number of ConvLSTM layers in the encoder
+  num_encoder_layers: 2
+  # Hidden channels for the decoder ConvLSTM layer
+  decoder_hidden_channels: 32
+  # Kernel size for the decoder ConvLSTM layer
+  decoder_kernel_size: [3, 3]
+  # Dropout probability (applied after ConvLSTM layers)
+  dropout: 0.3
+  # Whether to use batch normalization after ConvLSTM layers
+  use_batch_norm: true
+  # Hidden size for the intermediate regular LSTM layer in the decoder
+  decoder_lstm_hidden: 128
+  # FC (dense) output layer: hidden channels for the intermediate conv layer
+  fc_hidden_channels: 16
+  # FC layer intermediate kernel size
+  fc_kernel_size: [3, 3]
+
+training:
+  # Batch size
+  batch_size: 32
+  # Number of training epochs
+  epochs: 100
+  # Initial learning rate
+  learning_rate: 0.0002
+  # Optimizer: "adam" or "nadam" (NADAM requires third-party lib)
+  optimizer: "adam"
+  # Adam/NADAM beta1
+  beta1: 0.9
+  # Adam/NADAM beta2
+  beta2: 0.999
+  # Adam epsilon
+  epsilon: 1.0e-8
+  # Weight decay (L2 regularization)
+  weight_decay: 0.004
+  # Learning rate scheduler: "reduce_on_plateau" or "none"
+  lr_scheduler: "reduce_on_plateau"
+  # ReduceLROnPlateau patience (epochs)
+  lr_patience: 10
+  # Early stopping patience (epochs)
+  early_stopping_patience: 20
+  # Gradient clipping max norm
+  gradient_clip_norm: 5.0
+  # Loss function: "mse" or "mae"
+  loss: "mse"
+  # Whether to use teacher forcing during training
+  teacher_forcing_ratio: 0.5
+  # Gaussian noise std added to training inputs (regularization, paper §III-B)
+  noise_std: 0.2
+
+evaluation:
+  # Metrics to compute during evaluation
+  metrics: ["rmse", "mae", "r2"]
+  # Number of future time steps to evaluate (1 to prediction_horizon)
+  eval_horizons: [1, 3, 6]
+
+device:
+  # Device: "cuda", "cpu", or "auto"
+  device: "auto"
