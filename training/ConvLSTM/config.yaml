@@ -12,6 +12,8 @@ data:
   n_bins_per_node: 250
   # Number of sensor nodes
   n_nodes: 3
+  # Node names (used for plot labels and per-node metrics)
+  node_names: ["CC1", "CC2", "LW1"]
 
 preprocessing:
   # Normalization method: "zscore" or "minmax" or "none"

@@ -39,8 +39,10 @@ def plot_spectrogram_comparison(ground_truth, prediction, node_idx, node_name,
 
 
 def plot_error_analysis(errors, node_names, save_path):
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
-    for i, (ax, name) in enumerate(zip(axes, node_names)):
+    n = len(node_names)
+    fig, axes = plt.subplots(1, n, figsize=(5 * n, 4), squeeze=False)
+    for i, name in enumerate(node_names):
+        ax = axes[0, i]
         err = errors[:, i, :]
         im = ax.imshow(err.T, aspect="auto", cmap="RdBu_r", vmin=-3, vmax=3)
         ax.set_title(f"{name} — Error (Pred − GT)")
@@ -113,7 +115,14 @@ def main():
     pred = torch.cat(all_pred, dim=0)
     target = torch.cat(all_target, dim=0)
 
-    node_names = ["CC1", "CC2", "LW1"]
+    n_nodes = dcfg.get("n_nodes", 3)
+    node_names = dcfg.get("node_names", None)
+    if node_names is None:
+        node_names = [f"Node_{i}" for i in range(n_nodes)]
+        print(f"Warning: no node_names in config; using {node_names}")
+    elif len(node_names) != n_nodes:
+        print(f"Warning: config has {len(node_names)} names but n_nodes={n_nodes}; falling back to generic names")
+        node_names = [f"Node_{i}" for i in range(n_nodes)]
     overall = compute_metrics(pred, target)
     per_horizon = compute_metrics_per_horizon(pred, target)
     per_node = compute_metrics_per_node(pred, target, node_names)

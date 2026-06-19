@@ -1,0 +1,61 @@
+# =============================================================================
+# ConvLSTM Spectrum Prediction — Smoke Test Config (CC2 single-node)
+# =============================================================================
+
+data:
+  dataset_path: "training/data/cc2_smoke_test.csv"
+  n_bins_per_node: 250
+  n_nodes: 1
+  node_names: ["CC2"]
+
+preprocessing:
+  normalization: "zscore"
+  fit_on_train_only: true
+
+windowing:
+  input_sequence_length: 12
+  prediction_horizon: 6
+  stride: 1
+
+split:
+  train_ratio: 0.8
+  val_ratio: 0.1
+  test_ratio: 0.1
+  chronological_split: true
+
+model:
+  input_channels: 1
+  hidden_channels: [32, 64]
+  kernel_size: [[3, 3], [1, 1]]
+  num_encoder_layers: 2
+  decoder_hidden_channels: 32
+  decoder_kernel_size: [1, 1]
+  dropout: 0.3
+  use_batch_norm: true
+  decoder_lstm_hidden: 128
+  fc_hidden_channels: 0
+  fc_kernel_size: [3, 3]
+
+training:
+  batch_size: 32
+  epochs: 30
+  learning_rate: 0.0002
+  optimizer: "adam"
+  beta1: 0.9
+  beta2: 0.999
+  epsilon: 1.0e-8
+  weight_decay: 0.004
+  lr_scheduler: "reduce_on_plateau"
+  lr_patience: 10
+  early_stopping_patience: 10
+  gradient_clip_norm: 5.0
+  loss: "mse"
+  teacher_forcing_ratio: 1.0
+  noise_std: 0.2
+
+evaluation:
+  metrics: ["rmse", "mae", "r2"]
+  eval_horizons: [1, 3, 6]
+
+device:
+  device: "auto"

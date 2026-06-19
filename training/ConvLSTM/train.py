@@ -135,7 +135,7 @@ def main():
         weight_decay=tcfg["weight_decay"],
     )
     scheduler = ReduceLROnPlateau(optimizer, mode="min", factor=0.5,
-                                  patience=tcfg.get("lr_patience", 10), verbose=True) \
+                                  patience=tcfg.get("lr_patience", 10)) \
         if tcfg.get("lr_scheduler") == "reduce_on_plateau" else None
 
     best_val_loss = float("inf")
