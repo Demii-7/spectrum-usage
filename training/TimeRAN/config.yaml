@@ -1,0 +1,51 @@
+# TimeRAN AERPAW Spectrum Prediction Configuration
+# This is a proposed config — scripts do not exist yet.
+
+# Dataset
+dataset_path: /path/to/merged_power_data_sub6GHz_avg_per_minute.csv
+num_features: 750
+num_nodes: 3
+bins_per_node: 250
+
+# Windowing
+input_sequence_length: 128       # T_in — timesteps of history
+prediction_horizon: 32            # T_out — timesteps to forecast
+stride: 64                        # window stride (no overlap if = prediction_horizon)
+
+# Train/Validation/Test split (temporal, not random)
+train_ratio: 0.7
+val_ratio: 0.15
+test_ratio: 0.15
+
+# Normalization
+normalization: zscore             # "zscore" or "minmax" — computed on training split only
+
+# Model
+checkpoint_size: base             # small | base | large
+checkpoint_path: /path/to/checkpoints/base/TimeRAN_base.pth
+task: forecasting
+
+# Training mode
+freeze_backbone: true             # freeze encoder + embedder
+train_head_only: true             # only train the forecasting head
+
+# Hyperparameters
+learning_rate: 1e-5
+max_learning_rate: 1e-4           # for OneCycleLR scheduler
+batch_size: 32
+epochs: 10
+optimizer: Adam
+max_norm: 5.0                     # gradient clipping
+seed: 42
+
+# Metrics
+metrics:
+  - RMSE
+  - MAE
+
+# Hardware
+device: cuda:0                    # or "cpu"
+
+# Logging
+log_dir: ./logs
+checkpoint_dir: ./checkpoints
