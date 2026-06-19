@@ -56,6 +56,85 @@ python3 training/ConvLSTM/inference.py \
 
 ---
 
+## Scripts Reference
+
+### `train.py` — Train a new model
+
+```bash
+python3 training/ConvLSTM/train.py [--config CONFIG] [options]
+```
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--config` | `config.yaml` | Path to configuration file |
+| `--batch-size` | from config | Override batch size |
+| `--epochs` | from config | Override max epochs |
+| `--lr` | from config | Override learning rate |
+| `--input-len` | from config | Override input sequence length (T_in) |
+| `--pred-horizon` | from config | Override prediction horizon (T_out) |
+
+Output: `checkpoints/best_model.pt`, `checkpoints/last_model.pt`, `checkpoints/normalization_stats.pt`.
+
+### `evaluate.py` — Evaluate a trained model
+
+```bash
+python3 training/ConvLSTM/evaluate.py --checkpoint CHECKPOINT [options]
+```
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--checkpoint` | — | Path to `.pt` checkpoint from training (required) |
+| `--config` | from checkpoint | Path to config (overrides checkpoint's embedded config) |
+| `--horizons` | `[1, 3, 6]` | Specific future time steps to report metrics for |
+| `--output` | `evaluation/` | Output directory for metrics, plots, and CSVs |
+
+Output: `evaluation/metrics.json`, `evaluation/predictions.csv`, `evaluation/ground_truth.csv`, `evaluation/spectrogram_*.png`, `evaluation/error_analysis.png`.
+
+### `inference.py` — Predict on new CSV data
+
+```bash
+python3 training/ConvLSTM/inference.py --checkpoint CHECKPOINT --input CSV [options]
+```
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--checkpoint` | — | Path to `.pt` checkpoint (required) |
+| `--input` | — | Input CSV with same format as training data (required) |
+| `--output` | `predictions.csv` | Output CSV path |
+| `--t-in` | from checkpoint config | Input sequence length (must match training) |
+| `--t-out` | from checkpoint config | Prediction horizon (must match training) |
+
+Output: CSV with predicted PSD values, same column layout as input (750 cols, no header).
+
+### `dataset.py` — Data loading and preprocessing (library)
+
+Imported by `train.py` and `evaluate.py`. Key functions:
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `create_datasets(csv_path, n_nodes, n_bins, ...)` | `(train_ds, val_ds, test_ds, stats)` | Loads CSV, normalizes (z-score), creates sliding windows, splits chronologically or randomly |
+| `SpectrumDataset(data_3d, t_in, t_out, indices)` | PyTorch `Dataset` | Returns `(X, y)` tuples of shape `(T_in, 1, H, W)` and `(T_out, 1, H, W)` |
+| `load_csv(path)` | `ndarray (T, 750)` | Loads CSV via `numpy.loadtxt` |
+| `denormalize(data, mean, std)` | `ndarray` | Reverses z-score normalization |
+
+`stats` dict (`{"mean": ndarray, "std": ndarray}`) is saved alongside checkpoints and used by `evaluate.py` and `inference.py` for denormalization.
+
+### `utils.py` — Metrics and helpers (library)
+
+Imported by all training/evaluation scripts. Key functions:
+
+| Function | Description |
+|----------|-------------|
+| `compute_metrics(pred, target)` | Returns `{"rmse", "mae", "r2"}` across all dimensions |
+| `compute_metrics_per_horizon(pred, target)` | Per-timestep metrics (`rmse_t1`, `rmse_t2`, ...) |
+| `compute_metrics_per_node(pred, target, names)` | Per-node metrics (`rmse_CC1`, `mae_LW1`, ...) |
+| `save_checkpoint(path, model, optimizer, ...)` | Saves model weights, optimizer state, config, norm stats |
+| `load_checkpoint(path, device)` | Loads a saved checkpoint |
+| `get_device(device_str)` | Returns `torch.device` ("auto" → cuda if available) |
+| `set_seed(seed)` | Seeds Python, NumPy, and PyTorch RNGs |
+
+---
+
 ## 1. What the Model Is Intended to Do
 
 The model performs **long-term spectrum prediction** using the processed AERPAW 5 CSV dataset. Given a window of past per-minute power spectral density (PSD) measurements from three fixed sensor nodes, it predicts the PSD values for multiple future time steps.
@@ -656,10 +735,4 @@ All hyperparameters are in `config.yaml` (located in this directory). Key settin
 | Optimizer | NADAM | Adam | NADAM not in standard PyTorch |
 | Framework | R + TensorFlow | Python + PyTorch | Our stack |
 
-### Things That Still Need Clarification
 
-1. **Optimal T_in and T_out** for the AERPAW dataset. The paper used 120-step input and 50-step output (3-min resolution). Our 1-min resolution may need different values; set in `config.yaml`.
-
-2. **Spatial dimension treatment**. The paper had a regular 2D spatial grid (40×40). We have 3 discrete nodes. Treating nodes as rows in a 2D map vs. separate input channels vs. independent per-node models should be validated empirically.
-
-3. **Regular LSTM layer in the decoder**. The paper describes it as "used to capture memory and hidden states from the encoder output." Our reconstruction flattens the encoder states, passes them through an LSTM, then unflattens to initialize the decoder ConvLSTM. The exact dimensionality and connectivity (whether the LSTM processes the full sequence or just the final state) is underspecified and may need tuning.
