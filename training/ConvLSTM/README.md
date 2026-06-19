@@ -133,9 +133,89 @@ Imported by all training/evaluation scripts. Key functions:
 | `get_device(device_str)` | Returns `torch.device` ("auto" → cuda if available) |
 | `set_seed(seed)` | Seeds Python, NumPy, and PyTorch RNGs |
 
+## File Structure
+
+```
+training/ConvLSTM/
+├── README.md                # This file
+├── config.yaml              # Configuration / hyperparameters
+├── dataset.py               # SpectrumDataset, data loading, normalization, windowing
+├── model.py                 # ConvLSTMCell, ConvLSTM, ConvLSTMPredictor
+├── train.py                 # Training loop, logging, checkpointing
+├── evaluate.py              # Evaluation on test set, metrics, visualizations
+├── utils.py                 # Helpers: normalization, metrics, seeding, device setup
+├── inference.py             # Predict on new data, convert to CSV/plots
+└── requirements.txt         # Dependencies: torch, numpy, matplotlib, PyYAML, etc.
+```
+
+### Module Responsibilities
+
+| File | Contents |
+|------|----------|
+| `dataset.py` | `SpectrumDataset` (torch `Dataset`), CSV loading, z-score normalization, sliding windows, train/val/test splitting |
+| `model.py` | `ConvLSTMCell`, `ConvLSTM` (multi-layer, from reference), `ConvLSTMPredictor` (seq2seq encoder–decoder) |
+| `train.py` | Training loop, teacher forcing, gradient clipping, LR scheduling, early stopping, checkpoint saving |
+| `evaluate.py` | Test set evaluation, RMSE/MAE/R² per horizon and per node, spectrogram visualization, prediction CSV export |
+| `utils.py` | Normalization statistics, metrics, seed setting, device detection, denormalization |
+| `inference.py` | Load checkpoint + normalization stats, predict on arbitrary CSV input, save predictions as CSV |
+| `config.yaml` | All hyperparameters (see Configuration Reference) |
+| `requirements.txt` | Python dependencies |
+| `README.md` | This file |
+
+### State Flow Between Modules
+
+```
+config.yaml
+    │
+    ▼
+dataset.py ──► train.py ──► model.pt
+                              │
+                              ▼
+                         evaluate.py ──► metrics, plots, predictions.csv
+                              │
+                              ▼
+                         inference.py ──► predictions on new data
+```
+
 ---
 
-## 1. What the Model Is Intended to Do
+## Configuration Reference
+
+All hyperparameters are in `config.yaml`. Key settings:
+
+| Category | Parameter | Default | Description |
+|----------|-----------|---------|-------------|
+| Data | `dataset_path` | `training/data/merged_power_data_sub6GHz_avg_per_minute.csv` | Input CSV path |
+| Data | `n_bins_per_node` | 250 | Frequency bins per node |
+| Data | `n_nodes` | 3 | Number of sensor nodes |
+| Preprocessing | `normalization` | `zscore` | Normalization method |
+| Windowing | `input_sequence_length` | 12 | Past minutes (T_in) |
+| Windowing | `prediction_horizon` | 6 | Future minutes (T_out) |
+| Windowing | `stride` | 1 | Window stride |
+| Split | `train_ratio` | 0.8 | Training set fraction |
+| Split | `val_ratio` | 0.1 | Validation set fraction (set to 0 for train/test only) |
+| Split | `chronological_split` | true | Chronological (true) or random (false) split |
+| Model | `input_channels` | 1 | Input channel count |
+| Model | `hidden_channels` | [32, 64] | Encoder layer hidden sizes |
+| Model | `kernel_size` | [[3,3], [1,1]] | Encoder kernel sizes |
+| Model | `decoder_hidden_channels` | 32 | Decoder hidden size |
+| Model | `decoder_kernel_size` | [1,1] | Decoder ConvLSTM kernel size (per paper §III-A) |
+| Model | `dropout` | 0.3 | Dropout probability |
+| Model | `use_batch_norm` | true | Use batch normalization |
+| Model | `decoder_lstm_hidden` | 128 | Regular LSTM hidden size in decoder |
+| Model | `fc_hidden_channels` | 0 | FC intermediate channels (0 = single 1×1 Conv2d) |
+| Model | `fc_kernel_size` | [3,3] | FC intermediate kernel (only if fc_hidden_channels > 0) |
+| Training | `batch_size` | 32 | Mini-batch size |
+| Training | `epochs` | 100 | Max training epochs |
+| Training | `learning_rate` | 0.0002 | Initial learning rate |
+| Training | `optimizer` | adam | Optimizer choice |
+| Training | `teacher_forcing_ratio` | 1.0 | Teacher forcing probability |
+| Training | `noise_std` | 0.2 | Gaussian noise std for input |
+| Device | `device` | auto | cuda / cpu / auto |
+
+---
+
+## 1. Purpose
 
 The model performs **long-term spectrum prediction** using the processed AERPAW 5 CSV dataset. Given a window of past per-minute power spectral density (PSD) measurements from three fixed sensor nodes, it predicts the PSD values for multiple future time steps.
 
@@ -159,9 +239,9 @@ Target use case: enabling Dynamic Spectrum Access (DSA) by predicting spectrum a
 
 ---
 
-## 2. Input Format
+## 2. Dataset and Input Format
 
-### 2.1 Raw CSV Format
+### Raw CSV Format
 
 The processed AERPAW 5 CSV has the following characteristics:
 
@@ -187,7 +267,7 @@ These per-node offsets were discovered by reverse-engineering the TSS-LCD reposi
 
 Each row corresponds to a 1-minute averaged UTC interval. Rows are in chronological order.
 
-### 2.2 CSV → Tensor Conversion
+### CSV → Tensor Conversion
 
 The conversion pipeline is:
 
@@ -210,7 +290,7 @@ The conversion pipeline is:
      - `Y = windows[i + T_in : i + T_in + T_out]` → target sequence
    - Stride defaults to 1 (sliding window).
 
-### 2.3 Expected Tensor Shape
+### Expected Tensor Shape
 
 After CSV → tensor conversion, the input to the ConvLSTM model has shape:
 
@@ -292,9 +372,7 @@ Input: (B, T_in, 1, 3, 250)
 │        ▼                                     │
 │  ┌──────────────────────────────────┐       │
 │  │ FC (Dense) Output Layer          │       │
-│  │  Conv2d(32 → 16, k=3, pad=1)     │       │
-│  │  ReLU                             │       │
-│  │  Conv2d(16 → 1, k=1)             │       │
+│  │  Conv2d(32 → 1, k=1)            │       │
 │  │     ↓ (B, T_out, 1, 3, 250)     │       │
 │  └──────────────────────────────────┘       │
 └─────────────────────────────────────────────┘
@@ -394,7 +472,7 @@ Output: `(B, 1, 3, 250)` — squeezed to `(B, 3, 250)`.
 
 This version incorporates local spatial-spectral context (via the 3×3 kernel) before the final projection. Enabled by setting `fc_hidden_channels > 0` in config.yaml.
 
-### 3.3 ConvLSTMCell Equations
+### 3.3 ConvLSTM Equations
 
 Each ConvLSTMCell follows the formulation from Shi et al. (2015), modified per paper §III-A to use ReLU instead of tanh for the output and cell candidate activations:
 
@@ -431,7 +509,7 @@ dBm = prediction × σ_bin + μ_bin
 
 ## 4. Output Format
 
-### 4.1 Raw Output Tensor Shape
+### Raw Output Tensor Shape
 
 ```
 (B, T_out, 1, 3, 250)
@@ -445,7 +523,7 @@ dBm = prediction × σ_bin + μ_bin
 | 3 | Sensor node index (0=CC1, 1=CC2, 2=LW1) |
 | 250 | Frequency bin index |
 
-### 4.2 Meaning of Each Output Element
+### Meaning of Each Output Element
 
 Each output element `y_{b,t,0,n,f}` represents the **predicted normalized power spectral density** for:
 - Batch sample `b`
@@ -453,17 +531,14 @@ Each output element `y_{b,t,0,n,f}` represents the **predicted normalized power 
 - Node `n` (CC1, CC2, or LW1)
 - Frequency bin `f`
 
-### 4.3 Post-Processing: Normalization → dBm
+### Post-Processing: Normalization → dBm
 
 ```python
-# Z-score denormalization
 pred_dbm = pred_normalized * freq_std[freq_idx] + freq_mean[freq_idx]
-
-# Array reshape: (B, T_out, 3, 250) → (B, T_out, 750)
 pred_flat = pred_dbm.reshape(B, T_out, -1)
 ```
 
-### 4.4 CSV Output Format
+### CSV Output Format
 
 Predicted data can be written as CSV with the same format as the input:
 - No header
@@ -471,7 +546,7 @@ Predicted data can be written as CSV with the same format as the input:
 - 750 columns per row (CC1[0–249], CC2[250–499], LW1[500–749])
 - One row per predicted minute
 
-### 4.5 Visualization
+### Visualization
 
 To visualize predictions as spectrograms:
 1. Select a specific node: `pred_dbm[:, :, node_idx, :]` → shape `(B, T_out, 250)`
@@ -483,10 +558,9 @@ To visualize predictions as spectrograms:
 
 ## 5. Training Pipeline
 
-### 5.1 Data Loading Process
+### Data Loading Process
 
 ```python
-# Pseudocode
 dataset = SpectrumDataset(csv_path, T_in=12, T_out=6, stride=1)
 # Returns: (X, y) where
 #   X shape: (num_samples, T_in, 3, 250)
@@ -502,7 +576,7 @@ The `SpectrumDataset` class:
 5. Generates sliding windows of `(T_in + T_out)` consecutive time steps
 6. Returns `(X, y)` tuples for each window
 
-### 5.2 Normalization
+### Normalization
 
 **Method**: Z-score (standard score) normalization, applied **per frequency bin** across the time dimension.
 
@@ -518,7 +592,7 @@ X_normalized[:, n, f] = (X[:, n, f] − μ_{n,f}) / σ_{n,f}
 - The same `μ` and `σ` are applied to validation and test sets.
 - Saved alongside the model checkpoint for inference-time denormalization.
 
-### 5.3 Train / Validation / Test Split
+### Train / Validation / Test Split
 
 **Ratios**: Configurable in `config.yaml` under `split`. Default is 80/10/10, but `val_ratio` can be set to 0 for train/test only. Ratios can sum to less than 1.0 (remaining data unused) or to 1.0 (all data used).
 
@@ -530,28 +604,24 @@ With the default config (80/10/10 chronological):
 - Validation: next 10%
 - Test: final 10%
 
-This respects temporal ordering and avoids look-ahead bias.
-
-### 5.4 Windowing / Sequence Generation
+### Window Generation
 
 With the default config (`T_in=12`, `T_out=6`, `stride=1`):
 
 ```
 Total time steps: 6839
-Windows per sequence: 6839 − (12 + 6) + 1 = 6822
+Windows: 6839 − (12 + 6) + 1 = 6822
 
-Training windows:  floor(6822 × 0.80) = 5457
-Validation windows: floor(6822 × 0.10) =  682
-Test windows:        6822 − 5457 − 682 =  683
+Training:  5457 windows  (80%)
+Validation: 682 windows  (10%)
+Test:       683 windows  (10%)
 ```
 
 Each window `(X, y)`:
-- `X`: 12 consecutive time steps → `(12, 3, 250)`
-- `y`: 6 consecutive time steps immediately following `X` → `(6, 3, 250)`
-- DataLoader adds batch dimension → `(B, 12, 3, 250)` and `(B, 6, 3, 250)`
-- Channel dimension added → `(B, 12, 1, 3, 250)` and `(B, 6, 1, 3, 250)`
+- `X`: 12 consecutive time steps → `(12, 3, 250)` → unsqueeze → `(12, 1, 3, 250)`
+- `y`: 6 consecutive time steps → `(6, 3, 250)` → unsqueeze → `(6, 1, 3, 250)`
 
-### 5.5 Loss Function
+### Loss Function
 
 **Mean Squared Error (MSE)**:
 
@@ -559,11 +629,9 @@ Each window `(X, y)`:
 L = (1 / (B × T_out × 3 × 250)) × Σ(predicted − target)²
 ```
 
-MSE penalizes larger errors more heavily, which is appropriate for PSD values where outliers (e.g., unexpected interference) matter.
+MSE penalizes larger errors more heavily, appropriate for PSD regression. MAE can be used as an alternative by setting `loss: mae` in config.
 
-**Alternative**: MAE (Mean Absolute Error) can be used for robustness to outliers.
-
-### 5.6 Optimizer
+### Optimizer
 
 | Parameter | Value | Source |
 |-----------|-------|--------|
@@ -575,24 +643,22 @@ MSE penalizes larger errors more heavily, which is appropriate for PSD values wh
 | Weight decay (λ) | 0.004 | Paper §III-B |
 | Gradient clip norm | 5.0 | Common practice |
 
-NADAM (Nesterov-accelerated Adam) is preferred per the paper but requires a third-party implementation. Adam provides a close approximation.
-
-### 5.7 Batch Size
+### Batch Size
 
 - Default: **32**
-- Tune based on GPU memory. Reduce to 16 or 8 for smaller GPUs.
+- Reduce to 16 or 8 for smaller GPUs.
 
-### 5.8 Number of Epochs
+### Epochs
 
 - Default: **100**
 - Early stopping with patience of 20 epochs based on validation loss
 - Learning rate reduction on plateau (factor 0.5, patience 10)
 
-### 5.9 Teacher Forcing (Implementation Choice, Not in Paper)
+### Teacher Forcing (Implementation Choice, Not in Paper)
 
 The decoder receives ground-truth frames as input during training with probability `teacher_forcing_ratio` (default 1.0 — always on). This speeds up convergence by providing real data at every decoder step. Set to 0 for pure autoregressive decoding, or 0.5 for mixed scheduling.
 
-### 5.10 Regularization Techniques
+### Regularization
 
 | Technique | Value | Paper reference |
 |-----------|-------|-----------------|
@@ -601,7 +667,7 @@ The decoder receives ground-truth frames as input during training with probabili
 | Gaussian input noise | σ = 0.2 | §III-B |
 | Weight decay (L2) | λ = 0.004 | §III-B (NADAM parameter) |
 
-### 5.11 Evaluation Metrics
+### Evaluation Metrics
 
 | Metric | Formula | Purpose |
 |--------|---------|---------|
@@ -616,89 +682,7 @@ Metrics are computed:
 
 ---
 
-## 6. File Structure — Recommended Code Layout
-
-```
-training/ConvLSTM/
-├── README.md                # This file
-├── config.yaml              # Configuration / hyperparameters
-├── dataset.py               # SpectrumDataset, data loading, normalization, windowing
-├── model.py                 # ConvLSTMCell, ConvLSTM, ConvLSTMPredictor
-├── train.py                 # Training loop, logging, checkpointing
-├── evaluate.py              # Evaluation on test set, metrics, visualizations
-├── utils.py                 # Helpers: normalization, metrics, seeding, device setup
-├── inference.py             # Predict on new data, convert to CSV/plots
-└── requirements.txt         # Dependencies: torch, numpy, matplotlib, PyYAML, etc.
-```
-
-### 6.1 Module Responsibilities
-
-| File | Contents |
-|------|----------|
-| `dataset.py` | `SpectrumDataset` (torch `Dataset`), CSV loading, z-score normalization, sliding windows, train/val/test splitting |
-| `model.py` | `ConvLSTMCell`, `ConvLSTM` (multi-layer, from reference), `ConvLSTMPredictor` (seq2seq encoder–decoder) |
-| `train.py` | Training loop, teacher forcing, gradient clipping, LR scheduling, early stopping, checkpoint saving |
-| `evaluate.py` | Test set evaluation, RMSE/MAE/R² per horizon and per node, spectrogram visualization, prediction CSV export |
-| `utils.py` | Normalization statistics, metrics, seed setting, device detection, denormalization |
-| `inference.py` | Load checkpoint + normalization stats, predict on arbitrary CSV input, save predictions as CSV |
-| `config.yaml` | All hyperparameters (see Section 7) |
-| `requirements.txt` | Python dependencies |
-| `README.md` | This file |
-
-### 6.2 State Flow Between Modules
-
-```
-config.yaml
-    │
-    ▼
-dataset.py ──► train.py ──► model.pt
-                              │
-                              ▼
-                         evaluate.py ──► metrics, plots, predictions.csv
-                              │
-                              ▼
-                         inference.py ──► predictions on new data
-```
-
----
-
-## 7. Configuration Reference
-
-All hyperparameters are in `config.yaml` (located in this directory). Key settings:
-
-| Category | Parameter | Default | Description |
-|----------|-----------|---------|-------------|
-| Data | `dataset_path` | `training/data/merged_power_data_sub6GHz_avg_per_minute.csv` | Input CSV path |
-| Data | `n_bins_per_node` | 250 | Frequency bins per node |
-| Data | `n_nodes` | 3 | Number of sensor nodes |
-| Preprocessing | `normalization` | `zscore` | Normalization method |
-| Windowing | `input_sequence_length` | 12 | Past minutes (T_in) |
-| Windowing | `prediction_horizon` | 6 | Future minutes (T_out) |
-| Windowing | `stride` | 1 | Window stride |
-| Split | `train_ratio` | 0.8 | Training set fraction |
-| Split | `val_ratio` | 0.1 | Validation set fraction (set to 0 for train/test only) |
-| Split | `chronological_split` | true | Chronological (true) or random (false) split |
-| Model | `input_channels` | 1 | Input channel count |
-| Model | `hidden_channels` | [32, 64] | Encoder layer hidden sizes |
-| Model | `kernel_size` | [[3,3], [1,1]] | Encoder kernel sizes |
-| Model | `decoder_hidden_channels` | 32 | Decoder hidden size |
-| Model | `decoder_kernel_size` | [1,1] | Decoder ConvLSTM kernel size (per paper §III-A) |
-| Model | `dropout` | 0.3 | Dropout probability |
-| Model | `use_batch_norm` | true | Use batch normalization |
-| Model | `decoder_lstm_hidden` | 128 | Regular LSTM hidden size in decoder |
-| Model | `fc_hidden_channels` | 0 | FC intermediate channels (0 = single 1×1 Conv2d) |
-| Model | `fc_kernel_size` | [3,3] | FC intermediate kernel (only if fc_hidden_channels > 0) |
-| Training | `batch_size` | 32 | Mini-batch size |
-| Training | `epochs` | 100 | Max training epochs |
-| Training | `learning_rate` | 0.0002 | Initial learning rate |
-| Training | `optimizer` | adam | Optimizer choice |
-| Training | `teacher_forcing_ratio` | 1.0 | Teacher forcing probability |
-| Training | `noise_std` | 0.2 | Gaussian noise std for input |
-| Device | `device` | auto | cuda / cpu / auto |
-
----
-
-## Assumptions and Design Decisions
+## 6. Assumptions and Design Decisions
 
 ### Assumptions
 
@@ -721,7 +705,9 @@ All hyperparameters are in `config.yaml` (located in this directory). Key settin
 
 5. **Per-bin z-score normalization**: Spectrum data has different power levels across frequency bands. Normalizing per bin ensures each frequency contributes equally to the loss.
 
-### Deviations from the Original Paper
+---
+
+## 7. Deviations from the Original Paper
 
 | Aspect | Paper (2019) | Our Reconstruction | Reason |
 |--------|-------------|-------------------|--------|
@@ -734,5 +720,14 @@ All hyperparameters are in `config.yaml` (located in this directory). Key settin
 | Activation | ReLU (output, per §III-A) | ReLU (output) | Same |
 | Optimizer | NADAM | Adam | NADAM not in standard PyTorch |
 | Framework | R + TensorFlow | Python + PyTorch | Our stack |
+
+---
+
+## References
+
+1. **Original paper:** B. S. Shawel, D. H. Woldegebreal, S. Pollin, "Convolutional LSTM-based Long-Term Spectrum Prediction for Dynamic Spectrum Access," EUSIPCO 2019. ([arXiv](https://arxiv.org/abs/1907.12372))
+2. **ConvLSTM paper:** X. Shi, Z. Chen, H. Wang, D.-Y. Yeung, W.-K. Wong, W.-C. Woo, "Convolutional LSTM Network: A Machine Learning Approach for Precipitation Nowcasting," NIPS 2015.
+3. **Reference implementation:** [ndrplz/ConvLSTM_pytorch](https://github.com/ndrplz/ConvLSTM_pytorch) — base for our `ConvLSTMCell` / `ConvLSTM` modules.
+4. **AERPAW dataset:** AERPAW sub-6 GHz spectrum monitoring dataset — Fixed nodes CC1, CC2, LW1 (Feb 2022). DOI: [10.5061/dryad.hmgqnk9zn](https://doi.org/10.5061/dryad.hmgqnk9zn).
 
 
