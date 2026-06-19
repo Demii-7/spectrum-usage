@@ -36,6 +36,8 @@ python3 training/ConvLSTM/train.py \
 
 Training creates `training/ConvLSTM/checkpoints/` with `best_model.pt`, `last_model.pt`, and `normalization_stats.pt`.
 
+> **Note:** Checkpoints are large binary files (>100 MB) and are not tracked in git. To use a trained model on another machine, either re-train there or manually copy the `checkpoints/` directory.
+
 ### Evaluate
 
 ```bash
