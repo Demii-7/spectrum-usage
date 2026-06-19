@@ -38,7 +38,7 @@ model:
 
 training:
   batch_size: 32
-  epochs: 30
+  epochs: 200
   learning_rate: 0.0002
   optimizer: "adam"
   beta1: 0.9
@@ -46,8 +46,8 @@ training:
   epsilon: 1.0e-8
   weight_decay: 0.004
   lr_scheduler: "reduce_on_plateau"
-  lr_patience: 10
-  early_stopping_patience: 10
+  lr_patience: 15
+  early_stopping_patience: 30
   gradient_clip_norm: 5.0
   loss: "mse"
   teacher_forcing_ratio: 1.0
