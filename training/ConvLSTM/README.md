@@ -215,6 +215,8 @@ All hyperparameters are in `config.yaml`. Key settings:
 
 ---
 
+## About The Model
+
 ## 1. Purpose
 
 The model performs **long-term spectrum prediction** using the processed AERPAW 5 CSV dataset. Given a window of past per-minute power spectral density (PSD) measurements from three fixed sensor nodes, it predicts the PSD values for multiple future time steps.
