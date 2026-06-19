@@ -49,7 +49,7 @@ def main():
             raise ValueError(f"Input too short ({len(data_3d)} steps). Need at least {t_in + t_out}.")
 
     windows = np.stack([data_norm[i:i + t_in] for i in range(total_windows)], axis=0)
-    windows = torch.from_numpy(windows).float().unsqueeze(2).transpose(1, 2)
+    windows = torch.from_numpy(windows).float().unsqueeze(2)
     loader = DataLoader(windows, batch_size=32, shuffle=False)
 
     model = ConvLSTMPredictor(config).to(device)

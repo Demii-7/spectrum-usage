@@ -1,5 +1,158 @@
 # Training Data Pipeline
 
+## Integrated 200 MHz Chunk Models
+
+The integrated training path uses the AERPAW CSV files under `evaluation/aerpaw/` and trains one model per 200 MHz chunk. Each model sees one CC2 chunk as a tensor with shape `(T, 1, 1, 200)`, where `T` is minutes and `200` is the number of 1 MHz bins in the chunk. The shared settings live in `training/common/config.yaml`.
+
+The default chunks are `600-800 MHz`, `2400-2600 MHz`, and `3500-3700 MHz`. The default lookback is 60 minutes. The reported horizons are 1, 5, 15, and 60 minutes. Training can use normalized inputs, but all metrics are written in denormalized dBm.
+
+### Inputs
+
+Put the AERPAW per-minute CSV files in `evaluation/aerpaw/`:
+
+```text
+evaluation/aerpaw/ResultsCC1Feb2022_SigMF_power_1mhz_avg_per_minute.csv
+evaluation/aerpaw/ResultsCC2Feb2022_SigMF_power_1mhz_avg_per_minute.csv
+evaluation/aerpaw/ResultsLW1Feb2022_SigMF_power_1mhz_avg_per_minute.csv
+```
+
+The loader discovers files by site name, interpolates missing values per frequency, selects shared frequency columns, and creates the chronological CC2 train/test split. The final two days form `CC2_test`.
+
+Per-band metrics use `evaluation/results/step2/band_definitions.csv` when that file exists. The model runners still produce aggregate and per-frequency metrics when band definitions are absent.
+
+### Environment
+
+From the repository root:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install numpy pandas scikit-learn pyyaml matplotlib torch
+```
+
+Install a CUDA-enabled PyTorch build if you plan to train ConvLSTM on a GPU.
+
+### Run Baselines
+
+The evaluation baseline script writes persistence, historical mean, lookback mean, same-time last-3-days mean, AutoReg(60), and LAR metrics. Use `--normalize` to train the learned baselines on normalized inputs and report dBm metrics.
+
+```bash
+python3 evaluation/scripts/run_spectrum_steps_5_6.py \
+  --normalize \
+  --output-dir training/results/baselines
+```
+
+### Run LinearAutoRegressive
+
+This runner uses the shared config and trains one direct Ridge autoregressive model per frequency bin, per chunk, and per horizon.
+
+```bash
+python3 training/LinearAutoRegressive/train.py
+```
+
+Outputs go to `training/results/LinearAutoRegressive/` by default:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+models/linear_autoregressive_models.pkl
+```
+
+### Run ConvLSTM
+
+The integrated ConvLSTM runner trains one model per chunk using `(T, 1, 1, 200)` inputs. It predicts 60 consecutive future minutes and evaluates the configured horizons from that sequence.
+
+```bash
+python3 training/ConvLSTM/train_integrated.py
+```
+
+Outputs go to `training/results/ConvLSTM/` by default:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+models/<chunk_id>_convlstm.pt
+<chunk_id>_training_log.csv
+```
+
+For a shorter smoke run, copy `training/common/config.yaml`, reduce `convlstm.epochs`, and pass it with `--config`:
+
+```bash
+python3 training/ConvLSTM/train_integrated.py --config /path/to/smoke_config.yaml
+```
+
+### Assemble Overall Results
+
+After the baseline, LinearAutoRegressive, and ConvLSTM jobs finish, combine their metric files:
+
+```bash
+python3 -m training.common.assemble_results
+```
+
+The assembler reads these directories by default:
+
+```text
+training/results/baselines/
+training/results/LinearAutoRegressive/
+training/results/ConvLSTM/
+```
+
+It writes combined outputs to `training/results/overall/`:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+metrics_summary.md
+```
+
+Use `--input-dir` to combine a different set of model output directories:
+
+```bash
+python3 -m training.common.assemble_results \
+  --input-dir training/results/baselines \
+  --input-dir training/results/LinearAutoRegressive \
+  --input-dir training/results/ConvLSTM \
+  --output-dir training/results/overall
+```
+
+### Long-Interval Forecast Plots
+
+The long-interval plot script creates horizon-by-horizon forecast plots for AutoReg, LAR, and lookback mean on a selected CC2 test interval. It writes PNG and CSV files under `evaluation/results/figures/long_interval_forecasts/`.
+
+```bash
+python3 evaluation/scripts/plot_autoreg_long_interval_by_horizon.py --transition variable
+python3 evaluation/scripts/plot_autoreg_long_interval_by_horizon.py --transition falling
+python3 evaluation/scripts/plot_autoreg_long_interval_by_horizon.py --transition rising
+```
+
+The `variable` run also writes the compatibility filenames `cc2_autoreg_by_horizon_long_interval.png` and `cc2_autoreg_by_horizon_long_interval.csv`.
+
+### Shared Config
+
+Edit `training/common/config.yaml` to change chunks, horizons, lookback, normalization, or model hyperparameters. The model runners also accept `--config /path/to/config.yaml`.
+
+Key fields:
+
+```yaml
+windowing:
+  lookback: 60
+  horizons: [1, 5, 15, 60]
+
+preprocessing:
+  normalize: true
+
+convlstm:
+  input_sequence_length: 60
+  prediction_horizon: 60
+```
+
+Set `convlstm.prediction_horizon` to at least the largest configured horizon.
+
+## Legacy TSS-LCD Reconstruction
+
 This directory contains the pipeline for acquiring the AERPAW sub-6 GHz spectrum
 monitoring dataset and preprocessing it into the format used by the TSS-LCD (https://github.com/Xlab2024/TSS-LCD)
 repository. The raw dataset consists of spectrum sweeps collected by three fixed

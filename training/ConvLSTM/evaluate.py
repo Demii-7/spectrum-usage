@@ -33,7 +33,7 @@ def plot_spectrogram_comparison(ground_truth, prediction, node_idx, node_name,
     axes[1].set_title(f"{node_name} — Prediction")
     axes[1].set_xlabel("Time Step (future minutes)")
     axes[1].set_ylabel("Frequency Bin")
-    fig.colorbar(im1, ax=axes.ravel().tolist(), label="Normalized Power")
+    fig.colorbar(im1, ax=axes.ravel().tolist(), label="Power (dBm)")
     fig.savefig(save_path, dpi=150)
     plt.close(fig)
 
@@ -46,11 +46,12 @@ def plot_error_analysis(errors, node_names, save_path):
     for i, name in enumerate(node_names):
         ax = axes[0, i]
         err = errors[:, i, :]
-        im = ax.imshow(err.T, aspect="auto", cmap="RdBu_r", vmin=-3, vmax=3)
+        vmax = max(float(np.max(np.abs(err))), 1e-6)
+        im = ax.imshow(err.T, aspect="auto", cmap="RdBu_r", vmin=-vmax, vmax=vmax)
         ax.set_title(f"{name} — Error (Pred − GT)")
         ax.set_xlabel("Sample")
         ax.set_ylabel("Frequency Bin")
-    fig.colorbar(im, ax=axes.ravel().tolist(), label="Normalized Error")
+    fig.colorbar(im, ax=axes.ravel().tolist(), label="Error (dB)")
     fig.savefig(save_path, dpi=150)
     plt.close(fig)
 
@@ -116,6 +117,20 @@ def main():
     pred = torch.cat(all_pred, dim=0)
     target = torch.cat(all_target, dim=0)
 
+    pred_np = pred.cpu().numpy()
+    target_np = target.cpu().numpy()
+
+    mean = stats["mean"]
+    std = stats["std"]
+    if isinstance(mean, np.ndarray):
+        pred_dbm = denormalize(pred_np, mean, std)
+        target_dbm = denormalize(target_np, mean, std)
+    else:
+        pred_dbm, target_dbm = pred_np, target_np
+
+    pred_metric = torch.from_numpy(pred_dbm)
+    target_metric = torch.from_numpy(target_dbm)
+
     n_nodes = dcfg.get("n_nodes", 3)
     node_names = dcfg.get("node_names", None)
     if node_names is None:
@@ -124,9 +139,9 @@ def main():
     elif len(node_names) != n_nodes:
         print(f"Warning: config has {len(node_names)} names but n_nodes={n_nodes}; falling back to generic names")
         node_names = [f"Node_{i}" for i in range(n_nodes)]
-    overall = compute_metrics(pred, target)
-    per_horizon = compute_metrics_per_horizon(pred, target)
-    per_node = compute_metrics_per_node(pred, target, node_names)
+    overall = compute_metrics(pred_metric, target_metric)
+    per_horizon = compute_metrics_per_horizon(pred_metric, target_metric)
+    per_node = compute_metrics_per_node(pred_metric, target_metric, node_names)
 
     print("=== Evaluation Report ===")
     print(f"Overall RMSE: {overall['rmse']:.4f}")
@@ -148,17 +163,6 @@ def main():
     output_dir = args.output or os.path.join(os.path.dirname(__file__), "evaluation")
     os.makedirs(output_dir, exist_ok=True)
 
-    pred_np = pred.cpu().numpy()
-    target_np = target.cpu().numpy()
-
-    mean = stats["mean"]
-    std = stats["std"]
-    if isinstance(mean, np.ndarray):
-        pred_dbm = denormalize(pred_np, mean, std)
-        target_dbm = denormalize(target_np, mean, std)
-    else:
-        pred_dbm, target_dbm = pred_np, target_np
-
     bs, t_out, c, h, w = pred_dbm.shape
     pred_flat = pred_dbm.reshape(bs, t_out, -1)
     target_flat = target_dbm.reshape(bs, t_out, -1)
@@ -173,11 +177,11 @@ def main():
         json.dump({**overall, **per_horizon, **per_node}, f, indent=2)
     print(f"\nMetrics saved to {metrics_path}")
 
-    errors = pred_np[:, :, 0, :, :] - target_np[:, :, 0, :, :]
+    errors = pred_dbm[:, :, 0, :, :] - target_dbm[:, :, 0, :, :]
     for n, name in enumerate(node_names):
         plot_path = os.path.join(output_dir, f"spectrogram_{name}.png")
         plot_spectrogram_comparison(
-            target_np[0, :, 0, :, :], pred_np[0, :, 0, :, :],
+            target_dbm[0, :, 0, :, :], pred_dbm[0, :, 0, :, :],
             n, name, wcfg["input_sequence_length"], plot_path,
         )
         print(f"Spectrogram saved to {plot_path}")

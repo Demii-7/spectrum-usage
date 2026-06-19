@@ -1,0 +1,52 @@
+data:
+  data_dir: evaluation/aerpaw
+  band_definitions_path: evaluation/results/step2/band_definitions.csv
+  reference_site: CC2
+  test_splits: [CC2_test]
+  chunks:
+    - id: chunk_600_800
+      start_mhz: 600.0
+      end_mhz: 800.0
+    - id: chunk_2400_2600
+      start_mhz: 2400.0
+      end_mhz: 2600.0
+    - id: chunk_3500_3700
+      start_mhz: 3500.0
+      end_mhz: 3700.0
+
+windowing:
+  lookback: 60
+  horizons: [1, 5, 15, 60]
+  min_history: 4320
+
+preprocessing:
+  normalize: true
+
+outputs:
+  root_dir: training/results
+
+linear_autoregressive:
+  ridge_alpha: 1.0
+
+convlstm:
+  input_sequence_length: 60
+  prediction_horizon: 60
+  batch_size: 32
+  epochs: 25
+  learning_rate: 0.0002
+  weight_decay: 0.004
+  val_fraction: 0.1
+  teacher_forcing_ratio: 1.0
+  gradient_clip_norm: 5.0
+  model:
+    input_channels: 1
+    hidden_channels: [32, 64]
+    kernel_size: [[1, 3], [1, 1]]
+    num_encoder_layers: 2
+    decoder_hidden_channels: 32
+    decoder_kernel_size: [1, 1]
+    dropout: 0.3
+    use_batch_norm: true
+    decoder_lstm_hidden: 128
+    fc_hidden_channels: 0
+    fc_kernel_size: [1, 3]
