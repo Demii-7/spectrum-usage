@@ -8,6 +8,54 @@
 
 ---
 
+## Quick Start
+
+### Setup
+
+```bash
+cd /home/cc/spectrum-usage
+python3 -m venv .venv
+source .venv/bin/activate
+pip install torch numpy matplotlib pyyaml scikit-learn tqdm
+```
+
+### Train the Model
+
+```bash
+# Default config (T_in=12, T_out=6, 80/10/10 split)
+python3 training/ConvLSTM/train.py
+
+# With overrides
+python3 training/ConvLSTM/train.py \
+    --batch-size 64 \
+    --epochs 150 \
+    --lr 0.0001 \
+    --input-len 24 \
+    --pred-horizon 12
+```
+
+Training creates `training/ConvLSTM/checkpoints/` with `best_model.pt`, `last_model.pt`, and `normalization_stats.pt`.
+
+### Evaluate
+
+```bash
+python3 training/ConvLSTM/evaluate.py \
+    --checkpoint training/ConvLSTM/checkpoints/best_model.pt
+```
+
+Output: per-horizon and per-node RMSE/MAE/R², spectrogram plots, and `predictions.csv`.
+
+### Run Inference on New Data
+
+```bash
+python3 training/ConvLSTM/inference.py \
+    --checkpoint training/ConvLSTM/checkpoints/best_model.pt \
+    --input /path/to/new_measurements.csv \
+    --output predictions.csv
+```
+
+---
+
 ## 1. What the Model Is Intended to Do
 
 The model performs **long-term spectrum prediction** using the processed AERPAW 5 CSV dataset. Given a window of past per-minute power spectral density (PSD) measurements from three fixed sensor nodes, it predicts the PSD values for multiple future time steps.
@@ -154,7 +202,7 @@ Input: (B, T_in, 1, 3, 250)
 │        ▼                                     │
 │  ┌──────────────────────────────────┐       │
 │  │ ConvLSTM Layer 3                 │       │
-│  │  input_dim=64, hidden=32         │       │
+│  │  input_dim=1, hidden=32          │       │
 │  │  kernel=(1,1), padding=0         │       │
 │  │  activation=ReLU                 │       │
 │  │  Dropout(p=0.3)                  │       │
@@ -229,7 +277,7 @@ This LSTM layer acts as the memory-capture mechanism referenced in the paper: it
 | Parameter | Value |
 |-----------|-------|
 | Type | `ConvLSTMCell` (2D convolutional LSTM cell) |
-| Input channels | 64 (learned "start" embedding projected from LSTM context) |
+| Input channels | 1 (previous predicted or ground-truth frame) |
 | Hidden channels | 32 |
 | Kernel size | `(1, 1)` |
 | Padding | `(0, 0)` |
@@ -241,9 +289,7 @@ This LSTM layer acts as the memory-capture mechanism referenced in the paper: it
 | Batch norm | Layer-wise batch normalization on hidden states |
 | Output shape | `(B, T_out, 32, 3, 250)` |
 
-**Role**: Generates the output sequence step by step. At each decoder time step:
-- **t=1**: Input is a learned "start" embedding (projected from the LSTM context vector), and states are initialized from the encoder via the LSTM.
-- **t>1**: Input is the previous step's hidden state (autoregressive decoding). Optionally, ground-truth frames can be fed instead during training (teacher forcing — see §5.9; this is our implementation choice, not in the paper).
+**Role**: Generates the output sequence step by step. Initial hidden and cell states `(B, 32, 3, 250)` come from the LSTM projection of the encoder's final states. At each decoder time step, the input is the previous predicted frame (or ground-truth with teacher forcing). Because the kernel is `1×1`, each spatial location is processed independently — the decoder ConvLSTM learns temporal dynamics per (node, frequency bin) without mixing spatial positions.
 
 #### Decoder — Fully Connected (Dense) Output Layer
 
@@ -465,11 +511,7 @@ NADAM (Nesterov-accelerated Adam) is preferred per the paper but requires a thir
 
 ### 5.9 Teacher Forcing (Implementation Choice, Not in Paper)
 
-Optionally, the decoder can receive ground-truth frames as input during training with probability `teacher_forcing_ratio` (default 0.5). This:
-- Speeds up convergence (model sees real data during decoding)
-- Acts as regularization (randomly switches between ground-truth and model's own predictions)
-
-Set `teacher_forcing_ratio: 0` in config.yaml for pure autoregressive decoding (closer to the paper's described setup).
+The decoder receives ground-truth frames as input during training with probability `teacher_forcing_ratio` (default 1.0 — always on). This speeds up convergence by providing real data at every decoder step. Set to 0 for pure autoregressive decoding, or 0.5 for mixed scheduling.
 
 ### 5.10 Regularization Techniques
 
@@ -495,7 +537,7 @@ Metrics are computed:
 
 ---
 
-## 6. Modular Design — Recommended Code Structure
+## 6. File Structure — Recommended Code Layout
 
 ```
 training/ConvLSTM/
@@ -541,7 +583,7 @@ dataset.py ──► train.py ──► model.pt
 
 ---
 
-## 7. Configuration (`config.yaml`)
+## 7. Configuration Reference
 
 All hyperparameters are in `config.yaml` (located in this directory). Key settings:
 
@@ -571,111 +613,9 @@ All hyperparameters are in `config.yaml` (located in this directory). Key settin
 | Training | `epochs` | 100 | Max training epochs |
 | Training | `learning_rate` | 0.0002 | Initial learning rate |
 | Training | `optimizer` | adam | Optimizer choice |
-| Training | `teacher_forcing_ratio` | 0.5 | Teacher forcing probability |
+| Training | `teacher_forcing_ratio` | 1.0 | Teacher forcing probability |
 | Training | `noise_std` | 0.2 | Gaussian noise std for input |
 | Device | `device` | auto | cuda / cpu / auto |
-
----
-
-## 8. Usage Instructions
-
-> **Note**: The scripts below are **proposed commands** that will work once the corresponding Python files are implemented. They assume you are running from the repository root (`/home/cc/spectrum-usage`).
-
-### 8.1 Setup
-
-```bash
-cd /home/cc/spectrum-usage
-
-# Create virtual environment (one time)
-python3 -m venv .venv
-source .venv/bin/activate
-
-# Install dependencies
-pip install torch numpy matplotlib pyyaml scikit-learn tqdm
-```
-
-### 8.2 Train the Model
-
-```bash
-# Train with default config
-python3 training/ConvLSTM/train.py
-
-# Train with custom config
-python3 training/ConvLSTM/train.py --config training/ConvLSTM/config.yaml
-
-# Train with overrides
-python3 training/ConvLSTM/train.py \
-    --batch-size 64 \
-    --epochs 150 \
-    --lr 0.0001 \
-    --input-len 24 \
-    --pred-horizon 12
-```
-
-Expected output:
-```
-Training/ConvLSTM/
-├── checkpoints/
-│   ├── best_model.pt          # Lowest validation loss checkpoint
-│   ├── last_model.pt          # Final epoch checkpoint
-│   └── normalization_stats.pt # μ and σ for denormalization
-├── logs/
-│   └── training_YYYYMMDD_HHMMSS.json
-└── config.yaml
-```
-
-### 8.3 Evaluate the Model
-
-```bash
-# Evaluate best checkpoint
-python3 training/ConvLSTM/evaluate.py \
-    --checkpoint training/ConvLSTM/checkpoints/best_model.pt
-
-# Evaluate with specific horizons
-python3 training/ConvLSTM/evaluate.py \
-    --checkpoint training/ConvLSTM/checkpoints/best_model.pt \
-    --horizons 1 3 6 12
-```
-
-Expected output:
-```
-=== Evaluation Report ===
-Overall RMSE: 0.8423
-
-Per-horizon RMSE:
-  t=1:  0.6123
-  t=3:  0.8911
-  t=6:  1.0234
-
-Per-node RMSE:
-  CC1:  0.7892
-  CC2:  0.9123
-  LW1:  0.8254
-
-Outputs: training/ConvLSTM/evaluation/
-├── predictions.csv
-├── metrics.json
-├── spectrogram_comparison_*.png
-└── error_analysis.png
-```
-
-### 8.4 Run Inference on New Data
-
-```bash
-# Predict on new CSV data
-python3 training/ConvLSTM/inference.py \
-    --checkpoint training/ConvLSTM/checkpoints/best_model.pt \
-    --input data/some_new_measurements.csv \
-    --output predictions/predicted_spectrum.csv \
-    --t-in 12 \
-    --t-out 6
-```
-
-### 8.5 Monitor Training with TensorBoard
-
-```bash
-tensorboard --logdir training/ConvLSTM/logs
-```
 
 ---
 
@@ -696,7 +636,7 @@ tensorboard --logdir training/ConvLSTM/logs
 
 2. **Single-channel input**: Power values are in dBm (scalar per node×frequency point). The channel dimension is 1.
 
-3. **Seq2seq with optional teacher forcing**: The decoder generates outputs autoregressively. Teacher forcing (default 0.5) is our addition, not in the paper; set to 0 for the paper's pure autoregressive setup.
+3. **Seq2seq with teacher forcing**: The decoder generates outputs autoregressively. Teacher forcing (default 1.0, always on) is our addition; set lower in config.yaml for mixed or pure autoregressive decoding.
 
 4. **No spatial interpolation**: The paper used IDW interpolation across 1600 grid points from 5 sensors. Our AERPAW dataset has 3 fixed nodes without a regular spatial grid. We preserve the raw per-node data as independent rows in the 2D map.
 
