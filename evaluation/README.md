@@ -447,7 +447,7 @@ Now you can
 screen -dmS spectrum-sync \
   python3 sync_object_storage.py \
     cosmos/$RUN_ID \
-    s3://spectrum/powder/$NODE/$RUN_ID \
+    s3://spectrum/cosmos/$NODE/$RUN_ID \
     --env-file .env \
     --tool fsspec \
     --interval-seconds 300 \
