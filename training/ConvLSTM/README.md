@@ -36,7 +36,7 @@ python3 training/ConvLSTM/train.py \
 
 Training creates `training/ConvLSTM/checkpoints/` with `best_model.pt`, `last_model.pt`, and `normalization_stats.pt`.
 
-> **Note:** Checkpoints are large binary files (>100 MB) and are not tracked in git. To use a trained model on another machine, either re-train there or manually copy the `checkpoints/` directory.
+> **Note:** Checkpoints contain model weights, optimizer state, and normalization stats. They exceed GitHub's 100 MB file limit and are gitignored. To use a trained model on another machine, either re-train there or manually copy the `checkpoints/` directory.
 
 ### Evaluate
 
@@ -190,7 +190,9 @@ All hyperparameters are in `config.yaml`. Key settings:
 | Data | `dataset_path` | `training/data/merged_power_data_sub6GHz_avg_per_minute.csv` | Input CSV path |
 | Data | `n_bins_per_node` | 250 | Frequency bins per node |
 | Data | `n_nodes` | 3 | Number of sensor nodes |
-| Preprocessing | `normalization` | `zscore` | Normalization method |
+| Data | `node_names` | `["CC1","CC2","LW1"]` | Node labels for plots and per-node metrics (must match n_nodes length) |
+| Preprocessing | `normalization` | `zscore` | Normalization method (`zscore`, `minmax`, or `none`) |
+| Preprocessing | `fit_on_train_only` | true | Compute normalization stats on training set only (true) or full dataset (false) |
 | Windowing | `input_sequence_length` | 12 | Past minutes (T_in) |
 | Windowing | `prediction_horizon` | 6 | Future minutes (T_out) |
 | Windowing | `stride` | 1 | Window stride |
@@ -200,20 +202,32 @@ All hyperparameters are in `config.yaml`. Key settings:
 | Model | `input_channels` | 1 | Input channel count |
 | Model | `hidden_channels` | [32, 64] | Encoder layer hidden sizes |
 | Model | `kernel_size` | [[3,3], [1,1]] | Encoder kernel sizes |
+| Model | `num_encoder_layers` | 2 | Number of encoder ConvLSTM layers |
 | Model | `decoder_hidden_channels` | 32 | Decoder hidden size |
 | Model | `decoder_kernel_size` | [1,1] | Decoder ConvLSTM kernel size (per paper §III-A) |
 | Model | `dropout` | 0.3 | Dropout probability |
 | Model | `use_batch_norm` | true | Use batch normalization |
 | Model | `decoder_lstm_hidden` | 128 | Regular LSTM hidden size in decoder |
-| Model | `fc_hidden_channels` | 0 | FC intermediate channels (0 = single 1×1 Conv2d) |
-| Model | `fc_kernel_size` | [3,3] | FC intermediate kernel (only if fc_hidden_channels > 0) |
+| Model | `fc_hidden_channels` | 0 | FC intermediate channels (0 = single 1×1 Conv2d; >0 enables 2-layer MLP) |
+| Model | `fc_kernel_size` | [3,3] | FC intermediate kernel (only if `fc_hidden_channels > 0`) |
 | Training | `batch_size` | 32 | Mini-batch size |
 | Training | `epochs` | 100 | Max training epochs |
 | Training | `learning_rate` | 0.0002 | Initial learning rate |
-| Training | `optimizer` | adam | Optimizer choice |
-| Training | `teacher_forcing_ratio` | 1.0 | Teacher forcing probability |
-| Training | `noise_std` | 0.2 | Gaussian noise std for input |
-| Device | `device` | auto | cuda / cpu / auto |
+| Training | `optimizer` | adam | Optimizer choice (`adam` or `nadam`) |
+| Training | `beta1` | 0.9 | Adam/NADAM beta1 |
+| Training | `beta2` | 0.999 | Adam/NADAM beta2 |
+| Training | `epsilon` | 1e-8 | Adam/NADAM epsilon |
+| Training | `weight_decay` | 0.004 | L2 weight decay |
+| Training | `lr_scheduler` | `reduce_on_plateau` | LR scheduler (`reduce_on_plateau` or `none`) |
+| Training | `lr_patience` | 10 | ReduceLROnPlateau patience (epochs without improvement before halving LR) |
+| Training | `early_stopping_patience` | 20 | Epochs without val loss improvement before stopping |
+| Training | `gradient_clip_norm` | 5.0 | Max gradient norm for clipping (0 = disabled) |
+| Training | `loss` | mse | Loss function (`mse` or `mae`) |
+| Training | `teacher_forcing_ratio` | 1.0 | Teacher forcing probability (1.0 = always on, 0 = pure autoregressive) |
+| Training | `noise_std` | 0.2 | Gaussian noise std added to training inputs (paper §III-B) |
+| Evaluation | `metrics` | `["rmse","mae","r2"]` | Metrics to report |
+| Evaluation | `eval_horizons` | `[1, 3, 6]` | Specific future time steps for per-horizon reporting |
+| Device | `device` | auto | `cuda`, `cpu`, or `auto` |
 
 ---
 
@@ -592,7 +606,7 @@ For each frequency bin `f` in `{0..249}` and each node `n` in `{0..2}`:
 X_normalized[:, n, f] = (X[:, n, f] − μ_{n,f}) / σ_{n,f}
 ```
 
-- Statistics are computed **only from the training set** to prevent data leakage.
+- Statistics are computed **only from the training set** to prevent data leakage (controlled by `fit_on_train_only` in config).
 - The same `μ` and `σ` are applied to validation and test sets.
 - Saved alongside the model checkpoint for inference-time denormalization.
 
@@ -690,7 +704,7 @@ Metrics are computed:
 
 ### Assumptions
 
-1. **The input CSV has exactly 750 columns** (3 nodes × 250 bins) in the order CC1, CC2, LW1.
+1. **The input CSV has `n_nodes × n_bins_per_node` columns** (default 3 × 250 = 750) in the order matching `node_names` in config.
 2. **The CSV has no header row** and contains only comma-separated numeric dBm values.
 3. **Rows are in strict chronological order** with no gaps (the existing data has 6,839 contiguous minutes).
 4. **Normalization statistics are computed per frequency bin** across the time dimension, not globally.
@@ -699,7 +713,7 @@ Metrics are computed:
 
 ### Design Decisions
 
-1. **2D ConvLSTM with (3, 250) spatial map**: The 3 nodes are treated as the "height" dimension and 250 frequency bins as the "width" dimension. This allows the 2D kernels to learn cross-node and cross-frequency patterns simultaneously.
+1. **2D ConvLSTM with (n_nodes, n_bins) spatial map**: The nodes are treated as the "height" dimension and frequency bins as the "width" dimension (default 3 × 250). This allows the 2D kernels to learn cross-node and cross-frequency patterns simultaneously.
 
 2. **Single-channel input**: Power values are in dBm (scalar per node×frequency point). The channel dimension is 1.
 
