@@ -567,11 +567,21 @@ def main():
     usrp.set_rx_antenna(args.antenna, ch)
     usrp.set_rx_bandwidth(bw, ch)
 
-    # Enable firmware DC offset and IQ imbalance correction.  These are one-time
-    # calls; the adaptive estimator runs continuously in the background and will
-    # have converged well before the first real sweep completes.
-    usrp.set_rx_dc_offset(True, ch)
-    usrp.set_rx_iq_balance(True, ch)
+    # Enable firmware DC offset and IQ imbalance correction when supported.
+    # Some radios, including N3xx/AD9371 devices, do not implement these UHD APIs.
+    try:
+        usrp.set_rx_dc_offset(True, ch)
+        rx_dc_offset_correction_enabled = True
+    except RuntimeError as exc:
+        print(f"  RX DC offset correction unavailable: {exc}", file=sys.stderr)
+        rx_dc_offset_correction_enabled = False
+
+    try:
+        usrp.set_rx_iq_balance(True, ch)
+        rx_iq_balance_correction_enabled = True
+    except RuntimeError as exc:
+        print(f"  RX IQ balance correction unavailable: {exc}", file=sys.stderr)
+        rx_iq_balance_correction_enabled = False
 
     actual_rate = usrp.get_rx_rate(ch)
     fs = actual_rate
@@ -676,6 +686,8 @@ def main():
             "overlapped_tuning_enabled": args.tune_step_mhz is not None,
             "overscan_mhz": args.overscan_mhz,
             "dc_offset_shift_mhz": args.dc_offset_mhz,
+            "rx_dc_offset_correction_enabled": rx_dc_offset_correction_enabled,
+            "rx_iq_balance_correction_enabled": rx_iq_balance_correction_enabled,
             "center_notch_mhz": args.center_notch_mhz,
             "tune_retries": args.tune_retries,
             "sample_seconds_per_tune": args.sample_seconds,
