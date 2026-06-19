@@ -24,7 +24,8 @@ def plot_spectrogram_comparison(ground_truth, prediction, node_idx, node_name,
     vmin = min(gt_node.min(), pred_node.min())
     vmax = max(gt_node.max(), pred_node.max())
 
-    fig, axes = plt.subplots(2, 1, figsize=(12, 6), sharex=True, sharey=True)
+    fig, axes = plt.subplots(2, 1, figsize=(12, 6), sharex=True, sharey=True,
+                              constrained_layout=True)
     im0 = axes[0].imshow(gt_node, aspect="auto", cmap="viridis", vmin=vmin, vmax=vmax)
     axes[0].set_title(f"{node_name} — Ground Truth")
     axes[0].set_ylabel("Frequency Bin")
@@ -32,15 +33,16 @@ def plot_spectrogram_comparison(ground_truth, prediction, node_idx, node_name,
     axes[1].set_title(f"{node_name} — Prediction")
     axes[1].set_xlabel("Time Step (future minutes)")
     axes[1].set_ylabel("Frequency Bin")
-    fig.colorbar(im1, ax=axes, label="Normalized Power")
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=150)
+    fig.colorbar(im1, ax=axes.ravel().tolist(), label="Normalized Power")
+    fig.savefig(save_path, dpi=150)
     plt.close(fig)
 
 
 def plot_error_analysis(errors, node_names, save_path):
     n = len(node_names)
-    fig, axes = plt.subplots(1, n, figsize=(5 * n, 4), squeeze=False)
+    fig, axes = plt.subplots(1, n, figsize=(5 * n, 4), squeeze=False,
+                              constrained_layout=True)
+    im = None
     for i, name in enumerate(node_names):
         ax = axes[0, i]
         err = errors[:, i, :]
@@ -48,9 +50,8 @@ def plot_error_analysis(errors, node_names, save_path):
         ax.set_title(f"{name} — Error (Pred − GT)")
         ax.set_xlabel("Sample")
         ax.set_ylabel("Frequency Bin")
-        fig.colorbar(im, ax=ax, label="Normalized Error")
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=150)
+    fig.colorbar(im, ax=axes.ravel().tolist(), label="Normalized Error")
+    fig.savefig(save_path, dpi=150)
     plt.close(fig)
 
 
