@@ -50,17 +50,19 @@ model:
   num_encoder_layers: 2
   # Hidden channels for the decoder ConvLSTM layer
   decoder_hidden_channels: 32
-  # Kernel size for the decoder ConvLSTM layer
-  decoder_kernel_size: [3, 3]
+  # Kernel size for the decoder ConvLSTM layer (1×1 per paper §III-A)
+  decoder_kernel_size: [1, 1]
   # Dropout probability (applied after ConvLSTM layers)
   dropout: 0.3
   # Whether to use batch normalization after ConvLSTM layers
   use_batch_norm: true
   # Hidden size for the intermediate regular LSTM layer in the decoder
   decoder_lstm_hidden: 128
-  # FC (dense) output layer: hidden channels for the intermediate conv layer
-  fc_hidden_channels: 16
-  # FC layer intermediate kernel size
+  # FC (dense) output layer: hidden channels for the intermediate conv layer.
+  # Set to 0 (default) for a single 1×1 Conv2d(hidden→1) per the paper.
+  # Set > 0 for a two-layer MLP: Conv2d(hidden→fc_hidden, k=fc_kernel) + ReLU + Conv2d(fc_hidden→1, k=1).
+  fc_hidden_channels: 0
+  # FC layer intermediate kernel size (only used if fc_hidden_channels > 0)
   fc_kernel_size: [3, 3]
 
 training:
