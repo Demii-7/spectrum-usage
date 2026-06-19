@@ -21,7 +21,7 @@ Evaluation: training/ConvLSTM/smoke_test/evaluation/
    - Normalization: per-frequency-bin z-score, fit on training set only
 
 3. Training
-   - Train loss: 0.403 (epoch 1) -> 0.080 (epoch 36, plateau)
+   - Train loss: 0.403 (epoch 1) -> 0.094 (epoch 38, plateau)
    - Best epoch: 8 (val loss 0.313)
    - Early stopped at epoch 38
    - Overfitting observed after ~8 epochs (9.3M params on 1586 windows)
@@ -50,5 +50,5 @@ Evaluation: training/ConvLSTM/smoke_test/evaluation/
    - Negative R² is expected: 9.3M parameter model on 1586 training windows
      (1.4 days of single-node data) lacks sufficient signal.
    - Full 3-node dataset (6839 rows) should produce meaningful results.
-   - evaluate.py plot_error_analysis produces a tight_layout warning
-     (cosmetic, output is correct).
+   - evaluate.py uses constrained_layout and shared colorbars
+     (tight_layout warning resolved).
