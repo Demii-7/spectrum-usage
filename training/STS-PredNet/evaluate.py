@@ -10,7 +10,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from dataset import create_datasets, collate_branch_samples, generate_target_indices
+from dataset import create_datasets, collate_branch_samples
 from stsprednet import STSPredNet
 from utils import (
     get_device, compute_metrics, compute_metrics_per_node,
