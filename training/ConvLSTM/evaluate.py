@@ -157,13 +157,15 @@ def main():
     pred_np = pred.cpu().numpy()
     target_np = target.cpu().numpy()
 
-    mean = stats["mean"]
-    std = stats["std"]
-    if isinstance(mean, np.ndarray):
-        pred_dbm = denormalize(pred_np, mean, std)
-        target_dbm = denormalize(target_np, mean, std)
-    else:
-        pred_dbm, target_dbm = pred_np, target_np
+    mean = np.asarray(stats["mean"])
+    std = np.asarray(stats["std"])
+    pred_dbm = denormalize(pred_np, mean, std)
+    target_dbm = denormalize(target_np, mean, std)
+
+    print(f"pred_np range: [{pred_np.min():.4f}, {pred_np.max():.4f}]")
+    print(f"target_np range: [{target_np.min():.4f}, {target_np.max():.4f}]")
+    print(f"pred_dbm range: [{pred_dbm.min():.2f}, {pred_dbm.max():.2f}]")
+    print(f"target_dbm range: [{target_dbm.min():.2f}, {target_dbm.max():.2f}]")
 
     bs, t_out, c, h, w = pred_dbm.shape
     pred_flat = pred_dbm.reshape(bs, t_out, -1)
