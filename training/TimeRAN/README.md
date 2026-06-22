@@ -1,172 +1,525 @@
-# TimeRAN Adaptation for AERPAW Spectrum Prediction
+# TimeRAN Spectrum Prediction — Adaptation
 
-## 1. What TimeRAN Already Provides
+> **Based on:** *A Family of Open Time-Series Foundation Models for the Radio Access Network* — Panitsas, Tassiulas (arXiv 2026)
+>
+> **Built on:** MOMENT — a transformer-based time-series foundation model (`momentfm` library)
+>
+> **Repository:** https://github.com/Demii-7/TimeRAN
+>
+> **Target dataset:** AERPAW sub-6 GHz spectrum monitoring dataset — Fixed nodes CC1, CC2, LW1 (Feb 2022)
 
-TimeRAN is a family of open time-series foundation models for the Radio Access Network (RAN), built on top of **MOMENT** (`MOMENTPipeline` from `momentfm`). The repository at `git@github.com:Demii-7/TimeRAN.git` provides:
+**TimeRAN is reused, not reconstructed.** We are adapting an existing pretrained foundation model to AERPAW spectrum prediction. Forecasting is the correct downstream task. The 750-channel input is not an architecture blocker — GPU memory is the main risk.
 
-### Pretrained Backbone Checkpoints
-| Variant | Hugging Face Model | Checkpoint File |
-|---------|--------------------|-----------------|
-| small   | `AutonLab/MOMENT-1-small` | `TimeRAN_small.pth` |
-| base    | `AutonLab/MOMENT-1-base`  | `TimeRAN_base.pth`  |
-| large   | `AutonLab/MOMENT-1-large` | `TimeRAN_large.pth`  |
+---
 
-The checkpoints are fine-tuned versions of MOMENT backbone weights (encoder + embedder) trained on the TimeRAN DataPile. Task heads are **not** included in the checkpoint — they are stripped and reinitialized at load time.
+## Quick Start
 
-### Downstream Task Heads (via MOMENTPipeline)
-| Task | `task_name` | Output Attribute | Description |
-|------|-------------|------------------|-------------|
-| Forecasting | `"forecasting"` | `out.forecast` | Linear projection to `forecast_horizon` |
-| Anomaly Detection | `"reconstruction"` | `out.reconstruction` | Reconstruction-based scoring |
-| Imputation | `"reconstruction"` | `out.reconstruction` | Masked reconstruction |
-| Classification | `"classification"` | `out.logits` | Linear head to `num_class` |
+### Setup
 
-### Training Modes
-- **`full_finetuning`** — updates all parameters
-- **`linear_probing`** — freezes backbone, trains only task head
-- **`lora: true`** — applies LoRA to encoder (PEFT)
-
-### Task Folders
-```
-TimeRAN_Foundation_Model/
-  forecasting/          forecasting.ipynb + config.yaml
-  anomaly_detection/    zero_shot_anomaly_detection.ipynb + config.yaml
-  classification/       classification.ipynb + config.yaml
-  imputation/           zero_shot_imputation.ipynb + config.yaml
-  data/
-    interfaces/
-      TelecomTS.py      Dataset class for all tasks
-    checkpoints/        Local .pth checkpoint storage
-    datasets/           TelecomTS CSV data organized by task
+```bash
+cd /home/cc/spectrum-usage
+pip install momentfm torch numpy pyyaml tqdm scikit-learn
 ```
 
-## 2. Why Spectrum Prediction = Forecasting
+### Download Checkpoint
 
-| Task | Why NOT suited |
-|------|---------------|
-| **Anomaly Detection** | Reconstruction-based; detects anomalous timesteps, does not predict future values. |
-| **Classification** | Produces a single categorical label per window, not a continuous multi-step multi-variable sequence. |
-| **Imputation** | Fills missing values within a window; no forward-looking prediction. |
-| **Forecasting** | **Exactly** what we need: given `T_in` historical timesteps across all 750 channels, predict the next `T_out` timesteps. |
-
-Spectrum prediction is a **multivariate multi-step forecasting** problem — the forecasting task is the correct interface.
-
-## 3. Adaptation Pipeline
-
-```
-merged_power_data_sub6GHz_avg_per_minute.csv   (6839, 750)
-                       |
-                       ↓
-            Load as multivariate time series
-                       |
-                       ↓
-                Normalize (fit on training split only)
-                       |
-                       ↓
-                Create sliding windows
-            X: (num_windows, T_in, 750)
-            Y: (num_windows, T_out, 750)
-                       |
-                       ↓
-            Load pretrained TimeRAN checkpoint
-            (MOMENTPipeline + TimeRAN .pth weights)
-                       |
-                       ↓
-            Attach forecasting head
-            (task_name="forecasting", forecast_horizon=T_out)
-                       |
-                       ↓
-            Train head first (freeze backbone = linear_probing mode)
-                       |
-                       ↓
-            Optionally fine-tune backbone (full_finetuning or LoRA)
-                       |
-                       ↓
-            Evaluate: RMSE / MAE per horizon, node, frequency bin
+```bash
+# Download TimeRAN checkpoint files to training/TimeRAN/checkpoints/
+# e.g., training/TimeRAN/checkpoints/base/TimeRAN_base.pth
 ```
 
-## 4. Expected Input/Output Shapes
+### Train Forecasting Head (Linear Probing)
 
-| Stage | Shape | Notes |
-|-------|-------|-------|
-| Raw CSV | `(6839, 750)` | 6839 timesteps × 750 features |
-| Input window (X) | `(B, T_in, 750)` | MOMENT expects `(B, C, T)` — may need transpose to `(B, 750, T_in)` |
-| Target window (Y) | `(B, T_out, 750)` | Forecasting head produces `(B, 750, T_out)` |
-| Analysis reshape | `(B, T_out, 3, 250)` | 3 nodes × 250 bins; for per-node/per-bin metrics only |
+```bash
+python3 training/TimeRAN/train_head.py
+```
 
-**Note:** MOMENT internally treats input as `(batch, channels, sequence_length)`. The `TelecomTS` dataset transposes CSV rows from `(T, C)` to `(C, T)`. Our dataset must follow the same convention.
+### Evaluate
 
-## 5. Reconstruction Strategy
+```bash
+python3 training/TimeRAN/evaluate.py \
+    --checkpoint training/TimeRAN/checkpoints/best_model.pt
+```
 
-This is **not** a full model rebuild like ConvLSTM. We are reusing the pretrained TimeRAN foundation model as-is.
+### Run Inference on New Data
 
-What needs adaptation:
-- **Dataset interface** — replace `TelecomTS` with an `AERPawDataset` that loads our CSV
-- **Forecasting head dimension** — confirm the existing head handles 750 channels (MOMENT processes each channel independently, so this should work natively)
-- **Metrics** — RMSE/MAE computed per horizon step, per node, per frequency bin
+```bash
+python3 training/TimeRAN/inference.py \
+    --checkpoint training/TimeRAN/checkpoints/best_model.pt \
+    --input /path/to/new_measurements.csv \
+    --output predictions.csv
+```
 
-What stays unchanged:
-- Backbone architecture (MOMENT transformer encoder)
-- Checkpoint loading mechanism
-- Training loop structure (from `forecasting.ipynb`)
-- Hyperparameter config structure
+---
 
-## 6. Open Questions (to be resolved during implementation)
+## Scripts Reference
 
-1. **Input shape**: Does `MOMENTPipeline` with `task_name="forecasting"` accept `(B, 750, T_in)` or does it expect an extra dimension? (`forecasting.ipynb` adds `unsqueeze(1)` when `ndim == 2`, suggesting `(B, C, T)` where C=1 for univariate — need to test with C=750.)
+### `train_head.py` — Train forecasting head
 
-2. **Forecasting head**: Is the linear head `head.linear` mapping from `d_model` to `forecast_horizon` per channel, or globally? Does the head output shape match `(B, C, H)` automatically?
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--config` | `config.yaml` | Path to configuration |
+| `--mode` | from config | `linear_probing`, `full_finetuning`, or `lora` |
+| `--batch-size` | from config | Override batch size |
+| `--epochs` | from config | Override max epochs |
+| `--lr` | from config | Override learning rate |
 
-3. **750-channel support**: Does MOMENT's embedder handle 750 input channels natively, or does it have a maximum channel limit? The `n_channels` parameter in classification config suggests channel count is configurable.
+Output: `checkpoints/best_model.pt`, `checkpoints/last_model.pt`, `checkpoints/normalization_stats.pt`.
 
-4. **Checkpoint loading**: Does `load_state_dict(strict=False)` silently ignore mismatched embedder weights if channel counts differ? The TimeRAN checkpoint was trained on 8-channel TelecomTS data — loading into a 750-channel model may cause shape mismatch on the embedder.
+### `evaluate.py` — Evaluate a trained model
 
-5. **Freezing backbone**: Does `freeze_encoder=True` + `freeze_embedder=True` in `model_kwargs` cleanly freeze all non-head parameters? Verified from the code: yes, but only if the embedder shape matches (otherwise loading fails before freezing).
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--checkpoint` | — | Path to `.pt` checkpoint (required) |
+| `--config` | from checkpoint | Path to config |
+| `--output` | `evaluation/` | Output directory |
 
-6. **Input normalization**: Does the TelecomTS dataset apply any normalization? Reading the code — **no**, it loads raw CSV values. MOMENT may expect standardized inputs; this needs empirical testing.
+Output: `evaluation/metrics.json`, `evaluation/predictions.csv`, `evaluation/spectrogram_*.png`.
 
-7. **Dataset interface**: The existing `TelecomTS.__init__` expects a specific data directory structure. We will need a new dataset class (or a flag) that loads a single CSV and wraps it with sliding windows.
+### `inference.py` — Predict on new CSV data
 
-8. **Stride and overlap**: With 6839 timesteps, what stride yields sufficient training samples? If `stride < seq_len`, windows overlap — acceptable but must avoid data leakage between train/val/test splits.
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--checkpoint` | — | Path to `.pt` checkpoint (required) |
+| `--input` | — | Input CSV (750 cols) (required) |
+| `--output` | `predictions.csv` | Output CSV path |
 
-## 7. Proposed Files for Future Implementation
+### `dataset.py` — Data loading and preprocessing (library)
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `create_datasets(csv_path, n_features, ...)` | `(train_ds, val_ds, test_ds, stats)` | Loads CSV, normalizes, windows, splits chronologically |
+| `AERPAWDataset(data, t_in, t_out, indices)` | PyTorch `Dataset` | Returns `(X, Y)` as `(C, T_in)` and `(C, T_out)` |
+| `load_csv(path)` | `ndarray (T, C)` | Loads CSV via `numpy.loadtxt` |
+| `denormalize(data, mean, std)` | `ndarray` | Reverses z-score normalization |
+
+### `utils.py` — Metrics and helpers (library)
+
+| Function | Description |
+|----------|-------------|
+| `compute_metrics(pred, target)` | Returns `{"rmse", "mae"}` |
+| `compute_metrics_per_horizon(pred, target)` | Per-timestep metrics |
+| `compute_metrics_per_node(pred, target, names)` | Per-node metrics |
+| `save_checkpoint(path, model, optimizer, ...)` | Saves model weights, optimizer state, config, norm stats |
+| `load_checkpoint(path, device)` | Loads a saved checkpoint |
+| `get_device(device_str)` | Returns `torch.device` |
+| `set_seed(seed)` | Seeds all RNGs |
+
+---
+
+## File Structure
 
 ```
 training/TimeRAN/
-  README.md             # This file
-  config.yaml           # Configuration
-  dataset.py            # AERPawDataset — loads CSV, normalizes, creates windows
-  train_head.py         # Training script (linear probing + optional full fine-tune)
-  evaluate.py           # Evaluation script (RMSE/MAE per horizon/node/bin)
-  inference.py          # Inference script for deployment
-  utils.py              # Normalization, metrics, plotting helpers
+├── README.md                # This file
+├── config.yaml              # Configuration / hyperparameters
+├── dataset.py               # AERPAWDataset, data loading, normalization, windowing
+├── train_head.py            # Training loop, checkpointing, linear probing / fine-tuning
+├── evaluate.py              # Test set evaluation, metrics, visualizations
+├── inference.py             # Predict on new data, save predictions
+└── utils.py                 # Helpers: normalization, metrics, seeding, device setup
 ```
 
-## 8. Quick Start (Proposed — scripts do not exist yet)
+### State Flow
 
-```bash
-# 1. Install dependencies
-pip install momentfm torch pandas numpy pyyaml
-
-# 2. Download TimeRAN checkpoint
-#    (place in a local checkpoints/ directory)
-
-# 3. Edit config.yaml with your paths and hyperparameters
-
-# 4. Train forecasting head (backbone frozen)
-python train_head.py --config config.yaml
-
-# 5. Evaluate on test split
-python evaluate.py --config config.yaml
-
-# 6. Run inference on new data
-python inference.py --input new_spectrum.csv --checkpoint runs/best_model.pth
+```
+config.yaml
+    │
+    ▼
+dataset.py ──► train_head.py ──► model.pt (head weights)
+                                    │
+                                    ▼
+                               evaluate.py ──► metrics, plots, predictions.csv
+                                    │
+                                    ▼
+                               inference.py ──► predictions on new data
 ```
 
-## 9. ⚠️ Data Leakage Warning
+---
 
-- **Do not** normalize using global statistics. Compute mean/std **only on the training split** and apply the same transform to validation and test splits.
-- **Do not** allow validation or test windows to overlap with training windows. Use strict temporal split (first N% for train, next M% for val, last K% for test).
-- **Do not** shuffle across time when splitting — preserve temporal order.
-- **Evaluation** must be done autoregressively or using the same forecasting setup intended for inference (matching context length and horizon).
-- **Stride** must be chosen so that train/val/test windows come from disjoint time regions.
+## Configuration Reference
+
+| Category | Parameter | Default | Description |
+|----------|-----------|---------|-------------|
+| Data | `dataset_path` | `training/data/merged_power_data_sub6GHz_avg_per_minute.csv` | Input CSV path |
+| Data | `n_features` | 750 | Total columns (3 nodes × 250 bins) |
+| Data | `n_nodes` | 3 | Number of sensor nodes |
+| Data | `bins_per_node` | 250 | Frequency bins per node |
+| Data | `node_names` | `["CC1","CC2","LW1"]` | Node labels for plots/metrics |
+| Preprocessing | `normalization` | `revin_only` | `revin_only` or `train_zscore` |
+| Preprocessing | `fit_on_train_only` | true | Compute norm stats on training set only |
+| Windowing | `input_sequence_length` | 128 | Past minutes (T_in) |
+| Windowing | `prediction_horizon` | 16 | Future minutes (T_out) |
+| Windowing | `stride` | 16 | Window stride |
+| Split | `train_ratio` | 0.8 | Training set fraction |
+| Split | `val_ratio` | 0.1 | Validation set fraction |
+| Split | `test_ratio` | 0.1 | Test set fraction |
+| Split | `chronological_split` | true | Chronological split |
+| Model | `checkpoint_size` | `base` | `small`, `base`, or `large` |
+| Model | `checkpoint_path` | `checkpoints/base/TimeRAN_base.pth` | Local TimeRAN `.pth` |
+| Model | `task` | `forecasting` | Downstream task |
+| Model | `freeze_backbone` | true | Freeze encoder + embedder |
+| Model | `train_head_only` | true | Train only the head |
+| Training | `batch_size` | 1 | Mini-batch size (start small for 750 channels) |
+| Training | `epochs` | 10 | Max training epochs |
+| Training | `learning_rate` | 1e-5 | Initial learning rate |
+| Training | `max_learning_rate` | 1e-4 | OneCycleLR peak |
+| Training | `optimizer` | `adam` | Optimizer |
+| Training | `max_norm` | 5.0 | Gradient clipping |
+| Training | `seed` | 42 | Random seed |
+| Evaluation | `metrics` | `["rmse", "mae"]` | Metrics to report |
+| Evaluation | `eval_horizons` | `[1, 4, 8, 16]` | Per-horizon reporting steps |
+| Device | `device` | `auto` | `cuda:N`, `cpu`, or `auto` |
+
+---
+
+## 1. What the Model Is Intended to Do
+
+TimeRAN is a family of open time-series foundation models pretrained on the TimeRAN DataPile, a large corpus of RAN telemetry. It provides a pretrained transformer backbone (built on MOMENT) that can be adapted to downstream tasks via lightweight task-specific heads.
+
+**Our task: multivariate multi-step spectrum forecasting.**
+
+Given a window of past per-minute PSD measurements across 750 features (3 nodes × 250 frequency bins), predict the PSD values for multiple future time steps across all 750 features.
+
+| Task | Why Not Suited |
+|------|---------------|
+| **Anomaly detection** | Reconstruction-based; flags anomalous timesteps, does not predict future values |
+| **Classification** | Single categorical label per window, not a continuous sequence |
+| **Imputation** | Fills missing values within a window; no forward-looking prediction |
+| **Forecasting** | ✅ Correct: given `T_in` historical timesteps across all channels, predict the next `T_out` timesteps |
+
+---
+
+## 2. Input Format
+
+### 2.1 Raw CSV Format
+
+| Property | Value |
+|----------|-------|
+| Rows | 6,839 |
+| Columns | 750 |
+| Header | None |
+| Format | Comma-separated, 6 decimal places |
+| Values | PSD in dBm (−137.78 to −105.57) |
+| Missing | None |
+
+**Column layout:** columns 0–249 = CC1, 250–499 = CC2, 500–749 = LW1. Each row is one minute, chronological.
+
+### 2.2 CSV → Tensor Conversion
+
+```
+1. Load:  np.loadtxt(csv)  →  ndarray (6839, 750)
+
+2. Normalize:  revin_only (MOMENT internal RevIN handles this)
+   or optionally:  train_zscore (external z-score on training split)
+
+3. Split chronologically first:
+   Train:  first 80% of raw time steps
+   Val:    next  10%
+   Test:   last  10%
+
+4. Window separately per split:
+   For each split, slide a window of length T_in + T_out with given stride
+   X = window[:T_in]           shape (T_in, C)
+   Y = window[T_in:T_in+T_out] shape (T_out, C)
+   Transpose each to (C, T_in) and (C, T_out)
+```
+
+**Critical: split first, then window.** Generating windows first then splitting leaks information across the boundary.
+
+### 2.3 Expected Tensor Shapes
+
+```
+Raw CSV:                   (6839, 750)        — (T, C)
+After transpose per window:
+  Input:  (B, 750, T_in)   — (B, C, T_in)
+  Target: (B, 750, T_out)  — (B, C, T_out)
+Optional reshape for analysis:  (B, T_out, 3, 250)
+```
+
+MOMENT expects `(batch, channels, sequence_length)`. The dataset should transpose each window from `(T, C)` to `(C, T)` so the DataLoader produces `(B, C, T)`.
+
+---
+
+## 3. Model Architecture
+
+### 3.1 Overview
+
+```
+AERPAW CSV
+    ↓
+Sliding windows  ──►  X: (B, 750, T_in)
+                            ↓
+              ┌──────────────────────────────┐
+              │  MOMENT Backbone             │
+              │  (T5 Transformer Encoder)    │
+              │  Each channel = independent  │
+              │  sequence in batch dim       │
+              │  Shared nn.Linear embedder   │
+              │     ↓                        │
+              │  Output: (B, 750, N, d_model)│
+              └──────────────────────────────┘
+                            ↓
+              ┌──────────────────────────────┐
+              │  Forecasting Head            │
+              │  Flatten: (B, 750, N*d_model)│
+              │  Linear: N*d_model → T_out   │
+              │     ↓                        │
+              │  out.forecast: (B, 750, T_out)│
+              └──────────────────────────────┘
+                            ↓
+                    Predictions
+              (denormalized to dBm)
+```
+
+### 3.2 Backbone Architecture
+
+Three variants:
+
+| Variant | T5 Encoder | d_model | Layers | Heads | Params |
+|---------|-----------|---------|--------|-------|--------|
+| small | T5-small | 512 | 6 | 8 | ~40M |
+| base  | T5-base  | 768 | 12 | 12 | ~125M |
+| large | T5-large | 1024 | 24 | 16 | ~385M |
+
+Key components:
+- **Patching**: Unfold each channel into patches of length 8, stride 8 → N patches per channel
+- **PatchEmbedding**: Single shared `nn.Linear(8, d_model)` applied to every patch of every channel
+- **T5 Encoder**: Processes each channel independently (channels stacked in batch dim: `[B*C, N, d_model]`)
+- **RevIN**: Built-in per-channel reversible instance normalization
+
+### 3.3 Forecasting Head
+
+| Parameter | Value |
+|-----------|-------|
+| Type | `nn.Linear(N * d_model, T_out)` |
+| Input | `(B, C, N * d_model)` — per-channel flattened patches |
+| Output | `(B, C, T_out)` — per-channel predictions |
+| Initialization | Random (checkpoint head weights are always discarded) |
+
+### 3.4 Prediction Target
+
+```
+Raw output:  (B, 750, T_out)      — MOMENT convention
+Transpose:   (B, T_out, 750)      — flat format
+Reshape:     (B, T_out, 3, 250)   — for per-node per-bin analysis only
+```
+
+Output is in normalized space. Denormalize via RevIN (built-in) or external z-score inverse transform.
+
+---
+
+## 4. Output Format
+
+```
+out.forecast:   (B, 750, T_out)
+→ transpose:    (B, T_out, 750)
+→ reshape:      (B, T_out, 3, 250)  — analysis only
+```
+
+**Denormalization:**
+- If `revin_only`: MOMENT's RevIN denormalizer handles it automatically
+- If `train_zscore`: `pred_dbm = pred_normalized * feat_std + feat_mean` (per feature)
+
+**CSV output:** Same layout as input — no header, 750 columns, one row per predicted minute.
+
+**Visualization:** Reshape to `(T_out, 3, 250)`, select node, transpose to `(250, T_out)`, plot as spectrogram.
+
+---
+
+## 5. Training Pipeline
+
+### 5.1 Data Loading
+
+```python
+train_dataset = AERPAWDataset(
+    csv_path, split="train",
+    T_in=128, T_out=16, stride=16,
+    normalization="revin_only"
+)
+# X: (750, 128), Y: (750, 16)
+```
+
+The `AERPAWDataset`:
+1. Loads CSV as `(6839, 750)`
+2. Splits chronologically by time index (no windowing before split)
+3. Creates sliding windows within the split
+4. Transposes each window to `(C, T)` convention
+
+### 5.2 Normalization
+
+Two options:
+
+**Option A — RevIN only** (default, start here):
+- MOMENT's built-in `RevIN` normalizes per sample-channel before the encoder
+- No external normalization needed
+- Simple, safe baseline
+
+**Option B — External z-score + RevIN** (experimental):
+- Compute `mean_f`, `std_f` per feature from training split only
+- `X_norm[:, f] = (X[:, f] - mean_f) / std_f`
+- Applied to train/val/test before feeding to MOMENT (RevIN still runs internally)
+- May help if RevIN alone is insufficient
+
+### 5.3 Train / Validation / Test Split
+
+**Strict chronological split, applied to raw time series before windowing:**
+
+```
+Raw time steps: 0 ─────────────────────────────── 6838
+                  ├──────── 80% ────────┤──10%──┤─10%─┤
+                  Train (0..5470)      Val    Test
+```
+
+Generate windows inside each split independently. This ensures no boundary overlap leaks information.
+
+### 5.4 Window Generation
+
+With `T_in=128`, `T_out=16`, `stride=16`:
+
+| Split | Raw timesteps | Windows |
+|-------|---------------|---------|
+| Train | 0 – 5470 | (5471 − 144) / 16 + 1 ≈ 333 |
+| Val | 5471 – 6154 | (684 − 144) / 16 + 1 ≈ 34 |
+| Test | 6155 – 6838 | (684 − 144) / 16 + 1 ≈ 34 |
+
+Each window: `X = (128, 750)` → transpose → `(750, 128)`, `Y = (16, 750)` → transpose → `(750, 16)`.
+
+### 5.5 Loss Function
+
+Mean Squared Error (MSE):
+```
+L = (1 / (B × T_out × 750)) × Σ(predicted − target)²
+```
+
+### 5.6 Optimizer
+
+| Parameter | Value |
+|-----------|-------|
+| Type | Adam |
+| Learning rate | 1e-5 (linear probing) |
+| Max LR | 1e-4 (OneCycleLR peak, for full fine-tuning) |
+| Gradient clip | 5.0 |
+
+### 5.7 Batch Size
+
+Default: **1** (due to 750 channels × memory considerations). Increase to 2–8 after proving the pipeline works.
+
+### 5.8 Epochs
+
+Default: **10** for linear probing (converges quickly). Increase to 20–50 for LoRA or full fine-tuning.
+
+### 5.9 Training Strategy — Three Phases
+
+**Phase 1: Linear probing** (default, safest first experiment)
+- Backbone frozen (`freeze_encoder=true`, `freeze_embedder=true`)
+- Only forecasting head weights updated
+- Fast, minimal overfitting risk
+- Establishes whether the pretrained features are useful
+
+**Phase 2: LoRA**
+- Freeze most backbone, train low-rank adapters on attention projections + head
+- Good middle ground if head-only underfits
+
+**Phase 3: Full fine-tuning**
+- All parameters updated
+- Highest potential accuracy but risk of catastrophic forgetting
+- Only attempt after memory and overfitting are understood
+
+### 5.10 Evaluation Metrics
+
+| Metric | Formula | Purpose |
+|--------|---------|---------|
+| RMSE | √(mean((ŷ − y)²)) | Primary, same unit as dBm |
+| MAE | mean(\|ŷ − y\|) | Robust to outliers |
+
+Computed:
+- **Overall**: across all dimensions
+- **Per horizon**: RMSE at each future time step (t=1, 4, 8, 16)
+- **Per node**: RMSE for CC1, CC2, LW1 separately
+- **Per frequency bin**: RMSE per bin to identify problematic bands
+
+---
+
+## 6. Assumptions and Design Decisions
+
+### Assumptions
+
+1. **AERPAW has 750 features** (3 nodes × 250 bins). MOMENT supports arbitrary channel counts — each channel is an independent batch element for the T5 encoder.
+2. **The CSV has no header**, pure comma-separated dBm values in chronological order.
+3. **Normalization statistics** (if using `train_zscore`) are computed per feature across time, from training split only.
+4. **The split is chronological**, not random (time-series standard).
+5. **TimeRAN checkpoint head weights are always discarded** and the head is reinitialized for our specific `T_in` and `T_out`.
+6. **The embedder is fully channel-agnostic.** A single `nn.Linear(8, d_model)` is shared across all channels. No per-channel parameters exist, so the 8 → 750 change causes no loading issues.
+
+### Design Decisions
+
+1. **Foundation model adaptation, not reconstruction** — we reuse the pretrained backbone and only adapt the dataset interface and forecasting head.
+2. **750 features as independent channels** — unlike ConvLSTM (which reshapes to 2D spatial-spectral map), MOMENT processes each channel independently. No spatial reshape needed.
+3. **Linear probing first** — establishes baseline with minimal compute. LoRA and full fine-tuning are follow-up experiments.
+4. **Split before windowing** — prevents data leakage across split boundaries.
+5. **Start with `T_in=128`, batch=1** — conservative memory footprint. Scale up after pipeline is verified.
+6. **No cross-channel attention** — MOMENT stacks channels in the batch dimension, meaning the transformer never attends across channels. Each channel is predicted independently.
+
+---
+
+## 7. Deviations from Original TimeRAN Setup
+
+### AERPAW Adaptation
+
+| Aspect | Original (TelecomTS) | Our Adaptation | Reason |
+|--------|---------------------|----------------|--------|
+| Dataset | TelecomTS (8 channels, named KPI columns) | AERPAW (750 channels, unnamed PSD columns) | Different data source |
+| Dataset class | `TelecomTS` | `AERPAWDataset` (new) | Different file structure |
+| Channels | 8 | 750 | Spectrum vs KPI telemetry |
+| seq_len | 512 | 128 | Limited to 6839 timesteps |
+| horizon | 208 | 16 | Shorter prediction window |
+| stride | 512 (no overlap) | 16 (overlap) | Need more training windows |
+| Split | Per-file train_ratio | 3-way chronological on single file | Explicit val split |
+| Normalization | None (raw values) | `revin_only` (default) | MOMENT's built-in normalizer |
+
+### Implementation Choices
+
+1. **Linear probing as default**: Original notebooks use `full_finetuning`. We default to `linear_probing` because AERPAW (6839 rows) is much smaller than TelecomTS.
+2. **Three-way chronological split**: Original uses single `train_ratio` with remainder as test. We add explicit validation.
+3. **Start batch=1**: Memory scales with C × N × d_model. Batch=1 at C=750 with T_in=128 is ~5 GB for base.
+4. **`revin_only` normalization first**: Simplest path. Add `train_zscore` only if needed.
+
+### Experimental Options
+
+1. **Full fine-tuning**: Higher potential accuracy, risk of overfitting on small dataset.
+2. **LoRA**: Parameter-efficient middle ground.
+3. **Larger checkpoint**: Test `large` variant if memory permits.
+4. **Stride tuning**: Reduce to 1 for max windows, increase to reduce overlap.
+5. **External z-score**: Add explicit normalization if RevIN alone is insufficient.
+
+---
+
+## 8. Resolved and Unresolved Questions
+
+### Resolved
+
+1. **Embedder channel mismatch (8 vs 750): NOT AN ISSUE.** The MOMENT embedder is a single shared `nn.Linear(8, d_model)` with no per-channel parameters. Checkpoint loads cleanly regardless of channel count. The T5 encoder processes channels independently in the batch dimension — no architectural change needed.
+
+2. **Forecasting head output shape:** `(B, C, T_out)` where `C` = 750 (channels are preserved through the head).
+
+3. **Cross-channel attention:** MOMENT does NOT do cross-channel attention. Each channel is independent in the batch dim. This is fine for our use case — each frequency bin is predicted from its own history.
+
+4. **Normalization default:** Start with `revin_only` (MOMENT's built-in RevIN). This normalizes per sample-channel and handles the dBm range.
+
+### Still Need Clarification
+
+1. **GPU memory at scale:** With T_in=128, batch=1, C=750, base should use ~5 GB. This needs empirical verification.
+2. **RevIN vs external z-score:** Whether RevIN alone is sufficient for our data range (−138 to −105 dBm) needs experimental comparison.
+3. **Optimal stride:** Need to balance window count vs independence.
+4. **LoRA effectiveness:** Whether LoRA improves over linear probing for this dataset.
+5. **Checkpoint download:** The original TimeRAN repo uses `panitsasi/TimeRAN` but the cloned repo is `Demii-7/TimeRAN`. Verify checkpoint availability.
+
+---
+
+## References
+
+1. **TimeRAN paper:** I. Panitsas, L. Tassiulas, "A Family of Open Time-Series Foundation Models for the Radio Access Network," arXiv:2604.04271, 2026.
+2. **TimeRAN repository:** https://github.com/Demii-7/TimeRAN
+3. **MOMENT:** MOMENT: A Family of Open Time-series Foundation Models (ICML 2024). https://github.com/moment-timeseries-foundation-model/moment
+4. **AERPAW dataset:** AERPAW sub-6 GHz spectrum monitoring dataset — Fixed nodes CC1, CC2, LW1 (Feb 2022). DOI: 10.5061/dryad.hmgqnk9zn.
