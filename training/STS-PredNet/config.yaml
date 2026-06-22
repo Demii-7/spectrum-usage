@@ -1,0 +1,121 @@
+# =============================================================================
+# STS-PredNet Spectrum Prediction — Configuration
+# =============================================================================
+# Reconstructed from: "Deep Learning for Spectrum Prediction From
+#   Spatial–Temporal–Spectral Data"
+#   Li, Liu, Chen, Xu, Zhu (IEEE Communications Letters, 2020)
+# =============================================================================
+# Conceptual reference (incomplete): https://github.com/Demii-7/pred-rnn
+# =============================================================================
+
+data:
+  # Path to the processed AERPAW CSV (6839 rows × 750 cols, no header, dBm)
+  dataset_path: "training/data/merged_power_data_sub6GHz_avg_per_minute.csv"
+  # Number of sensor nodes
+  n_nodes: 3
+  # Frequency bins per node
+  bins_per_node: 250
+  # Total feature columns (3 nodes × 250 bins)
+  n_features: 750
+  # Node names (used for plot labels and per-node metrics)
+  node_names: ["CC1", "CC2", "LW1"]
+
+preprocessing:
+  # Normalization method:
+  #   minmax_neg1_pos1 — paper default, scales to [-1, 1]
+  #   zscore          — zero-mean unit-variance
+  #   none            — raw dBm values
+  normalization: "minmax_neg1_pos1"
+  # Fit normalization on training set only (true) or full dataset (false)
+  fit_on_train_only: true
+
+splits:
+  # Train/validation/test split ratios (applied chronologically to raw time series)
+  # Split FIRST, then generate branch samples inside each split
+  train_ratio: 0.8
+  val_ratio: 0.1
+  test_ratio: 0.1
+  # If true, split chronologically (recommended for time series).
+  # If false, splits are random.
+  chronological_split: true
+
+branches:
+  # Enable/disable each temporal branch independently
+  use_closeness: true
+  use_period: true
+  use_trend: false  # disabled because AERPAW has only 6839 min (< 1 week)
+
+  # Sequence lengths for each branch (from paper)
+  lc: 36   # closeness: number of recent consecutive time steps
+  lp: 7    # period:    number of daily-period samples
+  lq: 4    # trend:     number of weekly-trend samples  (currently unused)
+
+  # Time intervals (in minutes) for period and trend sampling
+  # AERPAW is 1-minute resolution
+  period_interval: 1440    # 1 day (24 × 60)
+  trend_interval: 10080   # 1 week (7 × 1440)  (currently unused)
+
+  # Whether to share PredRNN weights across branches
+  # If false, each branch has independent parameters (paper default).
+  share_branch_weights: false
+
+model:
+  # Input channel dimension (1 for single-channel power spectrogram)
+  input_channels: 1
+  # Spectrum map spatial dimensions
+  map_height: 3
+  map_width: 250
+  # Number of STS-ConvLSTM layers per PredRNN branch (from paper)
+  num_layers: 4
+  # Hidden dimension per layer (from paper)
+  hidden_dim: 128
+  # Convolution kernel size (from paper)
+  kernel_size: [3, 3]
+  # Learnable fusion weight shape:
+  #   per_location — shape (1, 1, H, W), different weight per node-frequency cell
+  #   per_branch   — shape (1, 1, 1, 1), single scalar per branch
+  fusion_weight_shape: "per_location"
+  # Output activation: "tanh" (paper default) or "linear"
+  output_activation: "tanh"
+
+training:
+  # Training batch size (from paper; configurable for GPU memory)
+  batch_size: 32
+  # Maximum number of training epochs (from paper)
+  epochs: 500
+  # Initial learning rate (Adam, from paper)
+  learning_rate: 0.0002
+  # Optimizer: "adam" or "nadam"
+  optimizer: "adam"
+  # Adam beta1
+  beta1: 0.9
+  # Adam beta2
+  beta2: 0.999
+  # Adam epsilon
+  epsilon: 1.0e-8
+  # Weight decay (L2 regularization)
+  weight_decay: 0.0
+  # Loss function: "mse" (paper default)
+  loss: "mse"
+  # Enable early stopping based on validation loss
+  early_stopping: true
+  # Patience for early stopping (epochs without validation improvement)
+  patience: 30
+  # Gradient clipping max norm
+  gradient_clip_norm: 5.0
+  # Random seed for reproducibility
+  seed: 42
+
+evaluation:
+  # Metrics to compute during evaluation
+  metrics: ["rmse", "mae", "r2"]
+  # Optional metrics (may be unstable for negative/zero dBm values)
+  optional_metrics: ["mape"]
+  # Report per-node metrics (separate RMSE/MAE/R² for CC1, CC2, LW1)
+  per_node_metrics: true
+  # Report per-frequency-bin metrics (RMSE across all nodes for each bin)
+  per_frequency_metrics: true
+
+device:
+  # Device: "cuda:N", "cpu", or "auto"
+  device: "auto"
