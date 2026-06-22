@@ -50,6 +50,9 @@ branches:
   lp: 3    # period:    paper default 7, but reduced to 3 because 7 × 1440 = 10080 > 6839
   lq: 4    # trend:     number of weekly-trend samples (currently unused; needs 40320 min)
 
+  # Number of minutes ahead to predict (target time = current + prediction_offset)
+  prediction_offset: 1
+
   # Time intervals (in minutes) for period and trend sampling
   # AERPAW is 1-minute resolution
   period_interval: 1440    # 1 day (24 × 60); lp=3 needs 4320 min history (fits in 6839)
