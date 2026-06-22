@@ -44,12 +44,16 @@ cd /home/cc/spectrum-usage
 python3 training/TimeRAN/train_head.py
 ```
 
+Output checkpoints go to `training/TimeRAN/checkpoints/`. Override with `--checkpoint-dir`.
+
 ### Evaluate
 
 ```bash
 python3 training/TimeRAN/evaluate.py \
     --checkpoint training/TimeRAN/checkpoints/best_model.pt
 ```
+
+Output (metrics, predictions CSV, spectrograms, error analysis) goes to `training/TimeRAN/evaluation/`. Override with `--output`.
 
 ### Run Inference on New Data
 
@@ -73,18 +77,20 @@ python3 training/TimeRAN/inference.py \
 | `--batch-size` | from config | Override batch size |
 | `--epochs` | from config | Override max epochs |
 | `--lr` | from config | Override learning rate |
+| `--checkpoint-dir` | `checkpoints/` | Output directory for checkpoints |
 
-Output: `checkpoints/best_model.pt`, `checkpoints/last_model.pt`, `checkpoints/normalization_stats.pt`.
+Output: `checkpoints/best_model.pt`, `checkpoints/last_model.pt`, `checkpoints/normalization_stats.pt`, `checkpoints/training_log.json`.
 
 ### `evaluate.py` — Evaluate a trained model
 
 | Argument | Default | Description |
 |----------|---------|-------------|
 | `--checkpoint` | — | Path to `.pt` checkpoint (required) |
-| `--config` | from checkpoint | Path to config |
+| `--config` | from checkpoint | Path to config (overrides embedded config) |
+| `--horizons` | `[1, 3, 6]` | Horizons to report |
 | `--output` | `evaluation/` | Output directory |
 
-Output: `evaluation/metrics.json`, `evaluation/predictions.csv`, `evaluation/spectrogram_*.png`.
+Output: `evaluation/metrics.json`, `evaluation/predictions.csv`, `evaluation/ground_truth.csv`, `evaluation/spectrogram_{NODE}.png`, `evaluation/error_analysis.png`.
 
 ### `inference.py` — Predict on new CSV data
 
@@ -107,7 +113,7 @@ Output: `evaluation/metrics.json`, `evaluation/predictions.csv`, `evaluation/spe
 
 | Function | Description |
 |----------|-------------|
-| `compute_metrics(pred, target)` | Returns `{"rmse", "mae"}` |
+| `compute_metrics(pred, target)` | Returns `{"rmse", "mae", "r2"}` |
 | `compute_metrics_per_horizon(pred, target)` | Per-timestep metrics |
 | `compute_metrics_per_node(pred, target, names)` | Per-node metrics |
 | `save_checkpoint(path, model, optimizer, ...)` | Saves model weights, optimizer state, config, norm stats |
@@ -127,7 +133,23 @@ training/TimeRAN/
 ├── train_head.py            # Training loop, checkpointing, linear probing / fine-tuning
 ├── evaluate.py              # Test set evaluation, metrics, visualizations
 ├── inference.py             # Predict on new data, save predictions
-└── utils.py                 # Helpers: normalization, metrics, seeding, device setup
+├── utils.py                 # Helpers: normalization, metrics, seeding, device setup
+├── checkpoints/             # Trained model checkpoints, training log
+├── evaluation/              # Evaluation outputs (metrics, plots, CSVs)
+└── smoke_test/              # Smoke test (CC2 single-node, 2000 rows)
+    ├── config.yaml
+    ├── report.txt
+    ├── checkpoints/
+    │   ├── best_model.pt
+    │   ├── last_model.pt
+    │   ├── normalization_stats.pt
+    │   └── training_log.json
+    └── evaluation/
+        ├── metrics.json
+        ├── predictions.csv
+        ├── ground_truth.csv
+        ├── spectrogram_CC2.png
+        └── error_analysis.png
 ```
 
 ### State Flow
@@ -136,13 +158,16 @@ training/TimeRAN/
 config.yaml
     │
     ▼
-dataset.py ──► train_head.py ──► model.pt (head weights)
-                                    │
-                                    ▼
-                               evaluate.py ──► metrics, plots, predictions.csv
-                                    │
-                                    ▼
-                               inference.py ──► predictions on new data
+dataset.py ──► train_head.py ──► checkpoints/best_model.pt
+                                     │
+                                     ▼
+                                evaluate.py ──► evaluation/metrics.json
+                                                evaluation/predictions.csv
+                                                evaluation/spectrogram_{NODE}.png
+                                                evaluation/error_analysis.png
+                                     │
+                                     ▼
+                                inference.py ──► predictions on new data
 ```
 
 ---
@@ -166,7 +191,7 @@ dataset.py ──► train_head.py ──► model.pt (head weights)
 | Split | `test_ratio` | 0.1 | Test set fraction |
 | Split | `chronological_split` | true | Chronological split |
 | Model | `checkpoint_size` | `base` | `small`, `base`, or `large` |
-| Model | `checkpoint_path` | `checkpoints/base/TimeRAN_base.pth` | Local TimeRAN `.pth` |
+| Model | `checkpoint_path` | `checkpoints/base/TimeRAN_base.pth` | Path to TimeRAN `.pth` (Google Drive download) |
 | Model | `task` | `forecasting` | Downstream task |
 | Model | `freeze_backbone` | true | Freeze encoder + embedder |
 | Model | `train_head_only` | true | Train only the head |

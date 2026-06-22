@@ -1,5 +1,6 @@
 import argparse
 import copy
+import json
 import sys
 from pathlib import Path
 
@@ -121,6 +122,7 @@ def train_epoch(
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
             optimizer.step()
+
         if scheduler:
             scheduler.step()
 
@@ -134,6 +136,7 @@ def train_epoch(
 def validate(model, dataloader, criterion, device):
     model.eval()
     losses = []
+    all_pred, all_target = [], []
     for timeseries, forecast in dataloader:
         timeseries = timeseries.to(device)
         forecast = forecast.to(device)
@@ -148,19 +151,28 @@ def validate(model, dataloader, criterion, device):
             loss = criterion(out.forecast, forecast)
 
         losses.append(loss.item())
-    return float(np.mean(losses))
+        all_pred.append(out.forecast)
+        all_target.append(forecast)
+
+    pred_cat = torch.cat(all_pred, dim=0)
+    target_cat = torch.cat(all_target, dim=0)
+    metrics = compute_metrics(pred_cat.cpu().numpy(), target_cat.cpu().numpy())
+    metrics["loss"] = float(np.mean(losses))
+    return metrics, pred_cat, target_cat
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="training/TimeRAN/config.yaml")
+    parser.add_argument("--config", default=None)
     parser.add_argument("--mode", default=None, choices=["linear_probing", "full_finetuning", "lora"])
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--lr", type=float, default=None)
+    parser.add_argument("--checkpoint-dir", default=None)
     args = parser.parse_args()
 
-    with open(args.config) as f:
+    config_path = args.config or str(Path(__file__).parent / "config.yaml")
+    with open(config_path) as f:
         config = yaml.safe_load(f)
 
     if args.mode:
@@ -179,37 +191,36 @@ def main():
     device = get_device(config["device"]["device"])
     print(f"Device: {device}")
 
-    csv_path = config["data"]["dataset_path"]
-    t_in = config["windowing"]["input_sequence_length"]
-    t_out = config["windowing"]["prediction_horizon"]
-    stride = config["windowing"]["stride"]
-    train_ratio = config["split"]["train_ratio"]
-    val_ratio = config["split"]["val_ratio"]
-    normalization = config["preprocessing"]["normalization"]
+    dcfg = config["data"]
+    wcfg = config["windowing"]
+    scfg = config["split"]
+
+    csv_path = dcfg["dataset_path"]
+    if not Path(csv_path).exists():
+        csv_path = str(Path(__file__).resolve().parent.parent.parent / csv_path)
 
     train_ds, val_ds, test_ds, norm_stats = create_datasets(
         csv_path=csv_path,
-        t_in=t_in,
-        t_out=t_out,
-        stride=stride,
-        train_ratio=train_ratio,
-        val_ratio=val_ratio,
-        normalization=normalization,
+        t_in=wcfg["input_sequence_length"],
+        t_out=wcfg["prediction_horizon"],
+        stride=wcfg["stride"],
+        train_ratio=scfg["train_ratio"],
+        val_ratio=scfg["val_ratio"],
+        normalization=config["preprocessing"]["normalization"],
     )
 
     batch_size = config["training"]["batch_size"]
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, drop_last=True)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, drop_last=True) if train_ds else None
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False) if val_ds else None
     test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False) if test_ds else None
 
-    print(f"Train windows: {len(train_ds)}, Val windows: {len(val_ds) if val_ds else 0}, Test windows: {len(test_ds) if test_ds else 0}")
+    print(f"Train windows: {len(train_ds) if train_ds else 0}, Val: {len(val_ds) if val_ds else 0}, Test: {len(test_ds) if test_ds else 0}")
 
     model = build_model(config, device)
 
     total = sum(p.numel() for p in model.parameters())
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    frozen = total - trainable
-    print(f"Total params: {total:,}, Trainable: {trainable:,}, Frozen: {frozen:,}")
+    print(f"Total params: {total:,}, Trainable: {trainable:,}, Frozen: {total - trainable:,}")
 
     criterion = torch.nn.MSELoss().to(device)
     lr = config["training"]["learning_rate"]
@@ -217,40 +228,67 @@ def main():
 
     epochs = config["training"]["epochs"]
     max_lr = config["training"].get("max_learning_rate", lr)
-    total_steps = len(train_loader) * epochs
-    scheduler = OneCycleLR(optimizer, max_lr=max_lr, total_steps=total_steps, pct_start=0.3)
+    total_steps = len(train_loader) * epochs if train_loader else 0
+    scheduler = OneCycleLR(optimizer, max_lr=max_lr, total_steps=total_steps, pct_start=0.3) if total_steps > 0 else None
     scaler = torch.amp.GradScaler("cuda") if device.type == "cuda" else None
 
-    best_val_loss = float("inf")
-    ckpt_dir = Path("training/TimeRAN/checkpoints")
+    ckpt_dir = Path(args.checkpoint_dir or Path(__file__).parent / "checkpoints")
     ckpt_dir.mkdir(parents=True, exist_ok=True)
+    log_path = ckpt_dir / "training_log.json"
+    log_data = {"train_loss": [], "val_metrics": []}
+
+    best_val_loss = float("inf")
+    best_epoch = 0
 
     for epoch in range(epochs):
-        train_loss = train_epoch(model, train_loader, criterion, optimizer, scheduler, scaler, device)
+        train_loss = train_epoch(model, train_loader, criterion, optimizer, scheduler, scaler, device) if train_loader else 0.0
         print(f"Epoch {epoch+1}/{epochs}: Train MSE: {train_loss:.6f}")
 
+        val_metrics = {"loss": float("inf"), "rmse": 0.0, "mae": 0.0, "r2": 0.0}
         if val_loader:
-            val_loss = validate(model, val_loader, criterion, device)
-            print(f"Epoch {epoch+1}/{epochs}: Val MSE: {val_loss:.6f}")
+            val_metrics, _, _ = validate(model, val_loader, criterion, device)
 
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-                save_checkpoint(
-                    str(ckpt_dir / "best_model.pt"),
-                    model, optimizer, epoch, train_loss, val_loss, config, norm_stats,
-                )
+        log_data["train_loss"].append(train_loss)
+        log_data["val_metrics"].append(val_metrics)
+        with open(log_path, "w") as f:
+            json.dump(log_data, f, indent=2)
+
+        print(f"  Val Loss: {val_metrics.get('loss', 0):.6f} | Val RMSE: {val_metrics.get('rmse', 0):.4f}")
 
         if test_loader:
-            test_loss = validate(model, test_loader, criterion, device)
-            print(f"Epoch {epoch+1}/{epochs}: Test MSE: {test_loss:.6f}")
+            test_metrics, _, _ = validate(model, test_loader, criterion, device)
+            print(f"  Test MSE: {test_metrics.get('loss', 0):.6f} | Test RMSE: {test_metrics.get('rmse', 0):.4f}")
+
+        if val_metrics.get("loss", float("inf")) < best_val_loss:
+            best_val_loss = val_metrics["loss"]
+            best_epoch = epoch + 1
+            save_checkpoint(
+                str(ckpt_dir / "best_model.pt"),
+                model, optimizer, best_epoch, train_loss, val_metrics, config, norm_stats,
+            )
+            if norm_stats:
+                torch.save(norm_stats, ckpt_dir / "normalization_stats.pt")
+
+    if test_loader:
+        print("\n=== Test Set Evaluation ===")
+        test_metrics, pred, target = validate(model, test_loader, criterion, device)
+        print(f"Test RMSE: {test_metrics['rmse']:.4f}")
+        print(f"Test MAE:  {test_metrics['mae']:.4f}")
+        print(f"Test R\u00b2:   {test_metrics['r2']:.4f}")
+
+        save_checkpoint(
+            str(ckpt_dir / "best_model.pt"),
+            model, optimizer, best_epoch, train_loss, test_metrics, config, norm_stats,
+        )
 
     save_checkpoint(
         str(ckpt_dir / "last_model.pt"),
-        model, optimizer, epochs - 1, train_loss,
-        val_loss if val_loader else 0.0, config, norm_stats,
+        model, optimizer, epochs, train_loss,
+        val_metrics if val_loader else {"loss": 0.0, "rmse": 0.0, "mae": 0.0, "r2": 0.0},
+        config, norm_stats,
     )
 
-    print("Training complete.")
+    print(f"\nDone. Best epoch: {best_epoch}. Checkpoints in {ckpt_dir}/")
 
 
 if __name__ == "__main__":

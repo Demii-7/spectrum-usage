@@ -1,44 +1,47 @@
-Smoke Test Report
-=================
+Smoke Test Report — TimeRAN Spectrum Prediction Pipeline
+=========================================================
 Date: 2026-06-22
-Config: config_smoke.yaml
+Config: training/TimeRAN/smoke_test/config.yaml
+Checkpoints: training/TimeRAN/smoke_test/checkpoints/
+Evaluation: training/TimeRAN/smoke_test/evaluation/
 
-Dataset:
-  Node: CC2 (250 bins)
-  Time steps: 2000 (1983 windows after T_in=12, T_out=6, stride=1)
-  Split: chronological 80/10/10 (train=1586, val=198, test=183)
-  Normalization: revin_only (RevIN instance norm applied to each window)
+---
+1. Configuration
+   - Dataset: training/TimeRAN/smoke_test/cc2_2k.csv (CC2 only, 2000 rows x 250 cols)
+   - Nodes: 1 (CC2)
+   - T_in: 12, T_out: 6, Stride: 1
+   - Split: 80/10/10 chronological
+   - Model: MOMENT-base via TimeRAN, 109,640,070 params
+   - Training: 5 epochs, batch=16, lr=1e-5, OneCycleLR (max_lr=1e-3)
 
-Model:
-  Base: MOMENT (pretrained via TimeRAN)
-  Head: Linear probing (forecasting head only, backbone frozen)
-  Input: 12 time steps
-  Output: 6 time steps
-  Channels: 250 frequency bins (single node CC2)
+2. Data Loading
+   - Train windows: 1583
+   - Val windows:   183
+   - Test windows:  183
+   - Normalization: revin_only (MOMENT internal RevIN)
 
-Hardware: CPU (NVIDIA driver too old for CUDA 12.6)
+3. Training
+   - Train MSE: 2.29 (epoch 1) -> ~1.28 (epoch 5)
+   - Best epoch: 1 (val MSE 2.04)
+   - No TimeRAN checkpoint found; fell back to raw MOMENT weights
 
-Training: 5 epochs, batch=16, OneCycleLR (max_lr=1e-3)
+4. Evaluation
+   - Test RMSE:  1.59
+   - Test MAE:   1.22
+   - Per-horizon RMSE: t=1: 1.55, t=3: 1.58, t=6: 1.61
+   - Per-node RMSE: CC2: 1.59
 
-Results:
-  Overall RMSE: 1.59
-  Overall MAE:  1.22
+5. Pipeline Verification
+   - [x] Data loading and preprocessing
+   - [x] Training loop with checkpointing
+   - [x] Training log (training_log.json)
+   - [x] Test set evaluation
+   - [x] Per-horizon and per-node metrics
+   - [x] Ground truth vs prediction spectrogram plot
+   - [x] Error analysis plot
+   - [x] Prediction CSV export
+   - [x] Inference on new data via inference.py
 
-  Per-horizon metrics (stable across all 6 forecast steps):
-    RMSE ranges from 1.55 (t=1) to 1.62 (t=5)
-    MAE  ranges from 1.18 (t=1) to 1.25 (t=4)
-
-  Training converged: Train MSE 2.29 -> 1.32, Val MSE 2.04 -> 1.85
-
-Outputs:
-  - metrics.json          Overall/per-horizon/per-node RMSE and MAE
-  - predictions.csv/.npy  Model forecasts (183 windows x 6 steps x 250 bins)
-  - ground_truth.csv/.npy True values for test set
-  - error_per_bin.png     RMSE per frequency bin (250 bins)
-  - spectrogram_*.png     3 random test samples (ground truth vs prediction)
-
-Next Steps:
-  1. Move to a GPU-enabled machine for full 750-channel (all 3 nodes) training
-  2. Download official TimeRAN checkpoint from github.com/panitsasi/TimeRAN
-  3. Experiment with full finetuning / LoRA modes
-  4. Adjust stride, normalization, or T_in/T_out for downstream application needs
+6. Issues and Notes
+   - No CUDA available; ran on CPU (NVIDIA driver too old for PyTorch 2.12.1)
+   - Download TimeRAN checkpoint from panitsasi/TimeRAN before final training

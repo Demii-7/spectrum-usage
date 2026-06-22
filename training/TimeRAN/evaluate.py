@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 from pathlib import Path
 
 import matplotlib
@@ -9,15 +10,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import yaml
-
-from momentfm import MOMENTPipeline
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from dataset import create_datasets, load_csv
+from dataset import create_datasets
 from utils import (
     compute_metrics,
-    compute_metrics_per_bin,
     compute_metrics_per_horizon,
     compute_metrics_per_node,
     denormalize,
@@ -25,6 +23,9 @@ from utils import (
     load_checkpoint,
     set_seed,
 )
+
+from momentfm import MOMENTPipeline
+
 
 VARIANT_TO_MODEL = {
     "small": "AutonLab/MOMENT-1-small",
@@ -56,6 +57,43 @@ def build_model_from_config(config: dict, device: torch.device):
     return model
 
 
+def plot_spectrogram_comparison(ground_truth, prediction, node_name, save_path):
+    gt_node = ground_truth.T
+    pred_node = prediction.T
+    vmin = min(gt_node.min(), pred_node.min())
+    vmax = max(gt_node.max(), pred_node.max())
+
+    fig, axes = plt.subplots(2, 1, figsize=(12, 6), sharex=True, sharey=True,
+                              constrained_layout=True)
+    im0 = axes[0].imshow(gt_node, aspect="auto", cmap="viridis", vmin=vmin, vmax=vmax)
+    axes[0].set_title(f"{node_name} — Ground Truth")
+    axes[0].set_ylabel("Frequency Bin")
+    im1 = axes[1].imshow(pred_node, aspect="auto", cmap="viridis", vmin=vmin, vmax=vmax)
+    axes[1].set_title(f"{node_name} — Prediction")
+    axes[1].set_xlabel("Time Step (future minutes)")
+    axes[1].set_ylabel("Frequency Bin")
+    fig.colorbar(im1, ax=axes.ravel().tolist(), label="Normalized Power")
+    fig.savefig(save_path, dpi=150)
+    plt.close(fig)
+
+
+def plot_error_analysis(errors, node_names, save_path):
+    n = len(node_names)
+    fig, axes = plt.subplots(1, n, figsize=(5 * n, 4), squeeze=False,
+                              constrained_layout=True)
+    im = None
+    for i, name in enumerate(node_names):
+        ax = axes[0, i]
+        err = errors[:, i, :]
+        im = ax.imshow(err.T, aspect="auto", cmap="RdBu_r", vmin=-3, vmax=3)
+        ax.set_title(f"{name} — Error (Pred − GT)")
+        ax.set_xlabel("Sample")
+        ax.set_ylabel("Frequency Bin")
+    fig.colorbar(im, ax=axes.ravel().tolist(), label="Normalized Error")
+    fig.savefig(save_path, dpi=150)
+    plt.close(fig)
+
+
 @torch.no_grad()
 def evaluate(model, dataloader, device):
     all_preds = []
@@ -79,49 +117,13 @@ def evaluate(model, dataloader, device):
     return pred, target
 
 
-def plot_spectrogram(
-    pred: np.ndarray,
-    target: np.ndarray,
-    node_idx: int,
-    node_name: str,
-    bins_per_node: int,
-    sample_idx: int,
-    save_path: str,
-):
-    start = node_idx * bins_per_node
-    end = start + bins_per_node
-    pred_node = pred[sample_idx, start:end, :]
-    target_node = target[sample_idx, start:end, :]
-
-    fig, axes = plt.subplots(2, 1, figsize=(10, 6))
-    vmin = min(target_node.min(), pred_node.min())
-    vmax = max(target_node.max(), pred_node.max())
-
-    im0 = axes[0].imshow(target_node, aspect="auto", cmap="viridis", vmin=vmin, vmax=vmax)
-    axes[0].set_title(f"{node_name} — Ground Truth")
-    axes[0].set_xlabel("Future time step")
-    axes[0].set_ylabel("Frequency bin")
-
-    im1 = axes[1].imshow(pred_node, aspect="auto", cmap="viridis", vmin=vmin, vmax=vmax)
-    axes[1].set_title(f"{node_name} — Prediction")
-    axes[1].set_xlabel("Future time step")
-    axes[1].set_ylabel("Frequency bin")
-
-    fig.colorbar(im1, ax=axes, label="Normalized PSD")
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=150)
-    plt.close(fig)
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--config", default=None)
-    parser.add_argument("--output", default="training/TimeRAN/evaluation")
+    parser.add_argument("--horizons", type=int, nargs="+", default=[1, 3, 6])
+    parser.add_argument("--output", default=None)
     args = parser.parse_args()
-
-    output_dir = Path(args.output)
-    output_dir.mkdir(parents=True, exist_ok=True)
 
     device = get_device("auto")
     print(f"Device: {device}")
@@ -132,80 +134,104 @@ def main():
         raise ValueError("Checkpoint has no embedded config")
     norm_stats = ckpt.get("norm_stats")
 
-    csv_path = config["data"]["dataset_path"]
-    t_in = config["windowing"]["input_sequence_length"]
-    t_out = config["windowing"]["prediction_horizon"]
-    stride = config["windowing"]["stride"]
-    train_ratio = config["split"]["train_ratio"]
-    val_ratio = config["split"]["val_ratio"]
-    normalization = config["preprocessing"]["normalization"]
-    bins_per_node = config["data"]["bins_per_node"]
-    node_names = config["data"]["node_names"]
-    n_nodes = config["data"]["n_nodes"]
+    if args.config:
+        with open(args.config) as f:
+            config = yaml.safe_load(f)
+        config["preprocessing"]["normalization"] = config["preprocessing"].get("normalization", "revin_only")
+
+    dcfg = config["data"]
+    wcfg = config["windowing"]
+    scfg = config["split"]
+
+    csv_path = dcfg["dataset_path"]
+    if not os.path.exists(csv_path):
+        csv_path = os.path.join(os.path.dirname(__file__), "..", "..", csv_path)
 
     _, _, test_ds, _ = create_datasets(
         csv_path=csv_path,
-        t_in=t_in, t_out=t_out, stride=stride,
-        train_ratio=train_ratio, val_ratio=val_ratio,
-        normalization=normalization,
+        t_in=wcfg["input_sequence_length"],
+        t_out=wcfg["prediction_horizon"],
+        stride=wcfg["stride"],
+        train_ratio=scfg["train_ratio"],
+        val_ratio=scfg["val_ratio"],
+        normalization=config["preprocessing"]["normalization"],
     )
+
+    if test_ds is None or len(test_ds) == 0:
+        print("No test set available.")
+        return
+
     test_loader = DataLoader(test_ds, batch_size=1, shuffle=False)
+
+    n_nodes = dcfg.get("n_nodes", 1)
+    bins_per_node = dcfg.get("bins_per_node", 250)
+    node_names = dcfg.get("node_names", [f"Node_{i}" for i in range(n_nodes)])
 
     model = build_model_from_config(config, device)
     model.load_state_dict(ckpt["model_state_dict"], strict=False)
 
-    pred, target = evaluate(model, test_loader, device)
+    pred_norm, target_norm = evaluate(model, test_loader, device)
+
+    overall = compute_metrics(pred_norm, target_norm)
+    per_horizon = compute_metrics_per_horizon(pred_norm, target_norm)
+    per_node = compute_metrics_per_node(pred_norm, target_norm, bins_per_node, node_names)
+
+    print("=== Evaluation Report ===")
+    print(f"Overall RMSE: {overall['rmse']:.4f}")
+    print(f"Overall MAE:  {overall['mae']:.4f}")
+    print(f"Overall R\u00b2:   {overall['r2']:.4f}")
+    print()
+    print("Per-horizon RMSE:")
+    for h in args.horizons:
+        key = f"rmse_t{h}"
+        if key in per_horizon:
+            print(f"  t={h}: {per_horizon[key]:.4f}")
+    print()
+    print("Per-node RMSE:")
+    for name in node_names:
+        key = f"rmse_{name}"
+        if key in per_node:
+            print(f"  {name}: {per_node[key]:.4f}")
+
+    output_dir = Path(args.output or os.path.join(os.path.dirname(__file__), "evaluation"))
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     if norm_stats:
         mean = norm_stats["mean"]
         std = norm_stats["std"]
-        pred = denormalize(pred, mean, std)
-        target = denormalize(target, mean, std)
+        pred_dbm = denormalize(pred_norm, mean, std)
+        target_dbm = denormalize(target_norm, mean, std)
+    else:
+        pred_dbm, target_dbm = pred_norm, target_norm
 
-    overall = compute_metrics(pred, target)
-    per_horizon = compute_metrics_per_horizon(pred, target)
-    per_node = compute_metrics_per_node(pred, target, bins_per_node, node_names)
-    rmse_per_bin, mae_per_bin = compute_metrics_per_bin(pred, target)
+    np.savetxt(output_dir / "predictions.csv",
+               pred_dbm[0].transpose(), delimiter=",", fmt="%.6f")
+    np.savetxt(output_dir / "ground_truth.csv",
+               target_dbm[0].transpose(), delimiter=",", fmt="%.6f")
 
-    results = {
-        "overall": overall,
-        "per_horizon": per_horizon,
-        "per_node": per_node,
-        "num_test_windows": len(test_ds),
-    }
+    metrics_path = output_dir / "metrics.json"
+    with open(metrics_path, "w") as f:
+        json.dump({**overall, **per_horizon, **per_node}, f, indent=2)
+    print(f"\nMetrics saved to {metrics_path}")
 
-    with open(output_dir / "metrics.json", "w") as f:
-        json.dump(results, f, indent=2)
-    print(json.dumps(results, indent=2))
+    B, C, H = pred_norm.shape
+    pred_3d = pred_norm.transpose(0, 2, 1).reshape(B, H, n_nodes, bins_per_node)
+    target_3d = target_norm.transpose(0, 2, 1).reshape(B, H, n_nodes, bins_per_node)
 
-    np.save(output_dir / "predictions.npy", pred)
-    np.save(output_dir / "ground_truth.npy", target)
+    errors = pred_3d - target_3d
+    for n, name in enumerate(node_names):
+        plot_path = output_dir / f"spectrogram_{name}.png"
+        plot_spectrogram_comparison(
+            target_3d[0, :, n, :], pred_3d[0, :, n, :],
+            name, plot_path,
+        )
+        print(f"Spectrogram saved to {plot_path}")
 
-    B, C, H = pred.shape
-    flat_pred = pred.transpose(0, 2, 1).reshape(B * H, C)
-    flat_target = target.transpose(0, 2, 1).reshape(B * H, C)
-    np.savetxt(output_dir / "predictions.csv", flat_pred, delimiter=",", fmt="%.6f")
-    np.savetxt(output_dir / "ground_truth.csv", flat_target, delimiter=",", fmt="%.6f")
+    error_plot_path = output_dir / "error_analysis.png"
+    plot_error_analysis(errors[0], node_names, error_plot_path)
+    print(f"Error analysis saved to {error_plot_path}")
 
-    for node_idx, node_name in enumerate(node_names):
-        for si in range(min(3, B)):
-            plot_spectrogram(
-                pred, target, node_idx, node_name, bins_per_node, si,
-                str(output_dir / f"spectrogram_{node_name}_sample{si}.png"),
-            )
-
-    fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(rmse_per_bin, label="RMSE per bin")
-    ax.plot(mae_per_bin, label="MAE per bin")
-    ax.set_xlabel("Feature index")
-    ax.set_ylabel("Error")
-    ax.legend()
-    ax.set_title("Per-frequency-bin Error")
-    plt.tight_layout()
-    plt.savefig(output_dir / "error_per_bin.png", dpi=150)
-    plt.close(fig)
-
-    print(f"Evaluation results saved to {output_dir}")
+    print(f"\nEvaluation results saved to {output_dir}")
 
 
 if __name__ == "__main__":
