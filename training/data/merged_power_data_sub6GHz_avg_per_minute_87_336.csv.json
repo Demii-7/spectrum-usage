@@ -1,0 +1,31 @@
+{
+  "created_utc": "2026-06-16T17:21:15.254682+00:00",
+  "band_start_mhz": 87,
+  "band_width_mhz": 250,
+  "labels": [
+    "CC1",
+    "CC2",
+    "LW1"
+  ],
+  "row_count": 6839,
+  "archives": [
+    {
+      "label": "CC1",
+      "archive_path": "ResultsCC1Feb2022_SigMF.zip",
+      "minute_count": 10243,
+      "raw_bin_count": 98868
+    },
+    {
+      "label": "CC2",
+      "archive_path": "ResultsCC2Feb2022_SigMF.zip",
+      "minute_count": 10080,
+      "raw_bin_count": 98868
+    },
+    {
+      "label": "LW1",
+      "archive_path": "ResultsLW1Feb2022_SigMF.zip",
+      "minute_count": 9519,
+      "raw_bin_count": 98868
+    }
+  ]
+}

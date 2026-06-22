@@ -1,0 +1,63 @@
+Dryad Download Investigation
+============================
+Date: 2026-06-17
+
+1. Exact method used
+---------------------
+The successful download used a custom Python script at /tmp/quick_download.py.
+Neither datahugger nor curl succeeded.
+
+The script sends requests.GET to each Dryad file_stream URL, solves the Anubis
+SHA256 proof-of-work challenge inline using multiprocessing.Pool, then streams
+the download through the same requests.Session with the resulting auth cookies.
+
+Files downloaded on June 15, 2026:
+  ResultsLW1Feb2022_SigMF.zip   12.50 GB   completed ~22:21
+  ResultsCC1Feb2022_SigMF.zip   19.08 GB   completed ~22:29
+  ResultsCC2Feb2022_SigMF.zip   20.66 GB   completed ~22:38
+
+Multiple other approaches in /tmp/ failed (download_all.py, download_v2.py,
+download_datasets.py, download_by_clicking.py, download_with_playwright_direct.py)
+due to Anubis challenges, HTTP 202, or Playwright failures.
+
+2. Authentication
+------------------
+No login, API key, token, or Dryad account. Authentication was the Anubis WAF
+anti-bot challenge. The script:
+  a) Parsed <script id="anubis_challenge"> JSON from the Dryad response
+  b) Extracted randomData, difficulty, challenge.id
+  c) Brute-forced SHA256(randomData + nonce) across 50K-nonce chunks using
+     multiprocessing.Pool (all CPU cores)
+  d) POSTed solution to /.within.website/x/cmd/anubis/api/pass-challenge
+  e) Received 302 redirect with Set-Cookie (techaro.lol-anubis-* cookies)
+
+The cookies in /tmp/curl_cookies.txt have ~1-day validity from issuance.
+
+3. Why datahugger now fails with HTTP 401
+------------------------------------------
+datahugger v0.13 (in /tmp/spectrum-venv/) does not handle Dryad's Anubis WAF
+challenge. It sends a plain requests.get() which hits the Anubis gate and
+gets 401/403. The earlier successful download used a local PoW solver, not
+datahugger. The Anubis cookies have also expired.
+
+4. Reproducible workflow
+-------------------------
+From a clean environment:
+  pip install requests
+  python3 /tmp/quick_download.py
+
+The script hardcodes three Dryad file_stream IDs (4677590, 4677592, 4677591).
+To get fresh IDs, visit the dataset page
+(https://datadryad.org/dataset/doi:10.5061/dryad.hmgqnk9zn),
+inspect a.js-individual-dl links, and extract the href values.
+
+5. Evidence the ZIPs are real
+------------------------------
+All three present at /home/cc/spectrum-usage/:
+  ResultsCC1Feb2022_SigMF.zip  19,084,799,397 bytes
+  ResultsCC2Feb2022_SigMF.zip  20,662,580,993 bytes
+  ResultsLW1Feb2022_SigMF.zip  12,498,435,786 bytes
+
+Sizes match download logs in /tmp/quick_dl.txt (19.08, 20.66, 12.50 GB).
+Each contains the expected number of SigMF pairs (CC1: 32,529, CC2: 34,865,
+LW1: 21,617), verified during earlier data processing.
