@@ -9,6 +9,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import yaml
+
+from momentfm import MOMENTPipeline
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -24,9 +26,6 @@ from utils import (
     set_seed,
 )
 
-from momentfm import MOMENTPipeline
-
-
 VARIANT_TO_MODEL = {
     "small": "AutonLab/MOMENT-1-small",
     "base": "AutonLab/MOMENT-1-base",
@@ -34,28 +33,27 @@ VARIANT_TO_MODEL = {
 }
 
 
-def load_model_from_checkpoint(ckpt_path: str, config: dict, device: torch.device):
+def build_model_from_config(config: dict, device: torch.device):
     variant = config["model"]["checkpoint_size"].lower()
     model_name = VARIANT_TO_MODEL[variant]
     horizon = config["windowing"]["prediction_horizon"]
+    t_in = config["windowing"]["input_sequence_length"]
 
     model = MOMENTPipeline.from_pretrained(
         model_name,
         model_kwargs={
             "task_name": "forecasting",
             "forecast_horizon": horizon,
+            "seq_len": t_in,
             "freeze_encoder": True,
             "freeze_embedder": True,
             "freeze_head": False,
         },
     )
     model.init()
-
-    ckpt_data = load_checkpoint(ckpt_path, device)
-    model.load_state_dict(ckpt_data["model_state_dict"], strict=False)
     model = model.to(device)
     model.eval()
-    return model, ckpt_data.get("norm_stats")
+    return model
 
 
 @torch.no_grad()
@@ -67,7 +65,10 @@ def evaluate(model, dataloader, device):
         forecast = forecast.to(device)
         input_mask = torch.ones(timeseries.shape[0], timeseries.shape[-1], device=device)
 
-        with torch.cuda.amp.autocast():
+        if device.type == "cuda":
+            with torch.amp.autocast("cuda"):
+                out = model(x_enc=timeseries, input_mask=input_mask)
+        else:
             out = model(x_enc=timeseries, input_mask=input_mask)
 
         all_preds.append(out.forecast.cpu().numpy())
@@ -150,7 +151,8 @@ def main():
     )
     test_loader = DataLoader(test_ds, batch_size=1, shuffle=False)
 
-    model, _ = load_model_from_checkpoint(args.checkpoint, config, device)
+    model = build_model_from_config(config, device)
+    model.load_state_dict(ckpt["model_state_dict"], strict=False)
 
     pred, target = evaluate(model, test_loader, device)
 

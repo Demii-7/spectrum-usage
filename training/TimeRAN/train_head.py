@@ -5,7 +5,6 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import torch.cuda.amp as amp
 import yaml
 from torch.optim.lr_scheduler import OneCycleLR
 from torch.utils.data import DataLoader
@@ -44,6 +43,7 @@ def build_model(config: dict, device: torch.device):
 
     model_name = VARIANT_TO_MODEL[variant]
     horizon = config["windowing"]["prediction_horizon"]
+    t_in = config["windowing"]["input_sequence_length"]
     mode = config.get("training_mode", "linear_probing")
 
     freeze_encoder = mode == "linear_probing"
@@ -54,6 +54,7 @@ def build_model(config: dict, device: torch.device):
         model_kwargs={
             "task_name": "forecasting",
             "forecast_horizon": horizon,
+            "seq_len": t_in,
             "freeze_encoder": freeze_encoder,
             "freeze_embedder": freeze_embedder,
             "freeze_head": False,
@@ -102,15 +103,24 @@ def train_epoch(
 
         optimizer.zero_grad(set_to_none=True)
 
-        with amp.autocast():
+        if device.type == "cuda":
+            with torch.amp.autocast("cuda"):
+                out = model(x_enc=timeseries, input_mask=input_mask)
+                loss = criterion(out.forecast, forecast)
+        else:
             out = model(x_enc=timeseries, input_mask=input_mask)
             loss = criterion(out.forecast, forecast)
 
-        scaler.scale(loss).backward()
-        scaler.unscale_(optimizer)
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
-        scaler.step(optimizer)
-        scaler.update()
+        if device.type == "cuda":
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
+            optimizer.step()
         if scheduler:
             scheduler.step()
 
@@ -129,7 +139,11 @@ def validate(model, dataloader, criterion, device):
         forecast = forecast.to(device)
         input_mask = torch.ones(timeseries.shape[0], timeseries.shape[-1], device=device)
 
-        with amp.autocast():
+        if device.type == "cuda":
+            with torch.amp.autocast("cuda"):
+                out = model(x_enc=timeseries, input_mask=input_mask)
+                loss = criterion(out.forecast, forecast)
+        else:
             out = model(x_enc=timeseries, input_mask=input_mask)
             loss = criterion(out.forecast, forecast)
 
@@ -151,7 +165,7 @@ def main():
 
     if args.mode:
         config["training_mode"] = args.mode
-    else:
+    elif "training_mode" not in config:
         config["training_mode"] = "linear_probing"
 
     if args.batch_size:
@@ -205,7 +219,7 @@ def main():
     max_lr = config["training"].get("max_learning_rate", lr)
     total_steps = len(train_loader) * epochs
     scheduler = OneCycleLR(optimizer, max_lr=max_lr, total_steps=total_steps, pct_start=0.3)
-    scaler = amp.GradScaler()
+    scaler = torch.amp.GradScaler("cuda") if device.type == "cuda" else None
 
     best_val_loss = float("inf")
     ckpt_dir = Path("training/TimeRAN/checkpoints")

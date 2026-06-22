@@ -17,14 +17,25 @@
 
 ```bash
 cd /home/cc/spectrum-usage
-pip install momentfm torch numpy pyyaml tqdm scikit-learn
+pip install momentfm torch numpy pyyaml tqdm scikit-learn gdown
 ```
 
-### Download Checkpoint
+### Download Pretrained Checkpoint
+
+Model checkpoints are not included in the repository due to GitHub file size limits. They must be downloaded from Google Drive using `gdown`:
 
 ```bash
-# Download TimeRAN checkpoint files to training/TimeRAN/checkpoints/
-# e.g., training/TimeRAN/checkpoints/base/TimeRAN_base.pth
+# Create checkpoint directories
+mkdir -p training/TimeRAN/checkpoints/{small,base,large}
+
+# Download checkpoints from the upstream TimeRAN repository
+cd training/TimeRAN/checkpoints
+
+gdown 1fJNCkufmfWC6zHecz10PUyreD0PhBOMJ -O base/TimeRAN_base.pth
+gdown 1gz23mmP4ZiNznCloObEaSlVaJH21fyxJ -O small/TimeRAN_small.pth
+gdown 1We9zE5BV6Iwkc_EKSAhP28B3wcM7RZRd -O large/TimeRAN_large.pth
+
+cd /home/cc/spectrum-usage
 ```
 
 ### Train Forecasting Head (Linear Probing)
@@ -511,8 +522,8 @@ Computed:
 4. **LoRA effectiveness is unknown for this task**
    The TimeRAN paper reports that LoRA was not competitive with other fine-tuning regimes for their evaluation. However, our dataset and task differ from TelecomTS, so LoRA may still be worth testing after the linear probing baseline is established.
 
-5. **Checkpoint availability must be verified against the upstream repository**
-   The original TimeRAN project is at `https://github.com/panitsasi/TimeRAN`. Checkpoint files, documentation, and future updates are tracked there. The local clone at `git@github.com:Demii-7/TimeRAN.git` is a copy; verify that the checkpoint files are present or can be downloaded from the upstream source before training.
+5. **Checkpoints must be downloaded from Google Drive before training**
+   The TimeRAN checkpoint files exceed GitHub's file size limits and are hosted on Google Drive. Run the `gdown` commands in the Quick Start section above to download them into `training/TimeRAN/checkpoints/{small,base,large}/`. Without a checkpoint, the pipeline falls back to raw MOMENT weights (no TimeRAN pretraining).
 
 ---
 

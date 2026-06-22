@@ -29,7 +29,10 @@ def predict(model, data: np.ndarray, t_in: int, t_out: int, stride: int, device:
         x = torch.as_tensor(window.T, dtype=torch.float32).unsqueeze(0).to(device)
         input_mask = torch.ones(1, t_in, device=device)
 
-        with torch.cuda.amp.autocast():
+        if device.type == "cuda":
+            with torch.amp.autocast("cuda"):
+                out = model(x_enc=x, input_mask=input_mask)
+        else:
             out = model(x_enc=x, input_mask=input_mask)
 
         pred_np = out.forecast.cpu().numpy()
@@ -75,6 +78,7 @@ def main():
         model_kwargs={
             "task_name": "forecasting",
             "forecast_horizon": t_out,
+            "seq_len": t_in,
             "freeze_encoder": True,
             "freeze_embedder": True,
             "freeze_head": False,
