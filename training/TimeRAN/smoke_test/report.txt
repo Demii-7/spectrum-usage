@@ -12,8 +12,9 @@ Evaluation: training/TimeRAN/smoke_test/evaluation/
    - T_in: 12, T_out: 6, Stride: 1
    - Split: 80/10/10 chronological
    - Model: MOMENT-base via TimeRAN, 109,640,070 params
-   - Training: 2 epochs, batch=16, lr=1e-5, OneCycleLR (max_lr=1e-3)
+   - Training: 5 epochs, batch=16, lr=1e-5, OneCycleLR (max_lr=1e-3)
    - TimeRAN checkpoint: training/TimeRAN/checkpoints/base/TimeRAN_base.pth (loaded)
+   - checkpoint_path derived automatically from checkpoint_size (no manual config needed)
 
 2. Data Loading
    - Train windows: 1583
@@ -22,21 +23,21 @@ Evaluation: training/TimeRAN/smoke_test/evaluation/
    - Normalization: revin_only (MOMENT internal RevIN)
 
 3. Training
-   - Train MSE: 2.235 (epoch 1) -> 2.209 (epoch 2)
+   - Train MSE: 2.235 (e1) -> 2.215 (e2) -> 2.208 (e3) -> 2.193 (e4) -> 2.193 (e5)
    - Best epoch: 2 (val MSE 2.017)
-   - TimeRAN checkpoint loaded successfully from Google Drive
+   - TimeRAN checkpoint loaded successfully, no shape mismatches (correct 768-dim weights)
 
 4. Evaluation
-   - Test RMSE:  1.5800
-   - Test MAE:   1.2093
-   - Test R^2:   0.2197
-   - Per-horizon RMSE: t=1: 1.543, t=3: 1.588, t=6: 1.611
-   - Per-node RMSE: CC2: 1.580
+   - Test RMSE:  1.5783
+   - Test MAE:   1.2074
+   - Test R^2:   0.2214
+   - Per-horizon RMSE: t=1: 1.545, t=3: 1.580, t=6: 1.611
+   - Per-node RMSE: CC2: 1.578
 
 5. Comparison: Raw MOMENT vs TimeRAN Checkpoint
-   - Raw MOMENT (no checkpoint):    RMSE 1.587, R^2 0.213
-   - TimeRAN checkpoint loaded:     RMSE 1.580, R^2 0.220
-   - Improvement: negligible (0.007 RMSE, 0.007 R^2)
+   - Raw MOMENT (no checkpoint, 2 epochs): RMSE 1.587, R^2 0.213
+   - TimeRAN checkpoint (5 epochs):        RMSE 1.578, R^2 0.221
+   - Improvement: negligible (~0.009 RMSE, ~0.008 R^2)
    - Expected: TimeRAN pretrained on TelecomTS (different domain),
      linear probing with frozen backbone limits adaptation
 
@@ -123,10 +124,12 @@ Evaluation: training/TimeRAN/smoke_test/evaluation/
 
 8. Issues and Notes
    - TimeRAN checkpoint provides negligible improvement over raw MOMENT
-     for this dataset (0.007 RMSE). Likely due to:
+     for this dataset (~0.009 RMSE). Likely due to:
      (a) Frozen backbone (linear probing) limits checkpoint's impact
      (b) TimeRAN pretrained on TelecomTS (KPI telemetry), not spectrum data
      (c) Single-node CC2 with 250 bins may not benefit from RAN pretraining
    - Full 3-node (750-channel) run with full finetuning may show larger benefit
    - No CUDA available; all tests on CPU
    - Google Drive file IDs for base/small are swapped in upstream README
+   - checkpoint_path derived automatically from checkpoint_size in code
+   - All fixes verified in this run: AMP deprecation, checkpoint sizing, seq_len, etc.
