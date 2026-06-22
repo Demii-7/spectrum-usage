@@ -16,14 +16,16 @@
 ### Setup
 
 ```bash
-cd /home/cc/spectrum-usage
+# Clone and enter the repository
+git clone https://github.com/Demii-7/spectrum-usage.git
+cd spectrum-usage
 
 # Create and activate virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
 
-# Install dependencies
-pip install momentfm torch numpy pyyaml tqdm scikit-learn gdown
+# Install dependencies (pinned to tested versions)
+pip install momentfm==0.1.4 torch==2.12.1 numpy pyyaml tqdm scikit-learn gdown
 ```
 
 ### Download Pretrained Checkpoint
@@ -197,7 +199,7 @@ dataset.py ──► train_head.py ──► checkpoints/best_model.pt
 | Split | `test_ratio` | 0.1 | Test set fraction |
 | Split | `chronological_split` | true | Chronological split |
 | Model | `checkpoint_size` | `base` | `small`, `base`, or `large` |
-| Model | `checkpoint_path` | `checkpoints/base/TimeRAN_base.pth` | Path to TimeRAN `.pth` (Google Drive download) |
+| Model | `checkpoint_path` | `training/TimeRAN/checkpoints/base/TimeRAN_base.pth` | Path to TimeRAN `.pth` (Google Drive download) |
 | Model | `task` | `forecasting` | Downstream task |
 | Model | `freeze_backbone` | true | Freeze encoder + embedder |
 | Model | `train_head_only` | true | Train only the head |
