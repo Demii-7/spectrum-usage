@@ -1,0 +1,54 @@
+Smoke Test Report — ConvLSTM Spectrum Prediction Pipeline
+=========================================================
+Date: 2026-06-19
+Config: training/ConvLSTM/smoke_test/config.yaml
+Checkpoints: training/ConvLSTM/smoke_test/checkpoints/
+Evaluation: training/ConvLSTM/smoke_test/evaluation/
+
+---
+1. Configuration
+   - Dataset: training/data/cc2_smoke_test.csv (CC2 only, 2000 rows x 250 cols)
+   - Nodes: 1 (CC2)
+   - T_in: 12, T_out: 6, Stride: 1
+   - Split: 80/10/10 chronological
+   - Model: 9,357,985 parameters
+   - Training: 200 max epochs, lr=0.0002, patience=30, lr_patience=15
+
+2. Data Loading
+   - Train windows: 1586
+   - Val windows:   198
+   - Test windows:  199
+   - Normalization: per-frequency-bin z-score, fit on training set only
+
+3. Training
+   - Train loss: 0.403 (epoch 1) -> 0.094 (epoch 38, plateau)
+   - Best epoch: 8 (val loss 0.313)
+   - Early stopped at epoch 38
+   - Overfitting observed after ~8 epochs (9.3M params on 1586 windows)
+
+4. Evaluation
+   - Test RMSE:  0.6107
+   - Test MAE:   0.4690
+   - Test R²:   -0.1085
+   - Per-horizon RMSE: t=1: 0.604, t=3: 0.610, t=6: 0.617
+   - Per-node RMSE: CC2: 0.6107
+
+5. Pipeline Verification
+   - [x] Data loading and preprocessing
+   - [x] Training loop with teacher forcing
+   - [x] Checkpoint saving and loading
+   - [x] Learning rate scheduling (reduce on plateau)
+   - [x] Early stopping
+   - [x] Test set evaluation
+   - [x] Per-horizon and per-node metrics
+   - [x] Ground truth vs prediction spectrogram plot
+   - [x] Error analysis plot
+   - [x] Prediction CSV export
+   - [x] Inference on new data via inference.py
+
+6. Issues and Notes
+   - Negative R² is expected: 9.3M parameter model on 1586 training windows
+     (1.4 days of single-node data) lacks sufficient signal.
+   - Full 3-node dataset (6839 rows) should produce meaningful results.
+   - evaluate.py uses constrained_layout and shared colorbars
+     (tight_layout warning resolved).

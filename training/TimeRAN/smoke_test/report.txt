@@ -1,0 +1,135 @@
+Smoke Test Report — TimeRAN Spectrum Prediction Pipeline
+=========================================================
+Date: 2026-06-22
+Config: training/TimeRAN/smoke_test/config.yaml
+Checkpoints: training/TimeRAN/smoke_test/checkpoints/
+Evaluation: training/TimeRAN/smoke_test/evaluation/
+
+---
+1. Configuration
+   - Dataset: training/TimeRAN/smoke_test/cc2_2k.csv (CC2 only, 2000 rows x 250 cols)
+   - Nodes: 1 (CC2)
+   - T_in: 12, T_out: 6, Stride: 1
+   - Split: 80/10/10 chronological
+   - Model: MOMENT-base via TimeRAN, 109,640,070 params
+   - Training: 5 epochs, batch=16, lr=1e-5, OneCycleLR (max_lr=1e-3)
+   - TimeRAN checkpoint: training/TimeRAN/checkpoints/base/TimeRAN_base.pth (loaded)
+   - checkpoint_path derived automatically from checkpoint_size (no manual config needed)
+
+2. Data Loading
+   - Train windows: 1583
+   - Val windows:   183
+   - Test windows:  183
+   - Normalization: revin_only (MOMENT internal RevIN)
+
+3. Training
+   - Train MSE: 2.235 (e1) -> 2.215 (e2) -> 2.208 (e3) -> 2.193 (e4) -> 2.193 (e5)
+   - Best epoch: 2 (val MSE 2.017)
+   - TimeRAN checkpoint loaded successfully, no shape mismatches (correct 768-dim weights)
+
+4. Evaluation
+   - Test RMSE:  1.5783
+   - Test MAE:   1.2074
+   - Test R^2:   0.2214
+   - Per-horizon RMSE: t=1: 1.545, t=3: 1.580, t=6: 1.611
+   - Per-node RMSE: CC2: 1.578
+
+5. Comparison: Raw MOMENT vs TimeRAN Checkpoint
+   - Raw MOMENT (no checkpoint, 2 epochs): RMSE 1.587, R^2 0.213
+   - TimeRAN checkpoint (5 epochs):        RMSE 1.578, R^2 0.221
+   - Improvement: negligible (~0.009 RMSE, ~0.008 R^2)
+   - Expected: TimeRAN pretrained on TelecomTS (different domain),
+     linear probing with frozen backbone limits adaptation
+
+6. Pipeline Verification
+   - [x] gdown checkpoint download
+   - [x] TimeRAN checkpoint loading (weights verified against MOMENT architecture)
+   - [x] Data loading and preprocessing
+   - [x] Training loop with checkpointing
+   - [x] Training log (training_log.json)
+   - [x] Test set evaluation
+   - [x] Per-horizon and per-node metrics (flat key format)
+   - [x] Ground truth vs prediction spectrogram (constrained_layout, side colorbar)
+   - [x] Error analysis plot (RdBu_r, [-3, 3])
+   - [x] Prediction CSV export (first window only)
+
+7. Errors, Failures, and Inconveniences Encountered
+
+   [E-1] CUDA driver too old (SYSTEM LIMITATION)
+         Symptom: "CUDA initialization: The NVIDIA driver on your system is
+         too old (found version 12060). Please update your GPU driver..."
+         Root cause: NVIDIA driver 12060 < 12070 required by PyTorch 2.12.1.
+         Impact: All training runs on CPU (~1.6s/batch vs ~0.05s on GPU).
+         Workaround: Added CPU fallback logic. No script fix possible.
+
+   [E-2] MOMENT default seq_len causes head dimension mismatch (BUG - FIXED)
+         Symptom: "mat1 and mat2 shapes cannot be multiplied (4000x768 and 49152x6)"
+         Root cause: MOMENTPipeline defaults to seq_len=512 -> 64 patches x
+         768 d_model = 49152 head input dims. Our T_in=12 -> 1 patch x 768 = 768.
+         Fix: Added "seq_len": t_in to model_kwargs in build_model().
+
+   [E-3] torch.cuda.amp deprecation warnings (COSMETIC - FIXED)
+         Symptom: FutureWarning for torch.cuda.amp.autocast() and GradScaler()
+         Root cause: PyTorch 2.12 moved AMP to torch.amp
+         Fix: Use torch.amp.autocast('cuda') / torch.amp.GradScaler('cuda'),
+         guard behind device.type == "cuda" check.
+
+   [E-4] evaluate.py double-loads checkpoint (PERFORMANCE - FIXED)
+         Symptom: Checkpoint loaded twice per evaluation run
+         Root cause: main() called load_checkpoint for config, then
+         load_model_from_checkpoint loaded it again internally.
+         Fix: Refactored into build_model_from_config() that takes
+         already-loaded checkpoint data.
+
+   [E-5] training_mode always overwrites YAML config (BUG - FIXED)
+         Symptom: Setting training_mode in config.yaml had no effect
+         Root cause: main() unconditionally set mode to "linear_probing"
+         Fix: Check if training_mode already in config before defaulting.
+
+   [E-6] TimeRAN checkpoint file mismatch (CRITICAL - FIXED)
+         Symptom: "RuntimeError: size mismatch for patch_embedding.value_embedding:
+         copying a param with shape torch.Size([512, 8]) from checkpoint,
+         the shape in current model is torch.Size([768, 8])."
+         (plus 70+ similar mismatches across all layers)
+         Root cause: The Google Drive file labeled "TimeRAN_base.pth" (file ID
+         1fJNCkufmfWC6zHecz10PUyreD0PhBOMJ, 145 MB) contains T5-small weights
+         (d_model=512, 6 layers). The file labeled "TimeRAN_small.pth" (file ID
+         1gz23mmP4ZiNznCloObEaSlVaJH21fyxJ, 433 MB) contains T5-base weights
+         (d_model=768, 12 layers). The upstream TimeRAN README has the file
+         names/IDs swapped for the base and small variants.
+         Fix: Manually renamed the downloaded files to match their actual content.
+         File sizes confirming the swap:
+           "base" file: 145 MB (actually T5-small, ~40M params)
+           "small" file: 433 MB (actually T5-base, ~125M params)
+           "large" file: 1.3 GB (matches T5-large, ~385M params)
+
+   [E-7] CPU training timeout (OPERATIONAL)
+         Symptom: Training terminated after 300s timeout at epoch 2
+         Root cause: CPU training at ~1.6s/batch x 98 batches x 5 epochs
+         needs ~13 min. Default 5-min timeout insufficient.
+         Workaround: Reduced to 2 epochs, used longer timeout.
+         Permanent fix: Run on GPU.
+
+   [E-8] gdown not found on PATH (INCONVENIENCE - FIXED)
+         Symptom: "gdown: command not found"
+         Root cause: gdown installed in venv, not system-wide.
+         Fix: Use full path /home/cc/spectrum-usage/.venv/bin/gdown.
+
+   [E-9] pip install failed system-wide due to PEP 668 (INCONVENIENCE)
+         Symptom: pip install rejected due to externally managed environment
+         Fix: Use /home/cc/spectrum-usage/.venv/bin/pip install gdown.
+
+   [E-10] checkpoints/ dir not created before gdown download (INCONVENIENCE)
+         Fix: Run mkdir -p before gdown commands (now in README).
+
+8. Issues and Notes
+   - TimeRAN checkpoint provides negligible improvement over raw MOMENT
+     for this dataset (~0.009 RMSE). Likely due to:
+     (a) Frozen backbone (linear probing) limits checkpoint's impact
+     (b) TimeRAN pretrained on TelecomTS (KPI telemetry), not spectrum data
+     (c) Single-node CC2 with 250 bins may not benefit from RAN pretraining
+   - Full 3-node (750-channel) run with full finetuning may show larger benefit
+   - No CUDA available; all tests on CPU
+   - Google Drive file IDs for base/small are swapped in upstream README
+   - checkpoint_path derived automatically from checkpoint_size in code
+   - All fixes verified in this run: AMP deprecation, checkpoint sizing, seq_len, etc.

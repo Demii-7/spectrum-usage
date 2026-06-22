@@ -1,0 +1,90 @@
+Smoke Test Report — STS-PredNet Spectrum Prediction Pipeline
+===========================================================
+Date: 2026-06-22
+Config: training/STS-PredNet/smoke_test/config.yaml
+Checkpoints: training/STS-PredNet/smoke_test/checkpoints/
+Evaluation: training/STS-PredNet/smoke_test/evaluation/
+
+---
+1. Configuration
+   - Dataset: training/STS-PredNet/smoke_test/aerpaw_3node_2k.csv (3 nodes, 2000 rows × 750 cols)
+   - Nodes: 3 (CC1, CC2, LW1)
+   - Branches: closeness (lc=10), period (lp=3, interval=10), trend disabled
+   - Split: 80/10/10 chronological
+   - Model: 1 STS-ConvLSTM layer, hidden_dim=16, 3×3 kernel, tanh output, per-location fusion
+   - Training: 2 epochs, batch=8, lr=0.001, Adam, MSE loss, early_stopping=false
+   - Parameters: 46,302 (paper default: 4 layers, 128 hidden ≈ millions)
+   - Device: cpu (CUDA driver too old for this PyTorch version)
+
+2. Data Loading
+   - Train samples: 1576
+   - Val samples:   197
+   - Test samples:  197
+   - Normalization: per-frequency min-max to [-1, 1], fit on training set only
+
+3. Training
+   - Train loss: 0.0907 (e1) → 0.0780 (e2)
+   - Val loss:   0.0627 (e1) → 0.0608 (e2)
+   - Best epoch: 2 (val rmse 0.2466)
+   - Each epoch ~140s on CPU (250-wide maps + PredRNN zigzag flow)
+
+4. Evaluation
+   - Test RMSE:  0.2913
+   - Test MAE:   0.2190
+   - Test R²:    0.4598
+   - Per-node RMSE: CC1=0.2713, CC2=0.2314, LW1=0.3569
+   - Per-frequency RMSE: min=0.1980, max=0.3344
+
+5. Pipeline Verification
+   - [x] Data loading and preprocessing (CSV→(T,3,250), normalization)
+   - [x] Branch sequence generation (closeness + period)
+   - [x] STS-ConvLSTM cell with H, C, M states
+   - [x] PredRNN branch with zigzag memory flow
+   - [x] STSPredNet multi-branch fusion
+   - [x] Training loop with checkpointing
+   - [x] Training log (training_log.json)
+   - [x] Test set evaluation
+   - [x] Per-node metrics (CC1, CC2, LW1)
+   - [x] Per-frequency-bin RMSE
+   - [x] Ground truth vs prediction spectrogram plots
+   - [x] Error analysis plot (RdBu_r)
+   - [x] Prediction CSV export (predictions.csv, ground_truth.csv)
+   - [x] Inference on new CSV data (inference.py)
+   - [x] Denormalization from [-1,1] back to dBm
+
+6. Errors, Failures, and Inconveniences Encountered
+
+   [E-1] CUDA driver too old (SYSTEM LIMITATION)
+         Symptom: "CUDA initialization: The NVIDIA driver on your system is
+         too old (found version 12060)."
+         Root cause: NVIDIA driver 12060 < 12070 required by PyTorch 2.12.1.
+         Impact: All training runs on CPU (~0.7s/batch vs ~0.05s on GPU).
+         Workaround: Set device: cpu in config and export CUDA_VISIBLE_DEVICES="".
+         No script fix possible.
+
+   [E-2] CPU training very slow with full 250-bin maps (PERFORMANCE LIMITATION)
+         Symptom: 1 epoch of 1576 samples × batch=8 took ~140s on CPU.
+         Root cause: 3×250 map × hidden_dim=16 × 2 PredRNN branches = heavy CPU compute.
+         Impact: Full paper config (4 layers, 128 hidden, 500 epochs) would take
+         weeks on CPU. A GPU is required for production training.
+         Workaround: Reduced to 1 layer, 16 hidden, 2 epochs for smoke test.
+
+   [E-3] GPU memory estimate (INFORMATIONAL)
+         With full paper config (4 layers × 128 hidden × 3 branches), estimated
+         batch=32 needs ~8-12 GB GPU memory. 3-node × 250-bin maps are 4% of
+         the paper's 100×60 map area, so smaller than paper but deeper layers
+         compensate.
+
+   [E-4] Backward pass triggers CUDA init hang on old driver (SYSTEM LIMITATION)
+         Symptom: loss.backward() hangs indefinitely when CUDA driver < 12070.
+         Workaround: CUDA_VISIBLE_DEVICES="" prevents CUDA access entirely.
+
+7. Issues and Notes
+   - Positive R² (0.46) indicates the model captures meaningful signal even with
+     46K parameters and 2 epochs — a good sign for the full model.
+   - LW1 has higher RMSE (0.357) than CC1 (0.271) and CC2 (0.231), suggesting
+     uneven spatial predictability across the 3 nodes.
+   - The smoke test uses period_interval=10 (not 1440) to generate enough samples
+     from 2000 rows. Production config uses period_interval=1440 with 6839 rows.
+   - Trend branch remains disabled (needs 40320 min of history; AERPAW has 6839).
+   - All spectrogram outputs and CSV exports verified correct shapes and ranges.
