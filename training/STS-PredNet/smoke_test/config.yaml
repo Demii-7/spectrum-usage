@@ -1,0 +1,73 @@
+# =============================================================================
+# STS-PredNet Spectrum Prediction — Smoke Test Config (3-node, 2000 rows)
+# =============================================================================
+# Lightweight config for CPU-based pipeline verification.
+# Full training uses num_layers=4, hidden_dim=128, lr=0.0002.
+# =============================================================================
+
+data:
+  dataset_path: "training/STS-PredNet/smoke_test/aerpaw_3node_2k.csv"
+  n_nodes: 3
+  bins_per_node: 250
+  n_features: 750
+  node_names: ["CC1", "CC2", "LW1"]
+
+preprocessing:
+  normalization: "minmax_neg1_pos1"
+  fit_on_train_only: true
+
+splits:
+  train_ratio: 0.8
+  val_ratio: 0.1
+  test_ratio: 0.1
+  chronological_split: true
+
+branches:
+  use_closeness: true
+  use_period: true
+  use_trend: false
+
+  lc: 10
+  lp: 3
+  lq: 4
+
+  prediction_offset: 1
+
+  period_interval: 10
+  trend_interval: 20
+
+  share_branch_weights: false
+
+model:
+  input_channels: 1
+  map_height: 3
+  map_width: 250
+  num_layers: 1
+  hidden_dim: 16
+  kernel_size: [3, 3]
+  fusion_weight_shape: "per_location"
+  output_activation: "tanh"
+
+training:
+  batch_size: 8
+  epochs: 3
+  learning_rate: 0.001
+  optimizer: "adam"
+  beta1: 0.9
+  beta2: 0.999
+  epsilon: 1.0e-8
+  weight_decay: 0.0
+  loss: "mse"
+  early_stopping: true
+  patience: 5
+  gradient_clip_norm: 5.0
+  seed: 42
+
+evaluation:
+  metrics: ["rmse", "mae", "r2"]
+  optional_metrics: ["mape"]
+  per_node_metrics: true
+  per_frequency_metrics: true
+
+device:
+  device: "cpu"
