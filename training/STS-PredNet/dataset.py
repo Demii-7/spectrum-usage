@@ -73,7 +73,7 @@ class STSPredNetDataset(Dataset):
     def __getitem__(self, idx):
         target_idx = self.target_indices[idx]
         t = target_idx - self.prediction_offset
-        result = {}
+        result = {"target_idx": target_idx, "t": t}
 
         if self.use_closeness:
             c_start = t - self.lc + 1
@@ -126,7 +126,9 @@ def collate_branch_samples(batch):
     keys = batch[0].keys()
     out = {}
     for k in keys:
-        if k == "target":
+        if k in ("target_idx", "t"):
+            out[k] = torch.tensor([b[k] for b in batch])
+        elif k == "target":
             out[k] = torch.stack([b[k] for b in batch], dim=0).unsqueeze(1)
         else:
             out[k] = torch.stack([b[k] for b in batch], dim=0)
@@ -138,6 +140,7 @@ def create_datasets(csv_path, config):
     pcfg = config["preprocessing"]
     scfg = config["splits"]
     bcfg = config["branches"]
+    wcfg = config.get("windowing", {})
 
     n_nodes = dcfg["n_nodes"]
     bins_per_node = dcfg["bins_per_node"]
@@ -154,6 +157,10 @@ def create_datasets(csv_path, config):
     trend_interval = bcfg["trend_interval"]
     prediction_offset = bcfg.get("prediction_offset", 1)
 
+    train_stride = wcfg.get("train_stride", 1)
+    val_stride = wcfg.get("val_stride", 1)
+    test_stride = wcfg.get("test_stride", 1)
+
     raw = load_csv(csv_path)
     data_3d = reshape_to_3d(raw, n_nodes, bins_per_node)
 
@@ -169,9 +176,9 @@ def create_datasets(csv_path, config):
         scfg.get("chronological_split", True),
     )
 
-    train_targets = [all_targets[i] for i in train_idx_list]
-    val_targets = [all_targets[i] for i in val_idx_list]
-    test_targets = [all_targets[i] for i in test_idx_list]
+    train_targets = [all_targets[i] for i in train_idx_list][::train_stride]
+    val_targets = [all_targets[i] for i in val_idx_list][::val_stride]
+    test_targets = [all_targets[i] for i in test_idx_list][::test_stride]
 
     if normalization == "minmax_neg1_pos1":
         if fit_on_train_only and train_targets:

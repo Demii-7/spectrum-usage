@@ -1,16 +1,16 @@
 # =============================================================================
-# STS-PredNet Spectrum Prediction — Smoke Test Config (3-node, 2000 rows)
+# STS-PredNet Spectrum Prediction — Smoke Test Config (1-node, CC2-only)
 # =============================================================================
+# Cross-model compatibility mode: 1 node, closeness-only, multi-step evaluate.
 # Lightweight config for CPU-based pipeline verification.
-# Full training uses num_layers=4, hidden_dim=128, lr=0.0002.
 # =============================================================================
 
 data:
-  dataset_path: "training/STS-PredNet/smoke_test/aerpaw_3node_2k.csv"
-  n_nodes: 3
+  dataset_path: "training/data/cc2_smoke_test.csv"
+  n_nodes: 1
   bins_per_node: 250
-  n_features: 750
-  node_names: ["CC1", "CC2", "LW1"]
+  n_features: 250
+  node_names: ["CC2"]
 
 preprocessing:
   normalization: "minmax_neg1_pos1"
@@ -22,12 +22,19 @@ splits:
   test_ratio: 0.1
   chronological_split: true
 
+windowing:
+  input_sequence_length: 12
+  prediction_horizon: 6
+  train_stride: 1
+  val_stride: 6
+  test_stride: 6
+
 branches:
   use_closeness: true
-  use_period: true
+  use_period: false
   use_trend: false
 
-  lc: 10
+  lc: 12
   lp: 3
   lq: 4
 
@@ -40,7 +47,7 @@ branches:
 
 model:
   input_channels: 1
-  map_height: 3
+  map_height: 1
   map_width: 250
   num_layers: 1
   hidden_dim: 16

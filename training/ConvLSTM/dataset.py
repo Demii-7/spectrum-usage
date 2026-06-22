@@ -45,39 +45,45 @@ def denormalize(data, mean, std):
     return data * std + mean
 
 
-def split_indices(n_windows, train_ratio, val_ratio, chronological=True):
-    if n_windows <= 0:
+def _make_windows(data_len, t_in, t_out, stride):
+    return list(range(0, data_len - t_in - t_out + 1, max(stride, 1)))
+
+
+def _split_time_ranges(total_len, train_ratio, val_ratio, chronological=True):
+    if total_len <= 0:
         return [], [], []
     if chronological:
-        n_train = int(n_windows * train_ratio)
-        n_val = int(n_windows * val_ratio)
-        train_idx = list(range(0, n_train))
-        val_idx = list(range(n_train, n_train + n_val))
-        test_idx = list(range(n_train + n_val, n_windows))
+        n_train = int(total_len * train_ratio)
+        n_val = int(total_len * val_ratio)
+        train_range = list(range(0, n_train))
+        val_range = list(range(n_train, n_train + n_val))
+        test_range = list(range(n_train + n_val, total_len))
     else:
-        perm = np.random.RandomState(42).permutation(n_windows)
-        n_train = int(n_windows * train_ratio)
-        n_val = int(n_windows * val_ratio)
-        train_idx = perm[:n_train].tolist()
-        val_idx = perm[n_train : n_train + n_val].tolist()
-        test_idx = perm[n_train + n_val :].tolist()
-    return train_idx, val_idx, test_idx
+        perm = np.random.RandomState(42).permutation(total_len)
+        n_train = int(total_len * train_ratio)
+        n_val = int(total_len * val_ratio)
+        train_range = perm[:n_train].tolist()
+        val_range = perm[n_train:n_train + n_val].tolist()
+        test_range = perm[n_train + n_val:].tolist()
+    return train_range, val_range, test_range
 
 
-def create_datasets(csv_path, n_nodes, n_bins, t_in, t_out, stride,
-                    train_ratio, val_ratio, chronological=True,
+def create_datasets(csv_path, n_nodes, n_bins, t_in, t_out, stride=1,
+                    train_stride=None, val_stride=None, test_stride=None,
+                    train_ratio=0.8, val_ratio=0.1, chronological=True,
                     normalization="zscore", fit_on_train_only=True):
+    train_stride = stride if train_stride is None else train_stride
+    val_stride = stride if val_stride is None else val_stride
+    test_stride = stride if test_stride is None else test_stride
+
     raw = load_csv(csv_path)
     data_3d = reshape_to_3d(raw, n_nodes, n_bins)
-
-    total_windows = (len(data_3d) - t_in - t_out) // stride + 1
-    if total_windows <= 0:
-        raise ValueError(f"Not enough data ({len(data_3d)} steps) for T_in={t_in} + T_out={t_out}")
+    T = len(data_3d)
 
     if fit_on_train_only:
-        n_train = int(total_windows * train_ratio)
-        train_end_idx = (n_train - 1) * stride + t_in + t_out
-        train_segment = data_3d[:train_end_idx] if train_end_idx > 0 else data_3d[:1]
+        n_train_raw = int(T * train_ratio)
+        train_segment_end = n_train_raw
+        train_segment = data_3d[:train_segment_end] if train_segment_end > 0 else data_3d[:1]
         mean, std = compute_norm_stats(train_segment)
     else:
         mean, std = compute_norm_stats(data_3d)
@@ -94,12 +100,20 @@ def create_datasets(csv_path, n_nodes, n_bins, t_in, t_out, stride,
         mean = np.zeros((1, n_nodes, n_bins), dtype=np.float32)
         std = np.ones((1, n_nodes, n_bins), dtype=np.float32)
 
-    all_start = list(range(0, len(data_3d) - t_in - t_out + 1, stride))
-    train_s, val_s, test_s = split_indices(len(all_start), train_ratio, val_ratio, chronological)
+    train_range, val_range, test_range = _split_time_ranges(
+        T, train_ratio, val_ratio, chronological,
+    )
 
-    train_ds = SpectrumDataset(data_norm, t_in, t_out, [all_start[i] for i in train_s]) if train_s else None
-    val_ds = SpectrumDataset(data_norm, t_in, t_out, [all_start[i] for i in val_s]) if val_s else None
-    test_ds = SpectrumDataset(data_norm, t_in, t_out, [all_start[i] for i in test_s]) if test_s else None
+    train_starts = _make_windows(len(train_range), t_in, t_out, train_stride)
+    val_starts = _make_windows(len(val_range), t_in, t_out, val_stride)
+    test_starts = _make_windows(len(test_range), t_in, t_out, test_stride)
+
+    train_ds = SpectrumDataset(data_norm, t_in, t_out,
+                               [train_range[s] for s in train_starts]) if train_starts else None
+    val_ds = SpectrumDataset(data_norm, t_in, t_out,
+                             [val_range[s] for s in val_starts]) if val_starts else None
+    test_ds = SpectrumDataset(data_norm, t_in, t_out,
+                              [test_range[s] for s in test_starts]) if test_starts else None
 
     stats = {"mean": mean, "std": std, "n_nodes": n_nodes, "n_bins": n_bins}
     return train_ds, val_ds, test_ds, stats

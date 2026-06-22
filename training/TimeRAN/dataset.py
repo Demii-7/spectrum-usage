@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import torch
@@ -54,10 +55,17 @@ def create_datasets(
     t_in: int = 128,
     t_out: int = 16,
     stride: int = 16,
+    train_stride: Optional[int] = None,
+    val_stride: Optional[int] = None,
+    test_stride: Optional[int] = None,
     train_ratio: float = 0.8,
     val_ratio: float = 0.1,
     normalization: str = "revin_only",
 ):
+    train_stride = stride if train_stride is None else train_stride
+    val_stride = stride if val_stride is None else val_stride
+    test_stride = stride if test_stride is None else test_stride
+
     data = load_csv(csv_path)
     T, C = data.shape
     assert val_ratio >= 0 and train_ratio + val_ratio <= 1.0
@@ -83,12 +91,12 @@ def create_datasets(
         val_data_norm = (data[val_idx] - mean) / std
         test_data_norm = (data[test_idx] - mean) / std
 
-        train_ds = AERPAWDataset(train_data_norm, train_idx, t_in, t_out, stride)
-        val_ds = AERPAWDataset(val_data_norm, val_idx, t_in, t_out, stride) if n_val > 0 else None
-        test_ds = AERPAWDataset(test_data_norm, test_idx, t_in, t_out, stride) if n_test > 0 else None
+        train_ds = AERPAWDataset(train_data_norm, train_idx, t_in, t_out, train_stride)
+        val_ds = AERPAWDataset(val_data_norm, val_idx, t_in, t_out, val_stride) if n_val > 0 else None
+        test_ds = AERPAWDataset(test_data_norm, test_idx, t_in, t_out, test_stride) if n_test > 0 else None
     else:
-        train_ds = AERPAWDataset(data, train_idx, t_in, t_out, stride)
-        val_ds = AERPAWDataset(data, val_idx, t_in, t_out, stride) if n_val > 0 else None
-        test_ds = AERPAWDataset(data, test_idx, t_in, t_out, stride) if n_test > 0 else None
+        train_ds = AERPAWDataset(data, train_idx, t_in, t_out, train_stride)
+        val_ds = AERPAWDataset(data, val_idx, t_in, t_out, val_stride) if n_val > 0 else None
+        test_ds = AERPAWDataset(data, test_idx, t_in, t_out, test_stride) if n_test > 0 else None
 
     return train_ds, val_ds, test_ds, norm_stats

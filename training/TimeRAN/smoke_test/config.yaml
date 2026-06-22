@@ -1,5 +1,5 @@
 data:
-  dataset_path: "training/TimeRAN/smoke_test/cc2_2k.csv"
+  dataset_path: "training/data/cc2_smoke_test.csv"
   n_features: 250
   n_nodes: 1
   bins_per_node: 250
@@ -12,6 +12,9 @@ preprocessing:
 windowing:
   input_sequence_length: 12
   prediction_horizon: 6
+  train_stride: 1
+  val_stride: 6
+  test_stride: 6
   stride: 1
 
 split:
