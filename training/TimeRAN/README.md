@@ -25,7 +25,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 
 # Install dependencies (pinned to tested versions)
-pip install momentfm==0.1.4 torch==2.12.1 numpy pyyaml tqdm scikit-learn gdown
+pip install momentfm==0.1.4 numpy pyyaml tqdm scikit-learn gdown
 ```
 
 ### Download Pretrained Checkpoint
