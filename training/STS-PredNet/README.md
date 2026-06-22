@@ -662,7 +662,7 @@ MAPE (mean absolute percentage error) is documented as optional because it is un
 ## References
 
 1. **STS-PredNet paper:**
-   Li, X., Liu, Z., Chen, G., Xu, Y., & Song, Q. (2020). *Deep Learning for Spectrum Prediction From Spatial–Temporal–Spectral Data.* IEEE Communications Letters, 25(4), 1216–1220.
+   Li, X., Liu, Z., Chen, G., Xu, Y., & Song, T. (2020). *Deep Learning for Spectrum Prediction From Spatial–Temporal–Spectral Data.* IEEE Communications Letters, 25(4), 1216–1220.
    DOI: [10.1109/LCOMM.2020.3045205](https://doi.org/10.1109/LCOMM.2020.3045205)
 
 2. **PredRNN paper:**
