@@ -3,7 +3,7 @@
 # =============================================================================
 # Reconstructed from: "Deep Learning for Spectrum Prediction From
 #   Spatial–Temporal–Spectral Data"
-#   Li, Liu, Chen, Xu, Zhu (IEEE Communications Letters, 2020)
+#   Li, Liu, Chen, Xu, Song (IEEE Communications Letters, 2020)
 # =============================================================================
 # Conceptual reference (incomplete): https://github.com/Demii-7/pred-rnn
 # =============================================================================
@@ -42,18 +42,18 @@ splits:
 branches:
   # Enable/disable each temporal branch independently
   use_closeness: true
-  use_period: true
-  use_trend: false  # disabled because AERPAW has only 6839 min (< 1 week)
+  use_period: true   # feasible with lp=3 (needs 4320 min); paper default lp=7 needs 10080 min (unavailable)
+  use_trend: false  # disabled: requires 1 week (10080 min), AERPAW has only 6839 min
 
   # Sequence lengths for each branch (from paper)
   lc: 36   # closeness: number of recent consecutive time steps
-  lp: 7    # period:    number of daily-period samples
-  lq: 4    # trend:     number of weekly-trend samples  (currently unused)
+  lp: 3    # period:    paper default 7, but reduced to 3 because 7 × 1440 = 10080 > 6839
+  lq: 4    # trend:     number of weekly-trend samples (currently unused; needs 40320 min)
 
   # Time intervals (in minutes) for period and trend sampling
   # AERPAW is 1-minute resolution
-  period_interval: 1440    # 1 day (24 × 60)
-  trend_interval: 10080   # 1 week (7 × 1440)  (currently unused)
+  period_interval: 1440    # 1 day (24 × 60); lp=3 needs 4320 min history (fits in 6839)
+  trend_interval: 10080   # 1 week (7 × 1440)  (currently unused; requires 40320 min)
 
   # Whether to share PredRNN weights across branches
   # If false, each branch has independent parameters (paper default).

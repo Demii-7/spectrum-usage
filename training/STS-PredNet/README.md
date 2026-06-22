@@ -1,6 +1,6 @@
 # STS-PredNet Spectrum Prediction — Reconstructed Model
 
-> **Based on:** *Deep Learning for Spectrum Prediction From Spatial–Temporal–Spectral Data* — Li, Liu, Chen, Xu, Zhu (IEEE Communications Letters, 2020)
+> **Based on:** *Deep Learning for Spectrum Prediction From Spatial–Temporal–Spectral Data* — Li, Liu, Chen, Xu, Song (IEEE Communications Letters, 2020)
 >
 > **Conceptual reference:** https://github.com/Demii-7/pred-rnn (incomplete, treat as rough reference only)
 >
@@ -34,7 +34,7 @@ python3 training/STS-PredNet/train.py \
     --batch-size 64 \
     --epochs 300 \
     --lr 0.0001 \
-    --use-trend
+    --lp 5
 ```
 
 Training creates `training/STS-PredNet/checkpoints/` with `best_model.pt`, `last_model.pt`, and `normalization_stats.pt`.
@@ -201,7 +201,7 @@ See `config.yaml` for the full configuration. Key fields:
 | `branches` | `use_period` | `true` | Enable daily period branch |
 | `branches` | `use_trend` | `false` | Enable weekly trend branch (requires >1 week of data) |
 | `branches` | `lc` | `36` | Closeness sequence length |
-| `branches` | `lp` | `7` | Period sequence length |
+| `branches` | `lp` | `3` | Period sequence length (paper default 7; reduced to 3 for AERPAW) |
 | `branches` | `lq` | `4` | Trend sequence length |
 | `branches` | `period_interval` | `1440` | Minutes between period samples (1 day at 1-min resolution) |
 | `branches` | `trend_interval` | `10080` | Minutes between trend samples (1 week at 1-min resolution) |
@@ -299,7 +299,7 @@ Daily-period observations at the same time from previous days:
 S_p = {X_{t+Δt-lp·p}, ..., X_{t+Δt-p}}
 ```
 
-Default: `lp = 7`, `period_interval = 1440` (1 day at 1-minute resolution)
+Default: `lp = 3` (reduced from paper's `lp = 7` because AERPAW has only `6839` minutes). With `period_interval = 1440`, `lp = 3` needs `3 × 1440 = 4320` minutes of history, which fits within `6839`. The paper's default `lp = 7` would require `10080` minutes (> 1 week) and is not feasible with the current dataset.
 
 #### Trend branch
 
@@ -311,12 +311,12 @@ S_q = {X_{t+Δt-lq·q}, ..., X_{t+Δt-q}}
 
 Default: `lq = 4`, `trend_interval = 10080` (1 week at 1-minute resolution)
 
-**Important AERPAW limitation:** The available CSV has only `6839` minutes, which is less than one week (`10080` minutes). Therefore the weekly trend branch is not feasible unless more data is added. Branch usage is configurable:
+**Important AERPAW limitation:** The available CSV has only `6839` minutes. This is less than one week (`10080` minutes), so the weekly trend branch is not feasible. It also limits the period branch: the paper's default `lp = 7` requires `10080` minutes of history, which is unavailable. The period branch is feasible only with a reduced `lp` (e.g., `lp = 3` requires `4320` minutes). Branch usage is configurable:
 
 ```yaml
 use_closeness: true
-use_period: true
-use_trend: false
+use_period: true    # feasible with reduced lp (from paper's lp=7)
+use_trend: false    # not feasible (< 1 week of data)
 ```
 
 ---
@@ -529,7 +529,7 @@ A branch is only constructed if its history exists (i.e., there are enough prece
 For the AERPAW dataset with `6839` time steps:
 
 * Closeness branch: always feasible (requires only `lc` recent steps)
-* Period branch: feasible for targets with ≥ `lp * period_interval` history
+* Period branch: feasible with reduced `lp`. Paper default `lp = 7` needs `7 × 1440 = 10080` min (unavailable). With `lp = 3` needs `3 × 1440 = 4320` min (feasible for targets with ≥ 4320 min of history).
 * Trend branch: **not feasible** (requires ≥ `lq * trend_interval = 4 * 10080 = 40320` steps of history)
 
 ### 5.5 Loss Function
@@ -577,7 +577,7 @@ MAPE (mean absolute percentage error) is documented as optional because it is un
 1. The AERPAW CSV has exactly `750` columns (3 nodes × 250 frequency bins).
 2. AERPAW rows are chronological with no missing timestamps.
 3. Each row can be reshaped to `(3, 250)` — the first 250 columns are CC1, next 250 are CC2, last 250 are LW1.
-4. Weekly trend is unavailable with only `6839` minutes of data (less than one week).
+4. Weekly trend is unavailable and daily period requires reduced `lp` — the AERPAW CSV has only `6839` minutes, which is less than one week.
 5. The three temporal branches capture complementary predictive information.
 6. Learnable weighted fusion improves over equal-weight averaging.
 7. The paper's PredRNN hyperparameters (4 layers, 128 hidden, 3×3 kernels) transfer reasonably to the AERPAW setup.
@@ -605,11 +605,12 @@ MAPE (mean absolute percentage error) is documented as optional because it is un
 | Frequency bands | 60 | 250 per node | Different spectrum analyzer configurations |
 | Map size | `(100, 60)` | `(3, 250)` | Different spatial × frequency dimensions |
 | Time resolution | 10 minutes | 1 minute | AERPAW logs every minute |
+| Period branch (`lp`) | 7 | 3 (reduced) | `7 × 1440 = 10080` min exceeds 6839 available; `3 × 1440 = 4320` fits |
 | Trend branch | Available | Unavailable (without more data) | `6839` rows < one week of 1-min data |
 | Normalization | Min-max `[-1, 1]` | Min-max `[-1, 1]` (same) | Paper-faithful default |
 | `lc` | 36 | 36 | Same as paper |
-| `lp` | 7 | 7 | Same as paper |
-| `lq` | 4 | 4 | Same as paper (but disabled) |
+| `lp` | 7 | 3 | Reduced to fit AERPAW (7 × 1440 = 10080 > 6839) |
+| `lq` | 4 | 4 | Same as paper (but disabled — trend unavailable) |
 | PredRNN layers | 4 | 4 | Same as paper |
 | Hidden states | 128 | 128 | Same as paper |
 | Kernel size | `3 × 3` | `3 × 3` | Same as paper |
@@ -624,9 +625,9 @@ MAPE (mean absolute percentage error) is documented as optional because it is un
 
 ## 8. Known Limitations
 
-1. **Weekly trend branch unavailable.** The weekly trend branch requires at least one week of data (`10080` minutes at 1-minute resolution), but the available AERPAW CSV contains only `6839` minutes. This branch is disabled by default and will remain unavailable unless more data is collected.
+1. **Weekly trend branch unavailable; daily period branch requires reduced `lp`.** The trend branch needs at least one week of data (`10080` minutes). The period branch with paper default `lp = 7` also needs `10080` minutes. With only `6839` minutes available, trend is disabled and period `lp` is reduced to `3` (needs `4320` minutes). These branches remain unavailable at full paper settings unless more data is collected.
 
-2. **Daily period branch requires data history.** The period branch samples from `lp` previous days. For a target late in the test set, there must be at least `lp × 1440` historical time steps. Early time steps in the dataset may not generate period branch samples.
+2. **Daily period branch requires data history.** The period branch samples from `lp` previous days. The paper default `lp = 7` requires `10080` minutes of history, which exceeds the available `6839` minutes. A reduced `lp` (e.g., `lp = 3` needing `4320` minutes) is required. Even with reduced `lp`, early time steps in the dataset may not generate period branch samples.
 
 3. **Small spatial dimension (3 rows).** With only 3 spatial nodes, the `3 × 3` convolution kernels span the full height of the spatial dimension. This means the model has limited ability to learn localized spatial patterns within individual nodes beyond what the kernel width captures.
 
@@ -661,7 +662,7 @@ MAPE (mean absolute percentage error) is documented as optional because it is un
 ## References
 
 1. **STS-PredNet paper:**
-   Li, X., Liu, Z., Chen, G., Xu, Y., & Zhu, Q. (2020). *Deep Learning for Spectrum Prediction From Spatial–Temporal–Spectral Data.* IEEE Communications Letters, 25(4), 1211–1215.
+   Li, X., Liu, Z., Chen, G., Xu, Y., & Song, Q. (2020). *Deep Learning for Spectrum Prediction From Spatial–Temporal–Spectral Data.* IEEE Communications Letters, 25(4), 1216–1220.
    DOI: [10.1109/LCOMM.2020.3045205](https://doi.org/10.1109/LCOMM.2020.3045205)
 
 2. **PredRNN paper:**
