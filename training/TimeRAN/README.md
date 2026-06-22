@@ -17,6 +17,12 @@
 
 ```bash
 cd /home/cc/spectrum-usage
+
+# Create and activate virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Install dependencies
 pip install momentfm torch numpy pyyaml tqdm scikit-learn gdown
 ```
 
@@ -29,13 +35,13 @@ Model checkpoints are not included in the repository due to GitHub file size lim
 mkdir -p training/TimeRAN/checkpoints/{small,base,large}
 
 # Download checkpoints from the upstream TimeRAN repository
-cd training/TimeRAN/checkpoints
-
-gdown 1fJNCkufmfWC6zHecz10PUyreD0PhBOMJ -O base/TimeRAN_base.pth
-gdown 1gz23mmP4ZiNznCloObEaSlVaJH21fyxJ -O small/TimeRAN_small.pth
-gdown 1We9zE5BV6Iwkc_EKSAhP28B3wcM7RZRd -O large/TimeRAN_large.pth
-
-cd /home/cc/spectrum-usage
+# NOTE: The upstream TimeRAN README mislabels these file IDs.
+# ID 1fJNCk... is the small variant (d_model=512, ~145 MB), NOT base.
+# ID 1gz23m... is the base variant (d_model=768, ~433 MB), NOT small.
+# We save them with correct names here.
+gdown 1fJNCkufmfWC6zHecz10PUyreD0PhBOMJ -O training/TimeRAN/checkpoints/small/TimeRAN_small.pth
+gdown 1gz23mmP4ZiNznCloObEaSlVaJH21fyxJ -O training/TimeRAN/checkpoints/base/TimeRAN_base.pth
+gdown 1We9zE5BV6Iwkc_EKSAhP28B3wcM7RZRd -O training/TimeRAN/checkpoints/large/TimeRAN_large.pth
 ```
 
 ### Train Forecasting Head (Linear Probing)
