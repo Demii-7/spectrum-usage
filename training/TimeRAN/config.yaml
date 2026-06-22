@@ -51,8 +51,6 @@ split:
 model:
   # TimeRAN variant: "small", "base", or "large"
   checkpoint_size: "base"
-  # Local path to the TimeRAN .pth checkpoint file
-  checkpoint_path: "training/TimeRAN/checkpoints/base/TimeRAN_base.pth"
   # Downstream task (must be "forecasting" for spectrum prediction)
   task: "forecasting"
   # Freeze encoder + embedder during training (linear probing mode)

@@ -22,7 +22,6 @@ split:
 
 model:
   checkpoint_size: "base"
-  checkpoint_path: "training/TimeRAN/checkpoints/base/TimeRAN_base.pth"
   task: "forecasting"
   freeze_backbone: true
   train_head_only: true

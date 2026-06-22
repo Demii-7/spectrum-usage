@@ -198,8 +198,7 @@ dataset.py ──► train_head.py ──► checkpoints/best_model.pt
 | Split | `val_ratio` | 0.1 | Validation set fraction |
 | Split | `test_ratio` | 0.1 | Test set fraction |
 | Split | `chronological_split` | true | Chronological split |
-| Model | `checkpoint_size` | `base` | `small`, `base`, or `large` |
-| Model | `checkpoint_path` | `training/TimeRAN/checkpoints/base/TimeRAN_base.pth` | Path to TimeRAN `.pth` (Google Drive download) |
+| Model | `checkpoint_size` | `base` | `small`, `base`, or `large` (checkpoint path derived automatically) |
 | Model | `task` | `forecasting` | Downstream task |
 | Model | `freeze_backbone` | true | Freeze encoder + embedder |
 | Model | `train_head_only` | true | Train only the head |
@@ -556,7 +555,7 @@ Computed:
    The TimeRAN paper reports that LoRA was not competitive with other fine-tuning regimes for their evaluation. However, our dataset and task differ from TelecomTS, so LoRA may still be worth testing after the linear probing baseline is established.
 
 5. **Checkpoints must be downloaded from Google Drive before training**
-   The TimeRAN checkpoint files exceed GitHub's file size limits and are hosted on Google Drive. Run the `gdown` commands in the Quick Start section above to download them into `training/TimeRAN/checkpoints/{small,base,large}/`. Without a checkpoint, the pipeline falls back to raw MOMENT weights (no TimeRAN pretraining).
+   The TimeRAN checkpoint files exceed GitHub's file size limits and are hosted on Google Drive. Run the `gdown` commands in the Quick Start section above to download them into `training/TimeRAN/checkpoints/{small,base,large}/`. The checkpoint path is derived automatically from `checkpoint_size`. Without a checkpoint, the pipeline falls back to raw MOMENT weights (no TimeRAN pretraining).
 
 ---
 

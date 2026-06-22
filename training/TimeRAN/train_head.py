@@ -63,8 +63,8 @@ def build_model(config: dict, device: torch.device):
     )
     model.init()
 
-    ckpt_path = config["model"]["checkpoint_path"]
-    if ckpt_path and Path(ckpt_path).exists():
+    ckpt_path = Path(__file__).parent / "checkpoints" / variant / f"TimeRAN_{variant}.pth"
+    if ckpt_path.exists():
         print(f"Loading TimeRAN checkpoint: {ckpt_path}")
         state_dict = torch.load(ckpt_path, map_location="cpu", weights_only=True)
         if any(k.startswith("module.") for k in state_dict.keys()):
