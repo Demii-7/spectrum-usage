@@ -8,8 +8,7 @@
 >
 > **Target dataset:** AERPAW sub-6 GHz spectrum monitoring dataset — Fixed nodes CC1, CC2, LW1 (Feb 2022)
 
-**TimeRAN is reused, not reconstructed.** We are adapting an existing pretrained foundation model to AERPAW spectrum prediction. Forecasting is the correct downstream task. The 750-channel input is not an architecture blocker — GPU memory is the main risk. This README serves both as user documentation and as a design specification for future implementation.
-
+**TimeRAN is reused, not reconstructed.** We are adapting the existing pretrained foundation model used in TIMERAN to AERPAW spectrum prediction. While TIMERAN has many task-specific heads,Forecasting is the most suitable task for spectrum prediction.  
 ---
 
 ## Quick Start
