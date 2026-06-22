@@ -3,4 +3,5 @@ __pycache__/
 *.pyo
 .venv/
 *.pt
+*.pth
 *.zip
