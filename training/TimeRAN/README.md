@@ -8,7 +8,7 @@
 >
 > **Target dataset:** AERPAW sub-6 GHz spectrum monitoring dataset — Fixed nodes CC1, CC2, LW1 (Feb 2022)
 
-**TimeRAN is reused, not reconstructed.** We are adapting an existing pretrained foundation model to AERPAW spectrum prediction. Forecasting is the correct downstream task. The 750-channel input is not an architecture blocker — GPU memory is the main risk.
+**TimeRAN is reused, not reconstructed.** We are adapting an existing pretrained foundation model to AERPAW spectrum prediction. Forecasting is the correct downstream task. The 750-channel input is not an architecture blocker — GPU memory is the main risk. This README serves both as user documentation and as a design specification for future implementation.
 
 ---
 
@@ -482,38 +482,29 @@ Computed:
 
 1. **Linear probing as default**: Original notebooks use `full_finetuning`. We default to `linear_probing` because AERPAW (6839 rows) is much smaller than TelecomTS.
 2. **Three-way chronological split**: Original uses single `train_ratio` with remainder as test. We add explicit validation.
-3. **Start batch=1**: Memory scales with C × N × d_model. Batch=1 at C=750 with T_in=128 is ~5 GB for base.
+3. **Start batch=1**: Memory scales with C × N × d_model (channels × patches × model size). Batch=1 keeps the initial footprint manageable.
 4. **`revin_only` normalization first**: Simplest path. Add `train_zscore` only if needed.
 
 ### Experimental Options
 
-1. **Full fine-tuning**: Higher potential accuracy, risk of overfitting on small dataset.
-2. **LoRA**: Parameter-efficient middle ground.
-3. **Larger checkpoint**: Test `large` variant if memory permits.
-4. **Stride tuning**: Reduce to 1 for max windows, increase to reduce overlap.
-5. **External z-score**: Add explicit normalization if RevIN alone is insufficient.
+1. **Checkpoint size**: `small`, `base`, `large` — trade off model capacity vs GPU memory.
+2. **Sequence length**: 128 (default), 256, 512 — longer context captures more history but increases memory linearly.
+3. **Prediction horizon**: Configurable — longer horizons are harder to predict; start short and extend.
+4. **Precision**: `fp32` or mixed precision (`bf16`/`fp16`) — mixed precision reduces memory and may speed up training.
+5. **Full fine-tuning**: Higher potential accuracy, risk of overfitting on small dataset.
+6. **LoRA**: Parameter-efficient middle ground.
+7. **Stride tuning**: Reduce to 1 for max windows, increase to reduce overlap.
+8. **External z-score**: Add explicit normalization if RevIN alone is insufficient.
 
 ---
 
-## 8. Implementation Notes
-
-- TimeRAN should be treated as a **pretrained forecasting backbone**, not rebuilt from scratch. The only new code needed is the dataset loader (`AERPAWDataset`) and training/evaluation scripts.
-- The default mode is **linear probing**: freeze the backbone and train only the forecasting head. This is the safest first experiment. LoRA and full fine-tuning are follow-up phases.
-- `input_sequence_length`, `batch_size`, `checkpoint_size`, and `precision` are configurable because they directly affect **GPU memory usage** — the main practical constraint when running 750 channels through the T5 encoder.
-- `normalization` is configurable so that `revin_only` (MOMENT's built-in RevIN) can be compared against `train_zscore` (external z-score from training split only) and `train_zscore_plus_revin` (both). AERPAW PSD values are in a narrow −138 to −105 dBm range; empirical testing will determine which approach converges better.
-- `stride` is configurable because it controls the tradeoff between **more training windows** (smaller stride, more overlap) and **less overlap / more independence** (larger stride, fewer windows). With only 6839 time steps, this tradeoff matters.
-- LoRA is an **optional experimental mode** after the head-only baseline is working. It provides lightweight backbone adaptation without the cost or risk of full fine-tuning.
-- TimeRAN's encoder processes each channel independently (channels are stacked in the T5 batch dimension, `[B*C, N, d_model]`). There is **no cross-channel attention**. This means each of the 750 frequency bins is predicted from its own history — appropriate for spectrum data where bins are not spatially correlated in the same way as images.
-
----
-
-## 9. Known Limitations
+## 8. Known Limitations
 
 1. **GPU memory with 750 channels**
-   TimeRAN is channel-agnostic architecturally, but memory usage still scales with `C × N × d_model`. Current estimate: `T_in=128`, `batch_size=1`, `C=750`, `checkpoint_size=base` should use roughly ~5 GB, but this must be empirically verified on the target GPU. If memory is insufficient, reduce `T_in`, switch to `small`, or use gradient checkpointing.
+   TimeRAN is channel-agnostic architecturally, but memory usage scales with `checkpoint_size`, `input_sequence_length`, `batch_size`, `precision`, and number of channels. Start conservatively (`base`, `T_in=128`, `batch_size=1`) and adjust based on empirical measurements. If memory is insufficient, reduce `T_in`, switch to `small`, enable mixed precision, or use gradient checkpointing.
 
 2. **RevIN may not fully replace dataset-specific normalization**
-   While MOMENT's built-in RevIN normalizes per sample-channel, the AERPAW PSD values (−138 to −105 dBm) may benefit from an external z-score computed across the training split. This is configurable via `normalization` and should be tested early.
+   While MOMENT's built-in RevIN normalizes per sample-channel, some datasets may benefit from an external z-score computed across the training split. This is configurable via `normalization` and should be tested early.
 
 3. **Window count is limited by dataset size**
    With only 6839 time steps, stride directly controls how many training windows are available. A stride of 16 with `T_in=128`, `T_out=16` yields ~333 training windows. Reducing stride to 1 gives ~6839 windows but with heavy overlap, which risks information leakage between nearby windows if not handled carefully.
@@ -523,6 +514,18 @@ Computed:
 
 5. **Checkpoint availability must be verified against the upstream repository**
    The original TimeRAN project is at `https://github.com/panitsasi/TimeRAN`. Checkpoint files, documentation, and future updates are tracked there. The local clone at `git@github.com:Demii-7/TimeRAN.git` is a copy; verify that the checkpoint files are present or can be downloaded from the upstream source before training.
+
+---
+
+## 9. Implementation Notes
+
+- TimeRAN should be treated as a **pretrained forecasting backbone**, not rebuilt from scratch. The only new code needed is the dataset loader (`AERPAWDataset`) and training/evaluation scripts.
+- The default mode is **linear probing**: freeze the backbone and train only the forecasting head. This is the safest first experiment. LoRA and full fine-tuning are follow-up phases.
+- `input_sequence_length`, `batch_size`, `checkpoint_size`, and `precision` are configurable because they directly affect **GPU memory usage** — the main practical constraint when running 750 channels through the T5 encoder.
+- `normalization` is configurable so that `revin_only` (MOMENT's built-in RevIN) can be compared against `train_zscore` (external z-score from training split only) and `train_zscore_plus_revin` (both). The best strategy depends on the data distribution and should be tested experimentally.
+- `stride` is configurable because it controls the tradeoff between **more training windows** (smaller stride, more overlap) and **less overlap / more independence** (larger stride, fewer windows). With only 6839 time steps, this tradeoff matters.
+- LoRA is an **optional experimental mode** after the head-only baseline is working. It provides lightweight backbone adaptation without the cost or risk of full fine-tuning.
+- TimeRAN's encoder processes channels independently by stacking channels in the effective batch dimension (`[B*C, N, d_model]`). Therefore, cross-channel relationships are not modeled explicitly through transformer attention. Each frequency bin is predicted primarily from its own history, which is appropriate for spectrum data where bins are not spatially correlated in the same way as images.
 
 ---
 
