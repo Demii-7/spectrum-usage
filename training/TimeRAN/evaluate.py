@@ -72,7 +72,7 @@ def plot_spectrogram_comparison(ground_truth, prediction, node_name, save_path):
     axes[1].set_title(f"{node_name} — Prediction")
     axes[1].set_xlabel("Time Step (future minutes)")
     axes[1].set_ylabel("Frequency Bin")
-    fig.colorbar(im1, ax=axes.ravel().tolist(), label="Normalized Power")
+    fig.colorbar(im1, ax=axes.ravel().tolist(), label="Power (dBm)")
     fig.savefig(save_path, dpi=150)
     plt.close(fig)
 
