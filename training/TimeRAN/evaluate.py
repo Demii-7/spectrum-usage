@@ -217,9 +217,9 @@ def main():
         json.dump({**overall, **per_horizon, **per_node}, f, indent=2)
     print(f"\nMetrics saved to {metrics_path}")
 
-    B, C, H = pred_norm.shape
-    pred_3d = pred_norm.transpose(0, 2, 1).reshape(B, H, n_nodes, bins_per_node)
-    target_3d = target_norm.transpose(0, 2, 1).reshape(B, H, n_nodes, bins_per_node)
+    B, C, H = pred_dbm.shape
+    pred_3d = pred_dbm.transpose(0, 2, 1).reshape(B, H, n_nodes, bins_per_node)
+    target_3d = target_dbm.transpose(0, 2, 1).reshape(B, H, n_nodes, bins_per_node)
 
     errors = pred_3d - target_3d
     for n, name in enumerate(node_names):

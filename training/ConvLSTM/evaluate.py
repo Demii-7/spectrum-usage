@@ -176,11 +176,11 @@ def main():
         json.dump({**overall, **per_horizon, **per_node}, f, indent=2)
     print(f"\nMetrics saved to {metrics_path}")
 
-    errors = pred_np[:, :, 0, :, :] - target_np[:, :, 0, :, :]
+    errors = pred_dbm[:, :, 0, :, :] - target_dbm[:, :, 0, :, :]
     for n, name in enumerate(node_names):
         plot_path = os.path.join(output_dir, f"spectrogram_{name}.png")
         plot_spectrogram_comparison(
-            target_np[0, :, 0, :, :], pred_np[0, :, 0, :, :],
+            target_dbm[0, :, 0, :, :], pred_dbm[0, :, 0, :, :],
             n, name, wcfg["input_sequence_length"], plot_path,
         )
         print(f"Spectrogram saved to {plot_path}")
