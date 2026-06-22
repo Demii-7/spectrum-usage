@@ -34,6 +34,9 @@ def plot_spectrogram_comparison(ground_truth, prediction, node_idx, node_name,
     axes[1].set_xlabel("Time Step (future minutes)")
     axes[1].set_ylabel("Frequency Bin")
     fig.colorbar(im1, ax=axes.ravel().tolist(), label="Power (dBm)")
+    fig.text(0.01, 0.99, f"Range [{vmin:.0f}, {vmax:.0f}] dBm",
+             transform=fig.transFigure, fontsize=8, va="top", ha="left",
+             bbox=dict(boxstyle="round", facecolor="white", alpha=0.8))
     fig.savefig(save_path, dpi=150)
     plt.close(fig)
 
