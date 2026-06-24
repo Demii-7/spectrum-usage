@@ -112,7 +112,6 @@ def main() -> None:
     all_aggregate: list[dict[str, Any]] = []
     all_frequency: list[dict[str, Any]] = []
     all_band: list[dict[str, Any]] = []
-    model_store = {}
 
     for chunk in chunk_specs(config):
         print(f"Training LinearAutoRegressive for {chunk.chunk_id} ({chunk.start_mhz:g}-{chunk.end_mhz:g} MHz)")
@@ -120,13 +119,12 @@ def main() -> None:
         all_aggregate.extend(aggregate)
         all_frequency.extend(frequency)
         all_band.extend(band)
-        model_store[chunk.chunk_id] = models
+        with (model_dir / f"{chunk.chunk_id}_linear_autoregressive.pkl").open("wb") as f:
+            pickle.dump(models, f)
 
     pd.DataFrame(all_aggregate).to_csv(out / "aggregate_metrics.csv", index=False)
     pd.DataFrame(all_frequency).to_csv(out / "per_frequency_metrics.csv", index=False)
     pd.DataFrame(all_band).to_csv(out / "per_band_metrics.csv", index=False)
-    with (model_dir / "linear_autoregressive_models.pkl").open("wb") as f:
-        pickle.dump(model_store, f)
 
     print(f"Wrote {len(all_aggregate)} aggregate metric rows to {out / 'aggregate_metrics.csv'}")
     print(f"Wrote {len(all_frequency)} per-frequency metric rows to {out / 'per_frequency_metrics.csv'}")

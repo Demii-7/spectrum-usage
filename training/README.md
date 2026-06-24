@@ -69,7 +69,7 @@ Outputs go to `training/results/LinearAutoRegressive/` by default:
 aggregate_metrics.csv
 per_frequency_metrics.csv
 per_band_metrics.csv
-models/linear_autoregressive_models.pkl
+models/<chunk_id>_linear_autoregressive.pkl
 ```
 
 ### Run ConvLSTM
