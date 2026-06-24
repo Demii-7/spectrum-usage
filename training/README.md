@@ -16,6 +16,19 @@ evaluation/aerpaw/ResultsCC2Feb2022_SigMF_power_1mhz_avg_per_minute.csv
 evaluation/aerpaw/ResultsLW1Feb2022_SigMF_power_1mhz_avg_per_minute.csv
 ```
 
+Generate these files from the downloaded SigMF ZIP archives with `evaluation/sigmf_zip_to_csv.py`:
+
+```bash
+python3 evaluation/sigmf_zip_to_csv.py ResultsCC1Feb2022_SigMF.zip --full-band \
+  --output evaluation/aerpaw/ResultsCC1Feb2022_SigMF_power_1mhz_avg_per_minute.csv
+python3 evaluation/sigmf_zip_to_csv.py ResultsCC2Feb2022_SigMF.zip --full-band \
+  --output evaluation/aerpaw/ResultsCC2Feb2022_SigMF_power_1mhz_avg_per_minute.csv
+python3 evaluation/sigmf_zip_to_csv.py ResultsLW1Feb2022_SigMF.zip --full-band \
+  --output evaluation/aerpaw/ResultsLW1Feb2022_SigMF_power_1mhz_avg_per_minute.csv
+```
+
+Omit `--full-band` to export the default 250 MHz slice.
+
 The loader discovers files by site name, interpolates missing values per frequency, selects shared frequency columns, and creates the chronological CC2 train/test split. The final two days form `CC2_test`.
 
 Per-band metrics use `evaluation/results/step2/band_definitions.csv` when that file exists. The model runners still produce aggregate and per-frequency metrics when band definitions are absent.
