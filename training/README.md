@@ -116,7 +116,33 @@ models/<chunk_id>_stsprednet.pt
 
 ### Run TimeRAN
 
-The integrated TimeRAN runner trains a MOMENT foundation model forecasting head per chunk using the shared lookback and horizon values.
+The integrated TimeRAN runner trains a MOMENT forecasting head per chunk using the shared lookback and horizon values.
+
+#### Prerequisites — Download Pretrained Checkpoint
+
+TimeRAN's pretrained backbone weights exceed GitHub's file size limits and must be downloaded from Google Drive before training. The checkpoint path is derived automatically from `config.timeran.checkpoint_size` (default: `base`).
+
+```bash
+# Install gdown for Google Drive downloads
+pip install momentfm==0.1.4 gdown
+
+# Create checkpoint directories
+mkdir -p training/TimeRAN/checkpoints/{small,base,large}
+
+# Download checkpoints from the upstream TimeRAN repository.
+#
+# NOTE: The upstream TimeRAN README mislabels these file IDs.
+# ID 1fJNCk... is the small variant (d_model=512, ~145 MB), NOT base.
+# ID 1gz23m... is the base variant (d_model=768, ~433 MB), NOT small.
+# We save them with correct names here.
+gdown 1fJNCkufmfWC6zHecz10PUyreD0PhBOMJ -O training/TimeRAN/checkpoints/small/TimeRAN_small.pth
+gdown 1gz23mmP4ZiNznCloObEaSlVaJH21fyxJ -O training/TimeRAN/checkpoints/base/TimeRAN_base.pth
+gdown 1We9zE5BV6Iwkc_EKSAhP28B3wcM7RZRd -O training/TimeRAN/checkpoints/large/TimeRAN_large.pth
+```
+
+Without these checkpoints, the pipeline falls back to raw MOMENT weights (no TimeRAN pretraining).
+
+#### Run
 
 ```bash
 python3 training/TimeRAN/train_integrated.py
