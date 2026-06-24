@@ -13,6 +13,8 @@ DEFAULT_INPUTS = (
     Path("training/results/baselines"),
     Path("training/results/LinearAutoRegressive"),
     Path("training/results/ConvLSTM"),
+    Path("training/results/STS-PredNet"),
+    Path("training/results/TimeRAN"),
 )
 
 

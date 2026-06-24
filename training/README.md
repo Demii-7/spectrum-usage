@@ -83,9 +83,45 @@ For a shorter smoke run, copy `training/common/config.yaml`, reduce `convlstm.ep
 python3 training/ConvLSTM/train_integrated.py --config /path/to/smoke_config.yaml
 ```
 
+### Run STS-PredNet
+
+The integrated STS-PredNet runner trains one model per chunk using recursive single-step prediction with closeness and period branches. It evaluates each horizon from the configured list.
+
+```bash
+python3 training/STS-PredNet/train_integrated.py
+```
+
+Outputs go to `training/results/STS-PredNet/` by default:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+models/<chunk_id>_stsprednet.pt
+<chunk_id>_training_log.csv
+```
+
+### Run TimeRAN
+
+The integrated TimeRAN runner trains a MOMENT foundation model forecasting head per chunk using the shared lookback and horizon values.
+
+```bash
+python3 training/TimeRAN/train_integrated.py
+```
+
+Outputs go to `training/results/TimeRAN/` by default:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+models/<chunk_id>_timeran.pt
+<chunk_id>_training_log.csv
+```
+
 ### Assemble Overall Results
 
-After the baseline, LinearAutoRegressive, and ConvLSTM jobs finish, combine their metric files:
+After the baseline, LinearAutoRegressive, ConvLSTM, STS-PredNet, and TimeRAN jobs finish, combine their metric files:
 
 ```bash
 python3 -m training.common.assemble_results
@@ -97,6 +133,8 @@ The assembler reads these directories by default:
 training/results/baselines/
 training/results/LinearAutoRegressive/
 training/results/ConvLSTM/
+training/results/STS-PredNet/
+training/results/TimeRAN/
 ```
 
 It writes combined outputs to `training/results/overall/`:
@@ -147,9 +185,22 @@ preprocessing:
 convlstm:
   input_sequence_length: 60
   prediction_horizon: 60
+
+stsprednet:
+  lc: 36
+  lp: 3
+  period_interval: 1440
+  epochs: 25
+  learning_rate: 0.0002
+
+timeran:
+  checkpoint_size: base
+  epochs: 10
+  learning_rate: 1.0e-5
+  training_mode: linear_probing
 ```
 
-Set `convlstm.prediction_horizon` to at least the largest configured horizon.
+Set each model's prediction/input length to at least the largest configured horizon.
 
 ## Legacy TSS-LCD Reconstruction
 
