@@ -238,13 +238,12 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands: pd.DataFrame, out: Path
     period_interval = int(scfg["period_interval"])
     min_history_base = int(config["windowing"].get("min_history", 4320))
     horizons = [int(h) for h in config["windowing"]["horizons"]]
-    test_splits = config["data"].get("test_splits", ["CC2_test"])
-
     data = load_chunk(config, chunk)
-    train = data.splits["CC2_train"].model_input
-    train_raw = data.splits["CC2_train"].raw_dbm
+    test_splits = config["data"].get("test_splits", [data.test_split])
+    train = data.splits[data.train_split].model_input
+    train_raw = data.splits[data.train_split].raw_dbm
 
-    full_x_all = np.vstack([train, data.splits["CC2_test"].model_input])
+    full_x_all = np.vstack([train, data.splits[data.test_split].model_input])
     model = train_one_model(config, full_x_all, out, chunk.chunk_id)
     device = next(model.parameters()).device
 
@@ -287,7 +286,7 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands: pd.DataFrame, out: Path
                 model=MODEL_NAME,
                 target_rows=target_rows,
                 history_offset=history_offset,
-                freqs=data.shared_frequencies,
+                freqs=data.frequencies,
                 abs_err=abs_err,
                 sq_err=sq_err,
                 bands=bands,

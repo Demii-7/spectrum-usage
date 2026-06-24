@@ -52,8 +52,9 @@ def device_for() -> torch.device:
 
 def build_model_config(config: dict[str, Any], n_bins: int) -> dict[str, Any]:
     ccfg = config["convlstm"]
+    reference_site = str(config["data"].get("reference_site", "CC2"))
     return {
-        "data": {"n_nodes": 1, "n_bins_per_node": n_bins, "node_names": ["CC2"]},
+        "data": {"n_nodes": 1, "n_bins_per_node": n_bins, "node_names": [reference_site]},
         "windowing": {
             "input_sequence_length": int(ccfg.get("input_sequence_length", config["windowing"]["lookback"])),
             "prediction_horizon": int(ccfg.get("prediction_horizon", max(config["windowing"]["horizons"]))),
@@ -174,11 +175,10 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands: pd.DataFrame, out: Path
     min_history = int(config["windowing"].get("min_history", 4320))
     horizons = [int(h) for h in config["windowing"]["horizons"]]
     batch_size = int(ccfg.get("batch_size", 32))
-    test_splits = config["data"].get("test_splits", ["CC2_test"])
-
     data = load_chunk(config, chunk)
-    train = data.splits["CC2_train"].model_input
-    train_raw = data.splits["CC2_train"].raw_dbm
+    test_splits = config["data"].get("test_splits", [data.test_split])
+    train = data.splits[data.train_split].model_input
+    train_raw = data.splits[data.train_split].raw_dbm
     model = train_one_model(config, train, out, chunk.chunk_id)
 
     aggregate_rows: list[dict[str, Any]] = []
@@ -206,7 +206,7 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands: pd.DataFrame, out: Path
                 model=MODEL_NAME,
                 target_rows=target_rows,
                 history_offset=history_offset,
-                freqs=data.shared_frequencies,
+                freqs=data.frequencies,
                 abs_err=abs_err,
                 sq_err=sq_err,
                 bands=bands,
