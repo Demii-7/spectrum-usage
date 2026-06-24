@@ -2,7 +2,6 @@ data:
   data_dir: evaluation/aerpaw
   band_definitions_path: evaluation/results/step2/band_definitions.csv
   reference_site: CC2
-  test_splits: [CC2_test]
   chunks:
     - id: chunk_600_800
       start_mhz: 600.0

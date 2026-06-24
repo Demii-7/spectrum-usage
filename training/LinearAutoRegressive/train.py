@@ -51,11 +51,10 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands: pd.DataFrame):
     min_history = int(config["windowing"].get("min_history", 4320))
     horizons = [int(h) for h in config["windowing"]["horizons"]]
     alpha = float(config.get("linear_autoregressive", {}).get("ridge_alpha", 1.0))
-    test_splits = config["data"].get("test_splits", ["CC2_test"])
-
     data = load_chunk(config, chunk)
-    train = data.splits["CC2_train"].model_input
-    train_raw = data.splits["CC2_train"].raw_dbm
+    test_splits = config["data"].get("test_splits", [data.test_split])
+    train = data.splits[data.train_split].model_input
+    train_raw = data.splits[data.train_split].raw_dbm
     models = {horizon: fit_lar(train, horizon, lookback, alpha) for horizon in horizons}
 
     aggregate_rows: list[dict[str, Any]] = []
@@ -85,7 +84,7 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands: pd.DataFrame):
                 model=MODEL_NAME,
                 target_rows=target_rows,
                 history_offset=history_offset,
-                freqs=data.shared_frequencies,
+                freqs=data.frequencies,
                 abs_err=abs_err,
                 sq_err=sq_err,
                 bands=bands,

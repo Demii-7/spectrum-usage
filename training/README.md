@@ -29,7 +29,7 @@ python3 evaluation/sigmf_zip_to_csv.py ResultsLW1Feb2022_SigMF.zip --full-band \
 
 Omit `--full-band` to export the default 250 MHz slice.
 
-The loader discovers files by site name, interpolates missing values per frequency, selects shared frequency columns, and creates the chronological CC2 train/test split. The final two days form `CC2_test`.
+The training loader reads the configured reference site, interpolates missing values per frequency, selects that site's columns in each configured chunk, and creates chronological train/test splits. The default reference site is `CC2`; the final two days form `CC2_test`.
 
 Per-band metrics use `evaluation/results/step2/band_definitions.csv` when that file exists. The model runners still produce aggregate and per-frequency metrics when band definitions are absent.
 

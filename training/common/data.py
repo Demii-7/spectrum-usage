@@ -1,20 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
-import sys
 from typing import Any
 
 import numpy as np
 
+from training.common.aerpaw_loader import LoadedSpectrumData, load_aerpaw_data
 from training.common.config import ROOT, resolve_path
-
-
-EVALUATION_ROOT = ROOT / "evaluation"
-if str(EVALUATION_ROOT) not in sys.path:
-    sys.path.insert(0, str(EVALUATION_ROOT))
-
-from spectrum_eval.aerpaw_loader import LoadedSpectrumData, load_aerpaw_data  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -34,7 +26,14 @@ def chunk_specs(config: dict[str, Any]) -> list[ChunkSpec]:
 def load_chunk(config: dict[str, Any], chunk: ChunkSpec) -> LoadedSpectrumData:
     data_dir = resolve_path(config["data"]["data_dir"])
     normalize = bool(config["preprocessing"].get("normalize", True))
-    return load_aerpaw_data(data_dir, chunk.start_mhz, chunk.end_mhz, normalize=normalize)
+    reference_site = str(config["data"].get("reference_site", "CC2"))
+    return load_aerpaw_data(
+        data_dir,
+        chunk.start_mhz,
+        chunk.end_mhz,
+        normalize=normalize,
+        reference_site=reference_site,
+    )
 
 
 def model_matrix_to_convlstm_frames(x: np.ndarray) -> np.ndarray:
