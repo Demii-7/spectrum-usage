@@ -15,8 +15,12 @@ pip install torch numpy pandas scipy scikit-learn pyyaml matplotlib
 # 3. Place CSV at expected path
 #    training/data/merged_power_data_sub6GHz_avg_per_minute.csv
 
+# -------------------------------------------------------------------
 # 4. Run training (three stages)
-#    (Future commands — scripts not yet created)
+#    NOTE: These are future commands only. The scripts do not yet
+#    exist. They are documented here to define the intended
+#    workflow before implementation begins.
+# -------------------------------------------------------------------
 python3 training/TSS-LCD/train_autoencoder.py    # Stage 1 — latent autoencoder
 python3 training/TSS-LCD/train_tss_condition.py  # Stage 2 — TSS condition stage
 python3 training/TSS-LCD/train_diffusion.py      # Stage 3 — LCD noise-estimation
@@ -252,6 +256,7 @@ The paper states that the TSS modules are trained to provide reliable conditiona
 Implementation options (set via `config.yaml` → `training.tss_condition_objective`):
 
 1. **`projection_to_latent`** (default target): Add a learnable projection head (e.g., pooling + FC) that maps `H_fusion` → `z_pred ∈ R^(d_latent)`, then train with MSE against `z0 = LSE(Y)`.
+   * **Note:** This projection head is **our implementation bridge**, not something explicitly specified in the paper. It exists to reconcile the dimensional mismatch between `H_fusion ∈ R^(T_in × L·F)` and the latent representation `z0 ∈ R^(d_latent)`.
 2. **`joint_with_diffusion`**: Skip standalone Stage 2. Train TSS-CC jointly with NEN during Stage 3 (the condition is only supervised by the diffusion loss).
 3. **`repo_context_ae`**: Fall back to the repository's context-autoencoder strategy if the paper-faithful approach proves unstable.
 
@@ -259,15 +264,20 @@ The final Stage 2 objective must be confirmed before scripting. Individual TSS b
 
 ### Stage 3: LCD Diffusion Training
 
+The freezing behavior during Stage 3 depends on `training.tss_condition_objective`:
+
+- **`projection_to_latent`** (default): TSS-CC is frozen after Stage 2. Only the NEN is trained.
+- **`joint_with_diffusion`**: No separate Stage 2 runs. TSS-CC is trained jointly with the NEN in Stage 3. LSE and LSD remain frozen in both cases.
+
 ```text
 Script:  train_diffusion.py
 Input:   X (incomplete historical) + Y (complete future)
 Loss:    MSE between true and predicted noise: ||ε - NEN(z_n, n, H_fusion)||²
-Freezes: LSE, LSD, TSS-CC (all previous stages)
+Freezes: LSE, LSD (always); TSS-CC only when objective = projection_to_latent
 Output:  checkpoints/diffusion.pth
 ```
 
-Only the NEN is trained. The frozen TSS-CC produces the condition, the frozen LSE encodes the target latent, and the NEN learns to predict the injected noise at each diffusion step.
+The frozen LSE encodes the target latent, and the NEN (and optionally TSS-CC) learns to predict the injected noise at each diffusion step.
 
 ### Evaluation / Inference
 

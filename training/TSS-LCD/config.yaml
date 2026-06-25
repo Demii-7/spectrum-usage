@@ -165,7 +165,7 @@ evaluation:
   # T_out index (1-based) at which metrics are computed.
   eval_horizons: [1, 5, 10]
   # Directory where evaluation results (CSV, plots) are written
-  output_dir: results
+  output_dir: evaluation
   # Directory where trained model checkpoints are loaded from
   checkpoint_dir: checkpoints
 

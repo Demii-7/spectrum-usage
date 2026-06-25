@@ -38,4 +38,11 @@ CUDA_VISIBLE_DEVICES="" python3 training/TimeRAN/evaluate.py --checkpoint traini
 rm -rf training/STS-PredNet/{checkpoints,evaluation}
 CUDA_VISIBLE_DEVICES="" python3 training/STS-PredNet/train.py --config training/STS-PredNet/smoke_test/config.yaml
 CUDA_VISIBLE_DEVICES="" python3 training/STS-PredNet/evaluate.py --checkpoint training/STS-PredNet/checkpoints/best_model.pt --config training/STS-PredNet/smoke_test/config.yaml
+
+# TSS-LCD (3-stage training)
+rm -rf training/TSS-LCD/{checkpoints,evaluation}
+CUDA_VISIBLE_DEVICES="" python3 training/TSS-LCD/train_autoencoder.py --config training/TSS-LCD/smoke_test/config.yaml
+CUDA_VISIBLE_DEVICES="" python3 training/TSS-LCD/train_tss_condition.py --config training/TSS-LCD/smoke_test/config.yaml --autoencoder_checkpoint training/TSS-LCD/checkpoints/best_autoencoder.pt
+CUDA_VISIBLE_DEVICES="" python3 training/TSS-LCD/train_diffusion.py --config training/TSS-LCD/smoke_test/config.yaml --autoencoder_checkpoint training/TSS-LCD/checkpoints/best_autoencoder.pt --tss_checkpoint training/TSS-LCD/checkpoints/best_tss_condition.pt
+CUDA_VISIBLE_DEVICES="" python3 training/TSS-LCD/evaluate.py --config training/TSS-LCD/smoke_test/config.yaml --checkpoint training/TSS-LCD/checkpoints/best_diffusion.pt --autoencoder_checkpoint training/TSS-LCD/checkpoints/best_autoencoder.pt
 ```
