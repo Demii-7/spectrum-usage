@@ -1,0 +1,120 @@
+Smoke Test Report — TSS-LCD Spectrum Prediction Pipeline
+=========================================================
+Date: 2026-06-25
+Config: training/TSS-LCD/smoke_test/config.yaml
+Checkpoints: training/TSS-LCD/smoke_test/checkpoints/
+Evaluation: training/TSS-LCD/smoke_test/evaluation/
+
+---
+1. Configuration
+   - Dataset: training/data/cc2_smoke_test.csv (CC2 only, 2000 rows x 250 cols)
+   - Nodes: 1 (CC2)
+   - T_in: 12, T_out: 6, Train stride: 10, Val/Test stride: 10
+   - Split: 70/15/15 chronological
+   - Model: TSS-CC (TemFE+SpeFE+SpaFE, 1 layer, 64 hidden, 2 heads, 256 FFN)
+            + Conv2D LSE/LSD (2 blocks, 16 init channels, 16 latent)
+            + Conv1D NEN U-Net (2 blocks, [32,64]/[64,32], 128 bottleneck)
+            + Diffusion (50 timesteps, cosine schedule)
+   - Parameters: LSE=5,522 + LSD=17,234 + TSS-CC=481,872 + NEN/Diff=84,204 = 588,832
+   - Training: 2 epochs each stage, batch=8, lr=0.001, Adam, no scheduler
+   - Device: cpu (CUDA driver too old for this PyTorch version)
+
+2. Data Loading
+   - Train windows: 138
+   - Val windows:   23
+   - Test windows:  23
+   - Normalization: per-frequency min-max to [0, 1], fit on training set only
+   - Masking: 25% random missing, zero-padded; applied to X only (not Y)
+
+3. Stage 1 — Latent Autoencoder (LSE/LSD)
+   - Train loss: 0.0692 (e1) → 0.0168 (e2)
+   - Val loss:   0.2920 (e1) → 0.0777 (e2)
+   - Best epoch: 2 (val loss 0.0777)
+   - LSE compresses Y ∈ (B, 6, 250) → z ∈ (B, 16); LSD reconstructs back
+
+4. Stage 2 — TSS Condition Constructor
+   - Objective: projection_to_latent (MSE between z_pred and LSE(Y).detach())
+   - Train loss: 0.0993 (e1) → 0.0322 (e2)
+   - Val loss:   0.0363 (e1) → 0.0108 (e2)
+   - Best epoch: 2 (val loss 0.0108)
+   - TSS-CC maps X ∈ (B, 12, 250) → z_pred ∈ (B, 16)
+
+5. Stage 3 — Diffusion Noise Estimation
+   - Train loss: 1.0003 (e1) → 0.9880 (e2)
+   - Val loss:   1.0437 (e1) → 0.8981 (e2)
+   - Best epoch: 2 (val loss 0.8981)
+   - TSS-CC frozen (projection_to_latent mode), NEN+Diffusion trained only
+
+6. Evaluation
+   - Test RMSE:  8.6542
+   - Test MAE:   6.4336
+   - Test R²:  -21.8005
+   - Per-horizon RMSE: t=1: 7.608, t=3: 9.282, t=6: 8.535
+   - Per-node RMSE: CC2: 8.654
+   - Metrics computed on denormalized dBm values
+
+7. Pipeline Verification
+   - [x] CSV loading and per-split stride windowing
+   - [x] Chronological 70/15/15 split
+   - [x] Min-max normalization fit on train only, applied to val/test
+   - [x] Random masking on X only (25% missing, zero-padded)
+   - [x] Stage 1: LSE/LSD autoencoder training loop
+   - [x] Stage 2: TSS-CC latent-condition training (frozen LSE)
+   - [x] Stage 3: Diffusion noise-prediction training (frozen LSE + TSS-CC)
+   - [x] Checkpoint save/load per stage
+   - [x] Test set evaluation (denormalized dBm metrics)
+   - [x] Per-horizon metrics (t+1, t+3, t+6)
+   - [x] Per-node metrics
+   - [x] Spectrogram comparison plots (ground truth vs prediction)
+   - [x] Error analysis plots (RdBu_r colormap)
+   - [x] Inference on new data via inference.py
+   - [x] repo_context_ae raises NotImplementedError
+   - [x] joint_with_diffusion freeze logic in Stage 3
+
+8. Errors, Failures, and Inconveniences Encountered
+
+   [E-1] CUDA driver too old (SYSTEM LIMITATION)
+         Symptom: "CUDA initialization: The NVIDIA driver on your system is
+         too old (found version 12060)."
+         Root cause: NVIDIA driver 12060 < 12070 required by PyTorch 2.12.1.
+         Impact: All training runs on CPU (~1-5s/batch).
+         Workaround: export CUDA_VISIBLE_DEVICES="". No script fix possible.
+
+   [E-2] np.loadtxt fails on CSV with commas (BUG - FIXED)
+         Symptom: "could not convert string to float32"
+         Root cause: np.loadtxt defaults to whitespace delimiter, not comma.
+         Fix: Replaced np.loadtxt with pd.read_csv(header=None).values.
+
+   [E-3] NEN skip-connection shape mismatch (BUG - FIXED)
+         Symptom: "RuntimeError: Sizes of tensors must match except dimension 1"
+         Root cause: The original EnhancedNoiseNet saved encoder outputs after
+         each MaxPool, but skip connections require pre-pool outputs. Generalized
+         encoder/decoder into _EncBlock/_DecBlock classes with explicit
+         pre_pool outputs.
+         Fix: Restructured NEN with separate EncBlock/DecBlock submodules.
+
+   [E-4] LSD output shape mismatch with dataset (BUG - FIXED)
+         Symptom: LSE expected (B, T, L, F) but dataset returns (B, T, L*F).
+         Root cause: LSE/LSD used 4D (B, T, L, F) internally but dataset and
+         loss computation use flat (B, T, L*F).
+         Fix: LSE accepts flat input, LSD outputs flat. Reshape happens inside
+         model components only as needed (Conv2D/TSS-CC branches).
+
+   [E-5] TSSConditionConstructor forward mismatched FFM signature (BUG - FIXED)
+         Symptom: "FeatureFusionModule.forward() missing 1 required positional
+         argument: 'H_spatial'"
+         Root cause: FFM originally had 3-arg signature (H_temporal, H_spectral,
+         H_spatial), but TSS-CC forward called it with pre-combined Q and KV.
+         Fix: Simplified FFM to 2-arg (x_q, x_kv); TSS-CC handles concatenation.
+
+9. Issues and Notes
+   - Negative R² is expected: 588K parameter model on 138 training windows
+     (2 hours of single-node data) lacks sufficient signal.
+   - Full 3-node dataset (6839 rows) with paper-default config should produce
+     meaningful results.
+   - Diffusion noise loss (Stage 3) did not decrease significantly in 2 epochs;
+     full training with 1000 epochs is needed for convergence.
+   - The projection_to_latent bridge converges quickly (Stage 2 val loss 0.01)
+     even with small model and data.
+   - All evaluation metrics computed on denormalized dBm values.
+   - Plots use constrained_layout, Viridis spectrogram, RdBu_r error colormap.
