@@ -1,0 +1,75 @@
+architecture:
+  decoder_layer_type: csam
+  encoder_layer_type: csam
+  model_variant: autoformer_csa
+  preserve_original_autoformer: false
+  use_csam: true
+data:
+  bins_per_node: 250
+  cc2_only_smoke_test: false
+  dataset_path: training/data/cc2_smoke_test.csv
+  n_features: 250
+  n_nodes: 1
+  node_names:
+  - CC2
+  selected_nodes:
+  - CC2
+device:
+  device: auto
+evaluation:
+  eval_horizons:
+  - 1
+  - 3
+  - 6
+  metrics:
+  - rmse
+  - mae
+  - r2
+model:
+  activation: relu
+  c_out: 250
+  csam_kernel_size: 7
+  csam_reduction: 16
+  d_ff: 128
+  d_model: 32
+  dec_in: 250
+  decoder_layers: 1
+  dropout: 0.1
+  embed: timeF
+  enc_in: 250
+  encoder_layers: 1
+  factor: 3
+  freq: h
+  model_name: autoformer_csa
+  moving_avg: 7
+  n_heads: 4
+  output_attention: false
+paths:
+  checkpoints_dir: training/Autoformer-CSA/checkpoints
+  evaluation_dir: training/Autoformer-CSA/evaluation
+preprocessing:
+  fit_on_train_only: true
+  normalization: zscore
+seed: 42
+split:
+  chronological_split: true
+  test_ratio: 0.1
+  train_ratio: 0.8
+  val_ratio: 0.1
+training:
+  batch_size: 8
+  early_stopping: true
+  epochs: 3
+  gradient_clip: 5.0
+  learning_rate: 0.001
+  loss: mse
+  optimizer: adam
+  patience: 10
+  seed: 42
+windowing:
+  label_len: 6
+  pred_len: 6
+  seq_len: 12
+  test_stride: 6
+  train_stride: 1
+  val_stride: 6
