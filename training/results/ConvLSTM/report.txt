@@ -1,0 +1,77 @@
+ConvLSTM Training Report
+=========================
+Date: 2026-06-24
+Model: ConvLSTM (integrate branch)
+GPU: NVIDIA H100 (95 GB / 95830 MiB total)
+GPU Memory Usage During Training: ~1600 MiB / 95830 MiB (1.7%)
+PyTorch: 2.12.1+cu126
+
+Config
+------
+- Lookback: 60, Horizons: [1, 5, 15, 60]
+- Epochs: 25, Batch size: 32, LR: 0.0002
+- 3 chunks (bin-index ranges): 0-82, 83-165, 166-249
+- 83 bins/chunk, 3959 train rows, 2880 test rows (chronological 90/10 split)
+
+Training Timing
+---------------
+| Chunk        | Time    | Per-epoch avg |
+|--------------|---------|---------------|
+| chunk_0_83   | 245.6s  | 9.4s          |
+| chunk_83_165 | 245.2s  | 9.4s          |
+| chunk_166_249| 248.2s  | 9.5s          |
+| **Total**    | **739s (12.3 min)** | |
+
+GPU Utilization: 33-45%, ~1600 MiB memory
+
+Training Loss (final epoch)
+----------------------------
+| Chunk        | Train Loss | Val Loss (best) |
+|--------------|------------|-----------------|
+| chunk_0_83   | 0.071      | 0.428 (epoch 11)|
+| chunk_83_165 | 0.075      | 1.351 (epoch 17)|
+| chunk_166_249| 0.061      | 0.713 (epoch 23)|
+
+Note: Validation loss shows occasional extreme spikes (1e17-1e30),
+likely due to numerical instability in batch norm or data normalization.
+Train loss decreases steadily across all chunks.
+
+Test Metrics (on CC2_test split, denormalized dBm)
+---------------------------------------------------
+| Chunk        | Horizon | MAE (dB) | RMSE (dB) |
+|--------------|---------|----------|-----------|
+| chunk_0_83   | 1       | 2.48     | 3.17      |
+| chunk_0_83   | 5       | 2.24     | 2.74      |
+| chunk_0_83   | 15      | 2.42     | 2.89      |
+| chunk_0_83   | 60      | 2.40     | 2.87      |
+| chunk_83_165 | 1       | 2.49     | 3.31      |
+| chunk_83_165 | 5       | 2.21     | 2.97      |
+| chunk_83_165 | 15      | 2.14     | 2.83      |
+| chunk_83_165 | 60      | 2.14     | 2.82      |
+| chunk_166_249| 1       | 2.14     | 2.78      |
+| chunk_166_249| 5       | 1.91     | 2.52      |
+| chunk_166_249| 15      | 2.13     | 2.72      |
+| chunk_166_249| 60      | 2.61     | 3.19      |
+
+Summary: MAE 1.91-2.61 dB across all chunks and horizons.
+Best performance: chunk_166_249 (bins 166-249) at horizon=5 (MAE=1.91 dB).
+
+Saved Files
+-----------
+- training/results/ConvLSTM/aggregate_metrics.csv
+- training/results/ConvLSTM/per_frequency_metrics.csv
+- training/results/ConvLSTM/per_band_metrics.csv
+- training/results/ConvLSTM/chunk_*_training_log.csv (epoch logs)
+- training/results/ConvLSTM/models/chunk_*_convlstm.pt (checkpoints)
+
+Log File: logs/convlstm_full.log
+
+Screen Session
+--------------
+- Screen name: convlstm
+- Reattach: screen -r convlstm
+- Detach: Ctrl+A D
+
+Notebook
+--------
+Open CONVLSTM.ipynb and run cells 9-11 to visualize results.

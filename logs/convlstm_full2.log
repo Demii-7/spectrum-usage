@@ -1,0 +1,83 @@
+Training ConvLSTM for chunk_0_82 (0-82 MHz)
+chunk_0_82 epoch 001/25 train_loss=1.966357 val_loss=1.712689 time=9.5s avg=9.5s eta=227s
+chunk_0_82 epoch 002/25 train_loss=0.507030 val_loss=0.804830 time=9.0s avg=9.2s eta=212s
+chunk_0_82 epoch 003/25 train_loss=0.260339 val_loss=0.549650 time=9.0s avg=9.2s eta=202s
+chunk_0_82 epoch 004/25 train_loss=0.210023 val_loss=0.583189 time=9.0s avg=9.1s eta=191s
+chunk_0_82 epoch 005/25 train_loss=0.185866 val_loss=120743983579136.000000 time=9.0s avg=9.1s eta=182s
+chunk_0_82 epoch 006/25 train_loss=0.163678 val_loss=108704158449664.000000 time=9.0s avg=9.1s eta=172s
+chunk_0_82 epoch 007/25 train_loss=0.153162 val_loss=201348339466240.000000 time=8.9s avg=9.1s eta=163s
+chunk_0_82 epoch 008/25 train_loss=0.140953 val_loss=0.464766 time=9.0s avg=9.1s eta=154s
+chunk_0_82 epoch 009/25 train_loss=0.137654 val_loss=0.976579 time=9.1s avg=9.1s eta=145s
+chunk_0_82 epoch 010/25 train_loss=0.128915 val_loss=18442747.166667 time=9.1s avg=9.1s eta=136s
+chunk_0_82 epoch 011/25 train_loss=0.117932 val_loss=2.433291 time=9.1s avg=9.1s eta=127s
+chunk_0_82 epoch 012/25 train_loss=0.105713 val_loss=2.734229 time=9.0s avg=9.1s eta=118s
+chunk_0_82 epoch 013/25 train_loss=0.108989 val_loss=2.345582 time=9.1s avg=9.1s eta=109s
+chunk_0_82 epoch 014/25 train_loss=0.095980 val_loss=0.531065 time=9.0s avg=9.1s eta=100s
+chunk_0_82 epoch 015/25 train_loss=0.099398 val_loss=6027.236613 time=9.1s avg=9.1s eta=91s
+chunk_0_82 epoch 016/25 train_loss=0.094402 val_loss=0.724900 time=9.0s avg=9.1s eta=82s
+chunk_0_82 epoch 017/25 train_loss=0.092323 val_loss=8323775872.000000 time=8.9s avg=9.0s eta=72s
+chunk_0_82 epoch 018/25 train_loss=0.087998 val_loss=0.428541 time=9.0s avg=9.0s eta=63s
+chunk_0_82 epoch 019/25 train_loss=0.089605 val_loss=647113101761576960.000000 time=9.1s avg=9.0s eta=54s
+chunk_0_82 epoch 020/25 train_loss=0.088180 val_loss=0.693096 time=9.0s avg=9.0s eta=45s
+chunk_0_82 epoch 021/25 train_loss=0.089131 val_loss=2.607197 time=9.0s avg=9.0s eta=36s
+chunk_0_82 epoch 022/25 train_loss=0.083352 val_loss=0.407114 time=9.0s avg=9.0s eta=27s
+chunk_0_82 epoch 023/25 train_loss=0.085206 val_loss=0.856283 time=9.0s avg=9.0s eta=18s
+chunk_0_82 epoch 024/25 train_loss=0.085749 val_loss=3.090795 time=9.0s avg=9.0s eta=9s
+chunk_0_82 epoch 025/25 train_loss=0.084396 val_loss=55977444726101.335938 time=8.9s avg=9.0s eta=0s
+Chunk chunk_0_82 done in 235.9s
+Training ConvLSTM for chunk_83_165 (83-165 MHz)
+chunk_83_165 epoch 001/25 train_loss=0.416761 val_loss=3.720662 time=8.9s avg=8.9s eta=215s
+chunk_83_165 epoch 002/25 train_loss=0.216336 val_loss=8.988686 time=9.0s avg=9.0s eta=206s
+chunk_83_165 epoch 003/25 train_loss=0.170395 val_loss=3.205741 time=9.0s avg=9.0s eta=198s
+chunk_83_165 epoch 004/25 train_loss=0.141412 val_loss=4.900664 time=9.0s avg=9.0s eta=189s
+chunk_83_165 epoch 005/25 train_loss=0.122435 val_loss=2.369192 time=9.1s avg=9.0s eta=180s
+chunk_83_165 epoch 006/25 train_loss=0.111346 val_loss=7.847028 time=8.9s avg=9.0s eta=171s
+chunk_83_165 epoch 007/25 train_loss=0.106757 val_loss=2.570077 time=8.9s avg=9.0s eta=162s
+chunk_83_165 epoch 008/25 train_loss=0.093315 val_loss=10.029283 time=9.0s avg=9.0s eta=153s
+chunk_83_165 epoch 009/25 train_loss=0.088361 val_loss=1.560305 time=9.0s avg=9.0s eta=144s
+chunk_83_165 epoch 010/25 train_loss=0.083227 val_loss=2.765550 time=9.0s avg=9.0s eta=135s
+chunk_83_165 epoch 011/25 train_loss=0.084046 val_loss=4.476627 time=9.2s avg=9.0s eta=126s
+chunk_83_165 epoch 012/25 train_loss=0.087323 val_loss=4.550543 time=9.1s avg=9.0s eta=117s
+chunk_83_165 epoch 013/25 train_loss=0.079820 val_loss=2.519438 time=9.1s avg=9.0s eta=108s
+chunk_83_165 epoch 014/25 train_loss=0.081807 val_loss=4.466691 time=10.0s avg=9.1s eta=100s
+chunk_83_165 epoch 015/25 train_loss=0.078266 val_loss=3.568784 time=9.0s avg=9.1s eta=91s
+chunk_83_165 epoch 016/25 train_loss=0.078633 val_loss=19.765027 time=9.0s avg=9.1s eta=82s
+chunk_83_165 epoch 017/25 train_loss=0.077372 val_loss=3.220452 time=9.0s avg=9.1s eta=73s
+chunk_83_165 epoch 018/25 train_loss=0.073145 val_loss=2.229820 time=9.1s avg=9.1s eta=64s
+chunk_83_165 epoch 019/25 train_loss=0.075284 val_loss=7.592168 time=9.0s avg=9.1s eta=54s
+chunk_83_165 epoch 020/25 train_loss=0.071744 val_loss=5.101993 time=9.0s avg=9.1s eta=45s
+chunk_83_165 epoch 021/25 train_loss=0.067434 val_loss=2.491472 time=9.1s avg=9.1s eta=36s
+chunk_83_165 epoch 022/25 train_loss=0.068593 val_loss=15.949989 time=9.0s avg=9.1s eta=27s
+chunk_83_165 epoch 023/25 train_loss=0.077095 val_loss=3.587578 time=9.0s avg=9.1s eta=18s
+chunk_83_165 epoch 024/25 train_loss=0.073417 val_loss=2.484125 time=8.9s avg=9.1s eta=9s
+chunk_83_165 epoch 025/25 train_loss=0.069757 val_loss=2.572652 time=9.0s avg=9.1s eta=0s
+Chunk chunk_83_165 done in 235.2s
+Training ConvLSTM for chunk_166_249 (166-249 MHz)
+chunk_166_249 epoch 001/25 train_loss=0.470958 val_loss=3.425643 time=9.0s avg=9.0s eta=217s
+chunk_166_249 epoch 002/25 train_loss=0.235246 val_loss=2.548008 time=9.0s avg=9.0s eta=208s
+chunk_166_249 epoch 003/25 train_loss=0.184991 val_loss=1.642760 time=9.0s avg=9.0s eta=198s
+chunk_166_249 epoch 004/25 train_loss=0.155592 val_loss=28.011141 time=8.9s avg=9.0s eta=189s
+chunk_166_249 epoch 005/25 train_loss=0.146210 val_loss=1.100409 time=9.0s avg=9.0s eta=180s
+chunk_166_249 epoch 006/25 train_loss=0.124039 val_loss=2.871466 time=9.0s avg=9.0s eta=171s
+chunk_166_249 epoch 007/25 train_loss=0.114610 val_loss=1.080647 time=8.9s avg=9.0s eta=162s
+chunk_166_249 epoch 008/25 train_loss=0.106645 val_loss=22.126692 time=9.0s avg=9.0s eta=153s
+chunk_166_249 epoch 009/25 train_loss=0.096363 val_loss=2.487602 time=9.0s avg=9.0s eta=144s
+chunk_166_249 epoch 010/25 train_loss=0.091976 val_loss=1.284135 time=9.0s avg=9.0s eta=135s
+chunk_166_249 epoch 011/25 train_loss=0.090812 val_loss=38.569543 time=9.0s avg=9.0s eta=126s
+chunk_166_249 epoch 012/25 train_loss=0.083169 val_loss=3.153051 time=9.1s avg=9.0s eta=117s
+chunk_166_249 epoch 013/25 train_loss=0.079956 val_loss=2.262399 time=9.0s avg=9.0s eta=108s
+chunk_166_249 epoch 014/25 train_loss=0.076790 val_loss=1.894706 time=9.0s avg=9.0s eta=99s
+chunk_166_249 epoch 015/25 train_loss=0.081264 val_loss=3.012905 time=9.2s avg=9.0s eta=90s
+chunk_166_249 epoch 016/25 train_loss=0.073636 val_loss=2670906.750000 time=9.0s avg=9.0s eta=81s
+chunk_166_249 epoch 017/25 train_loss=0.072440 val_loss=2.140118 time=9.0s avg=9.0s eta=72s
+chunk_166_249 epoch 018/25 train_loss=0.071677 val_loss=2.900001 time=9.0s avg=9.0s eta=63s
+chunk_166_249 epoch 019/25 train_loss=0.069408 val_loss=2.093854 time=9.0s avg=9.0s eta=54s
+chunk_166_249 epoch 020/25 train_loss=0.068284 val_loss=2.195526 time=9.0s avg=9.0s eta=45s
+chunk_166_249 epoch 021/25 train_loss=0.073834 val_loss=107.223306 time=9.1s avg=9.0s eta=36s
+chunk_166_249 epoch 022/25 train_loss=0.069480 val_loss=119919.074870 time=9.0s avg=9.0s eta=27s
+chunk_166_249 epoch 023/25 train_loss=0.066020 val_loss=1.817921 time=9.0s avg=9.0s eta=18s
+chunk_166_249 epoch 024/25 train_loss=0.065992 val_loss=52701.534831 time=9.1s avg=9.0s eta=9s
+chunk_166_249 epoch 025/25 train_loss=0.070473 val_loss=16.224875 time=9.0s avg=9.0s eta=0s
+Chunk chunk_166_249 done in 234.4s
+Total run time: 705.5s (11.8 min)
+Wrote 12 aggregate metric rows to /home/cc/spectrum-usage/training/results/ConvLSTM/aggregate_metrics.csv
