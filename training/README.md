@@ -158,9 +158,33 @@ models/<chunk_id>_timeran.pt
 <chunk_id>_training_log.csv
 ```
 
+### Run TSS-LCD
+
+The integrated TSS-LCD runner trains a 3-stage latent-conditioned diffusion model per chunk.
+
+Stage 1 trains a Conv2D autoencoder (LSE/LSD) to compress future windows into a latent space.
+Stage 2 trains the TSS-CC condition constructor (Temporal/Spectral/Spatial transformer branches) to predict the latent from the lookback window.
+Stage 3 trains the diffusion noise-estimation network (Conv1D U-Net) using the latent and TSS-CC condition.
+
+```bash
+python3 training/TSS-LCD/train_integrated.py
+```
+
+Outputs go to `training/results/TSS-LCD/` by default:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+models/<chunk_id>_tss_lcd_autoencoder.pt
+models/<chunk_id>_tss_lcd_tss.pt
+models/<chunk_id>_tss_lcd_diffusion.pt
+<chunk_id>_training_log.csv
+```
+
 ### Assemble Overall Results
 
-After the baseline, LinearAutoRegressive, ConvLSTM, STS-PredNet, and TimeRAN jobs finish, combine their metric files:
+After the baseline, LinearAutoRegressive, ConvLSTM, STS-PredNet, TimeRAN, and TSS-LCD jobs finish, combine their metric files:
 
 ```bash
 python3 -m training.common.assemble_results
@@ -174,6 +198,7 @@ training/results/LinearAutoRegressive/
 training/results/ConvLSTM/
 training/results/STS-PredNet/
 training/results/TimeRAN/
+training/results/TSS-LCD/
 ```
 
 It writes combined outputs to `training/results/overall/`:

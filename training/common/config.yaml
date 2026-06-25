@@ -80,3 +80,33 @@ timeran:
   gradient_clip_norm: 5.0
   checkpoint_size: base
   training_mode: linear_probing
+
+tss_lcd:
+  hidden_dim: 256
+  attention_heads: 4
+  ffn_dim: 1024
+  num_attention_layers: 2
+  dropout: 0.1
+  use_temporal_branch: true
+  use_spectral_branch: true
+  use_spatial_branch: true
+  latent_dim: 32
+  autoencoder_num_blocks: 3
+  autoencoder_initial_channels: 32
+  diffusion_steps: 1000
+  noise_schedule: cosine
+  nen_encoder_channels: [64, 128]
+  nen_bottleneck_channels: 256
+  nen_decoder_channels: [128, 64]
+  nen_kernel_size: 3
+  time_embed_dim: 32
+  batch_size: 32
+  autoencoder_epochs: 300
+  autoencoder_learning_rate: 0.0001
+  tss_epochs: 200
+  tss_learning_rate: 0.0001
+  diffusion_epochs: 1000
+  diffusion_learning_rate: 0.0001
+  weight_decay: 0.0
+  gradient_clip_norm: 5.0
+  patience: 30

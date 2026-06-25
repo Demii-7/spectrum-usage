@@ -15,6 +15,7 @@ DEFAULT_INPUTS = (
     Path("training/results/ConvLSTM"),
     Path("training/results/STS-PredNet"),
     Path("training/results/TimeRAN"),
+    Path("training/results/TSS-LCD"),
 )
 
 
