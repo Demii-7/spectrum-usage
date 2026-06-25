@@ -1,0 +1,51 @@
+data:
+  dataset_path: /home/cc/spectrum-usage/training/data/merged_power_data_sub6GHz_avg_per_minute.csv
+  n_nodes: 3
+  n_bins_per_node: 250
+  node_names: ["CC1", "CC2", "LW1"]
+
+windowing:
+  input_sequence_length: 50
+  prediction_horizon: 10
+  train_stride: 1
+  val_stride: 1
+  test_stride: 1
+
+split:
+  train_ratio: 0.7
+  val_ratio: 0.15
+  test_ratio: 0.15
+  chronological_split: true
+
+preprocessing:
+  normalization: minmax
+  fit_on_train_only: true
+  missing_rate: 0.25
+  masking_strategy: random
+  zero_pad_missing: true
+
+model:
+  latent_dim: 32
+  hidden_dim: 256
+  attention_heads: 4
+  diffusion_steps: 1000
+  noise_schedule: cosine
+  use_temporal_branch: true
+  use_spectral_branch: true
+  use_spatial_branch: true
+
+training:
+  autoencoder_epochs: 300
+  tss_epochs: 200
+  diffusion_epochs: 1000
+  batch_size: 32
+  learning_rate: 0.0001
+  optimizer: adam
+  gradient_clip: 5.0
+
+evaluation:
+  metrics: ["rmse", "mae", "r2"]
+  eval_horizons: [1, 5, 10]
+
+device:
+  device: auto
