@@ -1,0 +1,195 @@
+# ──────────────────────────────────────────────
+# Autoformer-CSA — AERPAW Spectrum Prediction Config
+# ──────────────────────────────────────────────
+# Everything in this file is tunable. Defaults follow the Autoformer-CSA paper
+# where applicable; deviations are noted inline.
+
+data:
+  # Path to the merged AERPAW CSV with all nodes. Shape expected: (6839, 750).
+  # Configurable because the CSV may move between environments.
+  dataset_path: "training/data/aerpaw_merged.csv"
+
+  # Total frequency bins across all nodes (3 nodes × 250 bins).
+  # Configurable in case the merge produces a different column count.
+  n_features: 750
+
+  # Number of fixed nodes in the AERPAW dataset.
+  n_nodes: 3
+
+  # Frequency bins per node. Product n_nodes * bins_per_node must equal n_features.
+  bins_per_node: 250
+
+  # Human-readable labels for the three nodes, in column order.
+  node_names: ["CC1", "CC2", "LW1"]
+
+  # Subset of nodes to include. Used to select columns during data loading.
+  # Configurable to experiment with single-node vs multi-node training.
+  selected_nodes: ["CC1", "CC2", "LW1"]
+
+  # Smoke-test mode: when true, only CC2 columns (indices 250-499) are used.
+  # This reduces the channel count from 750 to 250, allowing quick verification
+  # that the model trains and converges before committing to full runs.
+  cc2_only_smoke_test: false
+
+windowing:
+  # Number of past time steps fed to the encoder (M in the paper).
+  # Paper default: 96. Configurable for different lookback horizons.
+  input_sequence_length: 96
+
+  # Number of time steps from the encoder output used as known context for the
+  # decoder (the "start token" length). Paper uses M/2 = 48.
+  # Configurable to test different context lengths.
+  label_length: 48
+
+  # Number of future time steps to predict (K in the paper).
+  # Paper evaluates K ∈ {60, 120, 240, 300}. Configurable per experiment.
+  prediction_horizon: 60
+
+  # Stride between successive training windows. 1 = maximum overlap (default).
+  # Higher values reduce dataset size and training time.
+  train_stride: 1
+
+  # Stride for validation windows. Leave empty to default to prediction_horizon
+  # (non-overlapping windows for clean evaluation).
+  val_stride:
+
+  # Stride for test windows. Leave empty to default to prediction_horizon.
+  test_stride:
+
+split:
+  # Fraction of data used for training. Paper uses 5/7 ≈ 0.714.
+  # Configurable: different data sizes may require different splits.
+  train_ratio: 0.7142857
+
+  # Fraction used for validation. Paper uses 1/7 ≈ 0.143.
+  val_ratio: 0.1428571
+
+  # Fraction used for testing. Paper uses 1/7 ≈ 0.143.
+  test_ratio: 0.1428571
+
+  # If true, splits are chronological (earliest → train, middle → val, latest → test).
+  # Setting to false would enable random splitting (not recommended for time series).
+  chronological_split: true
+
+preprocessing:
+  # Normalization method. Paper uses z-score (mean removal + unit variance).
+  # Configurable to add min-max or robust scaling if needed.
+  normalization: "zscore"
+
+  # When true, mean/std are computed on the training split only and applied to
+  # val/test. This prevents data leakage from future to past.
+  fit_on_train_only: true
+
+model:
+  # Model identifier — used for checkpoint naming and logging.
+  model_name: "autoformer_csa"
+
+  # Number of encoder layers. Paper default: 2.
+  # Configurable for ablation on model depth.
+  encoder_layers: 2
+
+  # Number of decoder layers. Paper default: 1.
+  decoder_layers: 1
+
+  # Hidden dimension of the model (d_model in Transformer terminology).
+  # Paper does not specify; repo default is 512. Configurable for memory/performance.
+  d_model: 512
+
+  # Number of attention heads in the auto-correlation mechanism.
+  # Paper default: 8. Must divide d_model evenly.
+  n_heads: 8
+
+  # Kernel size for the moving average in the series decomposition block.
+  # Paper default: 25. Configurable for different trend smoothness.
+  moving_avg: 25
+
+  # Dropout rate applied throughout the model (attention, CSAM, embeddings).
+  # Paper default: 0.1. Configurable for regularization tuning.
+  dropout: 0.1
+
+  # Expansion factor for the auto-correlation top-k selection.
+  # Paper default: 3 (repo default). Controls how many periods are aggregated.
+  factor: 3
+
+  # Activation function used inside the model. "relu" or "gelu".
+  # Paper uses relu. Configurable for experimentation.
+  activation: "relu"
+
+  # When true, replaces the standard Conv1d FFN with the CSAM module.
+  # Set to false to run vanilla Autoformer as a baseline comparison.
+  use_csam: true
+
+  # Kernel size for the 1D convolution inside the CSAM spatial attention branch.
+  # Captures local temporal context. Paper uses kernel_size=7 (typical for CBAM).
+  # Configurable: larger kernels capture wider context but add parameters.
+  csam_kernel_size: 7
+
+  # Channel reduction ratio for the CSAM channel attention branch.
+  # The channel dimension is reduced by this factor in the bottleneck Conv1d.
+  # Paper uses reduction=16 (typical for CBAM). Configurable for capacity/param tradeoff.
+  csam_reduction: 16
+
+  # When true, the model returns attention weights alongside predictions.
+  # Useful for interpretability but increases memory usage. Set to false for training.
+  output_attention: false
+
+training:
+  # Mini-batch size. Paper default: 32.
+  # Configurable for GPU memory constraints.
+  batch_size: 32
+
+  # Maximum number of training epochs. Paper default: 20.
+  epochs: 20
+
+  # Initial learning rate for the Adam optimizer. Paper default: 0.0001.
+  # Configurable for different convergence behavior.
+  learning_rate: 0.0001
+
+  # Optimizer choice. Paper uses Adam. Configurable for future experimentation.
+  optimizer: "adam"
+
+  # Loss function for training. Paper uses MSE.
+  loss: "mse"
+
+  # When true, training stops if val loss does not improve for `patience` epochs.
+  early_stopping: true
+
+  # Number of epochs to wait before early stopping. Paper default: 6.
+  patience: 6
+
+  # Max gradient norm for clipping. Helps stabilize training.
+  # Leave empty to disable gradient clipping.
+  gradient_clip:
+
+  # Random seed for reproducibility. Leave empty for non-deterministic runs.
+  seed:
+
+evaluation:
+  # Metrics to compute on the test set. Paper reports RMSE/MAE; R² is a useful
+  # addition for variance explained. Configurable to add MAPE, SMAPE, etc.
+  metrics: ["rmse", "mae", "r2"]
+
+  # Specific prediction horizons (in minutes) to report metrics for.
+  # These are sub-sampled from the full prediction_horizon output.
+  # Paper evaluates at {60, 120, 240, 300}. Use [1, 5, 15, 60] for smoke tests.
+  eval_horizons: [1, 5, 15, 60]
+
+  # When true, writes predictions.csv and ground_truth.csv for downstream analysis.
+  export_predictions: true
+
+  # When true, spectrogram and error plots are denormalized back to dBm.
+  # dBm is the interpretable unit for spectrum data.
+  plot_denormalized_dbm: true
+
+paths:
+  # Directory for model checkpoints. Created automatically if it does not exist.
+  # Configurable per experiment to keep runs isolated.
+  checkpoints_dir: "training/results/Autoformer-CSA/checkpoints"
+
+  # Directory for evaluation outputs (metrics, predictions, plots).
+  evaluation_dir: "training/results/Autoformer-CSA/evaluation"
+
+device:
+  # "auto" → cuda if available else cpu; "cuda" → force GPU; "cpu" → force CPU.
+  # Configurable for debugging on CPU or submitting GPU jobs.
+  device: "auto"
