@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import sys
+import time
 from typing import Any
 
 import numpy as np
@@ -148,8 +149,12 @@ def train_autoencoder(enc, dec, train_loader, val_loader,
     best_loss = float("inf")
     best_state = None
     no_improve = 0
+    epoch_times: list[float] = []
+    log_rows: list[dict[str, Any]] = []
+    t_start = time.perf_counter()
 
     for epoch in range(1, epochs + 1):
+        t_epoch = time.perf_counter()
         enc.train()
         dec.train()
         train_loss = 0.0
@@ -177,8 +182,14 @@ def train_autoencoder(enc, dec, train_loader, val_loader,
                 val_loss += criterion(y_hat, y).item() * y.size(0)
         val_loss /= max(len(val_loader.dataset), 1)
 
+        t_epoch = time.perf_counter() - t_epoch
+        log_rows.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss, "time_sec": t_epoch})
+        epoch_times.append(t_epoch)
+        avg_time = sum(epoch_times) / len(epoch_times)
+        eta = avg_time * (epochs - epoch)
         print(f"{chunk_id} ae epoch {epoch:03d}/{epochs} "
-              f"train_loss={train_loss:.6f} val_loss={val_loss:.6f}")
+              f"train_loss={train_loss:.6f} val_loss={val_loss:.6f} "
+              f"time={t_epoch:.1f}s avg={avg_time:.1f}s eta={eta:.0f}s")
 
         if val_loss < best_loss:
             best_loss = val_loss
@@ -193,6 +204,9 @@ def train_autoencoder(enc, dec, train_loader, val_loader,
                 print(f"  Early stopping at epoch {epoch}")
                 break
 
+    total_time = time.perf_counter() - t_start
+    print(f"{chunk_id} ae training done in {total_time:.1f}s ({total_time/60:.1f} min)")
+    pd.DataFrame(log_rows).to_csv(out / f"{chunk_id}_ae_training_log.csv", index=False)
     if best_state is not None:
         enc.load_state_dict(best_state["enc"])
         dec.load_state_dict(best_state["dec"])
@@ -218,8 +232,12 @@ def train_tss_condition(enc, tss_cc, train_loader, val_loader,
     best_loss = float("inf")
     best_state = None
     no_improve = 0
+    epoch_times: list[float] = []
+    log_rows: list[dict[str, Any]] = []
+    t_start = time.perf_counter()
 
     for epoch in range(1, epochs + 1):
+        t_epoch = time.perf_counter()
         tss_cc.train()
         train_loss = 0.0
         for x, y in train_loader:
@@ -246,8 +264,14 @@ def train_tss_condition(enc, tss_cc, train_loader, val_loader,
                 val_loss += criterion(z_pred, z_target).item() * x.size(0)
         val_loss /= max(len(val_loader.dataset), 1)
 
+        t_epoch = time.perf_counter() - t_epoch
+        log_rows.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss, "time_sec": t_epoch})
+        epoch_times.append(t_epoch)
+        avg_time = sum(epoch_times) / len(epoch_times)
+        eta = avg_time * (epochs - epoch)
         print(f"{chunk_id} tss epoch {epoch:03d}/{epochs} "
-              f"train_loss={train_loss:.6f} val_loss={val_loss:.6f}")
+              f"train_loss={train_loss:.6f} val_loss={val_loss:.6f} "
+              f"time={t_epoch:.1f}s avg={avg_time:.1f}s eta={eta:.0f}s")
 
         if val_loss < best_loss:
             best_loss = val_loss
@@ -260,6 +284,9 @@ def train_tss_condition(enc, tss_cc, train_loader, val_loader,
                 print(f"  Early stopping at epoch {epoch}")
                 break
 
+    total_time = time.perf_counter() - t_start
+    print(f"{chunk_id} tss training done in {total_time:.1f}s ({total_time/60:.1f} min)")
+    pd.DataFrame(log_rows).to_csv(out / f"{chunk_id}_tss_training_log.csv", index=False)
     if best_state is not None:
         tss_cc.load_state_dict(best_state)
     torch.save({"tss_cc_state_dict": best_state},
@@ -287,8 +314,12 @@ def train_diffusion(enc, tss_cc, diffusion, train_loader, val_loader,
     best_loss = float("inf")
     best_state = None
     no_improve = 0
+    epoch_times: list[float] = []
+    log_rows: list[dict[str, Any]] = []
+    t_start = time.perf_counter()
 
     for epoch in range(1, epochs + 1):
+        t_epoch = time.perf_counter()
         diffusion.train()
         train_loss = 0.0
         for x, y in train_loader:
@@ -325,8 +356,14 @@ def train_diffusion(enc, tss_cc, diffusion, train_loader, val_loader,
                 val_loss += criterion(noise_pred, noise).item() * y.size(0)
         val_loss /= max(len(val_loader.dataset), 1)
 
+        t_epoch = time.perf_counter() - t_epoch
+        log_rows.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss, "time_sec": t_epoch})
+        epoch_times.append(t_epoch)
+        avg_time = sum(epoch_times) / len(epoch_times)
+        eta = avg_time * (epochs - epoch)
         print(f"{chunk_id} diff epoch {epoch:03d}/{epochs} "
-              f"train_loss={train_loss:.6f} val_loss={val_loss:.6f}")
+              f"train_loss={train_loss:.6f} val_loss={val_loss:.6f} "
+              f"time={t_epoch:.1f}s avg={avg_time:.1f}s eta={eta:.0f}s")
 
         if val_loss < best_loss:
             best_loss = val_loss
@@ -339,6 +376,9 @@ def train_diffusion(enc, tss_cc, diffusion, train_loader, val_loader,
                 print(f"  Early stopping at epoch {epoch}")
                 break
 
+    total_time = time.perf_counter() - t_start
+    print(f"{chunk_id} diff training done in {total_time:.1f}s ({total_time/60:.1f} min)")
+    pd.DataFrame(log_rows).to_csv(out / f"{chunk_id}_diff_training_log.csv", index=False)
     if best_state is not None:
         diffusion.load_state_dict(best_state)
     torch.save({
@@ -420,6 +460,8 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands: pd.DataFrame, out: Path
             len(split.raw_dbm), history_offset, max_horizon,
             t_in + max_horizon, 1,
         )
+        max_valid = len(full_raw) - max_horizon
+        origins = origins[origins <= max_valid]
         if len(origins) == 0:
             print(f"  No valid target rows for {chunk.chunk_id} {split_name}")
             continue
@@ -474,6 +516,7 @@ def main() -> None:
     (out / "models").mkdir(parents=True, exist_ok=True)
     bands = load_band_definitions(config)
 
+    total_start = time.perf_counter()
     aggregate_rows: list[dict[str, Any]] = []
     frequency_rows: list[dict[str, Any]] = []
     band_rows: list[dict[str, Any]] = []
@@ -481,7 +524,9 @@ def main() -> None:
     for chunk in chunk_specs(config):
         print(f"Training TSS-LCD for {chunk.chunk_id} "
               f"({chunk.start_mhz:g}-{chunk.end_mhz:g} MHz)")
+        chunk_start = time.perf_counter()
         a, f, b = evaluate_chunk(config, chunk, bands, out)
+        print(f"  {chunk.chunk_id} total done in {time.perf_counter() - chunk_start:.1f}s")
         aggregate_rows.extend(a)
         frequency_rows.extend(f)
         band_rows.extend(b)
@@ -489,8 +534,10 @@ def main() -> None:
     pd.DataFrame(aggregate_rows).to_csv(out / "aggregate_metrics.csv", index=False)
     pd.DataFrame(frequency_rows).to_csv(out / "per_frequency_metrics.csv", index=False)
     pd.DataFrame(band_rows).to_csv(out / "per_band_metrics.csv", index=False)
+    total_run = time.perf_counter() - total_start
     print(f"Wrote {len(aggregate_rows)} aggregate metric rows to "
           f"{out / 'aggregate_metrics.csv'}")
+    print(f"Total run time: {total_run:.1f}s ({total_run/60:.1f} min)")
 
 
 if __name__ == "__main__":

@@ -33,17 +33,35 @@ The training loader reads the configured reference site, interpolates missing va
 
 Per-band metrics use `evaluation/results/step2/band_definitions.csv` when that file exists. The model runners still produce aggregate and per-frequency metrics when band definitions are absent.
 
-### Environment
+### Environment (Docker)
 
-From the repository root:
+Training was performed inside a Jupyter PyTorch Docker container with CUDA 12 support:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python3 -m pip install numpy pandas scikit-learn pyyaml matplotlib torch
+docker run -d -p 8888:8888 --name jupyter \
+  -v /home/cc/spectrum-usage:/home/jovyan/work/spectrum-usage \
+  --rm --gpus all \
+  quay.io/jupyter/pytorch-notebook:cuda12-python-3.11.8
 ```
 
-Install a CUDA-enabled PyTorch build if you plan to train ConvLSTM on a GPU.
+The container image includes PyTorch (CUDA-enabled), numpy, pandas, scikit-learn, matplotlib, and Jupyter. After starting the container, attach a shell and navigate to the repo:
+
+```bash
+docker exec -it jupyter bash
+cd ~/work/spectrum-usage
+```
+
+Install additional dependencies:
+
+```bash
+pip install pyyaml momentfm==0.1.4 gdown
+```
+
+Install `screen` for long-running training jobs (required inside the container):
+
+```bash
+apt-get update && apt-get install -y screen
+```
 
 ### Run Baselines
 

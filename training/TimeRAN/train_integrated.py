@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import sys
+import time
 from typing import Any
 
 import numpy as np
@@ -125,8 +126,11 @@ def train_one_model(config: dict[str, Any], train_input: np.ndarray,
     best_loss = float("inf")
     best_state = None
     log_rows = []
+    epoch_times: list[float] = []
+    t_start = time.perf_counter()
 
     for epoch in range(1, epochs + 1):
+        t_epoch = time.perf_counter()
         model.train()
         train_loss = 0.0
         for x, y in train_loader:
@@ -164,12 +168,18 @@ def train_one_model(config: dict[str, Any], train_input: np.ndarray,
                 val_loss += criterion(out.forecast, y).item() * x.size(0)
         val_loss /= max(len(val_loader.dataset), 1)
 
-        log_rows.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss})
-        print(f"  {chunk_id} epoch {epoch:03d}/{epochs} train_loss={train_loss:.6f} val_loss={val_loss:.6f}")
+        t_epoch = time.perf_counter() - t_epoch
+        epoch_times.append(t_epoch)
+        avg_time = sum(epoch_times) / len(epoch_times)
+        eta = avg_time * (epochs - epoch)
+        log_rows.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss, "time_sec": t_epoch})
+        print(f"  {chunk_id} epoch {epoch:03d}/{epochs} train_loss={train_loss:.6f} val_loss={val_loss:.6f} time={t_epoch:.1f}s avg={avg_time:.1f}s eta={eta:.0f}s")
 
         if val_loss < best_loss:
             best_loss = val_loss
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+    total_time = time.perf_counter() - t_start
+    print(f"  {chunk_id} training done in {total_time:.1f}s ({total_time/60:.1f} min)")
 
     if best_state is not None:
         model.load_state_dict(best_state)
@@ -284,13 +294,16 @@ def main() -> None:
     (out / "models").mkdir(parents=True, exist_ok=True)
     bands = load_band_definitions(config)
 
+    total_start = time.perf_counter()
     aggregate_rows: list[dict[str, Any]] = []
     frequency_rows: list[dict[str, Any]] = []
     band_rows: list[dict[str, Any]] = []
 
     for chunk in chunk_specs(config):
         print(f"Training TimeRAN for {chunk.chunk_id} ({chunk.start_mhz:g}-{chunk.end_mhz:g} MHz)")
+        chunk_start = time.perf_counter()
         a, f, b = evaluate_chunk(config, chunk, bands, out)
+        print(f"  {chunk.chunk_id} total done in {time.perf_counter() - chunk_start:.1f}s")
         aggregate_rows.extend(a)
         frequency_rows.extend(f)
         band_rows.extend(b)
@@ -298,7 +311,9 @@ def main() -> None:
     pd.DataFrame(aggregate_rows).to_csv(out / "aggregate_metrics.csv", index=False)
     pd.DataFrame(frequency_rows).to_csv(out / "per_frequency_metrics.csv", index=False)
     pd.DataFrame(band_rows).to_csv(out / "per_band_metrics.csv", index=False)
+    total_run = time.perf_counter() - total_start
     print(f"Wrote {len(aggregate_rows)} aggregate metric rows to {out / 'aggregate_metrics.csv'}")
+    print(f"Total run time: {total_run:.1f}s ({total_run/60:.1f} min)")
 
 
 if __name__ == "__main__":
