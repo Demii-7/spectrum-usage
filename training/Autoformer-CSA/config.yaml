@@ -29,31 +29,33 @@ data:
   # Smoke-test mode: when true, only CC2 columns (indices 250-499) are used.
   # This reduces the channel count from 750 to 250, allowing quick verification
   # that the model trains and converges before committing to full runs.
+  # In CC2-only smoke mode, set enc_in=dec_in=c_out=250.
+  # In full 3-node mode, set enc_in=dec_in=c_out=750.
   cc2_only_smoke_test: false
 
 windowing:
   # Number of past time steps fed to the encoder (M in the paper).
   # Paper default: 96. Configurable for different lookback horizons.
-  input_sequence_length: 96
+  seq_len: 96
 
   # Number of time steps from the encoder output used as known context for the
   # decoder (the "start token" length). Paper uses M/2 = 48.
   # Configurable to test different context lengths.
-  label_length: 48
+  label_len: 48
 
   # Number of future time steps to predict (K in the paper).
   # Paper evaluates K ∈ {60, 120, 240, 300}. Configurable per experiment.
-  prediction_horizon: 60
+  pred_len: 60
 
   # Stride between successive training windows. 1 = maximum overlap (default).
   # Higher values reduce dataset size and training time.
   train_stride: 1
 
-  # Stride for validation windows. Leave empty to default to prediction_horizon
+  # Stride for validation windows. Leave empty to default to pred_len
   # (non-overlapping windows for clean evaluation).
   val_stride:
 
-  # Stride for test windows. Leave empty to default to prediction_horizon.
+  # Stride for test windows. Leave empty to default to pred_len.
   test_stride:
 
 split:
@@ -84,16 +86,31 @@ model:
   # Model identifier — used for checkpoint naming and logging.
   model_name: "autoformer_csa"
 
+  # Number of input channels (features). Matches the CSV column count after
+  # node selection. CC2 smoke mode = 250, full 3-node mode = 750.
+  enc_in: 750
+
+  # Number of decoder input channels. Typically same as enc_in.
+  dec_in: 750
+
+  # Number of output channels. Typically same as enc_in.
+  # Must match the final linear projection dimension.
+  c_out: 750
+
+  # Hidden dimension of the model (d_model in Transformer terminology).
+  # Paper does not specify; repo default is 512. Configurable for memory/performance.
+  d_model: 512
+
+  # Hidden dimension of the feed-forward network (d_ff). Only used when
+  # use_csam=false (vanilla Autoformer mode). Typically 4 * d_model.
+  d_ff: 2048
+
   # Number of encoder layers. Paper default: 2.
   # Configurable for ablation on model depth.
   encoder_layers: 2
 
   # Number of decoder layers. Paper default: 1.
   decoder_layers: 1
-
-  # Hidden dimension of the model (d_model in Transformer terminology).
-  # Paper does not specify; repo default is 512. Configurable for memory/performance.
-  d_model: 512
 
   # Number of attention heads in the auto-correlation mechanism.
   # Paper default: 8. Must divide d_model evenly.
@@ -116,8 +133,11 @@ model:
   activation: "relu"
 
   # When true, replaces the standard Conv1d FFN with the CSAM module.
-  # Set to false to run vanilla Autoformer as a baseline comparison.
   use_csam: true
+
+  # When true, also trains a vanilla Autoformer (use_csam=false) on the same
+  # data splits for ablation comparison. Only meaningful when use_csam=true.
+  run_vanilla_autoformer_baseline: false
 
   # Kernel size for the 1D convolution inside the CSAM spatial attention branch.
   # Captures local temporal context. Paper uses kernel_size=7 (typical for CBAM).
@@ -170,7 +190,7 @@ evaluation:
   metrics: ["rmse", "mae", "r2"]
 
   # Specific prediction horizons (in minutes) to report metrics for.
-  # These are sub-sampled from the full prediction_horizon output.
+  # These are sub-sampled from the full pred_len output.
   # Paper evaluates at {60, 120, 240, 300}. Use [1, 5, 15, 60] for smoke tests.
   eval_horizons: [1, 5, 15, 60]
 

@@ -1,6 +1,6 @@
 # Autoformer-CSA Spectrum Prediction — Adaptation
 
-> **Based on:** *An Autoformer-CSA Approach for Long-Term Spectrum Prediction* — Demii et al. (2025)
+> **Based on:** *An Autoformer-CSA Approach for Long-Term Spectrum Prediction* — Pan et al., IEEE Wireless Communications Letters, 2023.
 >
 > **Reference implementation:** https://github.com/Demii-7/Autoformer
 >
@@ -50,10 +50,10 @@ All settings live in `config.yaml`. See that file for detailed descriptions.
 | Section | Key Fields |
 |---------|------------|
 | `data` | dataset_path, n_features, n_nodes, bins_per_node, cc2_only_smoke_test |
-| `windowing` | input_sequence_length, label_length, prediction_horizon, train_stride, val_stride, test_stride |
+| `windowing` | seq_len, label_len, pred_len, train_stride, val_stride, test_stride |
 | `split` | train_ratio, val_ratio, test_ratio, chronological_split |
 | `preprocessing` | normalization (zscore), fit_on_train_only |
-| `model` | encoder_layers, decoder_layers, d_model, n_heads, moving_avg, dropout, use_csam, csam_kernel_size, csam_reduction |
+| `model` | enc_in, dec_in, c_out, d_model, d_ff, encoder_layers, decoder_layers, n_heads, moving_avg, dropout, use_csam, run_vanilla_autoformer_baseline, csam_kernel_size, csam_reduction |
 | `training` | batch_size, epochs, learning_rate, optimizer, loss, early_stopping, patience |
 | `evaluation` | metrics, eval_horizons, export_predictions, plot_denormalized_dbm |
 | `paths` | checkpoints_dir, evaluation_dir |
@@ -206,7 +206,9 @@ y = Dropout(Activation(Conv1d(d_model → d_ff, k=1)))
 y = Dropout(Conv1d(d_ff → d_model, k=1))
 ```
 
-CSAM replaces this with a two-branch attention module:
+CSAM operates on the **embedded representation** — its channel dimension is `d_model` (typically 512), not the raw 750 input features. The 750-channel input affects only the embedding layer and final projection; CSAM scales with `d_model`.
+
+CSAM replaces the FFN with a two-branch attention module:
 
 **1. Channel Attention Branch**
 
@@ -315,10 +317,16 @@ CSV (6839, 750)
 ### 5.2 Encoder/Decoder Construction for Training
 
 ```
-seq_x = data[s_begin : s_end]                             # encoder input
-seq_y = data[s_end - label_len : s_end + pred_len]        # decoder input
+seq_x = data[s_begin : s_end]                             # encoder input:  (seq_len, features)
+seq_y = data[s_end - label_len : s_end + pred_len]        # decoder input:  (label_len + pred_len, features)
 seq_x_mark = time_features[s_begin : s_end]                # encoder timestamp
 seq_y_mark = time_features[s_end - label_len : s_end + pred_len]  # decoder timestamp
+```
+
+Loss is computed only on the final `pred_len` steps of the decoder output:
+
+```
+loss = MSE(model(seq_x)[:, -pred_len:, :], seq_y[:, -pred_len:, :])
 ```
 
 ### 5.3 Training Loop
@@ -372,6 +380,17 @@ All of these are configurable via `config.yaml`.
 
 9. **Paper-faithful decoder initialization** — The latter half of encoder seasonal+trend + zero/mean placeholders, as implemented in the reference repo.
 
+### Implementation Decisions Already Confirmed
+
+| Decision | Status |
+|----------|--------|
+| Autoformer repo is vanilla Autoformer; CSAM is not implemented | Confirmed via repo inspection — no CSA/CSAM code exists |
+| FFN replacement points are in `layers/Autoformer_EncDec.py` | `EncoderLayer` lines 61–62/75–78 and `DecoderLayer` lines 122–123/143–146 |
+| `seq_len`, `label_len`, `pred_len` naming matches the repo | Used consistently across `run.py`, models, datasets |
+| Decoder initialization already exists | `models/Autoformer.py:77-82` — no changes needed |
+| Normalization will be handled in custom `dataset.py` | Repo's `Dataset_Custom` normalizes internally; we will handle z-score in our own loader |
+| Evaluation exports must use denormalized dBm | All other AERPAW pipeline models use denormalized metrics for comparability |
+
 ---
 
 ## 7. AERPAW Dataset Adaptation
@@ -387,9 +406,9 @@ All of these are configurable via `config.yaml`.
 | **Features** | Per-sensor PSD (unknown count) | 750 features (3 × 250 bins) |
 | **Temporal resolution** | 1 minute | 1 minute |
 | **Train/val/test split** | 5:1:1 | 5:1:1 (configurable) |
-| **Input length M** | 96 | Configurable via `input_sequence_length` |
-| **Prediction range K** | {60, 120, 240, 300} | Configurable via `prediction_horizon` |
-| **Label length** | M/2 | Configurable via `label_length` |
+| **Input length M** | 96 | Configurable via `seq_len` |
+| **Prediction range K** | {60, 120, 240, 300} | Configurable via `pred_len` |
+| **Label length** | M/2 | Configurable via `label_len` |
 
 ### Important Note
 
@@ -459,7 +478,7 @@ utils/
 
 1. **Horizon sensitivity** — Autoformer-CSA is designed for long-horizon forecasting (K ≥ 60). Smoke-test horizons (e.g., K = 1 or K = 5) may be too short to show the benefit of the auto-correlation mechanism and CSAM.
 
-2. **Memory footprint** — The full 750-channel input with `d_model=512` produces large intermediate tensors. The CSAM channel attention branch has a Conv1d with `C → C/r → C`, which may be memory-heavy at 750 channels. Consider gradient checkpointing if OOM occurs.
+2. **Memory footprint** — 750 input features mainly affect embedding/projection and data tensors; CSAM channel attention mainly scales with `d_model`. The channel attention bottleneck is `d_model → d_model/r → d_model`, so a typical `d_model=512` with `r=16` produces a manageable 512→32→512 Conv1d. Still, full 750-channel training may be memory-heavy for the embedding and projection layers. Consider gradient checkpointing if OOM occurs.
 
 3. **Tensor layout** — The repo uses `(B, T, C)` layout throughout (`batch_first`). The CSAM implementation must be careful with the `transpose(-1, 1)` patterns used in the existing Conv1d FFN (which expects `(B, C, T)`). The CSAM module should accept and return `(B, T, C)` consistently.
 
@@ -475,37 +494,17 @@ utils/
 
 ## 10. Items to Verify Before Scripting
 
-Before writing any implementation code, verify the following:
+Before writing any implementation code, verify the following unresolved items:
 
-1. **Tensor layout expected by the repo** — Does everything use `(B, T, C)` (batch_first)? Confirm the repo has `batch_first=True` in all attention layers. The CSAM module must accept this layout.
+1. **Confirm exact tensor layout in the forked repo during forward pass** — The expected model input appears to be `(B, T, C)`; internal Conv1d blocks transpose to `(B, C, T)`. CSAM must accept and return `(B, T, d_model)`.
 
-2. **FFN replacement points** — Exactly where in `EncoderLayer.forward` and `DecoderLayer.forward` should CSAM replace the Conv1d block? Confirm the residual connections and decomposition calls remain intact.
+2. **Confirm the safest integration strategy** — Option A: replace FFN inside existing `EncoderLayer` and `DecoderLayer`. Option B: create separate `EncoderLayerCSA` and `DecoderLayerCSA`. Prefer option B if it avoids breaking vanilla Autoformer.
 
-   In `EncoderLayer.forward` (lines 68–79):
-   - Line 75: `y = x` (input to FFN)
-   - Lines 76–77: Conv1d FFN (replace with CSAM)
-   - Line 78: `res, _ = self.decomp2(x + y)` (skip connection + decomposition)
+3. **Confirm decoder output slicing** — Model output should be `(B, pred_len, c_out)`; training loss should compare against `seq_y[:, -pred_len:, :]`.
 
-   In `DecoderLayer.forward` (lines 132–150):
-   - Line 143: `y = x` (input to FFN)
-   - Lines 144–145: Conv1d FFN (replace with CSAM)
-   - Line 146: `x, trend3 = self.decomp3(x + y)` (skip connection + decomposition + trend extraction)
+4. **Confirm custom AERPAW dataset compatibility** — No date column; synthetic time marks may be needed if the repo expects `x_mark` and `y_mark`. Alternatively, disable time-feature dependence if unused by Autoformer.
 
-3. **CSAM integration without breaking residual flow** — CSAM output must have shape `(B, T, d_model)` to match the skip connection `x + y`. The `decomp2`/`decomp3` expects `(B, T, d_model)`.
-
-4. **Decoder trend/seasonal initialization** — Already exists in `models/Autoformer.py:77-82`. Verify it uses `label_len = T_in/2` correctly.
-
-5. **seq_len / label_len / pred_len naming** — Confirmed consistent throughout the repo.
-
-6. **label_len = T_in/2 support** — The repo sets `label_len = 48` by default (half of `seq_len = 96`). Our config must support this pattern.
-
-7. **Normalization handling** — The repo's datasets perform normalization internally. Our `dataset.py` must handle normalization (z-score fit on train, transform on val/test).
-
-8. **Custom CSV integration** — The repo's `Dataset_Custom` expects a date column. Our CSV has 750 feature columns with no date column. We need a custom dataset class.
-
-9. **Multi-channel output dimension 750** — The final `projection = nn.Linear(d_model, c_out)` maps `d_model` → 750. This should work without modification. For the decoder's Conv1d projection (`self.projection` in `DecoderLayer`), the `c_out` parameter is already passed — verify `c_out=750` works with `kernel_size=3` Conv1d.
-
-10. **Paper defaults vs our config** — Verify all paper defaults (M=96, K∈{60,120,240,300}, 5:1:1 split, 2 encoder layers, 1 decoder layer, 8 heads, batch 32, lr=0.0001, patience=6) are representable in `config.yaml`.
+5. **Confirm final projection behavior** — Verify `c_out=250` works in CC2 smoke mode and `c_out=750` works in full mode, both for the `nn.Linear(d_model, c_out)` in the model and the Conv1d projection within `DecoderLayer`.
 
 ---
 
@@ -519,14 +518,14 @@ Responsibility: Load AERPAW merged CSV, apply chronological split, fit z-score n
 
 ```
 class AERPAWDataset(Dataset):
-    def __init__(self, data, T_in, T_out, label_len, stride):
+    def __init__(self, data, seq_len, pred_len, label_len, stride):
         # Store pre-loaded and normalized data
         # Generate window indices
 
     def __getitem__(self, idx):
         # Return (seq_x, seq_y, seq_x_mark, seq_y_mark)
-        # seq_x: (T_in, 750)
-        # seq_y: (T_in + T_out, 750) — includes label_len context
+        # seq_x: (seq_len, features)
+        # seq_y: (label_len + pred_len, features)
 ```
 
 ```python
@@ -592,7 +591,7 @@ Responsibility:
 ## References
 
 1. **Autoformer paper:** H. Wu, J. Xu, J. Wang, M. Long, "Autoformer: Decomposition Transformers with Auto-Correlation for Long-Term Series Forecasting," NeurIPS 2021.
-2. **Autoformer-CSA paper:** Demii et al., "An Autoformer-CSA Approach for Long-Term Spectrum Prediction," 2025.
+2. **Autoformer-CSA paper:** Pan et al., "An Autoformer-CSA Approach for Long-Term Spectrum Prediction," IEEE Wireless Communications Letters, 2023.
 3. **Reference implementation:** [Demii-7/Autoformer](https://github.com/Demii-7/Autoformer) (vanilla Autoformer fork)
 4. **CBAM (inspiration for CSAM):** S. Woo, J. Park, J.-Y. Lee, I. S. Kweon, "CBAM: Convolutional Block Attention Module," ECCV 2018.
 5. **AERPAW dataset:** DOI: [10.5061/dryad.hmgqnk9zn](https://doi.org/10.5061/dryad.hmgqnk9zn)
