@@ -107,6 +107,19 @@ Evaluation: training/TSS-LCD/smoke_test/evaluation/
          H_spatial), but TSS-CC forward called it with pre-combined Q and KV.
          Fix: Simplified FFM to 2-arg (x_q, x_kv); TSS-CC handles concatenation.
 
+   [E-6] Spectrogram plots used wrong axis orientation (BUG - FIXED)
+         Symptom: Plots showed 128 test samples at a single horizon instead of
+         6 prediction horizons for one test sample. Axis scales and ground truth
+         ranges did not match ConvLSTM/TimeRAN/STS-PredNet plots.
+         Root cause: evaluate.py passed target_dbm[:n_plot, 0].T (many samples,
+         single horizon) instead of target_dbm[0] (single sample, all horizons).
+         plot_spectrogram_comparison double-transposed data.
+         Fix: evaluate.py now reshapes to (B, T_out, L, F) and passes first
+         batch item to plot functions matching ConvLSTM's convention.
+         plot_spectrogram_comparison and plot_error_analysis rewritten to match
+         ConvLSTM's exact function signatures and axis conventions.
+         File naming now matches: spectrogram_{NodeName}.png, error_analysis.png.
+
 9. Issues and Notes
    - Negative R² is expected: 588K parameter model on 138 training windows
      (2 hours of single-node data) lacks sufficient signal.

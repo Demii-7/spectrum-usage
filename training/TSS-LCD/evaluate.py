@@ -123,7 +123,7 @@ def main():
     pred = np.concatenate(all_preds, axis=0)
     target = np.concatenate(all_targets, axis=0)
 
-    # Reshape back to (B, T_out, L*F) for metric computation
+    # Reshape to (B, T_out, D) for metric computation
     B_actual, T_actual, D_actual = pred.shape
     pred_flat = pred.reshape(B_actual * T_actual, D_actual)
     target_flat = target.reshape(B_actual * T_actual, D_actual)
@@ -160,34 +160,26 @@ def main():
         m = node_metrics[l]
         print(f"  Node {l}: RMSE={m['rmse']:.4f}  MAE={m['mae']:.4f}  R2={m['r2']:.4f}")
 
-    # Plot first 128 test samples as spectrograms
-    n_plot = min(128, B_actual)
-    plot_spectrogram_comparison(
-        target_dbm[:n_plot, 0].T,
-        pred_dbm[:n_plot, 0].T,
-        output_dir / "spectrogram_comparison_horizon_1.png",
-        title="Spectrogram Comparison (t+1)",
-    )
-    plot_error_analysis(
-        target_dbm[:n_plot, 0].T,
-        pred_dbm[:n_plot, 0].T,
-        output_dir / "error_analysis_horizon_1.png",
-        title="Error Analysis (t+1)",
-    )
+    # Reshape to (B, T_out, L, F) for plotting (matching ConvLSTM convention)
+    pred_4d = pred_dbm.reshape(B_actual, T_actual, L, -1)
+    target_4d = target_dbm.reshape(B_actual, T_actual, L, -1)
 
-    horizon_idx = min(eval_cfg.get("eval_horizons", [1])[-1], T_actual) - 1
-    plot_spectrogram_comparison(
-        target_dbm[:n_plot, horizon_idx].T,
-        pred_dbm[:n_plot, horizon_idx].T,
-        output_dir / f"spectrogram_comparison_horizon_{horizon_idx + 1}.png",
-        title=f"Spectrogram Comparison (t+{horizon_idx + 1})",
-    )
-    plot_error_analysis(
-        target_dbm[:n_plot, horizon_idx].T,
-        pred_dbm[:n_plot, horizon_idx].T,
-        output_dir / f"error_analysis_horizon_{horizon_idx + 1}.png",
-        title=f"Error Analysis (t+{horizon_idx + 1})",
-    )
+    node_names = config["data"].get("node_names", [f"Node_{i}" for i in range(L)])
+    errors = pred_4d - target_4d
+
+    # Plot spectrogram for each node (first test sample, all horizons)
+    for n, name in enumerate(node_names):
+        plot_path = output_dir / f"spectrogram_{name}.png"
+        plot_spectrogram_comparison(
+            target_4d[0], pred_4d[0],
+            n, name, config["windowing"]["input_sequence_length"], plot_path,
+        )
+        print(f"Spectrogram saved to {plot_path}")
+
+    # Error analysis plot
+    error_plot_path = output_dir / "error_analysis.png"
+    plot_error_analysis(errors[0], node_names, error_plot_path)
+    print(f"Error analysis saved to {error_plot_path}")
 
     print(f"\nResults saved to {output_dir}")
 

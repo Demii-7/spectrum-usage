@@ -81,45 +81,52 @@ def compute_metrics_per_frequency(pred: np.ndarray, target: np.ndarray) -> dict[
 
 
 def plot_spectrogram_comparison(
-    gt: np.ndarray,
-    pred: np.ndarray,
+    ground_truth: np.ndarray,
+    prediction: np.ndarray,
+    node_idx: int,
+    node_name: str,
+    t_in: int,
     save_path: str | Path,
-    title: str = "Spectrogram Comparison",
 ) -> None:
-    gt = gt.astype(np.float32)
-    pred = pred.astype(np.float32)
-    all_vals = np.concatenate([gt.ravel(), pred.ravel()])
-    vmin, vmax = np.percentile(all_vals, [1, 99])
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5), sharey=True, constrained_layout=True)
-    im0 = axes[0].imshow(gt.T, aspect="auto", origin="lower", cmap="viridis", vmin=vmin, vmax=vmax)
-    axes[0].set_title("Ground Truth")
-    axes[0].set_xlabel("Sample")
-    axes[0].set_ylabel("Frequency Index")
-    im1 = axes[1].imshow(pred.T, aspect="auto", origin="lower", cmap="viridis", vmin=vmin, vmax=vmax)
-    axes[1].set_title("Prediction")
-    axes[1].set_xlabel("Sample")
-    cbar = fig.colorbar(im0, ax=axes.ravel().tolist(), shrink=0.6, label="Power (dBm)")
-    fig.suptitle(title)
+    gt_node = ground_truth[:, node_idx, :].T
+    pred_node = prediction[:, node_idx, :].T
+    vmin = min(gt_node.min(), pred_node.min())
+    vmax = max(gt_node.max(), pred_node.max())
+    fig, axes = plt.subplots(2, 1, figsize=(12, 6), sharex=True, sharey=True,
+                              constrained_layout=True)
+    im0 = axes[0].imshow(gt_node, aspect="auto", cmap="viridis", vmin=vmin, vmax=vmax)
+    axes[0].set_title(f"{node_name} — Ground Truth")
+    axes[0].set_ylabel("Frequency Bin")
+    im1 = axes[1].imshow(pred_node, aspect="auto", cmap="viridis", vmin=vmin, vmax=vmax)
+    axes[1].set_title(f"{node_name} — Prediction")
+    axes[1].set_xlabel("Time Step (future minutes)")
+    axes[1].set_ylabel("Frequency Bin")
+    fig.colorbar(im1, ax=axes.ravel().tolist(), label="Power (dBm)")
+    fig.text(0.01, 0.99, f"Range [{vmin:.0f}, {vmax:.0f}] dBm",
+             transform=fig.transFigure, fontsize=8, va="top", ha="left",
+             bbox=dict(boxstyle="round", facecolor="white", alpha=0.8))
     Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(save_path, dpi=300)
+    fig.savefig(save_path, dpi=150)
     plt.close(fig)
 
 
 def plot_error_analysis(
-    gt: np.ndarray,
-    pred: np.ndarray,
+    errors: np.ndarray,
+    node_names: list[str],
     save_path: str | Path,
-    title: str = "Error Analysis",
 ) -> None:
-    err = pred.astype(np.float32) - gt.astype(np.float32)
-    vmax = max(abs(np.percentile(err, 1)), abs(np.percentile(err, 99)))
-    fig, ax = plt.subplots(1, 1, figsize=(7, 5), constrained_layout=True)
-    im = ax.imshow(err.T, aspect="auto", origin="lower", cmap="RdBu_r", vmin=-vmax, vmax=vmax)
-    ax.set_title("Prediction Error (Pred - GT)")
-    ax.set_xlabel("Sample")
-    ax.set_ylabel("Frequency Index")
-    cbar = fig.colorbar(im, ax=ax, shrink=0.6, label="Error (dBm)")
-    fig.suptitle(title)
+    n = len(node_names)
+    fig, axes = plt.subplots(1, n, figsize=(5 * n, 4), squeeze=False,
+                              constrained_layout=True)
+    im = None
+    for i, name in enumerate(node_names):
+        ax = axes[0, i]
+        err = errors[:, i, :]
+        im = ax.imshow(err.T, aspect="auto", cmap="RdBu_r", vmin=-3, vmax=3)
+        ax.set_title(f"{name} — Error (Pred − GT)")
+        ax.set_xlabel("Sample")
+        ax.set_ylabel("Frequency Bin")
+    fig.colorbar(im, ax=axes.ravel().tolist(), label="Normalized Error")
     Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(save_path, dpi=300)
+    fig.savefig(save_path, dpi=150)
     plt.close(fig)
