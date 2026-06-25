@@ -34,7 +34,7 @@ training/Autoformer-CSA/
 ├── README.md           # This file — adaptation plan and architecture reference
 ├── config.yaml         # Tunable hyperparameters and pipeline configuration
 ├── dataset.py          # AERPAW dataset loader with sliding windows (planned)
-├── model_csa.py        # Autoformer backbone + CSAM replacement (planned)
+├── model.py            # Autoformer, AutoformerCSA, CSAM (planned)
 ├── train.py            # Training loop, checkpointing, evaluation (planned)
 ├── evaluate.py         # Standalone evaluation on test split (planned)
 ├── inference.py        # Forward pass on new CSV data (planned)
@@ -53,7 +53,8 @@ All settings live in `config.yaml`. See that file for detailed descriptions.
 | `windowing` | seq_len, label_len, pred_len, train_stride, val_stride, test_stride |
 | `split` | train_ratio, val_ratio, test_ratio, chronological_split |
 | `preprocessing` | normalization (zscore), fit_on_train_only |
-| `model` | enc_in, dec_in, c_out, d_model, d_ff, encoder_layers, decoder_layers, n_heads, moving_avg, dropout, use_csam, run_vanilla_autoformer_baseline, csam_kernel_size, csam_reduction |
+| `model` | enc_in, dec_in, c_out, d_model, d_ff, encoder_layers, decoder_layers, n_heads, moving_avg, dropout, csam_kernel_size, csam_reduction |
+| `architecture` | model_variant, use_csam, preserve_original_autoformer, encoder_layer_type, decoder_layer_type |
 | `training` | batch_size, epochs, learning_rate, optimizer, loss, early_stopping, patience |
 | `evaluation` | metrics, eval_horizons, export_predictions, plot_denormalized_dbm |
 | `paths` | checkpoints_dir, evaluation_dir |
@@ -111,6 +112,12 @@ After windowing for the model:
 X: (T_in, 750)    — encoder input
 Y: (T_out, 750)   — decoder target (and prediction)
 ```
+
+### Dataset Representation
+
+The model treats the input as a **multivariate time series** with 750 channels. Node identity is encoded exclusively through the fixed column ordering — CC1 occupies columns 0–249, CC2 columns 250–499, LW1 columns 500–749. There is no spatial or graph structure imposed on the channels.
+
+The `(3, 250)` representation (3 nodes × 250 frequency bins) is **only** used for evaluation and visualization. Training always operates on `(T, 750)` tensors. This avoids conflating node identity with spatial adjacency and keeps the model architecture independent of the number of nodes.
 
 ### Key Design Choices
 
@@ -263,7 +270,7 @@ After:   attention → decomp1 → CSAM → decomp2 → output
 |----------|-------------|-------|--------------|
 | EncoderLayer forward | `layers/Autoformer_EncDec.py` | 75–78 | Replace `conv1 → activation → dropout → conv2 → dropout` with CSAM |
 | DecoderLayer forward | `layers/Autoformer_EncDec.py` | 143–146 | Same replacement |
-| New module | `models/model_csa.py` (planned) | — | Define `CSAM` class with channel and spatial attention |
+| New module | `model.py` (planned) | — | Define `CSAM`, `ChannelAttention`, `SpatialAttention`, `EncoderLayerCSA`, `DecoderLayerCSA`, `AutoformerCSA` |
 
 ---
 
@@ -275,21 +282,29 @@ After:   attention → decomp1 → CSAM → decomp2 → output
 Raw prediction: (B, T_out, 750)
 ```
 
-For evaluation on the test set:
+### Standardized Evaluation Artifacts
 
-| File | Description |
-|------|-------------|
+Autoformer-CSA must produce exactly the same evaluation artifacts as ConvLSTM, STS-PredNet, TimeRAN, and TSS-LCD. No model should have a unique evaluation format.
+
+| Artifact | Description |
+|----------|-------------|
+| `metrics.json` | RMSE, MAE, R² per node, per horizon, and overall |
 | `predictions.csv` | Denormalized predictions, shape `(T_test, 750)` |
 | `ground_truth.csv` | Denormalized ground truth, shape `(T_test, 750)` |
-| `metrics.json` | RMSE, MAE, R² per node and overall |
+| `spectrogram_{Node}.png` | Spectrogram comparison plot per node (CC1, CC2, LW1) — predicted vs actual PSD over time |
+| `error_analysis.png` | Per-frequency-bin error heatmap or MAE across the spectrum |
+
+### Per-Node and Per-Horizon Metrics
+
+- Metrics are computed for each node independently by slicing the 750-column output:
+  ```
+  node_i = output[:, i*250 : (i+1)*250]
+  ```
+- Metrics are also computed per horizon `h ∈ eval_horizons` by extracting the `h`-step-ahead prediction from the full `pred_len` output.
 
 ### Visualization
 
-All plots denormalized to dBm:
-
-- **Spectrogram plots** — one per node (CC1, CC2, LW1) showing predicted vs actual PSD over time
-- **Error analysis plot** — per-frequency-bin error heatmap or MAE across the spectrum
-- **Optional:** per-horizon comparison plots for multi-horizon evaluation
+All plots denormalized to dBm (no model-specific format).
 
 ### Optional Reshape for Analysis
 
@@ -360,7 +375,50 @@ All of these are configurable via `config.yaml`.
 
 ---
 
-## 6. Assumptions and Design Decisions
+## 6. Smoke Test
+
+Before training on the full 750-channel dataset, verify the model converges on a reduced configuration. This mirrors the smoke-test pipeline used by ConvLSTM, STS-PredNet, TimeRAN, and TSS-LCD.
+
+### Smoke Test Configuration
+
+| Parameter | Value |
+|-----------|-------|
+| Dataset | CC2-only (columns 250–499) |
+| Rows | First 2000 rows of the merged CSV |
+| Frequency bins | 250 (single node) |
+| `enc_in` / `dec_in` / `c_out` | 250 |
+| `seq_len` | 96 |
+| `label_len` | 48 |
+| `pred_len` | 60 |
+| `batch_size` | 32 |
+| `epochs` | 20 |
+| `train_stride` | 1 |
+| `val_stride` | 60 |
+| `test_stride` | 60 |
+
+### Expected Outputs
+
+After training completes, verify:
+
+```
+training/results/Autoformer-CSA/evaluation/
+├── metrics.json           # RMSE, MAE, R² for the CC2 smoke test
+├── predictions.csv        # Denormalized predictions, shape (T_test, 250)
+├── ground_truth.csv       # Denormalized ground truth, shape (T_test, 250)
+├── spectrogram_CC2.png    # Spectrogram comparison for CC2
+└── error_analysis.png     # Per-frequency-bin error plot
+```
+
+Training loss (MSE) should decrease monotonically. Validation loss should not diverge. The smoke test confirms:
+
+- Data loading and windowing work correctly for the AERPAW CSV format.
+- The model (Autoformer or Autoformer-CSA) trains without OOM or shape errors.
+- Checkpoint saving and loading function properly.
+- Evaluation artifacts are produced in the standard format.
+
+---
+
+## 7. Assumptions and Design Decisions
 
 1. **Use Autoformer repo as base** — The forked repo at `github.com/Demii-7/Autoformer` is vanilla Autoformer. CSAM must be added as a replacement for the Conv1d-based FFN.
 
@@ -393,7 +451,44 @@ All of these are configurable via `config.yaml`.
 
 ---
 
-## 7. AERPAW Dataset Adaptation
+## 8. Implementation Philosophy
+
+The following principles guide every implementation decision. They mirror the approach used by the TimeRAN adaptation and ensure the codebase remains maintainable, auditable, and compatible with upstream updates.
+
+### Reuse Upstream Autoformer Code Whenever Possible
+
+The forked Autoformer repository provides a complete, tested implementation of the vanilla Autoformer. We reuse every component that does not need to change: series decomposition, auto-correlation mechanism, embeddings, decoder initialization, and the top-level `Model` class. Duplicating working code increases maintenance burden and risks introducing subtle bugs.
+
+### Subclass or Wrap Instead of Copying
+
+When extending functionality, prefer inheritance and composition over copying and pasting. The `AutoformerCSA` class should import and reuse the upstream `Autoformer` rather than duplicating its forward pass. CSA-specific encoder/decoder layers are implemented as new classes that follow the same interface as the originals, allowing the model to switch between FFN and CSAM at construction time.
+
+### Isolate CSA-Specific Code
+
+All CSA/CSAM code lives in a single file (`model.py`). The upstream `layers/Autoformer_EncDec.py` and `models/Autoformer.py` are never modified. This means:
+- Reviewers can see exactly what changed by looking at `model.py`.
+- Upstream bug fixes can be pulled without merge conflicts.
+- The vanilla Autoformer remains runnable for ablation studies.
+
+### Minimize Edits to Upstream Files
+
+The only upstream files that may be referenced (but not edited) are:
+- `layers/AutoCorrelation.py` — reused as-is
+- `layers/Autoformer_EncDec.py` — `series_decomp`, `moving_avg`, `my_Layernorm` reused; original `EncoderLayer`/`DecoderLayer` left intact
+- `layers/Embed.py` — reused as-is
+- `models/Autoformer.py` — reused as-is; `AutoformerCSA` may wrap it
+
+### Preserve Compatibility with Future Upstream Updates
+
+By not modifying upstream files, we retain the ability to pull future updates to the forked repo without rewriting our changes. If the upstream repo fixes a bug in the auto-correlation mechanism or series decomposition, we can merge that fix directly.
+
+### Document Every Intentional Deviation from Upstream
+
+Any modification or addition relative to the upstream implementation is documented here and in code comments. This includes CSAM's use of 1D convolutions (vs 2D in image CBAM), the CSA-specific layer classes, and any changes to the model forward pass.
+
+---
+
+## 9. AERPAW Dataset Adaptation
 
 ### Paper vs Our Setup
 
@@ -416,7 +511,7 @@ Our results are **not** a direct reproduction of the paper's numbers. The spectr
 
 ---
 
-## 8. Repo-Specific Implementation Notes
+## 10. Repo-Specific Implementation Notes
 
 ### Files in the Forked Repo
 
@@ -461,24 +556,29 @@ utils/
 
 ### Required Modifications
 
-1. **Create `models/model_csa.py`** — Define the CSAM module (channel attention + spatial attention + final Conv1d).
-2. **Modify `layers/Autoformer_EncDec.py`** — In both `EncoderLayer` and `DecoderLayer`, either:
-   - Add a `use_csam` parameter to conditionally switch between FFN and CSAM, or
-   - Create new `CSAMEncoderLayer` / `CSAMDecoderLayer` classes.
-3. **Update `models/Autoformer.py`** — Either modify to accept `use_csam` flag or create `AutoformerCSA` subclass.
-4. **Create custom `dataset.py`** — AERPAW-specific data loading with chronological splits, z-score normalization, sliding windows.
+1. **Create `model.py`** — Define `ChannelAttention`, `SpatialAttention`, `CSAM`, `EncoderLayerCSA`, `DecoderLayerCSA`, and `AutoformerCSA`. The vanilla `Autoformer` class is imported from the upstream repo and used as-is. The CSA variant coexists in the same file without modifying the upstream.
+
+2. **Keep `layers/Autoformer_EncDec.py` intact** — The original `EncoderLayer` and `DecoderLayer` are not modified. New `EncoderLayerCSA` and `DecoderLayerCSA` classes are implemented in `model.py`, mirroring the upstream structure but using CSAM instead of the Conv1d FFN.
+
+3. **Keep `models/Autoformer.py` intact** — The vanilla `Autoformer` class remains untouched. A new `AutoformerCSA` class in `model.py` instantiates the CSA layers while the vanilla version continues using the original FFN. Switching between the two is driven entirely by the configuration file.
+
+4. **Create `dataset.py`** — AERPAW-specific data loading with chronological splits, z-score normalization, sliding windows.
+
 5. **Create `train.py`** — Training loop with early stopping, checkpointing, evaluation.
+
 6. **Create `evaluate.py`** — Standalone evaluation script for trained models.
+
 7. **Create `inference.py`** — Forward pass on new data.
+
 8. **Create `utils.py`** — Metrics computation, plotting, helper functions.
 
 ---
 
-## 9. Known Limitations
+## 11. Known Limitations
 
 1. **Horizon sensitivity** — Autoformer-CSA is designed for long-horizon forecasting (K ≥ 60). Smoke-test horizons (e.g., K = 1 or K = 5) may be too short to show the benefit of the auto-correlation mechanism and CSAM.
 
-2. **Memory footprint** — 750 input features mainly affect embedding/projection and data tensors; CSAM channel attention mainly scales with `d_model`. The channel attention bottleneck is `d_model → d_model/r → d_model`, so a typical `d_model=512` with `r=16` produces a manageable 512→32→512 Conv1d. Still, full 750-channel training may be memory-heavy for the embedding and projection layers. Consider gradient checkpointing if OOM occurs.
+2. **Memory footprint** — Memory usage is primarily determined by sequence length, batch size, `d_model`, and encoder/decoder depth. The 750-feature input mainly affects the embedding layer (`nn.Linear(750, d_model)`) and the final projection (`nn.Linear(d_model, 750)`), which are negligible relative to the auto-correlation and CSAM computations. The auto-correlation mechanism has O(L log L) complexity in sequence length. CSAM adds two small Conv1d bottlenecks per layer. For typical settings (`seq_len=96`, `d_model=512`, `batch=32`), GPU memory is well within 4 GB.
 
 3. **Tensor layout** — The repo uses `(B, T, C)` layout throughout (`batch_first`). The CSAM implementation must be careful with the `transpose(-1, 1)` patterns used in the existing Conv1d FFN (which expects `(B, C, T)`). The CSAM module should accept and return `(B, T, C)` consistently.
 
@@ -492,23 +592,19 @@ utils/
 
 ---
 
-## 10. Items to Verify Before Scripting
+## 12. Items to Verify Before Scripting
 
 Before writing any implementation code, verify the following unresolved items:
 
-1. **Confirm exact tensor layout in the forked repo during forward pass** — The expected model input appears to be `(B, T, C)`; internal Conv1d blocks transpose to `(B, C, T)`. CSAM must accept and return `(B, T, d_model)`.
+1. **Tensor layout throughout the model** — Confirm the forward pass uses `(B, T, C)` throughout, including auto-correlation, embeddings, and projections. CSAM layers must accept and return `(B, T, d_model)`.
 
-2. **Confirm the safest integration strategy** — Option A: replace FFN inside existing `EncoderLayer` and `DecoderLayer`. Option B: create separate `EncoderLayerCSA` and `DecoderLayerCSA`. Prefer option B if it avoids breaking vanilla Autoformer.
+2. **Custom AERPAW dataset compatibility** — The merged CSV has no date column. Determine whether the Autoformer forward pass requires `x_mark`/`y_mark` time features or whether they can be set to dummy tensors without affecting output.
 
-3. **Confirm decoder output slicing** — Model output should be `(B, pred_len, c_out)`; training loss should compare against `seq_y[:, -pred_len:, :]`.
-
-4. **Confirm custom AERPAW dataset compatibility** — No date column; synthetic time marks may be needed if the repo expects `x_mark` and `y_mark`. Alternatively, disable time-feature dependence if unused by Autoformer.
-
-5. **Confirm final projection behavior** — Verify `c_out=250` works in CC2 smoke mode and `c_out=750` works in full mode, both for the `nn.Linear(d_model, c_out)` in the model and the Conv1d projection within `DecoderLayer`.
+3. **Final projection behavior** — Verify `c_out=250` works in CC2 smoke mode and `c_out=750` works in full mode, both for the `nn.Linear(d_model, c_out)` model projection and the Conv1d projection within `DecoderLayer`.
 
 ---
 
-## 11. Implementation Notes
+## 13. Implementation Notes
 
 *The following files are planned but not yet created.*
 
@@ -533,9 +629,9 @@ def create_dataloaders(config):
     # Load CSV → split → normalize → window → DataLoader
 ```
 
-### `model_csa.py`
+### `model.py`
 
-Responsibility: Define CSAM module and (optionally) a modified Autoformer model that uses CSAM.
+Responsibility: Host all Autoformer-CSA code in one file, keeping the upstream repository untouched. Contains:
 
 ```
 class ChannelAttention(nn.Module):
@@ -546,11 +642,24 @@ class SpatialAttention(nn.Module):
 
 class CSAM(nn.Module):
     # ChannelAttention → element-wise multiply → SpatialAttention → element-wise multiply → Conv1D → Dropout
+
+class EncoderLayerCSA(nn.Module):
+    # Mirrors upstream EncoderLayer but uses CSAM instead of Conv1d FFN
+
+class DecoderLayerCSA(nn.Module):
+    # Mirrors upstream DecoderLayer but uses CSAM instead of Conv1d FFN
+
+class AutoformerCSA(nn.Module):
+    # Imports and reuses upstream Autoformer components;
+    # instantiates CSA layers based on configuration
 ```
 
-The CSAM module should accept and return `(B, T, C)` tensors.
+**Guiding principles for implementation:**
 
-If a new model class (`AutoformerCSA`) is created, it should inherit or wrap the existing Autoformer forward logic, replacing only the FFN with CSAM.
+- Reuse upstream code whenever identical (auto-correlation, series decomposition, embeddings, decoder initialization).
+- Only implement new code where Autoformer-CSA differs from vanilla Autoformer (the FFN → CSAM replacement).
+- Prefer inheritance and composition over copying code. `AutoformerCSA` should import and reuse the upstream `Autoformer` rather than duplicating its forward pass.
+- Document every intentional deviation from upstream in code comments and this README.
 
 ### `train.py`
 

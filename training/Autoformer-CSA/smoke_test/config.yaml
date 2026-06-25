@@ -1,0 +1,77 @@
+data:
+  dataset_path: "training/data/cc2_smoke_test.csv"
+  n_features: 250
+  n_nodes: 1
+  bins_per_node: 250
+  node_names: ["CC2"]
+  selected_nodes: ["CC2"]
+  cc2_only_smoke_test: false
+
+windowing:
+  seq_len: 12
+  label_len: 6
+  pred_len: 6
+  train_stride: 1
+  val_stride: 6
+  test_stride: 6
+
+split:
+  train_ratio: 0.8
+  val_ratio: 0.1
+  test_ratio: 0.1
+  chronological_split: true
+
+preprocessing:
+  normalization: "zscore"
+  fit_on_train_only: true
+
+model:
+  model_name: "autoformer_csa"
+  enc_in: 250
+  dec_in: 250
+  c_out: 250
+  d_model: 32
+  d_ff: 128
+  encoder_layers: 1
+  decoder_layers: 1
+  n_heads: 4
+  moving_avg: 7
+  dropout: 0.1
+  factor: 3
+  activation: "relu"
+  embed: "timeF"
+  freq: "h"
+  csam_kernel_size: 7
+  csam_reduction: 16
+  output_attention: false
+
+architecture:
+  model_variant: "autoformer_csa"
+  use_csam: true
+  preserve_original_autoformer: false
+  encoder_layer_type: "csam"
+  decoder_layer_type: "csam"
+
+training:
+  batch_size: 8
+  epochs: 3
+  learning_rate: 0.001
+  optimizer: "adam"
+  loss: "mse"
+  early_stopping: true
+  patience: 10
+  gradient_clip: 5.0
+  seed: 42
+
+evaluation:
+  metrics: ["rmse", "mae", "r2"]
+  eval_horizons: [1, 3, 6]
+
+paths:
+  checkpoints_dir: "training/Autoformer-CSA/checkpoints"
+  evaluation_dir: "training/Autoformer-CSA/evaluation"
+
+device:
+  device: "auto"
+
+seed: 42
