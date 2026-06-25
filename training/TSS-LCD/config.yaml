@@ -15,6 +15,10 @@ data:
   n_bins_per_node: 250
   # Node labels in CSV column order (columns 0-249, 250-499, 500-749)
   node_names: ["CC1", "CC2", "LW1"]
+  # Subset of nodes to actually use (can be fewer than n_nodes for ablation)
+  selected_nodes: ["CC1", "CC2", "LW1"]
+  # If true, restrict to CC2 only (columns 250-499). Overrides selected_nodes.
+  cc2_only_smoke_test: false
 
 windowing:
   # Number of historical time steps used as model input (T_in)
@@ -125,6 +129,11 @@ training:
   # --------------------------------------------------------------------------
   tss_epochs: 200
   tss_learning_rate: 0.0001
+  # Objective for Stage 2 training. Options:
+  #   "projection_to_latent" — learnable head maps H_fusion → z_pred, MSE vs LSE(Y)
+  #   "joint_with_diffusion" — skip Stage 2, train TSS-CC jointly with NEN in Stage 3
+  #   "repo_context_ae"      — fall back to the repo's context-autoencoder strategy
+  tss_condition_objective: projection_to_latent
 
   # --------------------------------------------------------------------------
   # Stage 3 — LCD diffusion noise-estimation training

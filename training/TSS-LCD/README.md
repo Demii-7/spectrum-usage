@@ -16,6 +16,7 @@ pip install torch numpy pandas scipy scikit-learn pyyaml matplotlib
 #    training/data/merged_power_data_sub6GHz_avg_per_minute.csv
 
 # 4. Run training (three stages)
+#    (Future commands — scripts not yet created)
 python3 training/TSS-LCD/train_autoencoder.py    # Stage 1 — latent autoencoder
 python3 training/TSS-LCD/train_tss_condition.py  # Stage 2 — TSS condition stage
 python3 training/TSS-LCD/train_diffusion.py      # Stage 3 — LCD noise-estimation
@@ -61,12 +62,12 @@ All configurable options live in `config.yaml`. Every tunable hyperparameter is 
 
 Key configurable groups:
 
-- **Data**: dataset path, number of nodes, frequency bins per node, node names
+- **Data**: dataset path, number of nodes, frequency bins per node, node names, selected node subset, CC2-only smoke mode
 - **Windowing**: input sequence length, prediction horizon, train/val/test strides
 - **Split**: train/val/test ratios, chronological split flag, random seed
 - **Preprocessing**: normalization method, missing rate, masking strategy, zero-padding toggle, complete-observation baseline mode
 - **Model architecture**: latent dimension, hidden dimension, attention heads, FFN dimension, number of attention layers, diffusion steps, noise schedule, per-branch toggles, autoencoder channels/depth, NEN U-Net channels/depth
-- **Training**: per-stage epochs, batch size, learning rate, optimizer, gradient clipping, weight decay, checkpoint path
+- **Training**: per-stage epochs, learning rates, batch size, optimizer, gradient clipping, weight decay, checkpoint path, Stage 2 objective strategy
 - **Evaluation**: metrics list, evaluation horizons, output directory
 - **Device**: auto / cuda / cpu
 
@@ -242,12 +243,19 @@ The LSE and LSD are trained end-to-end to compress and reconstruct future spectr
 ```text
 Script:  train_tss_condition.py
 Input:   X (incomplete historical) + Y (complete future)
-Loss:    MSE between predicted and true latent: ||LSE(Y) - TSS-CC(X)||²
 Freezes: LSE, LSD (from Stage 1)
 Output:  checkpoints/tss_cc.pth
 ```
 
-The TSS-CC modules (TemFE, SpeFE, SpaFE, FFM) are trained so that `H_fusion` aligns with the latent encoding of the future spectrum. Individual branches can be toggled via config to ablate their contribution.
+The paper states that the TSS modules are trained to provide reliable conditional information for the diffusion stage while LSE/LSD remain frozen. However, the exact supervised objective for `H_fusion` requires verification — the paper does not specify a direct loss between `H_fusion ∈ R^(T_in × L·F)` and `z0 ∈ R^(1 × d_latent)`, and those shapes do not naturally align.
+
+Implementation options (set via `config.yaml` → `training.tss_condition_objective`):
+
+1. **`projection_to_latent`** (default target): Add a learnable projection head (e.g., pooling + FC) that maps `H_fusion` → `z_pred ∈ R^(d_latent)`, then train with MSE against `z0 = LSE(Y)`.
+2. **`joint_with_diffusion`**: Skip standalone Stage 2. Train TSS-CC jointly with NEN during Stage 3 (the condition is only supervised by the diffusion loss).
+3. **`repo_context_ae`**: Fall back to the repository's context-autoencoder strategy if the paper-faithful approach proves unstable.
+
+The final Stage 2 objective must be confirmed before scripting. Individual TSS branches can be toggled via config for ablation.
 
 ### Stage 3: LCD Diffusion Training
 
@@ -310,7 +318,7 @@ This is an **AERPAW-specific adaptation**. The per-node offsets were reverse-eng
 
 ## 8. Repo-Specific Implementation Notes
 
-The original repository at `github.com/Demii-7/TSS-LCD` contains implementations that differ from the paper in several ways. These are **not** part of the paper-faithful target architecture, but are documented here for reference since they may influence implementation decisions.
+The original repository at `github.com/Xlab2024/TSS-LCD` contains implementations that differ from the paper in several ways. These are **not** part of the paper-faithful target architecture, but are documented here for reference since they may influence implementation decisions. (A local working copy was cloned to `/tmp/opencode/TSS-LCD` during adaptation.)
 
 ### Context Autoencoder (Not in Paper)
 
@@ -354,7 +362,7 @@ This is largely consistent with the paper description and can be used as referen
 
 ## 9. Known Limitations
 
-- **Complex and slow training**: Diffusion training requires 1000+ epochs (or 1000+ steps per epoch) and is significantly slower than direct regression models
+- **Complex and slow training**: Diffusion training can be substantially slower because each training step samples diffusion noise, and inference may require many reverse denoising steps (e.g., 1000). This is inherent to iterative generative models and differs from one-shot regression.
 - **Multi-stage checkpoint management**: Three separate training stages with careful freeze/thaw logic; a failed mid-stage requires partial restart
 - **Incomplete-observation masking must be standardized**: Masking strategy (random vs continuous) and missing rate must be consistent across all experiments for fair comparison
 - **CPU training is impractical**: The Conv1D U-Net in NEN and multi-head attention in TSS-CC are compute-intensive; a GPU (>= 8 GB VRAM) is strongly recommended
@@ -370,7 +378,7 @@ This is largely consistent with the paper description and can be used as referen
 3. **LSE/LSD Conv2D parameterization**: Determine the number of downsampling blocks, kernel sizes, stride, and channel progression from the paper's Fig. 5/7 (the paper shows "multiple stacked blocks" without exact counts)
 4. **Conditioning mechanism in NEN**: Verify whether `H_fusion` is projected and concatenated directly with `z_t` (as in the repo) or if there is a different conditioning mechanism (e.g., adaptive layer norm) described in the paper
 5. **FFM cross-attention dimensionality**: Confirm the exact reshaping of spatial features before cross-attention (paper says `H_spat` is reshaped from `L×(T·F)` to `F×(T·L)`)
-6. **Loss function for Stage 2**: Paper describes TSS stage training by minimizing MSE between `LSE(Y)` and something derived from `H_fusion`. Confirm the exact loss formulation — the repo trains the context AE separately, but the paper does not use a context AE.
+6. **Stage 2 objective**: The paper does not specify an explicit loss between `H_fusion` and `z0`; their shapes differ. Decide which implementation option to adopt from the three listed in the Stage 2 section (`projection_to_latent`, `joint_with_diffusion`, or `repo_context_ae`) before scripting.
 7. **Diffusion step count in paper**: The paper text mentions 500 epochs total training (line 1007) but does not explicitly state the number of diffusion steps N. The repo defaults to 1000. Verify if the paper provides a specific N value.
 8. **Normalization details**: The paper mentions min-max normalization to [0,1] (implied by the min-max scaler in `DataSetPrepare.py`) but does not specify this explicitly. Confirm whether z-score or min-max is more appropriate.
 
@@ -400,6 +408,7 @@ Set a fixed random seed in config for Python, NumPy, and PyTorch to ensure repro
 ## References
 
 - S. Cheng, X. Li, X. Lin, H. Ding, and Y. Sun, "TSS-LCD: A Temporal–Spectral–Spatial-Guided Latent Conditional Diffusion Model for Spectrum Prediction Under Incomplete Observations," *IEEE Trans. Cogn. Commun. Netw.*, vol. 12, 2026.
-- Original repository: [https://github.com/Demii-7/TSS-LCD](https://github.com/Demii-7/TSS-LCD) (cloned to `/tmp/opencode/TSS-LCD` during adaptation)
+- Original repository (paper authors): [https://github.com/Xlab2024/TSS-LCD](https://github.com/Xlab2024/TSS-LCD)
+- Local working clone (during adaptation): `/tmp/opencode/TSS-LCD`
 - Dataset: AERPAW sub-6 GHz spectrum monitoring dataset, [DOI: 10.5061/dryad.hmgqnk9zn](https://doi.org/10.5061/dryad.hmgqnk9zn)
 - AERPAW: [https://aerpaw.org/dataset/february-2022-cc1-cc2-lw1-spectrum-measurements/](https://aerpaw.org/dataset/february-2022-cc1-cc2-lw1-spectrum-measurements/)
