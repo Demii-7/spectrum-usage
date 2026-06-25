@@ -14,9 +14,9 @@ windowing:
   test_stride: 10
 
 split:
-  train_ratio: 0.7
-  val_ratio: 0.15
-  test_ratio: 0.15
+  train_ratio: 0.8
+  val_ratio: 0.1
+  test_ratio: 0.1
   chronological_split: true
 
 preprocessing:

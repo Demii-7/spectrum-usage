@@ -10,7 +10,7 @@ Evaluation: training/TSS-LCD/smoke_test/evaluation/
    - Dataset: training/data/cc2_smoke_test.csv (CC2 only, 2000 rows x 250 cols)
    - Nodes: 1 (CC2)
    - T_in: 12, T_out: 6, Train stride: 10, Val/Test stride: 10
-   - Split: 70/15/15 chronological
+   - Split: 80/10/10 chronological
    - Model: TSS-CC (TemFE+SpeFE+SpaFE, 1 layer, 64 hidden, 2 heads, 256 FFN)
             + Conv2D LSE/LSD (2 blocks, 16 init channels, 16 latent)
             + Conv1D NEN U-Net (2 blocks, [32,64]/[64,32], 128 bottleneck)
