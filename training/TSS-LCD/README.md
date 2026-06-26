@@ -62,18 +62,69 @@ training/TSS-LCD/
 
 ## Configuration Reference
 
-All configurable options live in `config.yaml`. Every tunable hyperparameter is exposed there; no major value should be hardcoded in scripts unless it is a fixed architectural constraint from the paper or repo. See `config.yaml` for the full field list with inline YAML comments.
+All hyperparameters are in `config.yaml`. Key settings:
 
-Key configurable groups:
-
-- **Data**: dataset path, number of nodes, frequency bins per node, node names, selected node subset, CC2-only smoke mode
-- **Windowing**: input sequence length, prediction horizon, train/val/test strides
-- **Split**: train/val/test ratios, chronological split flag, random seed
-- **Preprocessing**: normalization method, missing rate, masking strategy, zero-padding toggle, complete-observation baseline mode
-- **Model architecture**: latent dimension, hidden dimension, attention heads, FFN dimension, number of attention layers, diffusion steps, noise schedule, per-branch toggles, autoencoder channels/depth, NEN U-Net channels/depth
-- **Training**: per-stage epochs, learning rates, batch size, optimizer, gradient clipping, weight decay, checkpoint path, Stage 2 objective strategy
-- **Evaluation**: metrics list, evaluation horizons, output directory
-- **Device**: auto / cuda / cpu
+| Category | Parameter | Default | Description |
+|----------|-----------|---------|-------------|
+| Data | `dataset_path` | `training/data/merged_power_data_sub6GHz_avg_per_minute.csv` | Input CSV path |
+| Data | `n_nodes` | 3 | Number of sensor nodes |
+| Data | `n_bins_per_node` | 250 | Frequency bins per node |
+| Data | `node_names` | `["CC1","CC2","LW1"]` | Node labels for plots (must match n_nodes length) |
+| Data | `selected_nodes` | `["CC1","CC2","LW1"]` | Subset of nodes to use for ablation |
+| Data | `cc2_only_smoke_test` | false | Restrict to CC2 columns only (overrides selected_nodes) |
+| Windowing | `input_sequence_length` | 50 | Past minutes (T_in) |
+| Windowing | `prediction_horizon` | 10 | Future minutes (T_out) |
+| Windowing | `train_stride` | 1 | Training window stride |
+| Windowing | `val_stride` | 1 | Validation window stride |
+| Windowing | `test_stride` | 1 | Test window stride |
+| Split | `train_ratio` | 0.7 | Training set fraction |
+| Split | `val_ratio` | 0.15 | Validation set fraction |
+| Split | `test_ratio` | 0.15 | Test set fraction |
+| Split | `chronological_split` | true | Chronological (true) or random (false) split |
+| Preprocessing | `normalization` | minmax | Normalization method (`zscore`, `minmax`, or `none`) |
+| Preprocessing | `fit_on_train_only` | true | Compute normalization stats on training set only |
+| Preprocessing | `missing_rate` | 0.25 | Fraction of historical entries masked |
+| Preprocessing | `masking_strategy` | random | Masking strategy (`random` or `continuous`) |
+| Preprocessing | `zero_pad_missing` | true | Replace masked entries with 0.0 |
+| Preprocessing | `complete_observation_baseline` | false | Disable masking for baseline debugging |
+| Model | `latent_dim` | 32 | Dimensionality of TSS-CC conditional latent |
+| Model | `hidden_dim` | 256 | Hidden dimension in TSS attention branches |
+| Model | `attention_heads` | 4 | Self-attention heads per branch (must divide hidden_dim) |
+| Model | `ffn_dim` | 1024 | Inner dimension of position-wise FFN |
+| Model | `num_attention_layers` | 2 | Stacked transformer encoder layers per branch |
+| Model | `dropout` | 0.1 | Dropout probability |
+| Model | `use_temporal_branch` | true | Toggle TemFE branch |
+| Model | `use_spectral_branch` | true | Toggle SpeFE branch |
+| Model | `use_spatial_branch` | true | Toggle SpaFE branch |
+| Model | `autoencoder_num_blocks` | 3 | Conv2D down/up blocks in LSE/LSD |
+| Model | `autoencoder_hidden_channels` | 64 | Channel progression in autoencoder |
+| Model | `autoencoder_initial_channels` | 32 | Initial output channels in first autoencoder block |
+| Model | `diffusion_steps` | 1000 | Forward/reverse diffusion steps (N) |
+| Model | `noise_schedule` | cosine | Noise schedule (`cosine` or `linear`) |
+| Model | `nen_num_blocks` | 2 | NEN U-Net encoder/decoder block count |
+| Model | `nen_encoder_channels` | `[64, 128]` | NEN encoder channel counts per block |
+| Model | `nen_bottleneck_channels` | 256 | NEN bottleneck channel count |
+| Model | `nen_decoder_channels` | `[128, 64]` | NEN decoder channel counts per block |
+| Model | `nen_kernel_size` | 3 | NEN Conv1d kernel size |
+| Model | `time_embed_dim` | 32 | Sinusoidal time embedding dimension |
+| Training | `autoencoder_epochs` | 300 | Stage 1 (autoencoder) max epochs |
+| Training | `autoencoder_learning_rate` | 0.0001 | Stage 1 learning rate |
+| Training | `tss_epochs` | 200 | Stage 2 (TSS-CC) max epochs |
+| Training | `tss_learning_rate` | 0.0001 | Stage 2 learning rate |
+| Training | `tss_condition_objective` | projection_to_latent | Stage 2 objective (`projection_to_latent`, `joint_with_diffusion`, or `repo_context_ae`) |
+| Training | `diffusion_epochs` | 1000 | Stage 3 (diffusion) max epochs |
+| Training | `diffusion_learning_rate` | 0.0001 | Stage 3 learning rate |
+| Training | `batch_size` | 32 | Mini-batch size |
+| Training | `optimizer` | adam | Optimizer (`adam` or `adamw`) |
+| Training | `weight_decay` | 0.0 | L2 weight decay |
+| Training | `gradient_clip` | 5.0 | Max gradient norm for clipping (0 = disabled) |
+| Training | `lr_scheduler` | none | LR scheduler (`none`, `cosine`, or `plateau`) |
+| Training | `checkpoint_dir` | checkpoints | Per-stage checkpoint save/load directory |
+| Evaluation | `metrics` | `["rmse","mae","r2"]` | Metrics to report |
+| Evaluation | `eval_horizons` | `[1, 5, 10]` | Specific future time steps for per-horizon reporting |
+| Evaluation | `output_dir` | evaluation | Results output directory |
+| Device | `device` | auto | `cuda`, `cpu`, or `auto` |
+| Seed | `seed` | 42 | Random seed for reproducibility (null = non-deterministic) |
 
 ## 1. What the Model Is Intended to Do
 
