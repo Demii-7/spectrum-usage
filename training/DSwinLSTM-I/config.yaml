@@ -173,6 +173,13 @@ model:
   # CONFIRMED DECISION: tanh — matches MinMax normalization to [-1, 1].
   output_activation: tanh
 
+  # How to feed the decoder at each autoregressive step:
+  #   hidden_state    → use the decoder cell's own hidden state (no re-embedding)
+  #   pixel_feedback  → reconstruct y_hat, then patch_embed it back to tokens
+  # CONFIRMED DECISION: hidden_state — avoids redundant encode/decode round-trip,
+  #   matching the repo's teacher-forcing pattern in functions.py.
+  decoder_feedback: hidden_state
+
   # Padding mode for spatial dimensions when H or W is not divisible
   # by patch_size. Options: "zero", "reflect", "replicate", or null (error)
   # Needed because H=3 is not divisible by patch_size=2 or patch_shape=[1,2]

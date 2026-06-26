@@ -12,7 +12,7 @@
 
 ## Quick Start
 
-The following commands are proposed — scripts do not exist yet and will be created in a future step.
+The following commands are proposed — scripts are planned but not yet created.
 
 ### Setup
 
@@ -58,14 +58,14 @@ python3 training/DSwinLSTM-I/inference.py \
 
 ## Scripts Reference
 
-| Script | Responsibility |
-|--------|---------------|
-| `dataset.py` | CSV loading, pseudo-map reshaping, masking, windowing |
-| `model.py` | SwinLSTM cell, SwinLSTM-I cell, encoder-decoder, patch layers, reconstruction |
-| `train.py` | Training loop, checkpoints, logs |
-| `evaluate.py` | Metrics/plots/exports |
-| `inference.py` | Standalone prediction on new CSV |
-| `utils.py` | Config, normalization, metrics, plotting, checkpointing |
+| Script | Status | Responsibility |
+|--------|--------|---------------|
+| `dataset.py` | Planned | CSV loading, pseudo-map reshaping, masking, windowing |
+| `model.py` | Planned | SwinLSTM cell, SwinLSTM-I cell, encoder-decoder, reconstruction |
+| `train.py` | Planned | Training loop, checkpoints, logs |
+| `evaluate.py` | Planned | Metrics/plots/exports |
+| `inference.py` | Planned | Standalone prediction on new CSV |
+| `utils.py` | Planned | Config, normalization, metrics, plotting, checkpointing |
 
 ---
 
@@ -73,17 +73,17 @@ python3 training/DSwinLSTM-I/inference.py \
 
 ```
 training/DSwinLSTM-I/
-├── README.md              # This file
+├── README.md              # This file (plan)
 ├── config.yaml            # Proposed configuration
-├── dataset.py             # Data loading, reshaping, masking, windowing
-├── model.py               # SwinLSTM / SwinLSTM-I / encoder-decoder
-├── train.py               # Training entrypoint
-├── evaluate.py            # Evaluation entrypoint
-├── inference.py           # Inference on new CSV
-├── utils.py               # Shared utilities
+├── dataset.py             # Planned — data loading, reshaping, masking, windowing
+├── model.py               # Planned — SwinLSTM / SwinLSTM-I / encoder-decoder
+├── train.py               # Planned — training entrypoint
+├── evaluate.py            # Planned — evaluation entrypoint
+├── inference.py           # Planned — inference on new CSV
+├── utils.py               # Planned — shared utilities
 ├── checkpoints/           # Created during training
 ├── evaluation/            # Created during evaluation
-└── smoke_test/            # CC2-only smoke test config
+└── smoke_test/            # Planned — CC2-only smoke test config
     └── config.yaml
 ```
 
@@ -223,9 +223,9 @@ Masks:           {M_1, M_2, ..., M_T_in}
                       ▼
 ┌─────────────────────────────────────────────┐
 │         Reconstruction Layer                  │
-│   (ConvTranspose2d → sigmoid)                │
+│   (exact-size projection → tanh)             │
 │   Output: (Y_1, ..., Y_T_out)                │
-│   Each: (B, H, W, F)                         │
+│   Each: (B, F, H, W)                         │
 └─────────────────────────────────────────────┘
 ```
 
@@ -752,7 +752,9 @@ Classes to implement (in order of dependency):
 
 7. `Reconstruction` — Exact-size projection (`nn.Linear` or `Conv2d 1×1`) mapping `(B, L, C_feat)` → `(B, F, H, W)` with `tanh` activation.
 
-8. `DSwinLSTM_I` — Full model: PatchEmbed → Encoder → Decoder → Reconstruction → tanh.
+8. `DSwinLSTM_I` — Full model: PatchEmbed → Encoder → Decoder → Reconstruction → tanh. Supports two decoder feedback modes:
+   - `hidden_state` (default): decoder cell's own `hx` is fed as the next input token. No pixel round-trip.
+   - `pixel_feedback`: reconstruct `y_hat`, then `patch_embed(y_hat)` back to token space. More expensive but may improve stability.
 
 ### `train.py` — Training loop
 
@@ -762,7 +764,7 @@ Classes to implement (in order of dependency):
 - Early stopping based on validation loss.
 - Save checkpoints.
 
-Forward pass logic:
+Forward pass logic with `decoder_feedback: hidden_state`:
 
 ```text
 # Encoder: impute and encode each input time step
@@ -771,12 +773,22 @@ for t in range(T_in):
 
 # Decoder: autoregressive prediction (no masks)
 pred = []
-hx_dec, cx_dec = hx, cx   # carry last encoder state to decoder
+hx, cx = hx, cx     # carry last encoder state to decoder
 for t in range(T_out):
-    hx, cx = decoder_cell(hx_dec, None, (hx_dec, cx_dec))  # no mask for decoder
+    hx, cx = decoder_cell(hx, (hx, cx))   # no mask, feedback = hidden state
     y_hat = reconstruction(hx)
     pred.append(y_hat)
-    hx_dec = y_hat  # feed prediction as next input
+```
+
+**Shape rationale:** `hx` is token-space `(B, L, C_feat)` throughout — the decoder cell consumes and produces the same token-space representation. The reconstruction layer only runs to produce the final pixel-space output `y_hat` for the loss/metrics; `y_hat` is never fed back into the decoder. This avoids a redundant patch-embed round-trip at every autoregressive step.
+
+With `decoder_feedback: pixel_feedback` (alternative):
+
+```text
+    ...
+    y_hat = reconstruction(hx)
+    pred.append(y_hat)
+    hx = patch_embed(y_hat)   # re-embed pixel output back to token space
 ```
 
 ### `evaluate.py` — Metrics/plots/exports
