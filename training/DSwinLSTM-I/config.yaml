@@ -151,12 +151,13 @@ model:
   window_size: 4
 
   # Whether to use patch merging (downsampling) between encoder cells
-  # Paper: yes for DSwinLSTM, enables hierarchical feature extraction
-  use_patch_merging: true
+  # DISABLED: H=3 is odd (PatchMerging asserts even H,W) and already minimal.
+  # Paper uses merging but AERPAW's 3-node pseudo-map cannot support it.
+  use_patch_merging: false
 
   # Whether to use patch expanding (upsampling) between decoder cells
-  # Paper: yes, pairs with patch merging for symmetric encoder-decoder
-  use_patch_expanding: true
+  # DISABLED: pairs with patch_merging, both disabled for AERPAW.
+  use_patch_expanding: false
 
   # Whether to use the imputation unit (SwinLSTM-I) in encoder cells
   # Paper: true for encoder, false for decoder
@@ -164,9 +165,13 @@ model:
 
   # Whether to concatenate the binary mask as an additional input channel
   # instead of (or in addition to) the paper's imputation unit approach.
-  # Paper: imputation unit only, not additional channel.
-  # Configurable for experimentation.
+  # CONFIRMED DECISION: false — mask feeds imputation unit only (paper-faithful).
+  # Mask is pooled to patch resolution, not concatenated as an input channel.
   mask_as_input_channel: false
+
+  # Output activation for the reconstruction layer.
+  # CONFIRMED DECISION: tanh — matches MinMax normalization to [-1, 1].
+  output_activation: tanh
 
   # Padding mode for spatial dimensions when H or W is not divisible
   # by patch_size. Options: "zero", "reflect", "replicate", or null (error)

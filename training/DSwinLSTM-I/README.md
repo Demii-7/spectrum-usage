@@ -626,38 +626,87 @@ Monitor validation loss. Configurable patience (default: 30 epochs). Restore bes
 
 ---
 
-## 10. Items to Verify Before Scripting
+## 10. Implementation Decisions Already Confirmed
 
-1. **Whether the SwinLSTM repo supports non-square inputs like `(3, 250)` or `(1, 250)`.** The repo's `PatchEmbed` uses `to_2tuple(patch_size)` so rectangular patches are supported. However, `PatchMerging` and `PatchInflated` assert even H and W.
+The following design decisions have been resolved and will be hardcoded in the implementation. These are no longer open for debate.
 
-2. **Whether patch size can be rectangular, e.g., `(1, 2)` or `(1, 5)`, instead of 2×2.** Yes, the repo's `PatchEmbed` takes `patch_size` and converts with `to_2tuple`. Passing `patch_size=(1, 2)` directly should work.
+### 10.1 Map Representation
 
-3. **Whether padding is needed so `H` and `W` are divisible by patch size.** Yes, for `H=3` and any patch height > 1. Options:
-   - Pad H from 3 to 4.
-   - Use patch height = 1.
-   - Use `padding_mode: reflect` in config.
+```yaml
+map_representation: node_frequency
+```
 
-4. **Whether it is better to reshape AERPAW as:**
-   - `(3, 250, 1)` — node-frequency pseudo-map (default).
-   - `(1, 750, 1)` — flattened frequency-node strip.
-   - `(15, 50, 1)` — artificial 2D map (reshape to factors of 750).
-   - `(4, 250, 1)` — padded to next even height.
-   Each has trade-offs. Decision should be based on whether the model can learn meaningful node-frequency relationships.
+AERPAW data is reshaped to `(T, 3, 250, 1)`, treating the 3 sensor nodes as rows and 250 frequency bins as columns in a pseudo-spectrum map. No alternative representations (`flat_strip`, `artificial_grid`, `padded`) will be implemented.
 
-5. **How to implement the imputation unit with the repo's SwinLSTM state tensors.** The states `(hx, cx)` are in token space `(B, L, C_feat)`. The imputation linear layers `W_p` and `U_p` must operate on this token space. The mask `M_t` must also be in token space (either down-projected from pixel space or applied at the patch level).
+### 10.2 Patch Merging / Expanding
 
-6. **Whether masks should enter only the imputation unit or also be concatenated as an input channel.** The paper uses only the imputation unit. The config option `mask_as_input_channel: false` follows the paper. The mask is not an input channel but is used inside the cell to decide which values to replace.
+```yaml
+use_patch_merging: false
+use_patch_expanding: false
+```
 
-7. **Whether target should be the next single map or next `T_out` maps.** The paper predicts `T_out = 10` future maps. The repo's `functions.py` generates outputs for all target steps via autoregressive prediction.
+Patch merging and expanding are disabled because:
 
-8. **Whether the repo is sequence-to-sequence or next-frame-only by default.** The repo is sequence-to-sequence: it processes the entire input sequence through time and generates outputs for the target horizon. Teacher forcing is used during training (loss on `inputs[:, 1:]` + targets). Inference is fully autoregressive.
+- `H=3` is odd — `PatchMerging` asserts both H and W are even.
+- `H=3` is already minimal; downsampling the height dimension would collapse it to `H=2` or `H=1`, losing the 3-node structure.
+- The encoder and decoder each stack two SwinLSTMCell layers operating at the same patch-embedded resolution `(3, 125)`.
+- Only `PatchEmbed` (at entry) and the reconstruction layer (at exit) change resolution.
 
-9. **How to handle PatchInflated reconstruction for non-even dimensions.** For `H=3, W=250` with patch `[1,2]`, embedded resolution is `(3, 125)`. ConvTranspose2d with stride 2 would produce `(6, 250)`. Options:
-   - Replace with `nn.Linear` + reshape.
-   - Use `AdaptiveConvTranspose2d` with `output_size=(H, W)`.
-   - Add a cropping layer after ConvTranspose2d.
+This deviates from the paper's DSwinLSTM which uses hierarchical down/up sampling, but is necessary for the AERPAW pseudo-map shape.
 
-10. **Whether to use Siglip/BCE loss instead of MSE for normalized `[0,1]` outputs.** The paper uses MSE with MinMax [-1,1] normalization. If sigmoid output is `[0,1]`, the loss and output range need to match.
+### 10.3 Reconstruction Head Design
+
+```yaml
+reconstruction: exact_size_linear_or_conv
+```
+
+The repo's `PatchInflated` (ConvTranspose2d stride 2) is unsuitable because the embedded resolution `(3, 125)` upsampled by 2× would produce `(6, 250)`, not `(3, 250)`.
+
+The reconstruction head will use **exact-size projection** — either an `nn.Linear` mapping `(B, L, C_feat)` → `(B, L, F)` then reshape to `(B, F, H, W)`, or a Conv2d with `kernel_size=1, stride=1` that preserves spatial dimensions. This guarantees the output matches the target shape `(B, 1, 3, 250)` without cropping or padding.
+
+### 10.4 Mask Handling
+
+```yaml
+mask_as_input_channel: false
+```
+
+The binary mask is **not** concatenated as an extra input channel. Instead it feeds into the imputation unit of each SwinLSTM-I cell in token space:
+
+1. Input mask `M_t` (pixel space) is aggregated to patches via average pooling to match the patch-embedded token grid `(p_H, p_W)`.
+2. The patch-level mask is flattened to `(B, L, 1)` and broadcast to `(B, L, C_feat)` for the imputation linear layers.
+3. Inside the cell: `P_hat_t = σ(W_p · C_{t-1} + U_p · H_{t-1} + b_p)`, then `P_t = M_t ⊙ P_t + (1 - M_t) ⊙ P_hat_t`.
+4. The filled `P_t` proceeds to the standard SwinLSTM gate update.
+
+Decoder cells receive `mask = None` and skip the imputation step entirely.
+
+### 10.5 Output Activation
+
+```yaml
+output_activation: tanh
+```
+
+The final reconstruction layer applies `tanh` activation, matching the paper's MinMax normalization to `[-1, 1]`. The loss (MSE) is computed in this normalized space. Denormalization to dBm happens only during evaluation.
+
+### 10.6 Patch Shape
+
+```yaml
+patch_shape: [1, 2]
+```
+
+Rectangular patches of height 1, width 2 are used because:
+
+- Height 1 is compatible with `H=3` (no remainder, no padding needed).
+- Width 2 is compatible with `W=250` (125 patches exactly, no remainder).
+- No `reflect` padding required for the height dimension.
+- The resulting token grid is `(3, 125)` — both dimensions usable by the Swin Transformer blocks and WindowAttention.
+
+This deviates from the paper's `patch_size=2` (square 2×2) but is the only option that divides both `H=3` and `W=250` evenly.
+
+### 10.7 Sequence Handling
+
+- The model is **sequence-to-sequence**: processes all `T_in` input time steps, then autoregressively predicts `T_out` future time steps.
+- Target is the next `T_out` complete maps, not a single map.
+- Teacher forcing is used during training (loss computed on all output frames).
 
 ---
 
@@ -695,19 +744,15 @@ Classes to implement (in order of dependency):
    - Extra linear layers `W_p`, `U_p`, `b_p` for imputation.
    - Forward: `(xt, mask, hidden_states)` → fill missing → SwinLSTM gate → `(hy, (hy, cy))`.
 
-4. `PatchEmbed` — Copy from repo `SwinLSTM_D.py:324-354`. May need to support rectangular patches and optional padding.
+4. `PatchEmbed` — Copy from repo `SwinLSTM_D.py:324-354` with `patch_size=(1, 2)` for rectangular patches.
 
-5. `PatchMerging` — Copy from repo `SwinLSTM_D.py:257-288`. May need optional padding or adaptive handling for odd dimensions.
+5. `Encoder` — Stacks 2 `SwinLSTMCellI` cells at the same resolution. No PatchMerging between them.
 
-6. `PatchExpanding` — Copy from repo `SwinLSTM_D.py:294-321`.
+6. `Decoder` — Stacks 2 vanilla `SwinLSTMCell` cells at the same resolution. No PatchExpanding between them.
 
-7. `PatchInflated` — Copy from repo `SwinLSTM_D.py:357-387`. May need adaptive output size or cropping.
+7. `Reconstruction` — Exact-size projection (`nn.Linear` or `Conv2d 1×1`) mapping `(B, L, C_feat)` → `(B, F, H, W)` with `tanh` activation.
 
-8. `Encoder` — Stacks `SwinLSTMCellI` cells with PatchMerging between them.
-
-9. `Decoder` — Stacks `SwinLSTMCell` cells (vanilla) with PatchExpanding between them.
-
-10. `DSwinLSTM_I` — Full model: PatchEmbed → Encoder → Decoder → PatchInflated → sigmoid.
+8. `DSwinLSTM_I` — Full model: PatchEmbed → Encoder → Decoder → Reconstruction → tanh.
 
 ### `train.py` — Training loop
 
@@ -720,14 +765,13 @@ Classes to implement (in order of dependency):
 Forward pass logic:
 
 ```text
+# Encoder: impute and encode each input time step
 for t in range(T_in):
     hx, cx = encoder_cell(x_t, mask_t, (hx, cx))
-    if t < T_in - 1:
-        x_t_enc = patch_merging(hx)  # at merging layers
 
-# Autoregressive prediction
+# Decoder: autoregressive prediction (no masks)
 pred = []
-hx_dec = encoder_output
+hx_dec, cx_dec = hx, cx   # carry last encoder state to decoder
 for t in range(T_out):
     hx, cx = decoder_cell(hx_dec, None, (hx_dec, cx_dec))  # no mask for decoder
     y_hat = reconstruction(hx)
