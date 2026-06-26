@@ -1,3 +1,14 @@
+"""
+Evaluation script for a trained ConvLSTM spectrum-prediction model.
+
+Loads a checkpoint, runs inference on the test set, computes overall and
+per-horizon/per-node metrics (RMSE, MAE, R²), and generates diagnostic plots:
+- Spectrogram comparisons (ground truth vs. prediction) for each node
+- Error analysis heatmaps (prediction minus ground truth)
+
+All results (CSV, metrics JSON, PNG figures) are saved to an output directory.
+"""
+
 import os
 import sys
 import json
@@ -6,6 +17,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 import matplotlib
+# Use non-interactive Agg backend so the script works on headless servers.
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
@@ -19,6 +31,14 @@ from utils import (
 
 def plot_spectrogram_comparison(ground_truth, prediction, node_idx, node_name,
                                  t_in, save_path):
+    """
+    Plot a side-by-side spectrogram comparison of ground truth and prediction
+    for a single node across the entire prediction horizon.
+
+    A shared color scale (based on the min/max across both panels) ensures
+    the visual comparison is fair. The input sequence length is noted in
+    the filename but not plotted, as only the future window is shown.
+    """
     gt_node = ground_truth[:, node_idx, :].T
     pred_node = prediction[:, node_idx, :].T
     vmin = min(gt_node.min(), pred_node.min())
@@ -42,6 +62,14 @@ def plot_spectrogram_comparison(ground_truth, prediction, node_idx, node_name,
 
 
 def plot_error_analysis(errors, node_names, save_path):
+    """
+    Plot per-node error heatmaps across all test samples.
+
+    Each heatmap shows (prediction - ground truth) for every frequency bin
+    across all test-set windows. The RdBu_r diverging colormap highlights
+    overestimation (red) and underestimation (blue), clipped to ±3 normalized
+    units for readability.
+    """
     n = len(node_names)
     fig, axes = plt.subplots(1, n, figsize=(5 * n, 4), squeeze=False,
                               constrained_layout=True)
@@ -68,9 +96,11 @@ def main():
 
     device = get_device("auto")
 
+    # Load checkpoint — contains model weights, config, and normalization stats.
     ckpt = load_checkpoint(args.checkpoint, device)
     config = ckpt["config"]
     stats = ckpt["norm_stats"]
+    # Allow overriding the config baked into the checkpoint with an external file.
     if args.config:
         import yaml
         with open(args.config) as f:
@@ -81,9 +111,11 @@ def main():
     scfg = config["split"]
 
     csv_path = dcfg["dataset_path"]
+    # Try relative path resolution if the dataset path is not absolute.
     if not os.path.exists(csv_path):
         csv_path = os.path.join(os.path.dirname(__file__), "..", "..", csv_path)
 
+    # Recreate only the test dataset (train/val are not needed for evaluation).
     _, _, test_ds, _ = create_datasets(
         csv_path=csv_path,
         n_nodes=dcfg["n_nodes"],
@@ -111,6 +143,7 @@ def main():
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
 
+    # Run inference on the entire test set.
     all_pred, all_target = [], []
     with torch.no_grad():
         for x, y in loader:
@@ -157,6 +190,7 @@ def main():
     pred_np = pred.cpu().numpy()
     target_np = target.cpu().numpy()
 
+    # Denormalize predictions and targets back to dBm for interpretable output.
     mean = np.asarray(stats["mean"])
     std = np.asarray(stats["std"])
     pred_dbm = denormalize(pred_np, mean, std)
@@ -181,6 +215,7 @@ def main():
         json.dump({**overall, **per_horizon, **per_node}, f, indent=2)
     print(f"\nMetrics saved to {metrics_path}")
 
+    # Compute per-node errors and generate visualizations.
     errors = pred_dbm[:, :, 0, :, :] - target_dbm[:, :, 0, :, :]
     for n, name in enumerate(node_names):
         plot_path = os.path.join(output_dir, f"spectrogram_{name}.png")

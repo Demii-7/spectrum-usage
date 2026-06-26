@@ -1,10 +1,40 @@
+"""
+Dataset loading, normalization, and PyTorch Dataset creation for spectrum data.
+
+This module handles:
+- Reading raw CSV spectrum traces
+- Reshaping flat arrays into 3D tensors (time × nodes × frequency bins)
+- Computing normalization statistics (z-score or min-max)
+- Creating train/val/test PyTorch Datasets with sliding-window sequences
+
+Data shape conventions:
+- Raw CSV: (total_time_steps, n_nodes * n_bins)
+- Reshaped 3D: (total_time_steps, n_nodes, n_bins)
+- Dataset sample x: (t_in, 1, n_nodes, n_bins)  -- model input sequence
+- Dataset sample y: (t_out, 1, n_nodes, n_bins) -- target sequence
+"""
+
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 
 
 class SpectrumDataset(Dataset):
+    """PyTorch Dataset that yields (input, target) sliding-window pairs from 3D spectrum data.
+
+    Each sample consists of ``t_in`` consecutive time steps as input and the following
+    ``t_out`` consecutive time steps as the prediction target. The data tensor has shape
+    (T, C=1, H=n_nodes, W=n_bins) after the unsqueeze/transpose transformation.
+    """
+
     def __init__(self, data_3d, t_in, t_out, start_indices):
+        """
+        Args:
+            data_3d: Normalized spectrum data, shape (T, n_nodes, n_bins).
+            t_in: Number of input time steps per sample.
+            t_out: Number of target (prediction) time steps per sample.
+            start_indices: List of time indices marking the start of each window.
+        """
         self.data = torch.from_numpy(data_3d).float()
         self.t_in = t_in
         self.t_out = t_out
@@ -14,23 +44,47 @@ class SpectrumDataset(Dataset):
         return len(self.indices)
 
     def __getitem__(self, idx):
+        """
+        Returns:
+            x: Input sequence, shape (t_in, 1, n_nodes, n_bins).
+            y: Target sequence, shape (t_out, 1, n_nodes, n_bins).
+        """
         i = self.indices[idx]
         x = self.data[i : i + self.t_in]
         y = self.data[i + self.t_in : i + self.t_in + self.t_out]
+        # Add a channel dimension (C=1) and swap so time is dim 0, channel is dim 1.
         x = x.unsqueeze(0).transpose(0, 1)
         y = y.unsqueeze(0).transpose(0, 1)
         return x, y
 
 
 def load_csv(csv_path):
+    """
+    Load a CSV file of spectrum measurements as a float32 NumPy array.
+
+    Expected format: comma-delimited, one time step per row, each column
+    corresponds to a flattened (node, frequency_bin) pair.
+    """
     return np.loadtxt(csv_path, delimiter=",").astype(np.float32)
 
 
 def reshape_to_3d(arr, n_nodes, n_bins):
+    """
+    Reshape a 2D array (T, n_nodes * n_bins) into 3D (T, n_nodes, n_bins).
+
+    Each row of the original CSV is a flattened concatenation of spectra
+    from all nodes; this reverses that flattening.
+    """
     return arr.reshape(-1, n_nodes, n_bins)
 
 
 def compute_norm_stats(data_3d):
+    """
+    Compute per-(node, frequency-bin) mean and standard deviation.
+
+    Standard deviations below 1e-8 are clamped to avoid division-by-zero
+    during z-score normalization (e.g., for constant or silent channels).
+    """
     mean = np.mean(data_3d, axis=0, keepdims=True)
     std = np.std(data_3d, axis=0, keepdims=True)
     std = np.where(std < 1e-8, 1e-8, std)
@@ -38,18 +92,40 @@ def compute_norm_stats(data_3d):
 
 
 def zscore(data_3d, mean, std):
+    """Apply z-score normalization: (data - mean) / std."""
     return ((data_3d - mean) / std).astype(np.float32)
 
 
 def denormalize(data, mean, std):
+    """Reverse z-score normalization: data * std + mean.
+
+    Also used for min-max denormalization when `mean`/`std` are repurposed
+    to hold the min and (max - min) respectively.
+    """
     return data * std + mean
 
 
 def _make_windows(data_len, t_in, t_out, stride):
+    """Generate a list of starting indices for sliding windows.
+
+    Each window covers ``t_in + t_out`` steps. The stride controls overlap:
+    stride=1 yields maximum overlap; stride=t_in+t_out yields non-overlapping windows.
+    The list may be empty if the data is too short for even one window.
+    """
     return list(range(0, data_len - t_in - t_out + 1, max(stride, 1)))
 
 
 def _split_time_ranges(total_len, train_ratio, val_ratio, chronological=True):
+    """Partition the time index range into train/val/test index lists.
+
+    When ``chronological=True`` (default for time-series), the split is contiguous:
+    the first ``train_ratio`` fraction of time steps go to training, the next
+    ``val_ratio`` to validation, and the remainder to testing.
+
+    When ``chronological=False``, indices are randomly permuted before splitting,
+    which is useful when the data is not a true time series (e.g., independent samples).
+    A fixed seed (42) ensures reproducibility of the random split.
+    """
     if total_len <= 0:
         return [], [], []
     if chronological:
@@ -72,6 +148,21 @@ def create_datasets(csv_path, n_nodes, n_bins, t_in, t_out, stride=1,
                     train_stride=None, val_stride=None, test_stride=None,
                     train_ratio=0.8, val_ratio=0.1, chronological=True,
                     normalization="zscore", fit_on_train_only=True):
+    """
+    Full pipeline: load CSV, reshape, normalize, split, and create Datasets.
+
+    Normalization statistics are computed either on the training segment only
+    (``fit_on_train_only=True``, the default) or on the entire dataset, to avoid
+    data leakage from validation/test sets into training.
+
+    The returned ``stats`` dict contains the normalization parameters so they
+    can be saved alongside the model checkpoint for correct denormalization
+    during evaluation or inference.
+
+    Returns:
+        train_ds, val_ds, test_ds: SpectrumDataset instances (may be None if no windows).
+        stats: dict with keys "mean", "std", "n_nodes", "n_bins".
+    """
     train_stride = stride if train_stride is None else train_stride
     val_stride = stride if val_stride is None else val_stride
     test_stride = stride if test_stride is None else test_stride
@@ -80,6 +171,7 @@ def create_datasets(csv_path, n_nodes, n_bins, t_in, t_out, stride=1,
     data_3d = reshape_to_3d(raw, n_nodes, n_bins)
     T = len(data_3d)
 
+    # Compute normalization statistics on the training portion only to prevent leakage.
     if fit_on_train_only:
         n_train_raw = int(T * train_ratio)
         train_segment_end = n_train_raw
@@ -88,14 +180,17 @@ def create_datasets(csv_path, n_nodes, n_bins, t_in, t_out, stride=1,
     else:
         mean, std = compute_norm_stats(data_3d)
 
+    # Apply the chosen normalization method.
     if normalization == "zscore":
         data_norm = zscore(data_3d, mean, std)
     elif normalization == "minmax":
         dmin = data_3d.min(axis=0, keepdims=True)
         dmax = data_3d.max(axis=0, keepdims=True)
         data_norm = ((data_3d - dmin) / (dmax - dmin + 1e-8)).astype(np.float32)
+        # Repurpose mean/std to store min/max-info for later denormalization.
         mean, std = dmin.astype(np.float32), (dmax - dmin + 1e-8).astype(np.float32)
     else:
+        # Identity normalization — pass through as-is with dummy stats.
         data_norm = data_3d.astype(np.float32)
         mean = np.zeros((1, n_nodes, n_bins), dtype=np.float32)
         std = np.ones((1, n_nodes, n_bins), dtype=np.float32)
@@ -108,6 +203,7 @@ def create_datasets(csv_path, n_nodes, n_bins, t_in, t_out, stride=1,
     val_starts = _make_windows(len(val_range), t_in, t_out, val_stride)
     test_starts = _make_windows(len(test_range), t_in, t_out, test_stride)
 
+    # Create Datasets, translating window start offsets from split-relative to absolute indices.
     train_ds = SpectrumDataset(data_norm, t_in, t_out,
                                [train_range[s] for s in train_starts]) if train_starts else None
     val_ds = SpectrumDataset(data_norm, t_in, t_out,

@@ -1,3 +1,15 @@
+"""
+Training script for the ConvLSTM spectrum-prediction model.
+
+Implements the full training loop:
+- YAML config loading with optional CLI overrides
+- Dataset creation (train/val/test) with normalization
+- Per-epoch training with optional teacher forcing, input noise, and gradient clipping
+- Validation after every epoch with ReduceLROnPlateau scheduling
+- Early stopping based on validation loss
+- Checkpointing (best and last model) and test-set evaluation on completion
+"""
+
 import os
 import sys
 import json
@@ -18,17 +30,35 @@ from utils import (
 
 
 def load_config(config_path):
+    """Load a YAML configuration file."""
     with open(config_path) as f:
         return yaml.safe_load(f)
 
 
 def add_gaussian_noise(x, std):
+    """
+    Add Gaussian noise to the input tensor as a simple regularization.
+
+    Noise is only applied during training (called within train_epoch) and helps
+    the model become robust to small perturbations in input spectra.
+    """
     if std <= 0:
         return x
     return x + torch.randn_like(x) * std
 
 
 def train_epoch(model, loader, optimizer, criterion, device, teacher_forcing_ratio, noise_std, clip_norm):
+    """
+    Run one epoch of training.
+
+    For each batch:
+    1. Optionally add Gaussian noise to inputs.
+    2. Forward pass with teacher forcing (if enabled in config).
+    3. Compute loss, backpropagate, optionally clip gradients, and update weights.
+
+    Returns:
+        Average loss over the epoch (weighted by batch size).
+    """
     model.train()
     total_loss = 0
     for x, y in loader:
@@ -46,6 +76,14 @@ def train_epoch(model, loader, optimizer, criterion, device, teacher_forcing_rat
 
 
 def validate(model, loader, criterion, device):
+    """
+    Evaluate the model on a validation or test set.
+
+    Returns:
+        metrics: dict with "loss", "rmse", "mae", "r2".
+        pred_cat: Concatenated predictions, shape (N, t_out, C, H, W).
+        target_cat: Corresponding ground truth, same shape.
+    """
     model.eval()
     total_loss = 0
     all_pred, all_target = [], []
@@ -75,6 +113,7 @@ def main():
     args = parser.parse_args()
 
     config = load_config(args.config)
+    # CLI overrides take precedence over values in the config file.
     if args.batch_size:
         config["training"]["batch_size"] = args.batch_size
     if args.epochs:
@@ -96,6 +135,7 @@ def main():
     tcfg = config["training"]
 
     csv_path = dcfg["dataset_path"]
+    # Try relative path resolution if the dataset path is not absolute.
     if not os.path.exists(csv_path):
         csv_path = os.path.join(os.path.dirname(__file__), "..", "..", csv_path)
 
@@ -117,6 +157,7 @@ def main():
         fit_on_train_only=config["preprocessing"]["fit_on_train_only"],
     )
 
+    # Shuffle training data for stochasticity; drop_last avoids ragged batches.
     train_loader = DataLoader(train_ds, batch_size=tcfg["batch_size"], shuffle=True, drop_last=True) if train_ds else None
     val_loader = DataLoader(val_ds, batch_size=tcfg["batch_size"], shuffle=False) if val_ds else None
     test_loader = DataLoader(test_ds, batch_size=tcfg["batch_size"], shuffle=False) if test_ds else None
@@ -137,6 +178,7 @@ def main():
         eps=tcfg["epsilon"],
         weight_decay=tcfg["weight_decay"],
     )
+    # Reduce LR by 50% when validation loss plateaus to help fine-tune convergence.
     scheduler = ReduceLROnPlateau(optimizer, mode="min", factor=0.5,
                                   patience=tcfg.get("lr_patience", 10)) \
         if tcfg.get("lr_scheduler") == "reduce_on_plateau" else None
@@ -164,6 +206,7 @@ def main():
         if val_loader:
             val_metrics, _, _ = validate(model, val_loader, criterion, device)
 
+        # Persist training progress after every epoch for crash recovery.
         log_data["train_loss"].append(train_loss)
         log_data["val_metrics"].append(val_metrics)
         with open(log_path, "w") as f:
@@ -175,6 +218,7 @@ def main():
         if scheduler:
             scheduler.step(val_metrics.get("loss", float("inf")))
 
+        # Save checkpoint whenever validation loss improves; track early stopping.
         if val_metrics.get("loss", float("inf")) < best_val_loss:
             best_val_loss = val_metrics["loss"]
             best_epoch = epoch
@@ -195,6 +239,7 @@ def main():
         model, optimizer, epoch, stats, config, val_metrics,
     )
 
+    # Final evaluation on the held-out test set.
     if test_loader:
         print("\n=== Test Set Evaluation ===")
         test_metrics, pred, target = validate(model, test_loader, criterion, device)
@@ -205,6 +250,8 @@ def main():
         for k, v in horizons.items():
             print(f"  {k}: {v:.4f}")
 
+        # Overwrite best_model.pt with test metrics (it previously had val metrics)
+        # so the final checkpoint reflects performance on unseen data.
         save_checkpoint(
             os.path.join(ckpt_dir, "best_model.pt"),
             model, optimizer, best_epoch, stats, config, test_metrics,
