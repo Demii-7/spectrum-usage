@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reconstruct merged per-minute 1 MHz power CSVs from raw S3 objects."""
+"""Reconstruct per-band per-minute 1 MHz power CSVs from raw S3 objects."""
 
 from __future__ import annotations
 
@@ -213,38 +213,40 @@ def format_value(value: float) -> str:
     return f"{value:.6f}"
 
 
-def write_node_csv(
+def write_band_csv(
     s3,
     bucket: str,
     dataset: str,
     node: str,
     run_id: str,
-    bands: list[tuple[int, int]],
+    band: tuple[int, int],
     cache_dir: Path,
     output_dir: Path,
 ) -> Path | None:
     run_start = parse_run_id(run_id)
     run_prefix = f"{dataset.strip('/')}/{node}/{run_id}/"
-    raw_by_band: dict[tuple[int, int], dict[int, list[str]]] = {}
+    label = band_label(band)
+    raw_prefix = f"{run_prefix}{label}/raw/"
+    keys = list_objects(s3, bucket, raw_prefix)
+    raw_by_minute = group_raw_keys_by_minute(keys)
+    print(f"{node} {label}: {len(raw_by_minute)} raw minute(s), {len(keys)} object(s)")
 
-    for band in bands:
-        raw_prefix = f"{run_prefix}{band_label(band)}/raw/"
-        keys = list_objects(s3, bucket, raw_prefix)
-        raw_by_band[band] = group_raw_keys_by_minute(keys)
-        print(f"{node} {band_label(band)}: {len(raw_by_band[band])} raw minute(s), {len(keys)} object(s)")
-
-    minute_indices = sorted(set().union(*(set(v) for v in raw_by_band.values())))
+    present_minutes = sorted(raw_by_minute)
+    minute_indices = list(range(present_minutes[0], present_minutes[-1] + 1)) if present_minutes else []
     if not minute_indices:
-        print(f"warning: no raw minutes found for {node}; skipping", file=sys.stderr)
+        print(f"warning: no raw minutes found for {node} {label}; skipping", file=sys.stderr)
         return None
 
-    node_output_dir = output_dir / dataset / node / run_id
-    node_output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = node_output_dir / "power_merged_1mhz_avg_per_minute.csv"
+    missing_count = len(minute_indices) - len(present_minutes)
+    if missing_count:
+        print(f"{node} {label}: inserting {missing_count} NaN row(s) for missing minute directory indices")
+
+    band_output_dir = output_dir / dataset / node / run_id / label
+    band_output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = band_output_dir / "power_1mhz_avg_per_minute.csv"
 
     header = ["timestamp_utc"]
-    for start_mhz, stop_mhz in bands:
-        header.extend(f"{freq + 0.5:.1f}" for freq in range(start_mhz, stop_mhz))
+    header.extend(f"{freq + 0.5:.1f}" for freq in range(band[0], band[1]))
 
     with output_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -252,22 +254,21 @@ def write_node_csv(
         for row_no, minute_idx in enumerate(minute_indices, start=1):
             timestamp = (run_start + timedelta(minutes=minute_idx)).strftime("%Y-%m-%dT%H:%M:%SZ")
             row = [timestamp]
-            for band in bands:
-                keys = raw_by_band[band].get(minute_idx)
-                if keys:
-                    values = reconstruct_band_minute(s3, bucket, keys, cache_dir, band)
-                else:
-                    values = np.full(band[1] - band[0], np.nan)
-                row.extend(format_value(value) for value in values)
+            minute_keys = raw_by_minute.get(minute_idx)
+            if minute_keys:
+                values = reconstruct_band_minute(s3, bucket, minute_keys, cache_dir, band)
+            else:
+                values = np.full(band[1] - band[0], np.nan)
+            row.extend(format_value(value) for value in values)
             writer.writerow(row)
             if row_no % 25 == 0 or row_no == len(minute_indices):
-                print(f"{node}: wrote {row_no}/{len(minute_indices)} merged row(s)")
+                print(f"{node} {label}: wrote {row_no}/{len(minute_indices)} row(s)")
 
     return output_path
 
 
-def upload_csv(s3, bucket: str, dataset: str, node: str, run_id: str, output_path: Path) -> str:
-    key = f"{dataset.strip('/')}/{node}/{run_id}/{output_path.name}"
+def upload_csv(s3, bucket: str, dataset: str, node: str, run_id: str, band: tuple[int, int], output_path: Path) -> str:
+    key = f"{dataset.strip('/')}/{node}/{run_id}/{band_label(band)}/{output_path.name}"
     s3.upload_file(str(output_path), bucket, key)
     return key
 
@@ -286,7 +287,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--node", action="append", help="Process one node. Repeat to process multiple nodes. Default: all nodes with the run ID.")
     parser.add_argument("--cache-dir", type=Path, default=Path(".cache/spectrum-raw-s3"))
     parser.add_argument("--output-dir", type=Path, default=Path("reconstructed"))
-    parser.add_argument("--upload", action="store_true", help="Upload reconstructed CSVs to S3.")
+    parser.add_argument(
+        "--upload",
+        action="store_true",
+        help="Upload reconstructed per-band CSVs back to their original S3 band paths.",
+    )
     return parser.parse_args()
 
 
@@ -308,22 +313,23 @@ def main() -> int:
 
     print(f"processing {len(nodes)} node(s): {', '.join(nodes)}")
     for node in nodes:
-        output_path = write_node_csv(
-            s3=s3,
-            bucket=args.bucket,
-            dataset=args.dataset,
-            node=node,
-            run_id=args.run_id,
-            bands=bands,
-            cache_dir=args.cache_dir,
-            output_dir=args.output_dir,
-        )
-        if output_path is None:
-            continue
-        print(f"wrote {output_path}")
-        if args.upload:
-            key = upload_csv(s3, args.bucket, args.dataset, node, args.run_id, output_path)
-            print(f"uploaded s3://{args.bucket}/{key}")
+        for band in bands:
+            output_path = write_band_csv(
+                s3=s3,
+                bucket=args.bucket,
+                dataset=args.dataset,
+                node=node,
+                run_id=args.run_id,
+                band=band,
+                cache_dir=args.cache_dir,
+                output_dir=args.output_dir,
+            )
+            if output_path is None:
+                continue
+            print(f"wrote {output_path}")
+            if args.upload:
+                key = upload_csv(s3, args.bucket, args.dataset, node, args.run_id, band, output_path)
+                print(f"uploaded s3://{args.bucket}/{key}")
 
     return 0
 
