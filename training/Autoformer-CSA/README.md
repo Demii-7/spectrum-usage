@@ -2,7 +2,7 @@
 
 > **Based on:** *An Autoformer-CSA Approach for Long-Term Spectrum Prediction* — Pan et al., IEEE Wireless Communications Letters, 2023.
 >
-> **Reference implementation:** https://github.com/Demii-7/Autoformer
+> **Reference implementation:** https://github.com/thuml/Autoformer
 >
 > **Target dataset:** AERPAW sub-6 GHz spectrum monitoring dataset — Fixed nodes CC1, CC2, LW1 (Feb 2022)
 
@@ -420,7 +420,7 @@ Training loss (MSE) should decrease monotonically. Validation loss should not di
 
 ## 7. Assumptions and Design Decisions
 
-1. **Use Autoformer repo as base** — The forked repo at `github.com/Demii-7/Autoformer` is vanilla Autoformer. CSAM must be added as a replacement for the Conv1d-based FFN.
+1. **Use Autoformer repo as base** — The upstream repo at `github.com/thuml/Autoformer` is the vanilla Autoformer (Wu et al., NeurIPS 2021). CSAM must be added as a replacement for the Conv1d-based FFN.
 
 2. **Add CSAM in place of FFN only** — The decomposition block, auto-correlation mechanism, embedding (no positional encoding), and decoder initialization remain unchanged from the paper's specification.
 
@@ -701,7 +701,7 @@ Responsibility:
 
 1. **Autoformer paper:** H. Wu, J. Xu, J. Wang, M. Long, "Autoformer: Decomposition Transformers with Auto-Correlation for Long-Term Series Forecasting," NeurIPS 2021.
 2. **Autoformer-CSA paper:** Pan et al., "An Autoformer-CSA Approach for Long-Term Spectrum Prediction," IEEE Wireless Communications Letters, 2023.
-3. **Reference implementation:** [Demii-7/Autoformer](https://github.com/Demii-7/Autoformer) (vanilla Autoformer fork)
+3. **Reference implementation:** [thuml/Autoformer](https://github.com/thuml/Autoformer) (original Autoformer by Wu et al.)
 4. **CBAM (inspiration for CSAM):** S. Woo, J. Park, J.-Y. Lee, I. S. Kweon, "CBAM: Convolutional Block Attention Module," ECCV 2018.
 5. **AERPAW dataset:** DOI: [10.5061/dryad.hmgqnk9zn](https://doi.org/10.5061/dryad.hmgqnk9zn)
 6. **AERPAW paper:** D. Uvaydov et al., "AERPAW: A Dataset for Long-Term Spectrum Prediction," IEEE DySPAN 2024.
