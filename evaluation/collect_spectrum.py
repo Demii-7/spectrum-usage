@@ -374,8 +374,8 @@ def aggregate_to_1mhz(sweeps, band_start_mhz, band_stop_mhz):
     return bin_centers, mean_db
 
 
-def append_csv_row(csv_path, row_200, minute_idx, bin_centers):
-    """Append one 200-element row to the per-minute CSV, writing header first time.
+def append_csv_row(csv_path, row_200, timestamp_utc, bin_centers):
+    """Append one timestamped 200-element row to the per-minute CSV.
 
     NaN values are written as empty fields so they are unambiguously missing
     rather than a numeric placeholder.
@@ -383,10 +383,10 @@ def append_csv_row(csv_path, row_200, minute_idx, bin_centers):
     def fmt(v):
         return "" if np.isnan(v) else f"{v:.4f}"
 
-    row_str = ",".join(fmt(v) for v in row_200)
+    row_str = ",".join([timestamp_utc, *(fmt(v) for v in row_200)])
     write_header = not csv_path.exists() or csv_path.stat().st_size == 0
     if write_header:
-        header = ",".join(f"{bc:.1f}" for bc in bin_centers)
+        header = ",".join(["timestamp_utc", *(f"{bc:.1f}" for bc in bin_centers)])
         with open(csv_path, "w") as f:
             f.write(header + "\n")
     with open(csv_path, "a") as f:
@@ -611,6 +611,7 @@ def main():
 
     for minute_idx in range(minute_count):
         target_time = start_wall + minute_idx * 60.0
+        target_utc = datetime.fromtimestamp(target_time, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         # Wait until this minute's target time
         remaining = target_time - time.time()
@@ -618,14 +619,21 @@ def main():
             time.sleep(remaining)
         elif remaining < -30.0:
             print(f"\nMinute {minute_idx + 1}: skipping (too late)")
+            for start_mhz, stop_mhz in bands:
+                band_dir = output_root / f"{start_mhz}_{stop_mhz}"
+                bin_centers = np.arange(start_mhz + 0.5, stop_mhz, 1.0)
+                csv_path = band_dir / "power_1mhz_avg_per_minute.csv"
+                append_csv_row(csv_path, np.full(len(bin_centers), np.nan), target_utc, bin_centers)
+                print(f"  Wrote NaN row to {csv_path.name} [{target_utc}]")
             continue
 
         now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        print(f"\n--- Minute {minute_idx + 1}/{minute_count} [{now_utc}] ---")
+        print(f"\n--- Minute {minute_idx + 1}/{minute_count} [{target_utc}] ---")
 
         for start_mhz, stop_mhz in bands:
             band_label = f"{start_mhz}_{stop_mhz}"
             band_dir = output_root / band_label
+            bin_centers = np.arange(start_mhz + 0.5, stop_mhz, 1.0)
             raw_dir = None
             if args.save_raw:
                 safe_ts = now_utc.replace(":", "").replace("-", "")
@@ -635,24 +643,45 @@ def main():
             print(f"  Band {start_mhz}-{stop_mhz} MHz")
             sys.stdout.flush()
 
-            sweeps = sweep_band(
-                usrp, rx_streamer, ch, start_mhz, stop_mhz,
-                fs, fft_size, cutoff, n_samples, raw_dir, tune_step_hz,
-                center_notch_hz, dc_offset_hz, args.tune_retries,
-                overscan_hz,
-            )
+            try:
+                sweeps = sweep_band(
+                    usrp, rx_streamer, ch, start_mhz, stop_mhz,
+                    fs, fft_size, cutoff, n_samples, raw_dir, tune_step_hz,
+                    center_notch_hz, dc_offset_hz, args.tune_retries,
+                    overscan_hz,
+                )
+            except Exception as exc:
+                print(f"    Sweep failed: {exc}", file=sys.stderr)
+                csv_path = band_dir / "power_1mhz_avg_per_minute.csv"
+                append_csv_row(csv_path, np.full(len(bin_centers), np.nan), target_utc, bin_centers)
+                print(f"    Wrote NaN row to {csv_path.name}")
+                continue
 
             if not sweeps:
                 print(f"    No sweeps collected for this band", file=sys.stderr)
+                csv_path = band_dir / "power_1mhz_avg_per_minute.csv"
+                append_csv_row(csv_path, np.full(len(bin_centers), np.nan), target_utc, bin_centers)
+                print(f"    Wrote NaN row to {csv_path.name}")
                 continue
 
-            bin_centers, mean_db = aggregate_to_1mhz(sweeps, start_mhz, stop_mhz)
+            try:
+                bin_centers, mean_db = aggregate_to_1mhz(sweeps, start_mhz, stop_mhz)
+            except Exception as exc:
+                print(f"    Could not aggregate data: {exc}", file=sys.stderr)
+                csv_path = band_dir / "power_1mhz_avg_per_minute.csv"
+                append_csv_row(csv_path, np.full(len(bin_centers), np.nan), target_utc, bin_centers)
+                print(f"    Wrote NaN row to {csv_path.name}")
+                continue
             if mean_db is None:
                 print(f"    Could not aggregate data", file=sys.stderr)
+                bin_centers = np.arange(start_mhz + 0.5, stop_mhz, 1.0)
+                csv_path = band_dir / "power_1mhz_avg_per_minute.csv"
+                append_csv_row(csv_path, np.full(len(bin_centers), np.nan), target_utc, bin_centers)
+                print(f"    Wrote NaN row to {csv_path.name}")
                 continue
 
             csv_path = band_dir / "power_1mhz_avg_per_minute.csv"
-            append_csv_row(csv_path, mean_db, minute_idx, bin_centers)
+            append_csv_row(csv_path, mean_db, target_utc, bin_centers)
 
             nan_count = int(np.sum(np.isnan(mean_db)))
             if nan_count:
@@ -697,6 +726,8 @@ def main():
             "bin_resolution_mhz": 1.0,
             "bin_semantics": "center frequencies of 1 MHz intervals "
                              "(left-inclusive, right-exclusive)",
+            "csv_columns": "timestamp_utc followed by one column per 1 MHz frequency bin",
+            "timestamp_semantics": "scheduled UTC minute for the row",
             "time_resolution": "1 minute",
             "power_unit": "dB (relative, uncalibrated PSD from Welch's method)",
             "nan_semantics": "empty CSV field; all capture retries failed for that bin",
