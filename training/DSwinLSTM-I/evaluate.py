@@ -40,13 +40,14 @@ def main():
     parser.add_argument("--cc2-only", action="store_true", help="CC2-only mode")
     args = parser.parse_args()
 
-    device = get_device(config.get("device", {}).get("device", "auto"))
-    ckpt = load_checkpoint(args.checkpoint, device)
+    ckpt = load_checkpoint(args.checkpoint, "cpu")
     config = ckpt["config"]
     stats = ckpt["norm_stats"]
 
     if args.config:
         config = load_config(args.config)
+
+    device = get_device(config.get("device", {}).get("device", "auto"))
 
     cc2_only = args.cc2_only or config["data"].get("cc2_only_smoke_test", False)
     script_dir = os.path.dirname(os.path.abspath(__file__))

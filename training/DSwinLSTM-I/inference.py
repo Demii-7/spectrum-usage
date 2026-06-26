@@ -41,13 +41,14 @@ def main():
     parser.add_argument("--config", default=None, help="Config YAML (overrides checkpoint)")
     args = parser.parse_args()
 
-    device = get_device(config.get("device", {}).get("device", "auto"))
-    ckpt = load_checkpoint(args.checkpoint, device)
+    ckpt = load_checkpoint(args.checkpoint, "cpu")
     config = ckpt["config"]
     stats = ckpt["norm_stats"]
 
     if args.config:
         config = load_config(args.config)
+
+    device = get_device(config.get("device", {}).get("device", "auto"))
 
     T_in = config["windowing"]["input_sequence_length"]
     T_out = config["windowing"]["prediction_horizon"]
