@@ -1,0 +1,229 @@
+# =============================================================================
+# DSwinLSTM-I Spectrum Prediction — Configuration
+# =============================================================================
+# Based on: "Robust Imputation SwinLSTM for Spectrum Map Prediction of
+#   Incomplete Data" (the target architecture)
+# Supporting code reference (vanilla SwinLSTM only, no imputation):
+#   https://github.com/SongTang-x/SwinLSTM (ICCV 2023)
+# =============================================================================
+
+data:
+  # Path to processed AERPAW CSV (6839 rows × 750 cols, no header, dBm)
+  dataset_path: "training/data/merged_power_data_sub6GHz_avg_per_minute.csv"
+
+  # Number of sensor nodes for pseudo-spectrum-map reshaping
+  n_nodes: 3
+
+  # Frequency bins per node
+  bins_per_node: 250
+
+  # Node names (used for plot labels and per-node metrics)
+  node_names: ["CC1", "CC2", "LW1"]
+
+  # Filter to specific nodes (e.g., ["CC2"] for smoke test)
+  # Allowed: "CC1", "CC2", "LW1" — subsets drop unselected columns
+  selected_nodes: ["CC1", "CC2", "LW1"]
+
+  # CC2-only smoke test mode:
+  #   true  → H=1, W=250, F=1  (only CC2 columns, for quick CPU verification)
+  #   false → H=3, W=250, F=1  (full 3-node pseudo-map)
+  cc2_only_smoke_test: false
+
+  # How to represent the AERPAW data as a map:
+  #   node_frequency  → (nodes, frequency_bins, 1)   — default pseudo-map
+  #   flat_strip      → (1, nodes*frequency_bins, 1) — 1D strip
+  #   artificial_grid → (H_art, W_art, 1)            — padded 2D grid
+  # NOTE: node_frequency is the primary adaptation. Other options exist for
+  # experimentation but may not match the paper's 2D patch-based design.
+  map_representation: node_frequency
+
+windowing:
+  # Number of historical time steps used as model input (paper: 10)
+  input_sequence_length: 10
+
+  # Number of future time steps to predict (paper: 10)
+  prediction_horizon: 10
+
+  # Sliding window stride for training (1 = maximal overlap)
+  train_stride: 1
+
+  # Sliding window stride for validation (defaults to prediction_horizon if null)
+  val_stride:
+
+  # Sliding window stride for testing (defaults to prediction_horizon if null)
+  test_stride:
+
+split:
+  # Chronological split ratios applied BEFORE windowing
+  # Train on earliest data, validate on middle, test on latest
+  train_ratio: 0.8
+  val_ratio: 0.1
+  test_ratio: 0.1
+
+  # If true, split chronologically (required for time series).
+  # If false, splits are random (not recommended).
+  chronological_split: true
+
+preprocessing:
+  # Normalization method:
+  #   minmax  → scale to minmax_range (paper: [-1, 1])
+  #   zscore  → zero-mean unit-variance
+  #   none    → raw dBm (not recommended)
+  normalization: minmax
+
+  # Target range for minmax normalization (paper: [-1, 1])
+  minmax_range: [-1, 1]
+
+  # Fit normalization statistics on training split only (true, recommended)
+  # to avoid data leakage. If false, fit on full dataset before splitting.
+  fit_on_train_only: true
+
+  # Fraction of input entries to randomly mask as missing for training
+  # Paper tests 0.2 to 0.8; configurable to match TSS-LCD experiments
+  missing_rate: 0.3
+
+  # How missing entries are generated:
+  #   random      → random element-wise Bernoulli(missing_rate)
+  #   block       → random contiguous blocks (more realistic for dropout)
+  #   frequency   → mask entire frequency bins (simulates band blocking)
+  #   node        → mask entire nodes (simulates node failure)
+  missing_strategy: random
+
+  # Additional anomaly injection strategy:
+  #   none        → no anomalies (missing only)
+  #   spike       → inject very low/high dBm spikes at random locations
+  #   dropout     → zero out contiguous blocks (simulates sensor dropout)
+  anomaly_strategy: none
+
+  # Value used for anomalous/corrupted entries (dBm)
+  # Paper uses very low values for corruptions
+  anomaly_value_dbm: -150
+
+  # Whether to also mask the target Y (false = only mask input X)
+  # Paper: target is always complete; masking only applied to input
+  mask_targets: false
+
+model:
+  # Model identifier (for checkpoint naming and logging)
+  model_name: dswinlstm_i
+
+  # Pseudo-spectrum-map dimensions after reshaping
+  # Full mode:  H=3, W=250  |  CC2 smoke:  H=1, W=250
+  map_height: 3
+  map_width: 250
+
+  # Input channel dimension (F=1 for single-channel RSS/PSD)
+  input_channels: 1
+
+  # Patch size for patch embedding (paper: patch_size=2 for 64×64 maps)
+  # With AERPAW H=3, a 2×2 patch does not divide evenly.
+  # Configurable so we can test rectangular patches like (1, 2) or (1, 5).
+  # Set to null to derive automatically from patch_shape.
+  patch_size:
+
+  # Explicit patch shape as [height, width].
+  # Allows rectangular patches: (1, 2), (2, 1), (1, 5), etc.
+  # If both patch_size and patch_shape are null, default behavior applies.
+  patch_shape: [1, 2]
+
+  # Embedding dimension after patch projection (paper: 128 for SwinLSTM-D)
+  embed_dim: 128
+
+  # Hidden dimension of SwinLSTM cells (same as embed_dim by default)
+  hidden_dim:
+
+  # Number of SwinLSTM-I units in the encoder (paper: 2)
+  encoder_units: 2
+
+  # Number of vanilla SwinLSTM units in the decoder (paper: 2)
+  decoder_units: 2
+
+  # Depth (number of Swin Transformer blocks) per SwinLSTM cell layer
+  # Paper uses (2, 6, 6, 2) for the full 4-cell model (2 enc + 2 dec)
+  swin_depths: [2, 6, 6, 2]
+
+  # Number of attention heads per Swin Transformer block
+  # Paper for Moving MNIST: [4, 8, 8, 4]; adjust for map resolution
+  num_heads: [4, 8, 8, 4]
+
+  # Window size for shifted window attention (paper: 4 for 64×64 maps)
+  # May need adjustment for non-square maps
+  window_size: 4
+
+  # Whether to use patch merging (downsampling) between encoder cells
+  # Paper: yes for DSwinLSTM, enables hierarchical feature extraction
+  use_patch_merging: true
+
+  # Whether to use patch expanding (upsampling) between decoder cells
+  # Paper: yes, pairs with patch merging for symmetric encoder-decoder
+  use_patch_expanding: true
+
+  # Whether to use the imputation unit (SwinLSTM-I) in encoder cells
+  # Paper: true for encoder, false for decoder
+  use_imputation_unit: true
+
+  # Whether to concatenate the binary mask as an additional input channel
+  # instead of (or in addition to) the paper's imputation unit approach.
+  # Paper: imputation unit only, not additional channel.
+  # Configurable for experimentation.
+  mask_as_input_channel: false
+
+  # Padding mode for spatial dimensions when H or W is not divisible
+  # by patch_size. Options: "zero", "reflect", "replicate", or null (error)
+  # Needed because H=3 is not divisible by patch_size=2 or patch_shape=[1,2]
+  padding_mode: "reflect"
+
+training:
+  # Batch size (paper: 4 for spectrum prediction)
+  batch_size: 4
+
+  # Maximum training epochs (paper: 400)
+  epochs: 400
+
+  # Learning rate (paper: 0.0001)
+  learning_rate: 0.0001
+
+  # Optimizer (paper: Adam)
+  optimizer: adam
+
+  # Loss function (paper: MSE)
+  loss: mse
+
+  # Enable early stopping based on validation loss
+  early_stopping: true
+
+  # Patience for early stopping
+  patience: 30
+
+  # Gradient clipping max norm (optional, paper doesn't specify)
+  gradient_clip: 5.0
+
+  # Random seed for reproducibility
+  seed: 42
+
+evaluation:
+  # Metrics to compute during evaluation
+  # nrmse_db is the paper's primary metric
+  metrics: ["rmse", "mae", "r2", "nrmse_db"]
+
+  # Evaluation horizons (list of time steps) — null means full prediction_horizon
+  eval_horizons:
+
+  # Export predictions and ground truth as CSV
+  export_predictions: true
+
+  # Plots use denormalized dBm values
+  plot_denormalized_dbm: true
+
+paths:
+  # Directory for model checkpoints (relative to model directory)
+  # Created automatically if it doesn't exist
+  checkpoints_dir: checkpoints
+
+  # Directory for evaluation outputs (metrics, plots, CSVs)
+  # Created automatically if it doesn't exist
+  evaluation_dir: evaluation
+
+device:
+  # Device: "cuda:N", "cpu", or "auto" (detect CUDA availability)
+  device: auto
