@@ -54,6 +54,8 @@ Combines closeness and period PredRNN branches with learnable weighted fusion.
 
 Stacks STS-ConvLSTM cells with zigzag memory flow across layers and time steps.
 
+The `output_proj` 1×1 convolution projects the top-layer hidden state to `output_channels` (default 1 for single-channel CSV mode; configurable for multi-channel map mode).
+
 ### `sts_convlstm_cell.py` — STS-ConvLSTM (ST-LSTM) cell
 
 Implements the SpatioTemporal LSTM cell with three states: `H` (hidden), `C` (cell), `M` (unified spatiotemporal memory).
@@ -172,11 +174,13 @@ where `∗` = convolution, `⊙` = element-wise multiplication, `[, ]` = concate
 | `num_layers` | 4 |
 | `hidden_dim` | 128 per layer |
 | `kernel_size` | `[3, 3]` |
+| `output_channels` | 1 (default; configurable for multi-channel maps) |
 
 Memory flows in a zigzag pattern:
 - Layer 0 receives `M` from the last layer of the *previous* time step
 - Layers 1..L-1 receive `M` from the previous layer of the *current* time step
 - Output is the hidden state of the top layer after all frames
+- The 1×1 `output_proj` convolution maps this to `(B, output_channels, H, W)`
 
 ### 3.4 Fusion Layer
 
@@ -252,6 +256,7 @@ For each horizon `h`:
 | **Output activation** | tanh (paper-faithful) | tanh (unchanged) |
 | **Config** | Standalone `config.yaml` | Shared `config.yaml`, `stsprednet:` section |
 | **Epochs** | 500 (paper-faithful) | 25 (reduced; converges faster on single-node chunks) |
+| **Output channels** | 1 (always) | 1 (default); `output_channels` parameter available for multi-channel maps |
 
 ### Rationale for Changes
 
@@ -286,6 +291,7 @@ All STS-PredNet settings are under `stsprednet:` in `training/common/config.yaml
 | `model.kernel_size` | [1, 3] | Convolution kernel size |
 | `model.output_activation` | tanh | Output activation |
 | `model.fusion_weight_shape` | per_location | Fusion weight shape |
+| `model.output_channels` | 1 | PredRNN output channels (1 for single-channel CSV, >1 for multi-channel maps) |
 
 ---
 

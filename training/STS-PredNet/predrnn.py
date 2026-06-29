@@ -5,13 +5,14 @@ from sts_convlstm_cell import STSConvLSTMCell
 
 
 class PredRNN(nn.Module):
-    def __init__(self, input_dim, hidden_dim, num_layers, kernel_size, bias=True):
+    def __init__(self, input_dim, hidden_dim, num_layers, kernel_size, bias=True, output_channels=1):
         super().__init__()
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
         self.kernel_size = kernel_size
         self.bias = bias
+        self.output_channels = output_channels
 
         cell_list = []
         for i in range(num_layers):
@@ -26,7 +27,7 @@ class PredRNN(nn.Module):
             )
         self.cell_list = nn.ModuleList(cell_list)
 
-        self.output_proj = nn.Conv2d(hidden_dim, 1, kernel_size=1)
+        self.output_proj = nn.Conv2d(hidden_dim, output_channels, kernel_size=1)
 
     def forward(self, x):
         B, T, C, H, W = x.shape
