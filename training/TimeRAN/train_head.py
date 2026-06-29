@@ -1,3 +1,12 @@
+"""Training script for the TimeRAN forecasting head on top of a MOMENT backbone.
+
+Supports three fine-tuning modes:
+  - **linear_probing**: freeze the entire MOMENT encoder, train only the head.
+  - **full_finetuning**: unfreeze everything and train end-to-end.
+  - **lora**: attach LoRA adapters to the encoder's attention & feed-forward
+    projection layers and train them alongside the head.
+"""
+
 import argparse
 import copy
 import json
@@ -30,6 +39,7 @@ except ImportError:
 from momentfm import MOMENTPipeline
 
 
+# Mapping from user-facing size labels to HuggingFace Hub model identifiers.
 VARIANT_TO_MODEL = {
     "small": "AutonLab/MOMENT-1-small",
     "base": "AutonLab/MOMENT-1-base",
@@ -38,6 +48,19 @@ VARIANT_TO_MODEL = {
 
 
 def build_model(config: dict, device: torch.device):
+    """Construct the MOMENT forecasting model with optional TimeRAN weight loading.
+
+    Loads a MOMENTPipeline and optionally replaces its weights with a pre-trained
+    TimeRAN checkpoint (excluding the head layer so it can be re-initialised).
+    Applies LoRA adapters if *training_mode* is ``"lora"``.
+
+    Args:
+        config: Full training configuration dictionary.
+        device: Target torch device.
+
+    Returns:
+        A ``torch.nn.Module`` ready for training or evaluation.
+    """
     variant = config["model"]["checkpoint_size"].lower()
     if variant not in VARIANT_TO_MODEL:
         raise ValueError(f"Unknown checkpoint_size: {variant}")
@@ -47,6 +70,7 @@ def build_model(config: dict, device: torch.device):
     t_in = config["windowing"]["input_sequence_length"]
     mode = config.get("training_mode", "linear_probing")
 
+    # Freeze encoder & embedder only in linear probing mode.
     freeze_encoder = mode == "linear_probing"
     freeze_embedder = mode == "linear_probing"
 
@@ -63,10 +87,12 @@ def build_model(config: dict, device: torch.device):
     )
     model.init()
 
+    # Load pre-trained TimeRAN encoder weights, discarding the head so it starts fresh.
     ckpt_path = Path(__file__).parent / "checkpoints" / variant / f"TimeRAN_{variant}.pth"
     if ckpt_path.exists():
         print(f"Loading TimeRAN checkpoint: {ckpt_path}")
         state_dict = torch.load(ckpt_path, map_location="cpu", weights_only=True)
+        # Strip DataParallel wrapping prefix if present.
         if any(k.startswith("module.") for k in state_dict.keys()):
             state_dict = {k.replace("module.", "", 1): v for k, v in state_dict.items()}
         for k in ["head.linear.weight", "head.linear.bias"]:
@@ -75,6 +101,7 @@ def build_model(config: dict, device: torch.device):
     else:
         print(f"TimeRAN checkpoint not found at {ckpt_path}, using raw MOMENT weights")
 
+    # Optionally wrap the encoder with LoRA adapters for parameter-efficient fine-tuning.
     if mode == "lora" and get_peft_model is not None:
         lora_config = LoraConfig(
             r=64,
@@ -94,12 +121,30 @@ def build_model(config: dict, device: torch.device):
 def train_epoch(
     model, dataloader, criterion, optimizer, scheduler, scaler, device
 ):
+    """Run one training epoch over the dataloader.
+
+    Uses automatic mixed precision (AMP) on CUDA for faster training and
+    gradient clipping to stabilise training.
+
+    Args:
+        model: The forecasting model.
+        dataloader: Training data loader.
+        criterion: Loss function (e.g. MSELoss).
+        optimizer: Weight optimizer.
+        scheduler: Learning-rate scheduler (stepped per batch).
+        scaler: AMP gradient scaler (``None`` on CPU).
+        device: Target torch device.
+
+    Returns:
+        Mean training loss for the epoch.
+    """
     model.train()
     losses = []
     pbar = tqdm(dataloader, desc="Train")
     for timeseries, forecast in pbar:
         timeseries = timeseries.to(device)
         forecast = forecast.to(device)
+        # All time steps are observed (no padding mask needed).
         input_mask = torch.ones(timeseries.shape[0], timeseries.shape[-1], device=device)
 
         optimizer.zero_grad(set_to_none=True)
@@ -134,6 +179,20 @@ def train_epoch(
 
 @torch.no_grad()
 def validate(model, dataloader, criterion, device):
+    """Evaluate the model on a validation/test dataloader without updating weights.
+
+    Returns both aggregate metrics and the concatenated predictions/targets
+    for downstream analysis.
+
+    Args:
+        model: The forecasting model.
+        dataloader: Validation or test data loader.
+        criterion: Loss function.
+        device: Target torch device.
+
+    Returns:
+        Tuple of (metrics_dict, predictions_tensor, targets_tensor).
+    """
     model.eval()
     losses = []
     all_pred, all_target = [], []
@@ -171,6 +230,7 @@ def main():
     parser.add_argument("--checkpoint-dir", default=None)
     args = parser.parse_args()
 
+    # Load config, CLI overrides take precedence over YAML values.
     config_path = args.config or str(Path(__file__).parent / "config.yaml")
     with open(config_path) as f:
         config = yaml.safe_load(f)
@@ -195,6 +255,7 @@ def main():
     wcfg = config["windowing"]
     scfg = config["split"]
 
+    # Resolve CSV path relative to the repository root if not found as-is.
     csv_path = dcfg["dataset_path"]
     if not Path(csv_path).exists():
         csv_path = str(Path(__file__).resolve().parent.parent.parent / csv_path)
@@ -262,6 +323,7 @@ def main():
             test_metrics, _, _ = validate(model, test_loader, criterion, device)
             print(f"  Test MSE: {test_metrics.get('loss', 0):.6f} | Test RMSE: {test_metrics.get('rmse', 0):.4f}")
 
+        # Save checkpoint whenever validation loss improves.
         if val_metrics.get("loss", float("inf")) < best_val_loss:
             best_val_loss = val_metrics["loss"]
             best_epoch = epoch + 1
@@ -272,6 +334,7 @@ def main():
             if norm_stats:
                 torch.save(norm_stats, ckpt_dir / "normalization_stats.pt")
 
+    # Final test evaluation after all epochs.
     if test_loader:
         print("\n=== Test Set Evaluation ===")
         test_metrics, pred, target = validate(model, test_loader, criterion, device)

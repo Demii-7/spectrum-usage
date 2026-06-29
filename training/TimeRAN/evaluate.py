@@ -1,3 +1,10 @@
+"""Evaluation script for trained TimeRAN models on the test set.
+
+Computes overall, per-horizon, and per-node metrics; saves predictions,
+ground truth, spectrogram comparison plots, and an error analysis heatmap.
+Supports denormalization back to dBm when training used z-score normalization.
+"""
+
 import argparse
 import json
 import os
@@ -27,6 +34,7 @@ from utils import (
 from momentfm import MOMENTPipeline
 
 
+# Mapping from user-facing size labels to HuggingFace Hub model identifiers.
 VARIANT_TO_MODEL = {
     "small": "AutonLab/MOMENT-1-small",
     "base": "AutonLab/MOMENT-1-base",
@@ -35,6 +43,18 @@ VARIANT_TO_MODEL = {
 
 
 def build_model_from_config(config: dict, device: torch.device):
+    """Construct a frozen MOMENT model for inference from a config dict.
+
+    The encoder and embedder are frozen (evaluation only); weights are
+    overwritten later by ``load_state_dict`` from the checkpoint.
+
+    Args:
+        config: Configuration dictionary with model and windowing keys.
+        device: Target torch device.
+
+    Returns:
+        A ``torch.nn.Module`` in eval mode.
+    """
     variant = config["model"]["checkpoint_size"].lower()
     model_name = VARIANT_TO_MODEL[variant]
     horizon = config["windowing"]["prediction_horizon"]
@@ -58,8 +78,19 @@ def build_model_from_config(config: dict, device: torch.device):
 
 
 def plot_spectrogram_comparison(ground_truth, prediction, node_name, save_path):
+    """Plot ground-truth and predicted spectrograms side-by-side for one node.
+
+    Uses a shared colour scale to make visual comparison easier.
+
+    Args:
+        ground_truth: Array of shape (time, freq_bins).
+        prediction: Array of shape (time, freq_bins).
+        node_name: Label for the plot title.
+        save_path: Path to save the PNG figure.
+    """
     gt_node = ground_truth.T
     pred_node = prediction.T
+    # Shared colour limits so the two subplots are directly comparable.
     vmin = min(gt_node.min(), pred_node.min())
     vmax = max(gt_node.max(), pred_node.max())
 
@@ -78,6 +109,16 @@ def plot_spectrogram_comparison(ground_truth, prediction, node_name, save_path):
 
 
 def plot_error_analysis(errors, node_names, save_path):
+    """Plot per-node error heatmaps (prediction minus ground truth).
+
+    Each column shows the error for one node across all samples and frequency
+    bins.  The colour scale is clamped to [-3, 3] to highlight moderate errors.
+
+    Args:
+        errors: Array of shape (samples, n_nodes, freq_bins).
+        node_names: List of node labels.
+        save_path: Path to save the PNG figure.
+    """
     n = len(node_names)
     fig, axes = plt.subplots(1, n, figsize=(5 * n, 4), squeeze=False,
                               constrained_layout=True)
@@ -96,6 +137,18 @@ def plot_error_analysis(errors, node_names, save_path):
 
 @torch.no_grad()
 def evaluate(model, dataloader, device):
+    """Run the model over a dataloader and collect all predictions/targets.
+
+    Args:
+        model: The forecasting model in eval mode.
+        dataloader: DataLoader yielding (input, target) pairs.
+        device: Target torch device.
+
+    Returns:
+        Tuple of (predictions, targets), each a NumPy array of shape
+        (N, C, H) where N is the number of windows, C is channels,
+        and H is the forecast horizon.
+    """
     all_preds = []
     all_targets = []
     for timeseries, forecast in tqdm(dataloader, desc="Evaluating"):
@@ -134,6 +187,7 @@ def main():
         raise ValueError("Checkpoint has no embedded config")
     norm_stats = ckpt.get("norm_stats")
 
+    # Allow overriding the config via a separate YAML (often used in smoke tests).
     if args.config:
         with open(args.config) as f:
             config = yaml.safe_load(f)
@@ -164,6 +218,7 @@ def main():
         print("No test set available.")
         return
 
+    # Use batch_size=1 so the first sample can be directly plotted.
     test_loader = DataLoader(test_ds, batch_size=1, shuffle=False)
 
     n_nodes = dcfg.get("n_nodes", 1)
@@ -199,6 +254,7 @@ def main():
     output_dir = Path(args.output or os.path.join(os.path.dirname(__file__), "evaluation"))
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Denormalise back to physical dBm units for saved CSV and plots.
     if norm_stats:
         mean = norm_stats["mean"]
         std = norm_stats["std"]
@@ -217,6 +273,7 @@ def main():
         json.dump({**overall, **per_horizon, **per_node}, f, indent=2)
     print(f"\nMetrics saved to {metrics_path}")
 
+    # Reshape to (batch, horizon, node, freq_bin) for per-node plotting.
     B, C, H = pred_dbm.shape
     pred_3d = pred_dbm.transpose(0, 2, 1).reshape(B, H, n_nodes, bins_per_node)
     target_3d = target_dbm.transpose(0, 2, 1).reshape(B, H, n_nodes, bins_per_node)

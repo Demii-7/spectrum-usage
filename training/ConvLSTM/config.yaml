@@ -6,14 +6,26 @@
 # =============================================================================
 
 data:
-  # Path to the processed AERPAW 5 CSV (6839 rows × 750 cols, no header, dBm)
+  # Data format: "csv" (original node-frequency) or "interpolated_map" (pre-interpolated grid)
+  format: "csv"
+  # CSV mode: path to the processed AERPAW 5 CSV (6839 rows × 750 cols, no header, dBm)
   dataset_path: "training/data/merged_power_data_sub6GHz_avg_per_minute.csv"
-  # Number of frequency bins per node
+  # Number of frequency bins per node (CSV mode)
   n_bins_per_node: 250
-  # Number of sensor nodes
+  # Number of sensor nodes (CSV mode)
   n_nodes: 3
   # Node names (used for plot labels and per-node metrics)
   node_names: ["CC1", "CC2", "LW1"]
+  # Interpolated-map mode: path to .npz with pre-interpolated map data
+  map_path: ""
+  # Key inside the .npz file containing the map data
+  map_key: "map_db"
+  # Number of frequency / feature channels for interpolated-map mode (F dimension)
+  n_freq_bins: 200
+  # Spatial grid height (H) for interpolated-map mode
+  grid_height: 50
+  # Spatial grid width (W) for interpolated-map mode
+  grid_width: 50
 
 preprocessing:
   # Normalization method: "zscore" or "minmax" or "none"
@@ -42,8 +54,12 @@ split:
   chronological_split: true
 
 model:
-  # Number of input channels (1 for single-channel power spectrogram)
+  # Number of input channels (1 for CSV mode; n_freq_bins for interpolated_map mode)
   input_channels: 1
+  # Optional 1×1 Conv2d projection before the encoder to reduce channel dimension
+  # (useful when input_channels is large, e.g. 200 freq bins → 16)
+  use_channel_projection: false
+  channel_projection_dim: 16
   # Hidden channels per ConvLSTM layer (encoder layers)
   hidden_channels: [32, 64]
   # Kernel size per ConvLSTM layer (encoder layers)

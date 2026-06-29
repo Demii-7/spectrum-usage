@@ -1,3 +1,10 @@
+"""
+Training script for the DSwinLSTM-I spectrum prediction model.
+
+Handles data loading, model initialization, training loop with validation,
+early stopping, checkpoint saving, and logging.
+"""
+
 import os
 import sys
 import argparse
@@ -13,9 +20,23 @@ from model import DSwinLSTM_I
 
 
 def train_epoch(model, loader, criterion, optimizer, device, config):
+    """Run one training epoch over the dataset.
+
+    Args:
+        model: The DSwinLSTM-I model.
+        loader: DataLoader providing (X, mask, Y) batches.
+        criterion: Loss function (MSELoss).
+        optimizer: Optimizer for parameter updates.
+        device: Torch device.
+        config: Full configuration dict.
+
+    Returns:
+        Average loss over the entire training set for this epoch.
+    """
     model.train()
     total_loss = 0
     for X, mask, Y in loader:
+        # Permute from (B, T, H, W, F) to (B, T, F, H, W) as expected by the model
         X = X.permute(0, 1, 4, 2, 3).contiguous().to(device)
         mask = mask.to(device)
         Y = Y.permute(0, 1, 4, 2, 3).contiguous().to(device)
@@ -36,6 +57,17 @@ def train_epoch(model, loader, criterion, optimizer, device, config):
 
 @torch.no_grad()
 def validate(model, loader, criterion, device):
+    """Evaluate the model on a validation/test set without gradient computation.
+
+    Args:
+        model: The DSwinLSTM-I model.
+        loader: DataLoader providing (X, mask, Y) batches.
+        criterion: Loss function.
+        device: Torch device.
+
+    Returns:
+        Average loss over the dataset.
+    """
     model.eval()
     total_loss = 0
     for X, mask, Y in loader:
@@ -92,6 +124,7 @@ def main():
     ckpt_dir = os.path.join(script_dir, config["paths"]["checkpoints_dir"])
     os.makedirs(ckpt_dir, exist_ok=True)
 
+    # Save normalization stats alongside checkpoints for later denormalization
     stats_path = os.path.join(ckpt_dir, "normalization_stats.pt")
     torch.save(stats, stats_path)
 

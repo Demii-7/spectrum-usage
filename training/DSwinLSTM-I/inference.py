@@ -1,3 +1,10 @@
+"""
+Inference script for the DSwinLSTM-I spectrum prediction model.
+
+Loads a trained checkpoint, runs prediction on a user-provided CSV file,
+denormalizes the output to dBm, and saves the resulting predictions as CSV.
+"""
+
 import os
 import sys
 import argparse
@@ -12,6 +19,12 @@ from model import DSwinLSTM_I
 
 
 class InferenceDataset(Dataset):
+    """Dataset for running inference on raw CSV input data.
+
+    Creates (T_in,)-length windows from the input time series and uses
+    an all-ones mask (no simulated missing data).
+    """
+
     def __init__(self, data, T_in, T_out, stride=1):
         self.T_in = T_in
         self.T_out = T_out
@@ -26,7 +39,7 @@ class InferenceDataset(Dataset):
 
     def __getitem__(self, idx):
         X = self.windows[idx]
-        dummy_mask = np.ones_like(X)
+        dummy_mask = np.ones_like(X)  # No masking during inference
         return (
             torch.from_numpy(X).float(),
             torch.from_numpy(dummy_mask).float(),
@@ -68,6 +81,7 @@ def main():
     W = bins
     data_map = data_2d.reshape(T, H, W, 1).astype(np.float32)
 
+    # Normalize using the same statistics computed during training
     dmin = stats["dmin"]
     dmax = stats["dmax"]
     target_range = stats.get("range", [-1, 1])
@@ -93,6 +107,7 @@ def main():
     B, T_o, C, H, W = pred_dbm.shape
     pred_flat = pred_dbm.reshape(B, T_o, -1)
 
+    # Save the first window's predictions
     np.savetxt(args.output, pred_flat[0], delimiter=",", fmt="%.6f")
     print(f"Predictions saved to {args.output}")
 

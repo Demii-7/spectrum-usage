@@ -1,3 +1,9 @@
+"""
+Batch inference script for a trained STS-PredNet checkpoint.
+
+Loads a new CSV spectrogram, applies the saved normalization, runs
+the model, and writes denormalized predictions to a CSV file.
+"""
 import os
 import sys
 import argparse
@@ -12,6 +18,7 @@ from dataset import STSPredNetDataset, collate_branch_samples, generate_target_i
 
 
 def main():
+    """Run inference: load a checkpoint, predict on new data, save results."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--input", required=True, help="Path to input CSV to predict on")
@@ -42,6 +49,7 @@ def main():
     raw = load_csv(args.input)
     data_3d = reshape_to_3d(raw, n_nodes, bins_per_node)
 
+    # Apply the same normalization that was fitted during training
     method = stats.get("method", "minmax_neg1_pos1")
     if method == "minmax_neg1_pos1":
         dmin = stats["dmin"]
@@ -59,6 +67,7 @@ def main():
     )
 
     if len(target_indices) == 0:
+        # Input too short; duplicate data to make enough context windows
         data_norm = np.tile(data_norm, (2, 1, 1))
         target_indices = generate_target_indices(
             len(data_norm), prediction_offset,
@@ -101,11 +110,13 @@ def main():
     pred = torch.cat(all_pred, dim=0)
     B, C, H, W = pred.shape
 
+    # Denormalize predictions back to physical dBm scale
     if method != "none":
         pred_dbm = denormalize(pred.numpy(), stats)
     else:
         pred_dbm = pred.numpy()
 
+    # Flatten node×frequency dimensions and write CSV
     pred_flat = pred_dbm.reshape(B, -1)
     np.savetxt(args.output, pred_flat, delimiter=",", fmt="%.2f")
     print(f"Predictions saved to {args.output} ({B} samples × {H * W} columns)")

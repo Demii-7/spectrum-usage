@@ -1,3 +1,10 @@
+"""
+Training script for STS-PredNet spectrum prediction model.
+
+Loads configuration, creates datasets and dataloaders, trains the
+STSPredNet model with early stopping, and evaluates on the test set.
+Logs training loss and validation metrics, and saves checkpoints.
+"""
 import os
 import sys
 import json
@@ -17,11 +24,25 @@ from utils import (
 
 
 def load_config(config_path):
+    """Load YAML configuration file from disk."""
     with open(config_path) as f:
         return yaml.safe_load(f)
 
 
 def train_epoch(model, loader, optimizer, criterion, device, clip_norm):
+    """Run one training epoch over all batches.
+
+    Args:
+        model: The STSPredNet model.
+        loader: DataLoader supplying training batches.
+        optimizer: Optimizer for gradient updates.
+        criterion: Loss function (e.g. MSELoss).
+        device: torch device for computation.
+        clip_norm: Max gradient norm for clipping (0 disables).
+
+    Returns:
+        Average epoch loss normalized by dataset size.
+    """
     model.train()
     total_loss = 0
     for batch in loader:
@@ -42,6 +63,7 @@ def train_epoch(model, loader, optimizer, criterion, device, clip_norm):
         loss = criterion(pred, target)
         loss.backward()
         if clip_norm > 0:
+            # Prevent exploding gradients by scaling down if norm exceeds threshold
             nn.utils.clip_grad_norm_(model.parameters(), clip_norm)
         optimizer.step()
         total_loss += loss.item() * target.size(0)
@@ -49,6 +71,17 @@ def train_epoch(model, loader, optimizer, criterion, device, clip_norm):
 
 
 def validate(model, loader, criterion, device):
+    """Evaluate the model on a validation or test loader.
+
+    Args:
+        model: Trained STSPredNet model.
+        loader: DataLoader for evaluation.
+        criterion: Loss function.
+        device: torch device.
+
+    Returns:
+        Tuple of (metrics dict, concatenated predictions, concatenated targets).
+    """
     model.eval()
     total_loss = 0
     all_pred, all_target = [], []
@@ -80,6 +113,7 @@ def validate(model, loader, criterion, device):
 
 
 def main():
+    """Entry point: parse args, load config, train, validate, and test."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default=os.path.join(os.path.dirname(__file__), "config.yaml"))
     parser.add_argument("--batch-size", type=int)
@@ -88,6 +122,7 @@ def main():
     args = parser.parse_args()
 
     config = load_config(args.config)
+    # Override config values with CLI arguments if provided
     if args.batch_size:
         config["training"]["batch_size"] = args.batch_size
     if args.epochs:
@@ -110,6 +145,7 @@ def main():
     print("Loading data...")
     train_ds, val_ds, test_ds, stats = create_datasets(csv_path, config)
 
+    # Build dataloaders; skip if a split has no samples
     train_loader = DataLoader(
         train_ds, batch_size=tcfg["batch_size"], shuffle=True,
         drop_last=True, collate_fn=collate_branch_samples,
@@ -182,6 +218,7 @@ def main():
             torch.save(stats, os.path.join(ckpt_dir, "normalization_stats.pt"))
         else:
             no_improve += 1
+            # Stop training if validation loss has not improved for `patience` epochs
             if no_improve >= patience:
                 print(f"Early stopping at epoch {epoch}")
                 break
@@ -208,6 +245,7 @@ def main():
         if freq_rmse:
             print(f"  Per-frequency RMSE: min={min(freq_rmse):.4f} max={max(freq_rmse):.4f}")
 
+        # Overwrite best model checkpoint with test metrics for downstream use
         save_checkpoint(
             os.path.join(ckpt_dir, "best_model.pt"),
             model, optimizer, best_epoch, stats, config, test_metrics,

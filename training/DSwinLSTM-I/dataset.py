@@ -1,9 +1,30 @@
+"""
+Dataset loading, splitting, normalization, and masking utilities for the
+AERPAW spectrum dataset.
+
+Provides functions for sliding-window generation, various masking strategies
+(random, block, frequency, node) to simulate missing data, and an
+AERPAWDataset class.
+"""
+
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 
 
 def node_column_slice(node_names, bins_per_node=250):
+    """Map node names to flat column indices in the raw CSV.
+
+    The CSV has 250 frequency bins per node in a fixed order (CC1, CC2, LW1).
+    This function returns the column slice for the requested node names.
+
+    Args:
+        node_names: List of node name strings.
+        bins_per_node: Number of frequency bins per node.
+
+    Returns:
+        List of column indices.
+    """
     known = {"CC1": 0, "CC2": 1, "LW1": 2}
     cols = []
     for name in node_names:
@@ -15,10 +36,15 @@ def node_column_slice(node_names, bins_per_node=250):
 
 
 def random_mask(shape, missing_rate):
+    """Generate a random binary mask where each element is independently zeroed with probability missing_rate."""
     return (torch.rand(shape) > missing_rate).float()
 
 
 def block_mask(shape, missing_rate):
+    """Generate a mask with contiguous blocks of missing values along the frequency axis.
+
+    Simulates burst interference or hardware dropout affecting contiguous frequency bins.
+    """
     mask = torch.ones(shape)
     T, H, W, F = shape
     block_len = max(1, int(W * missing_rate * 0.5))
@@ -32,6 +58,10 @@ def block_mask(shape, missing_rate):
 
 
 def frequency_mask(shape, missing_rate):
+    """Generate a mask that drops complete frequency bins across all nodes.
+
+    Simulates narrowband interference at specific frequencies.
+    """
     T, H, W, F = shape
     n_masked = max(1, int(W * missing_rate))
     mask = torch.ones(shape)
@@ -42,6 +72,10 @@ def frequency_mask(shape, missing_rate):
 
 
 def node_mask(shape, missing_rate, n_nodes):
+    """Generate a mask that drops all frequency bins for randomly selected nodes.
+
+    Simulates a node being temporarily offline.
+    """
     T, H, W, F = shape
     mask = torch.ones(shape)
     n_masked = max(1, int(n_nodes * missing_rate))
@@ -52,6 +86,13 @@ def node_mask(shape, missing_rate, n_nodes):
 
 
 class AERPAWDataset(Dataset):
+    """Sliding-window dataset for the AERPAW spectrum occupancy data.
+
+    Each sample is a (T_in + T_out) window of spectrogram maps,
+    split into input (X) and target (Y) subsequences. A synthetic mask
+    is generated per sample to simulate missing data.
+    """
+
     def __init__(self, data, config, split="train"):
         self.config = config
         self.split = split
@@ -61,6 +102,7 @@ class AERPAWDataset(Dataset):
         self.missing_strategy = config["preprocessing"].get("missing_strategy", "random")
         self.mask_targets = config["preprocessing"].get("mask_targets", False)
 
+        # Determine stride: training typically uses stride=1, val/test use T_out to avoid overlap
         stride_key = f"{split}_stride"
         stride = config["windowing"].get(stride_key)
         if stride is None:
@@ -73,6 +115,7 @@ class AERPAWDataset(Dataset):
         self.maps = torch.from_numpy(maps).float()
 
     def _build_windows(self, data):
+        """Create sliding windows from the full time-series data."""
         T_total, H, W, F = data.shape
         total_len = self.T_in + self.T_out
         indices = []
@@ -88,6 +131,7 @@ class AERPAWDataset(Dataset):
         return len(self.window_starts)
 
     def _generate_mask(self, shape):
+        """Generate a mask according to the configured strategy."""
         if self.missing_strategy == "block":
             return block_mask(shape, self.missing_rate)
         elif self.missing_strategy == "frequency":
@@ -106,11 +150,21 @@ class AERPAWDataset(Dataset):
         mask_shape = (self.T_in,) + tuple(X.shape[1:])
         mask = self._generate_mask(mask_shape)
 
+        # Apply mask to input; masked positions are set to zero
         X_masked = X * mask
         return X_masked, mask, Y
 
 
 def load_and_split(config, cc2_only=False):
+    """Load CSV data, select nodes, reshape into spectrogram maps, normalize, and train/val/test split.
+
+    Args:
+        config: Full configuration dict.
+        cc2_only: If True, use only CC2 node data (for smoke testing).
+
+    Returns:
+        Tuple of (train_norm, val_norm, test_norm, stats, node_names).
+    """
     csv_path = config["data"]["dataset_path"]
     nodes = config["data"]["selected_nodes"]
     bins = config["data"]["bins_per_node"]

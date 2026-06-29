@@ -1,3 +1,12 @@
+"""
+Stage 2 training: TSS Condition Constructor (TSS-CC).
+
+Trains the transformer-based conditioner to predict the latent code
+z = enc(y) from the input window x. The frozen autoencoder encoder
+provides the latent target. The trained TSS-CC later conditions the
+diffusion model.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -13,6 +22,7 @@ from utils import load_config, set_seed, get_device, save_checkpoint, load_check
 
 
 def main():
+    """Entry point: load frozen autoencoder, train TSS-CC, save best checkpoint."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True, help="Path to config YAML")
     parser.add_argument("--autoencoder_checkpoint", type=str, required=True,
@@ -36,6 +46,7 @@ def main():
             "repo_context_ae is not implemented; use projection_to_latent"
         )
 
+    # Load and freeze the trained autoencoder encoder
     ae_checkpoint = load_checkpoint(args.autoencoder_checkpoint, map_location=device)
     enc = LatentSpaceEncoder(
         T_out=T_out, L=L, F=F,
@@ -81,6 +92,7 @@ def main():
         train_loss = 0.0
         for x, y in train_loader:
             x, y = x.to(device), y.to(device)
+            # Use frozen encoder to produce latent target
             with torch.no_grad():
                 z_target = enc(y)
             z_pred = tss_cc(x)

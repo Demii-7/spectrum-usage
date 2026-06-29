@@ -21,7 +21,7 @@ from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from tqdm import tqdm
 
-from dataset import create_datasets
+from dataset import create_datasets, create_interpolated_map_datasets
 from model import ConvLSTMPredictor
 from utils import (
     set_seed, get_device, compute_metrics, compute_metrics_per_horizon,
@@ -63,15 +63,15 @@ def train_epoch(model, loader, optimizer, criterion, device, teacher_forcing_rat
     total_loss = 0
     for x, y in loader:
         x, y = x.to(device), y.to(device)
-        x = add_gaussian_noise(x, noise_std)
+        x = add_gaussian_noise(x, noise_std)  # Regularize with input noise.
         optimizer.zero_grad()
         pred = model(x, y_teacher=y, teacher_forcing_ratio=teacher_forcing_ratio)
         loss = criterion(pred, y)
         loss.backward()
         if clip_norm > 0:
-            nn.utils.clip_grad_norm_(model.parameters(), clip_norm)
+            nn.utils.clip_grad_norm_(model.parameters(), clip_norm)  # Prevent gradient explosion.
         optimizer.step()
-        total_loss += loss.item() * x.size(0)
+        total_loss += loss.item() * x.size(0)  # Accumulate sum for weighted average.
     return total_loss / len(loader.dataset)
 
 
@@ -103,6 +103,13 @@ def validate(model, loader, criterion, device):
 
 
 def main():
+    """
+    Entry point for training the ConvLSTM model.
+
+    Parses CLI args, loads/overrides config, creates datasets and dataloaders,
+    builds the model, runs the training loop with validation, early stopping,
+    LR scheduling, checkpointing, and final test-set evaluation.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default=os.path.join(os.path.dirname(__file__), "config.yaml"))
     parser.add_argument("--batch-size", type=int)
@@ -133,31 +140,51 @@ def main():
     wcfg = config["windowing"]
     scfg = config["split"]
     tcfg = config["training"]
-
-    csv_path = dcfg["dataset_path"]
-    # Try relative path resolution if the dataset path is not absolute.
-    if not os.path.exists(csv_path):
-        csv_path = os.path.join(os.path.dirname(__file__), "..", "..", csv_path)
+    data_format = dcfg.get("format", "csv")
 
     print("Loading data...")
-    train_ds, val_ds, test_ds, stats = create_datasets(
-        csv_path=csv_path,
-        n_nodes=dcfg["n_nodes"],
-        n_bins=dcfg["n_bins_per_node"],
-        t_in=wcfg["input_sequence_length"],
-        t_out=wcfg["prediction_horizon"],
-        stride=wcfg.get("stride", 1),
-        train_stride=wcfg.get("train_stride"),
-        val_stride=wcfg.get("val_stride"),
-        test_stride=wcfg.get("test_stride"),
-        train_ratio=scfg["train_ratio"],
-        val_ratio=scfg["val_ratio"],
-        chronological=scfg["chronological_split"],
-        normalization=config["preprocessing"]["normalization"],
-        fit_on_train_only=config["preprocessing"]["fit_on_train_only"],
-    )
+    if data_format == "interpolated_map":
+        map_path = dcfg["map_path"]
+        if not os.path.exists(map_path):
+            map_path = os.path.join(os.path.dirname(__file__), "..", "..", map_path)
+        train_ds, val_ds, test_ds, stats = create_interpolated_map_datasets(
+            map_path=map_path,
+            map_key=dcfg.get("map_key", "map_db"),
+            t_in=wcfg["input_sequence_length"],
+            t_out=wcfg["prediction_horizon"],
+            stride=wcfg.get("stride", 1),
+            train_stride=wcfg.get("train_stride"),
+            val_stride=wcfg.get("val_stride"),
+            test_stride=wcfg.get("test_stride"),
+            train_ratio=scfg["train_ratio"],
+            val_ratio=scfg["val_ratio"],
+            chronological=scfg["chronological_split"],
+            normalization=config["preprocessing"]["normalization"],
+            fit_on_train_only=config["preprocessing"]["fit_on_train_only"],
+        )
+    else:
+        csv_path = dcfg["dataset_path"]
+        if not os.path.exists(csv_path):
+            csv_path = os.path.join(os.path.dirname(__file__), "..", "..", csv_path)
+        train_ds, val_ds, test_ds, stats = create_datasets(
+            csv_path=csv_path,
+            n_nodes=dcfg["n_nodes"],
+            n_bins=dcfg["n_bins_per_node"],
+            t_in=wcfg["input_sequence_length"],
+            t_out=wcfg["prediction_horizon"],
+            stride=wcfg.get("stride", 1),
+            train_stride=wcfg.get("train_stride"),
+            val_stride=wcfg.get("val_stride"),
+            test_stride=wcfg.get("test_stride"),
+            train_ratio=scfg["train_ratio"],
+            val_ratio=scfg["val_ratio"],
+            chronological=scfg["chronological_split"],
+            normalization=config["preprocessing"]["normalization"],
+            fit_on_train_only=config["preprocessing"]["fit_on_train_only"],
+        )
 
-    # Shuffle training data for stochasticity; drop_last avoids ragged batches.
+    # Shuffle training data for stochasticity; drop_last avoids ragged batches
+    # (due to BN layers requiring consistent batch sizes across steps).
     train_loader = DataLoader(train_ds, batch_size=tcfg["batch_size"], shuffle=True, drop_last=True) if train_ds else None
     val_loader = DataLoader(val_ds, batch_size=tcfg["batch_size"], shuffle=False) if val_ds else None
     test_loader = DataLoader(test_ds, batch_size=tcfg["batch_size"], shuffle=False) if test_ds else None

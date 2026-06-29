@@ -90,7 +90,9 @@ python3 training/ConvLSTM/evaluate.py --checkpoint CHECKPOINT [options]
 | `--horizons` | `[1, 3, 6]` | Specific future time steps to report metrics for |
 | `--output` | `evaluation/` | Output directory for metrics, plots, and CSVs |
 
-Output: `evaluation/metrics.json`, `evaluation/predictions.csv`, `evaluation/ground_truth.csv`, `evaluation/spectrogram_*.png`, `evaluation/error_analysis.png`.
+Output (CSV mode): `evaluation/metrics.json`, `evaluation/predictions.csv`, `evaluation/ground_truth.csv`, `evaluation/spectrogram_*.png`, `evaluation/error_analysis.png`.
+
+Output (map mode): `evaluation/metrics.json`, `evaluation/map_comparison_t*.png`, `evaluation/spatial_rmse_map.png`, `evaluation/per_frequency_rmse.png`.
 
 ### `inference.py` — Predict on new CSV data
 
@@ -114,9 +116,12 @@ Imported by `train.py` and `evaluate.py`. Key functions:
 
 | Function | Returns | Description |
 |----------|---------|-------------|
-| `create_datasets(csv_path, n_nodes, n_bins, ...)` | `(train_ds, val_ds, test_ds, stats)` | Loads CSV, normalizes (z-score), creates sliding windows, splits chronologically or randomly |
-| `SpectrumDataset(data_3d, t_in, t_out, indices)` | PyTorch `Dataset` | Returns `(X, y)` tuples of shape `(T_in, 1, H, W)` and `(T_out, 1, H, W)` |
+| `create_datasets(csv_path, n_nodes, n_bins, ...)` | `(train_ds, val_ds, test_ds, stats)` | Loads CSV (CSV mode), normalizes (z-score), creates sliding windows, splits chronologically or randomly |
+| `create_interpolated_map_datasets(map_path, map_key, ...)` | `(train_ds, val_ds, test_ds, stats)` | Loads `.npz` map (map mode), normalizes per frequency, creates sliding windows, splits |
+| `SpectrumDataset(data_3d, t_in, t_out, indices)` | PyTorch `Dataset` | Returns `(X, y)` tuples of shape `(T_in, 1, H, W)` and `(T_out, 1, H, W)` (CSV mode) |
+| `InterpolatedMapDataset(data_4d, t_in, t_out, indices)` | PyTorch `Dataset` | Returns `(X, y)` of shape `(T_in, F, H, W)` and `(T_out, F, H, W)` (map mode) |
 | `load_csv(path)` | `ndarray (T, 750)` | Loads CSV via `numpy.loadtxt` |
+| `load_map_npz(path, key)` | `ndarray (T, F, H, W)` | Loads `.npz`, transposes from `(T, H, W, F)` to `(T, F, H, W)` |
 | `denormalize(data, mean, std)` | `ndarray` | Reverses z-score normalization |
 
 `stats` dict (`{"mean": ndarray, "std": ndarray}`) is saved alongside checkpoints and used by `evaluate.py` and `inference.py` for denormalization.
@@ -154,12 +159,12 @@ training/ConvLSTM/
 
 | File | Contents |
 |------|----------|
-| `dataset.py` | `SpectrumDataset` (torch `Dataset`), CSV loading, z-score normalization, sliding windows, train/val/test splitting |
-| `model.py` | `ConvLSTMCell`, `ConvLSTM` (multi-layer, from reference), `ConvLSTMPredictor` (seq2seq encoder–decoder) |
-| `train.py` | Training loop, teacher forcing, gradient clipping, LR scheduling, early stopping, checkpoint saving |
-| `evaluate.py` | Test set evaluation, RMSE/MAE/R² per horizon and per node, spectrogram visualization, prediction CSV export |
+| `dataset.py` | `SpectrumDataset` / `InterpolatedMapDataset` (torch `Dataset`s), CSV loading, `.npz` loading, z-score normalization, sliding windows, train/val/test splitting for both CSV and map modes |
+| `model.py` | `ConvLSTMCell`, `ConvLSTM` (multi-layer, from reference), `ConvLSTMPredictor` (seq2seq encoder–decoder with optional channel projection) |
+| `train.py` | Training loop, data format branching, teacher forcing, gradient clipping, LR scheduling, early stopping, checkpoint saving |
+| `evaluate.py` | Test set evaluation, data format branching, RMSE/MAE/R² per horizon (+ per node in CSV mode, per frequency in map mode), spectrogram/map visualization, prediction CSV export |
 | `utils.py` | Normalization statistics, metrics, seed setting, device detection, denormalization |
-| `inference.py` | Load checkpoint + normalization stats, predict on arbitrary CSV input, save predictions as CSV |
+| `inference.py` | Load checkpoint + normalization stats, predict on arbitrary input, save predictions as CSV |
 | `config.yaml` | All hyperparameters (see Configuration Reference) |
 | `requirements.txt` | Python dependencies |
 | `README.md` | This file |
@@ -187,10 +192,16 @@ All hyperparameters are in `config.yaml`. Key settings:
 
 | Category | Parameter | Default | Description |
 |----------|-----------|---------|-------------|
-| Data | `dataset_path` | `training/data/merged_power_data_sub6GHz_avg_per_minute.csv` | Input CSV path |
-| Data | `n_bins_per_node` | 250 | Frequency bins per node |
-| Data | `n_nodes` | 3 | Number of sensor nodes |
-| Data | `node_names` | `["CC1","CC2","LW1"]` | Node labels for plots and per-node metrics (must match n_nodes length) |
+| Data | `format` | `csv` | Data format: `csv` (node-frequency) or `interpolated_map` (pre-interpolated grid) |
+| Data | `dataset_path` | `training/data/merged_power_data_sub6GHz_avg_per_minute.csv` | Input CSV path (CSV mode) |
+| Data | `n_bins_per_node` | 250 | Frequency bins per node (CSV mode) |
+| Data | `n_nodes` | 3 | Number of sensor nodes (CSV mode) |
+| Data | `node_names` | `["CC1","CC2","LW1"]` | Node labels for plots and per-node metrics (CSV mode) |
+| Data | `map_path` | `""` | Path to .npz with pre-interpolated spatial map (map mode) |
+| Data | `map_key` | `map_db` | Key inside the .npz containing the map array (map mode) |
+| Data | `n_freq_bins` | 200 | Number of frequency channels in the map (map mode; becomes ConvLSTM input channels) |
+| Data | `grid_height` | 50 | Spatial grid height / rows (map mode) |
+| Data | `grid_width` | 50 | Spatial grid width / columns (map mode) |
 | Preprocessing | `normalization` | `zscore` | Normalization method (`zscore`, `minmax`, or `none`) |
 | Preprocessing | `fit_on_train_only` | true | Compute normalization stats on training set only (true) or full dataset (false) |
 | Windowing | `input_sequence_length` | 12 | Past minutes (T_in) |
@@ -199,7 +210,9 @@ All hyperparameters are in `config.yaml`. Key settings:
 | Split | `train_ratio` | 0.8 | Training set fraction |
 | Split | `val_ratio` | 0.1 | Validation set fraction (set to 0 for train/test only) |
 | Split | `chronological_split` | true | Chronological (true) or random (false) split |
-| Model | `input_channels` | 1 | Input channel count |
+| Model | `input_channels` | 1 | Input channel count (1 for CSV; n_freq_bins for map mode) |
+| Model | `use_channel_projection` | false | Apply 1×1 Conv2d before encoder to reduce channel count (map mode) |
+| Model | `channel_projection_dim` | 16 | Target channel count after projection (only if `use_channel_projection: true`) |
 | Model | `hidden_channels` | [32, 64] | Encoder layer hidden sizes |
 | Model | `kernel_size` | [[3,3], [1,1]] | Encoder kernel sizes |
 | Model | `num_encoder_layers` | 2 | Number of encoder ConvLSTM layers |
@@ -334,6 +347,45 @@ This is the key design choice that enables ConvLSTM's 2D convolutions to jointly
 - **Cross-frequency spectral patterns** (horizontal convolution across the 250 bins)
 - **Spatial-spectral correlations** (2D convolution kernels)
 
+### Interpolated Map Format (Alternative)
+
+When `data.format: interpolated_map`, the model reads a pre-generated `.npz` file instead of a CSV. This format represents spectrum data as a dense 3D spatial map — power values interpolated onto a regular 2D grid at each time step.
+
+**Source**: These `.npz` files are produced by a separate interpolation script (e.g., inverse distance weighting) using raw sensor coordinates.
+
+**Shape in `.npz` file:**
+
+| Axis | Label | Description |
+|------|-------|-------------|
+| 0 | T | Time steps (minutes) |
+| 1 | H | Grid height (e.g. 50) |
+| 2 | W | Grid width (e.g. 50) |
+| 3 | F | Frequency channels (e.g. 200) |
+
+On load, the array is transposed to `(T, F, H, W)` so frequency becomes the channel dimension — each frequency channel is treated as a separate input channel to the ConvLSTM.
+
+**Map → Tensor Conversion:**
+
+1. **Load**: `load_map_npz(path, key)` — loads `.npz`, extracts the key (default `map_db`), transposes `(T, H, W, F)` → `(T, F, H, W)`.
+2. **Normalize**: Per-frequency z-score normalized across the time dimension, using stats `(F, 1, 1)` (broadcast over H×W).
+3. **Window**: Identical sliding-window logic as CSV mode, producing `X: (T_in, F, H, W)` and `y: (T_out, F, H, W)`.
+
+**Expected Tensor Shape (Map Mode):**
+
+```
+(B, T_in, F, H, W)
+```
+
+| Dimension | Symbol | Value | Meaning |
+|-----------|--------|-------|---------|
+| Batch size | B | 32 | Number of independent sequences |
+| Input sequence length | T_in | 12 | Past minutes |
+| Frequency channels | F | 200 | Frequency bins (input channels) |
+| Grid height | H | 50 | Spatial rows |
+| Grid width | W | 50 | Spatial columns |
+
+**Key difference from CSV mode:** The channel dimension holds frequency, and the spatial dimensions (H, W) represent a real 2D spatial grid rather than synthetic rows-of-nodes. Optionally, a `1×1` Conv2d channel projection (configurable via `use_channel_projection` / `channel_projection_dim`) can reduce F before the encoder to lower memory usage.
+
 ---
 
 ## 3. Model Architecture
@@ -342,26 +394,36 @@ The architecture follows the paper's **sequence-to-sequence** design with an enc
 
 ### 3.1 Overview
 
+Shapes shown for **CSV mode** (`C=1, H=n_nodes=3, W=n_bins=250`). In **map mode**, `C=n_freq_bins` (e.g. 200), `H=grid_height` (e.g. 50), `W=grid_width` (e.g. 50), and an optional `1×1` Conv2d channel projection may precede the encoder.
+
 ```
-Input: (B, T_in, 1, 3, 250)
+Input: (B, T_in, C, H, W)
+        │
+        ▼
+┌─────────────────────────────────────────────┐
+│  [Optional] Channel Projection              │
+│  1×1 Conv2d(C → proj_dim) — only when       │
+│  use_channel_projection=true (map mode)      │
+│        ↓ (B, T_in, proj_dim, H, W)          │
+└─────────────────────────────────────────────┘
         │
         ▼
 ┌─────────────────────────────────────────────┐
 │              ENCODER                        │
 │  ┌──────────────────────────────────┐       │
 │  │ ConvLSTM Layer 1                 │       │
-│  │  input_dim=1, hidden=32          │       │
-│  │  kernel=(3,3), padding=1         │       │
+│  │  input_dim=C (or proj_dim)       │       │
+│  │  hidden=32, kernel=(3,3)         │       │
 │  │  activation=ReLU                 │       │
-│  │     ↓ (B, T_in, 32, 3, 250)     │       │
+│  │     ↓ (B, T_in, 32, H, W)       │       │
 │  │ ConvLSTM Layer 2                 │       │
 │  │  input_dim=32, hidden=64         │       │
 │  │  kernel=(1,1), padding=0         │       │
 │  │  activation=ReLU                 │       │
-│  │     ↓ (B, T_in, 64, 3, 250)     │       │
+│  │     ↓ (B, T_in, 64, H, W)       │       │
 │  └──────────────────────────────────┘       │
 │  Last states: (h_enc, c_enc)                │
-│  each (B, 64, 3, 250)                       │
+│  each (B, 64, H, W)                         │
 └─────────────────────────────────────────────┘
         │
         ▼
@@ -370,34 +432,34 @@ Input: (B, T_in, 1, 3, 250)
 │  ┌──────────────────────────────────┐       │
 │  │ LSTM (regular)                   │       │
 │  │  Flatten encoder states          │       │
-│  │  → (B, 64*3*250)                │       │
+│  │  → (B, 64*H*W)                  │       │
 │  │  LSTM(hidden=128)                │       │
 │  │  → (B, 128)                      │       │
-│  │  Unflatten → (B, 32, 3, 250)    │       │
+│  │  Unflatten → (B, 32, H, W)      │       │
 │  └──────────────────────────────────┘       │
 │        │                                     │
 │        ▼                                     │
 │  ┌──────────────────────────────────┐       │
 │  │ ConvLSTM Layer 3                 │       │
-│  │  input_dim=1, hidden=32          │       │
-│  │  kernel=(1,1), padding=0         │       │
+│  │  input_dim=C (or proj_dim)       │       │
+│  │  hidden=32, kernel=(1,1)         │       │
 │  │  activation=ReLU                 │       │
 │  │  Dropout(p=0.3)                  │       │
 │  │  BatchNorm(32)                   │       │
-│  │     ↓ (B, T_out, 32, 3, 250)    │       │
+│  │     ↓ (B, T_out, 32, H, W)      │       │
 │  └──────────────────────────────────┘       │
 │        │                                     │
 │        ▼                                     │
 │  ┌──────────────────────────────────┐       │
 │  │ FC (Dense) Output Layer          │       │
-│  │  Conv2d(32 → 1, k=1)            │       │
-│  │     ↓ (B, T_out, 1, 3, 250)     │       │
+│  │  Conv2d(32 → C, k=1)            │       │
+│  │     ↓ (B, T_out, C, H, W)       │       │
 │  └──────────────────────────────────┘       │
 └─────────────────────────────────────────────┘
         │
         ▼
-Output: (B, T_out, 1, 3, 250)
-        Squeeze channels → (B, T_out, 3, 250)
+Output: (B, T_out, C, H, W)
+        Squeeze channels → (B, T_out, H, W) in CSV mode
 ```
 
 ### 3.2 Layer-by-Layer Specification
@@ -407,7 +469,7 @@ Output: (B, T_out, 1, 3, 250)
 | Parameter | Value |
 |-----------|-------|
 | Type | `ConvLSTMCell` (2D convolutional LSTM cell) |
-| Input channels | 1 (normalized dBm PSD) |
+| Input channels | C (1 for CSV mode, n_freq_bins for map mode, or proj_dim if channel projection enabled) |
 | Hidden channels | 32 |
 | Kernel size | `(3, 3)` |
 | Padding | `(1, 1)` (same convolution, preserves H×W) |
@@ -415,9 +477,9 @@ Output: (B, T_out, 1, 3, 250)
 | Activation (gates) | Sigmoid |
 | Activation (cell candidate g) | ReLU (per paper §III-A, replaces tanh) |
 | Activation (output H) | ReLU (per paper §III-A, replaces tanh) |
-| Output shape | `(B, T_in, 32, 3, 250)` |
+| Output shape | `(B, T_in, 32, H, W)` |
 
-**Role**: Learns low-level spatial-spectral features. The `3×3` kernel captures local correlations between adjacent nodes and adjacent frequency bins simultaneously. Padding of 1 preserves the `3×250` spatial dimensions.
+**Role**: Learns low-level spatial-spectral features. The `3×3` kernel captures local correlations between adjacent spatial positions and adjacent spectral bins simultaneously. Padding of 1 preserves the `H×W` spatial dimensions.
 
 #### Encoder — ConvLSTM Layer 2
 
@@ -429,7 +491,7 @@ Output: (B, T_out, 1, 3, 250)
 | Kernel size | `(1, 1)` |
 | Padding | `(0, 0)` |
 | Bias | True |
-| Output shape | `(B, T_in, 64, 3, 250)` |
+| Output shape | `(B, T_in, 64, H, W)` |
 
 **Role**: Compresses the learned features into a higher-dimensional latent space. The `1×1` kernel performs pointwise convolution — it mixes information across channels at each spatial location without mixing adjacent spatial positions. This acts as a learned feature aggregation layer.
 
@@ -437,22 +499,22 @@ Output: (B, T_out, 1, 3, 250)
 
 > **Note:** The paper states there is *"an LSTM hidden layer that is used to capture memory and hidden states from the encoder output"* but does not specify its exact dimensionality or connectivity. The design below is our interpretation.
 
-The encoder's final hidden and cell states from ConvLSTM Layer 2 (`h_enc`, `c_enc` — each `(B, 64, 3, 250)`) are fed into a regular LSTM layer at the decoder:
+The encoder's final hidden and cell states from ConvLSTM Layer 2 (`h_enc`, `c_enc` — each `(B, 64, H, W)`) are fed into a regular LSTM layer at the decoder:
 
-1. **Flatten**: Each state tensor is flattened from `(B, 64, 3, 250)` to `(B, 64 × 3 × 250) = (B, 48000)`.
+1. **Flatten**: Each state tensor is flattened from `(B, 64, H, W)` to `(B, 64 × H × W)`.
 2. **LSTM**: The flattened state passes through a regular LSTM cell with hidden size 128, producing a context vector `(B, 128)`.
 3. **Unflatten → ConvLSTM init**: The context vector is projected back to a 4D tensor:
-   - `Linear(128 → 32 × 3 × 250)` → `(B, 32, 3, 250)`
+   - `Linear(128 → 32 × H × W)` → `(B, 32, H, W)`
    - This projected tensor initializes the decoder ConvLSTM's hidden state `h_dec_0` and cell state `c_dec_0`.
 
-This LSTM layer acts as the memory-capture mechanism referenced in the paper: it compresses the encoder's spatial-spectral representation into a compact code and initializes the decoder's generative process. Sizing (128, 48000) is empirical; tune as needed.
+This LSTM layer acts as the memory-capture mechanism referenced in the paper: it compresses the encoder's spatial-spectral representation into a compact code and initializes the decoder's generative process. Dimensionalities are empirical; tune as needed.
 
 #### Decoder — ConvLSTM Layer 3
 
 | Parameter | Value |
 |-----------|-------|
 | Type | `ConvLSTMCell` (2D convolutional LSTM cell) |
-| Input channels | 1 (previous predicted or ground-truth frame) |
+| Input channels | C (1 for CSV mode, n_freq_bins for map mode, or proj_dim if projection enabled) |
 | Hidden channels | 32 |
 | Kernel size | `(1, 1)` |
 | Padding | `(0, 0)` |
@@ -462,9 +524,9 @@ This LSTM layer acts as the memory-capture mechanism referenced in the paper: it
 | Activation (output H) | ReLU (per paper §III-A, replaces tanh) |
 | Dropout | `p = 0.3` (after hidden state, before output) |
 | Batch norm | Layer-wise batch normalization on hidden states |
-| Output shape | `(B, T_out, 32, 3, 250)` |
+| Output shape | `(B, T_out, 32, H, W)` |
 
-**Role**: Generates the output sequence step by step. Initial hidden and cell states `(B, 32, 3, 250)` come from the LSTM projection of the encoder's final states. At each decoder time step, the input is the previous predicted frame (or ground-truth with teacher forcing). Because the kernel is `1×1`, each spatial location is processed independently — the decoder ConvLSTM learns temporal dynamics per (node, frequency bin) without mixing spatial positions.
+**Role**: Generates the output sequence step by step. Initial hidden and cell states `(B, 32, H, W)` come from the LSTM projection of the encoder's final states. At each decoder time step, the input is the previous predicted frame (or ground-truth with teacher forcing). Because the kernel is `1×1`, each spatial location is processed independently — the decoder ConvLSTM learns temporal dynamics per spatial location without mixing positions.
 
 #### Decoder — Fully Connected (Dense) Output Layer
 
@@ -472,13 +534,13 @@ This implements the "fully connected (dense) layer" from the paper §III-A. The 
 
 | Layer | Type | Input → Output | Kernel | Padding |
 |-------|------|----------------|--------|---------|
-| FC | `Conv2d` | 32 → 1 | (1, 1) | (0, 0) |
+| FC | `Conv2d` | 32 → C | (1, 1) | (0, 0) |
 
-Input: `(B, 32, 3, 250)` — single time step of decoder ConvLSTM hidden state.
+Input: `(B, 32, H, W)` — single time step of decoder ConvLSTM hidden state.
 
-Output: `(B, 1, 3, 250)` — squeezed to `(B, 3, 250)`.
+Output: `(B, C, H, W)` — squeezed to `(B, H, W)` in CSV mode.
 
-**Role**: Linearly projects the 32-channel hidden representation to a single normalized PSD value per (node, frequency bin) location. The `1×1` kernel ensures each spatial location is projected independently, exactly matching a fully-connected layer applied per position.
+**Role**: Linearly projects the 32-channel hidden representation to the output channels (C=1 for CSV mode, C=n_freq_bins for map mode). The `1×1` kernel ensures each spatial location is projected independently, exactly matching a fully-connected layer applied per position.
 
 **Optional alternative** (not in the paper): Replace the single `1×1` Conv2d with a small two-layer MLP convolution to add non-linearity:
 
@@ -513,14 +575,14 @@ where:
 
 ### 3.4 Prediction Target
 
-The model predicts **the next `T_out` consecutive minutes** of PSD values across all 3 nodes and 250 frequency bins. Specifically:
+The model predicts **the next `T_out` consecutive minutes** of PSD values across all spatial and frequency dimensions:
 
-- **Single-frame prediction**: The immediate next minute `(3 × 250)` slice
-- **Multi-frame prediction**: `T_out` consecutive minutes `(T_out × 3 × 250)`
+- **CSV mode**: `(H=n_nodes, W=n_bins)` — e.g. single-frame `(3 × 250)`, multi-frame `(T_out × 3 × 250)`
+- **Map mode**: `(F=n_freq_bins, H=grid_h, W=grid_w)` — e.g. single-frame `(200 × 50 × 50)`, multi-frame `(T_out × 200 × 50 × 50)`
 
-The output is in **normalized (z-score) dBm space**. Predictions must be un-normalized for interpretation:
+The output is in **normalized (z-score) space**. Predictions must be un-normalized for interpretation:
 ```
-dBm = prediction × σ_bin + μ_bin
+value = prediction × σ + μ
 ```
 
 ---
@@ -530,33 +592,32 @@ dBm = prediction × σ_bin + μ_bin
 ### Raw Output Tensor Shape
 
 ```
-(B, T_out, 1, 3, 250)
+(B, T_out, C, H, W)
 ```
 
 | Dimension | Meaning |
 |-----------|---------|
 | B | Batch size |
 | T_out | Number of predicted future minutes |
-| 1 | Channel dimension (squeezed in post-processing) |
-| 3 | Sensor node index (0=CC1, 1=CC2, 2=LW1) |
-| 250 | Frequency bin index |
+| C | Output channels (1 in CSV mode, n_freq_bins in map mode) |
+| H | Spatial height (n_nodes in CSV mode, grid_height in map mode) |
+| W | Spatial width (n_bins in CSV mode, grid_width in map mode) |
 
 ### Meaning of Each Output Element
 
-Each output element `y_{b,t,0,n,f}` represents the **predicted normalized power spectral density** for:
-- Batch sample `b`
-- Future time step `t` (minutes from now)
-- Node `n` (CC1, CC2, or LW1)
-- Frequency bin `f`
+Each output element represents the **predicted normalized power spectral density** for a batch sample `b`, future time step `t`, at a location defined by `(channel, row, column)`.
 
-### Post-Processing: Normalization → dBm
+### Post-Processing: Normalization → Physical Units
 
 ```python
-pred_dbm = pred_normalized * freq_std[freq_idx] + freq_mean[freq_idx]
-pred_flat = pred_dbm.reshape(B, T_out, -1)
+pred_physical = pred_normalized * stats_std + stats_mean
 ```
 
-### CSV Output Format
+Denormalization shapes depend on the data format:
+- **CSV mode**: `stats_mean/std` have shape `(n_nodes, n_bins)` — broadcast against `(H, W)`
+- **Map mode**: `stats_mean/std` have shape `(n_freq_bins, 1, 1)` — broadcast over `H×W`
+
+### CSV Output Format (CSV Mode Only)
 
 Predicted data can be written as CSV with the same format as the input:
 - No header
@@ -566,11 +627,9 @@ Predicted data can be written as CSV with the same format as the input:
 
 ### Visualization
 
-To visualize predictions as spectrograms:
-1. Select a specific node: `pred_dbm[:, :, node_idx, :]` → shape `(B, T_out, 250)`
-2. Transpose to `(250, T_out)` for a frequency-vs-time spectrogram
-3. Plot with `matplotlib.pyplot.imshow` using a `'viridis'` or `'jet'` colormap
-4. Overlay ground truth for comparison (side-by-side or difference plot)
+**CSV mode**: Per-node spectrograms — select a specific node `pred[:, :, node_idx, :]`, transpose to frequency-vs-time, `imshow`.
+
+**Map mode**: Spatial map comparisons — side-by-side ground truth vs prediction for selected time steps, spatial RMSE heatmap, and per-frequency RMSE line plot.
 
 ---
 
@@ -578,32 +637,40 @@ To visualize predictions as spectrograms:
 
 ### Data Loading Process
 
-```python
-dataset = SpectrumDataset(csv_path, T_in=12, T_out=6, stride=1)
-# Returns: (X, y) where
-#   X shape: (num_samples, T_in, 3, 250)
-#   y shape: (num_samples, T_out, 3, 250)
-#   Both in normalized dBm
-```
+The data loading pipeline branches based on `data.format` in config:
 
-The `SpectrumDataset` class:
-1. Loads CSV as `numpy.ndarray` of shape `(6839, 750)`
-2. Reshapes to `(6839, 3, 250)`
-3. Computes normalization statistics (frequency-bin-wise mean/std)
-4. Normalizes the data
-5. Generates sliding windows of `(T_in + T_out)` consecutive time steps
-6. Returns `(X, y)` tuples for each window
+- **CSV mode** (`format: csv`): `create_datasets(...)` → `SpectrumDataset`
+- **Map mode** (`format: interpolated_map`): `create_interpolated_map_datasets(...)` → `InterpolatedMapDataset`
+
+**CSV mode** (`SpectrumDataset`):
+```python
+# X shape: (num_samples, T_in, 1, n_nodes, n_bins)
+# y shape: (num_samples, T_out, 1, n_nodes, n_bins)
+```
+1. Loads CSV as `numpy.ndarray` → reshapes to `(T, n_nodes, n_bins)`
+2. Computes normalization statistics (per-node, per-bin mean/std)
+3. Normalizes the data
+4. Generates sliding windows → `(X, y)` tuples
+
+**Map mode** (`InterpolatedMapDataset`):
+```python
+# X shape: (num_samples, T_in, n_freq_bins, grid_h, grid_w)
+# y shape: (num_samples, T_out, n_freq_bins, grid_h, grid_w)
+```
+1. Loads `.npz` via `load_map_npz(path, key)` → transposes to `(T, F, H, W)`
+2. Computes per-frequency z-score statistics (shape `(F, 1, 1)`)
+3. Normalizes the data (broadcast over H×W)
+4. Generates sliding windows → `(X, y)` tuples
 
 ### Normalization
 
 **Method**: Z-score (standard score) normalization, applied **per frequency bin** across the time dimension.
 
-For each frequency bin `f` in `{0..249}` and each node `n` in `{0..2}`:
+- **CSV mode**: For each node `n` and bin `b`: `μ_{n,b}`, `σ_{n,b}` computed across time → shape `(n_nodes, n_bins)`
+- **Map mode**: For each frequency channel `f`: `μ_f`, `σ_f` computed across time × H × W → shape `(F, 1, 1)` (broadcast over H×W)
 
 ```
-μ_{n,f} = mean( X_train[:, n, f] )
-σ_{n,f} = std( X_train[:, n, f] )
-X_normalized[:, n, f] = (X[:, n, f] − μ_{n,f}) / σ_{n,f}
+X_normalized = (X − μ) / σ
 ```
 
 - Statistics are computed **only from the training set** to prevent data leakage (controlled by `fit_on_train_only` in config).
@@ -616,35 +683,19 @@ X_normalized[:, n, f] = (X[:, n, f] − μ_{n,f}) / σ_{n,f}
 
 **Strategy**: Default is **chronological split** (recommended for time series). If `chronological_split: false`, splits are random.
 
-With the default config (80/10/10 chronological):
-
-- Train: first 80% of temporal window centers
-- Validation: next 10%
-- Test: final 10%
-
 ### Window Generation
 
-With the default config (`T_in=12`, `T_out=6`, `stride=1`):
+Both modes use the same sliding-window logic: extract overlapping windows of length `T_in + T_out` with configurable stride. Each window produces `(X, y)` of shapes:
 
-```
-Total time steps: 6839
-Windows: 6839 − (12 + 6) + 1 = 6822
-
-Training:  5457 windows  (80%)
-Validation: 682 windows  (10%)
-Test:       683 windows  (10%)
-```
-
-Each window `(X, y)`:
-- `X`: 12 consecutive time steps → `(12, 3, 250)` → unsqueeze → `(12, 1, 3, 250)`
-- `y`: 6 consecutive time steps → `(6, 3, 250)` → unsqueeze → `(6, 1, 3, 250)`
+- **CSV mode**: `X: (T_in, 1, n_nodes, n_bins)`, `y: (T_out, 1, n_nodes, n_bins)`
+- **Map mode**: `X: (T_in, F, grid_h, grid_w)`, `y: (T_out, F, grid_h, grid_w)`
 
 ### Loss Function
 
-**Mean Squared Error (MSE)**:
+**Mean Squared Error (MSE)** (default):
 
 ```
-L = (1 / (B × T_out × 3 × 250)) × Σ(predicted − target)²
+L = (1 / (B × T_out × C × H × W)) × Σ(predicted − target)²
 ```
 
 MSE penalizes larger errors more heavily, appropriate for PSD regression. MAE can be used as an alternative by setting `loss: mae` in config.
@@ -694,9 +745,11 @@ The decoder receives ground-truth frames as input during training with probabili
 | R² | 1 − (SS_res / SS_tot) | Proportion of variance explained |
 
 Metrics are computed:
-- **Per horizon**: RMSE at t=1, t=3, t=6 (to measure error accumulation)
-- **Per node**: RMSE for CC1, CC2, LW1 separately
-- **Overall**: Average across all nodes and time steps
+- **Per horizon**: RMSE at specified horizons (eval_horizons), measuring error accumulation
+- **Per node** (CSV mode only): RMSE for each sensor node separately
+- **Per frequency** (map mode only): RMSE for each frequency channel separately
+- **Spatial RMSE map** (map mode only): 2D heatmap of RMSE per spatial location
+- **Overall**: Average across all dimensions
 
 ---
 
@@ -704,24 +757,25 @@ Metrics are computed:
 
 ### Assumptions
 
-1. **The input CSV has `n_nodes × n_bins_per_node` columns** (default 3 × 250 = 750) in the order matching `node_names` in config.
-2. **The CSV has no header row** and contains only comma-separated numeric dBm values.
-3. **Rows are in strict chronological order** with no gaps (the existing data has 6,839 contiguous minutes).
-4. **Normalization statistics are computed per frequency bin** across the time dimension, not globally.
+1. **In CSV mode** (`format: csv`), the input has `n_nodes × n_bins_per_node` columns (default 750) ordered as per `node_names` in config.
+2. **In CSV mode**, the file has no header and contains only comma-separated dBm values.
+3. **Rows (time axis) are in strict chronological order** with no gaps (both modes).
+4. **Normalization statistics are computed per frequency bin** across the time dimension, not globally (both modes).
 5. **The train/val/test split is chronological**, not random, because this is time-series data.
-6. **The per-node-offset CSV is the target dataset** (`merged_power_data_sub6GHz_avg_per_minute.csv`), produced by `training/build_training_csv.py` using per-node raw SigMF bin offsets (CC1=21000, CC2=33250, LW1=27500). Each node's 250 bins are from a different quiet L-band / lower S-band region, not a shared 87–336 MHz band.
+6. **In CSV mode**, the per-node-offset CSV (`merged_power_data_sub6GHz_avg_per_minute.csv`) is the target, produced by `training/build_training_csv.py` using per-node raw SigMF bin offsets (CC1=21000, CC2=33250, LW1=27500). Each node's 250 bins are from a different quiet L-band / lower S-band region, not a shared 87–336 MHz band.
+7. **In map mode** (`format: interpolated_map`), the `.npz` file has shape `(T, H, W, F)` with the specified key (default `map_db`). The spatial grid is a regular 2D mesh (e.g. 50×50) with each cell representing an interpolated PSD value at that spatial location.
 
 ### Design Decisions
 
-1. **2D ConvLSTM with (n_nodes, n_bins) spatial map**: The nodes are treated as the "height" dimension and frequency bins as the "width" dimension (default 3 × 250). This allows the 2D kernels to learn cross-node and cross-frequency patterns simultaneously.
+1. **2D ConvLSTM with (H, W) spatial map**: In CSV mode, nodes are treated as height and frequency bins as width (default 3 × 250). In map mode, the grid is a regular spatial mesh (e.g. 50 × 50) with frequency as the channel dimension. Both allow 2D kernels to learn spatial-spectral patterns.
 
-2. **Single-channel input**: Power values are in dBm (scalar per node×frequency point). The channel dimension is 1.
+2. **Input channels vary by mode**: CSV mode uses C=1 (scalar PSD per location). Map mode uses C=n_freq_bins (one channel per frequency), with an optional `1×1` channel projection to reduce memory.
 
 3. **Seq2seq with teacher forcing**: The decoder generates outputs autoregressively. Teacher forcing (default 1.0, always on) is our addition; set lower in config.yaml for mixed or pure autoregressive decoding.
 
-4. **No spatial interpolation**: The paper used IDW interpolation across 1600 grid points from 5 sensors. Our AERPAW dataset has 3 fixed nodes without a regular spatial grid. We preserve the raw per-node data as independent rows in the 2D map.
+4. **No spatial interpolation (CSV mode) / Pre-interpolated map (map mode)**: The paper used IDW interpolation across 1600 grid points from 5 sensors. Our AERPAW CSV dataset has 3 fixed nodes without a regular spatial grid — we preserve the raw per-node data. The map mode accepts pre-interpolated `.npz` files, enabling the model to work on dense spatial grids when interpolation has been applied offline.
 
-5. **Per-bin z-score normalization**: Spectrum data has different power levels across frequency bands. Normalizing per bin ensures each frequency contributes equally to the loss.
+5. **Per-bin z-score normalization**: Spectrum data has different power levels across frequency bands. Normalizing per bin ensures each frequency contributes equally to the loss. In map mode, statistics are `(F, 1, 1)` and broadcast over the spatial grid.
 
 ---
 
@@ -729,12 +783,13 @@ Metrics are computed:
 
 | Aspect | Paper (2019) | Our Reconstruction | Reason |
 |--------|-------------|-------------------|--------|
-| Dataset | Electrosense (5 sensors, 450–520 MHz) | AERPAW (3 nodes, per-node L-band offsets) | Our target dataset |
-| Spatial dimension | 40×40 IDW grid → 1600 locations | 3 fixed nodes | AERPAW has sparse, fixed nodes |
+| Dataset | Electrosense (5 sensors, 450–520 MHz) | AERPAW (3 nodes, per-node L-band offsets) or interpolated .npz map | Our target dataset; map mode enables dense spatial grids |
+| Spatial dimension | 40×40 IDW grid → 1600 locations | 3 fixed nodes (CSV) or configurable grid (map) | AERPAW has sparse, fixed nodes; map mode matches paper's dense grid |
 | Input time steps | 120 (6 hours × 3 min resolution) | Configurable (e.g. 12) | Set in config; 1-min vs 3-min resolution |
 | Prediction horizon | 50 steps (150 min) | Configurable (e.g. 6) | Set in config.yaml |
 | Encoder layers | 2 ConvLSTM | 2 ConvLSTM | Same |
 | Decoder layers | LSTM + ConvLSTM + FC | LSTM + ConvLSTM + FC (1×1 Conv2d; 2-layer MLP optional) | Same structure; FC details are our interpretation |
+| Input channels | 1 (power per grid point) | 1 (CSV) or n_freq_bins (map) | Map mode uses frequency as channel dimension |
 | Activation | ReLU (output, per §III-A) | ReLU (output) | Same |
 | Optimizer | NADAM | Adam | NADAM not in standard PyTorch |
 | Framework | R + TensorFlow | Python + PyTorch | Our stack |

@@ -71,8 +71,10 @@ def r2_score(pred, target):
     and negative values indicate worse-than-mean prediction.
     A small epsilon prevents division by zero when the target is constant.
     """
+    # ss_res: residual sum of squares; ss_tot: total sum of squares around the mean.
     ss_res = torch.sum((target - pred) ** 2)
     ss_tot = torch.sum((target - target.mean()) ** 2)
+    # Epsilon prevents division by zero when the target is constant across all samples.
     return 1 - ss_res / (ss_tot + 1e-8)
 
 
@@ -124,6 +126,8 @@ def compute_metrics_per_node(pred, target, node_names=None):
         node_names = [f"node_{i}" for i in range(h)]
     metrics = {}
     for n in range(h):
+        # Slice with n:n+1 (not just n) to keep the spatial dimension, ensuring
+        # compute_metrics sees a 5D tensor and operates on shape-compatible inputs.
         m = compute_metrics(pred[:, :, :, n:n+1, :], target[:, :, :, n:n+1, :])
         for k, v in m.items():
             metrics[f"{k}_{node_names[n]}"] = v
@@ -155,5 +159,7 @@ def load_checkpoint(path, device):
 
     ``weights_only=False`` is required because the checkpoint contains
     non-tensor objects (config dict, norm_stats, etc.).
+    Note: loading with weights_only=False unpickles arbitrary objects,
+    so only load checkpoints from trusted sources.
     """
     return torch.load(path, map_location=device, weights_only=False)

@@ -1,3 +1,10 @@
+"""
+Evaluation script for a trained STS-PredNet checkpoint.
+
+Generates predictions on the test set, computes metrics (RMSE, MAE, R²),
+produces per-node and per-frequency breakdowns, saves CSV outputs in
+denormalized dBm units, and creates visualisations (spectrograms, error maps).
+"""
 import copy
 import os
 import sys
@@ -19,6 +26,7 @@ from utils import (
 
 
 def load_config(config_path):
+    """Load YAML configuration file from disk."""
     import yaml
     with open(config_path) as f:
         return yaml.safe_load(f)
@@ -26,8 +34,18 @@ def load_config(config_path):
 
 def plot_spectrogram_comparison(ground_truth, prediction, node_idx, node_name,
                                  save_path):
+    """Plot side-by-side spectrograms of ground truth and prediction for one node.
+
+    Args:
+        ground_truth: Array of shape (time, nodes, frequencies).
+        prediction: Array of same shape as ground_truth.
+        node_idx: Index of the node to plot.
+        node_name: Human-readable name for the node.
+        save_path: Destination file path for the PNG.
+    """
     gt_node = ground_truth[:, node_idx, :].T
     pred_node = prediction[:, node_idx, :].T
+    # Use a shared color range so the two plots are directly comparable
     vmin = min(gt_node.min(), pred_node.min())
     vmax = max(gt_node.max(), pred_node.max())
 
@@ -46,6 +64,13 @@ def plot_spectrogram_comparison(ground_truth, prediction, node_idx, node_name,
 
 
 def plot_error_analysis(errors, node_names, save_path):
+    """Plot prediction error heatmaps for every node.
+
+    Args:
+        errors: Array of (prediction - ground_truth) of shape (samples, nodes, freqs).
+        node_names: List of node label strings.
+        save_path: Destination PNG path.
+    """
     n = len(node_names)
     fig, axes = plt.subplots(1, n, figsize=(5 * n, 4), squeeze=False,
                               constrained_layout=True)
@@ -53,6 +78,7 @@ def plot_error_analysis(errors, node_names, save_path):
     for i, name in enumerate(node_names):
         ax = axes[0, i]
         err = errors[:, i, :]
+        # Symmetric color scale around zero to highlight over-/under-prediction
         vmax = max(abs(err.min()), abs(err.max()))
         im = ax.imshow(err.T, aspect="auto", cmap="RdBu_r", vmin=-vmax, vmax=vmax)
         ax.set_title(f"{name} — Error (Pred − GT)")
@@ -64,6 +90,7 @@ def plot_error_analysis(errors, node_names, save_path):
 
 
 def main():
+    """Load a trained checkpoint, run evaluation on the test set, and save results."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--config")
@@ -90,6 +117,8 @@ def main():
 
     eval_config = copy.deepcopy(config)
     if is_multistep:
+        # For multi-step evaluation we shift prediction_offset so the dataset
+        # yields the correct alignment for autoregressive-style sampling
         eval_config["branches"]["prediction_offset"] = prediction_horizon
 
     print("Loading data...")
@@ -124,6 +153,8 @@ def main():
                 trend = trend.to(device)
 
             if is_multistep and t_tensor is not None:
+                # Multi-step: iteratively predict one step at a time and gather
+                # targets from the pre-loaded dataset tensor
                 bs = closeness.shape[0] if closeness is not None else period.shape[0]
                 bs_preds, bs_targets = [], []
                 for o in range(1, prediction_horizon + 1):
@@ -135,6 +166,7 @@ def main():
                 all_pred.append(torch.stack(bs_preds, dim=1))
                 all_target.append(torch.stack(bs_targets, dim=1))
             else:
+                # Single-step prediction
                 target = batch["target"].to(device)
                 pred = model(closeness, period, trend)
                 all_pred.append(pred.cpu().unsqueeze(1))
@@ -147,6 +179,7 @@ def main():
     target_np = target.numpy()
 
     B, T, C, H, W = pred.shape
+    # Flatten time and channels for overall metric computation
     pred_2d = pred.reshape(B * T, C * H * W)
     target_2d = target.reshape(B * T, C * H * W)
 
@@ -169,6 +202,7 @@ def main():
     output_dir = args.output or os.path.join(os.path.dirname(__file__), "evaluation")
     os.makedirs(output_dir, exist_ok=True)
 
+    # Convert back from normalized space to physical dBm units
     pred_dbm = denormalize(pred_np, stats)
     target_dbm = denormalize(target_np, stats)
     pred_dbm_2d = pred_dbm.reshape(B, T, -1)

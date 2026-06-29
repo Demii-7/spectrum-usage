@@ -1,3 +1,11 @@
+"""
+Stage 3 training: Latent Conditional Diffusion.
+
+Trains the diffusion model (EnhancedNoiseNet) to denoise latent vectors
+conditioned on the TSS-CC output. The conditioner can be frozen
+(standard) or jointly fine-tuned (joint_with_diffusion).
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -13,6 +21,7 @@ from utils import load_config, set_seed, get_device, save_checkpoint, load_check
 
 
 def main():
+    """Entry point: load frozen LSE + optionally frozen TSS-CC, train diffusion, save best."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True, help="Path to config YAML")
     parser.add_argument("--autoencoder_checkpoint", type=str, required=True,
@@ -35,7 +44,7 @@ def main():
 
     objective = train_cfg.get("tss_condition_objective", "projection_to_latent")
 
-    # Load frozen LSE
+    # Load frozen LSE — provides latent targets z0 from spectrogram y
     ae_checkpoint = load_checkpoint(args.autoencoder_checkpoint, map_location=device)
     enc = LatentSpaceEncoder(
         T_out=T_out, L=L, F=F,
@@ -48,7 +57,7 @@ def main():
     for p in enc.parameters():
         p.requires_grad = False
 
-    # Load TSS-CC (optionally trainable for joint_with_diffusion)
+    # Load TSS-CC (optionally trainable for joint_with_diffusion objective)
     tss_cc = TSSConditionConstructor(
         T_in=T_in, L=L, F=F,
         hidden_dim=model_cfg.get("hidden_dim", 256),
@@ -115,7 +124,9 @@ def main():
             x, y = x.to(device), y.to(device)
             with torch.no_grad():
                 z0 = enc(y)
+                # Detach condition when frozen to avoid gradient flow
                 cond_z = tss_cc(x).detach() if freeze_tss else tss_cc(x)
+            # Sample random timestep and noise, then apply forward diffusion
             t = torch.randint(0, diffusion.n_timestep, (x.size(0),), device=device)
             noise = torch.randn_like(z0)
             zt = diffusion.q_sample(z0, t, noise)

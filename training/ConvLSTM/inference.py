@@ -22,6 +22,12 @@ from dataset import load_csv, reshape_to_3d, compute_norm_stats, zscore
 
 
 def main():
+    """
+    Run standalone inference: load checkpoint → read & normalize input CSV → predict → save.
+
+    The input CSV can be any spectrum data with the same node/bins layout as training.
+    Predictions are denormalized back to dBm before saving.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--input", required=True, help="Path to input CSV to predict on")
@@ -59,6 +65,7 @@ def main():
     # tile it once as a fallback; this handles edge cases like single-row inputs.
     total_windows = len(data_norm) - t_in - t_out + 1
     if total_windows < 1:
+        # Duplicate the data along the time axis to guarantee at least one complete window.
         data_norm = np.tile(data_norm, (2, 1, 1))
         total_windows = len(data_norm) - t_in - t_out + 1
         if total_windows < 1:

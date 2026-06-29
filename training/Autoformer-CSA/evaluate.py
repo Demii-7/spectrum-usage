@@ -1,3 +1,11 @@
+"""
+Evaluation script for a trained Autoformer-CSA / AutoformerVanilla model.
+
+Loads a saved checkpoint, runs inference on the test set, computes RMSE/MAE/R2
+metrics overall, per horizon, and per node, saves numeric results as JSON/CSV,
+and generates diagnostic spectrogram comparison and error-analysis plots.
+"""
+
 import os, sys, argparse, json
 import numpy as np
 import torch
@@ -15,6 +23,11 @@ from train import build_model
 
 
 def main():
+    """Entry point: load checkpoint, run test inference, compute metrics, save results.
+
+    The checkpoint must contain ``model_state_dict`` and ``norm_stats``
+    (mean/std for denormalisation).
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument("--checkpoint", type=str, required=True)
@@ -41,6 +54,7 @@ def main():
     norm_stats = checkpoint["norm_stats"]
 
     print(f"Loading data from {data_cfg['dataset_path']}")
+    # Only the test split is needed for evaluation
     _, _, test_ds, _ = create_datasets(
         csv_path=data_cfg["dataset_path"],
         seq_len=windowing["seq_len"],
@@ -83,6 +97,7 @@ def main():
     all_pred = torch.cat(all_pred, dim=0)
     all_true = torch.cat(all_true, dim=0)
 
+    # Denormalise using the saved stats (computed during training)
     mean_t = torch.from_numpy(norm_stats["mean"]).float()
     std_t = torch.from_numpy(norm_stats["std"]).float()
     pred_dbm = denormalize(all_pred, mean_t, std_t).numpy()

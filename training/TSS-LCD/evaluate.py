@@ -1,3 +1,12 @@
+"""
+Evaluation script for the full TSS-LCD pipeline.
+
+Loads trained LSE, LSD, TSS-CC, and diffusion checkpoints, runs the
+complete inference chain (x → cond_z → z_sample → y_hat) on the test
+set, and computes overall / per-horizon / per-node metrics along with
+visualization plots.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -28,6 +37,7 @@ from utils import (
 
 
 def main():
+    """Load all checkpoints, run evaluation on test set, save metrics and plots."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument("--checkpoint", type=str, required=True,
@@ -89,7 +99,7 @@ def main():
         time_embed_dim=model_cfg.get("time_embed_dim", 32),
     ).to(device)
 
-    # Load weights
+    # Load weights from respective checkpoints
     ae_ckpt = load_checkpoint(args.autoencoder_checkpoint, map_location=device)
     enc.load_state_dict(ae_ckpt["enc_state_dict"])
     dec.load_state_dict(ae_ckpt["dec_state_dict"])
@@ -97,6 +107,7 @@ def main():
     diff_ckpt = load_checkpoint(args.checkpoint, map_location=device)
     diffusion.load_state_dict(diff_ckpt["diffusion_state_dict"])
 
+    # TSS-CC may come from its own checkpoint or be embedded in the diffusion ckpt
     if args.tss_checkpoint is not None:
         tss_ckpt = load_checkpoint(args.tss_checkpoint, map_location=device)
         tss_cc.load_state_dict(tss_ckpt["tss_cc_state_dict"])
@@ -128,7 +139,7 @@ def main():
     pred_flat = pred.reshape(B_actual * T_actual, D_actual)
     target_flat = target.reshape(B_actual * T_actual, D_actual)
 
-    # Inverse normalize
+    # Inverse normalize from [0,1] back to dBm
     pred_dbm = normalizer.inverse_transform(pred_flat).reshape(B_actual, T_actual, D_actual)
     target_dbm = normalizer.inverse_transform(target_flat).reshape(B_actual, T_actual, D_actual)
 

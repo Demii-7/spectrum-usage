@@ -1,3 +1,12 @@
+"""
+Training script for Autoformer-CSA / AutoformerVanilla models.
+
+Loads spectrum-usage CSV data, creates train/val/test windows, builds the
+model, runs the training loop with early stopping, and evaluates the best
+checkpoint on the test set.  Metrics, predictions, and diagnostic plots are
+saved to the evaluation directory.
+"""
+
 import os, sys, argparse, json, copy
 import numpy as np
 import torch
@@ -15,6 +24,12 @@ from utils import (
 
 
 class DotDict(dict):
+    """Dictionary subclass that allows attribute-style access (dot notation).
+
+    Enables writing ``cfg.key`` instead of ``cfg["key"]``, which is
+    convenient for passing configuration values to model constructors.
+    """
+
     def __getattr__(self, k):
         try:
             return self[k]
@@ -27,6 +42,15 @@ class DotDict(dict):
 
 
 def build_model(config, device):
+    """Construct model instance from a YAML configuration dict.
+
+    Reads architecture variant (``autoformer_csa`` or ``autoformer``) and
+    model hyper-parameters from *config*, builds a DotDict for the model
+    constructor, and moves the model to *device*.
+
+    Returns:
+        Tuple of (model, model_cfg_dotdict).
+    """
     arch = config.get("architecture", {})
     variant = arch.get("model_variant", "autoformer_csa")
 
@@ -56,6 +80,7 @@ def build_model(config, device):
     })
 
     if variant == "autoformer":
+        # Try local override first, else fall back to upstream Autoformer repo
         if "AUTOFORMER_REPO" in os.environ or os.path.isdir(
             os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "..", "extern", "Autoformer")
         ):
@@ -77,6 +102,11 @@ def build_model(config, device):
 
 
 def main():
+    """Entry point: parse args, load data, train, evaluate, and save results.
+
+    Command-line arguments override corresponding fields in the YAML config.
+    The best checkpoint (by validation loss) is used for test evaluation.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument("--checkpoints-dir", type=str, default=None)
@@ -90,6 +120,7 @@ def main():
     with open(args.config) as f:
         config = yaml.safe_load(f)
 
+    # Allow CLI args to override paths in config
     if args.checkpoints_dir:
         config["paths"]["checkpoints_dir"] = args.checkpoints_dir
     if args.evaluation_dir:
@@ -154,6 +185,7 @@ def main():
     os.makedirs(checkpoints_dir, exist_ok=True)
     os.makedirs(evaluation_dir, exist_ok=True)
 
+    # Save a copy of the config alongside checkpoints for reproducibility
     with open(os.path.join(checkpoints_dir, "config.yaml"), "w") as f:
         yaml.dump(config, f)
 
@@ -168,9 +200,11 @@ def main():
         for seq_x, seq_y in train_loader:
             seq_x, seq_y = seq_x.to(device), seq_y.to(device)
 
+            # Time features are unused (zeros) but required by the embedding layer
             x_mark_enc = torch.zeros(seq_x.shape[0], seq_x.shape[1], 4, device=device)
             x_mark_dec = torch.zeros(seq_y.shape[0], seq_y.shape[1], 4, device=device)
 
+            # Decoder input: first label_len + pred_len steps of ground truth
             dec_input = seq_y[:, :model_cfg.label_len + model_cfg.pred_len, :]
             optimizer.zero_grad()
             output = model(seq_x, x_mark_enc, dec_input, x_mark_dec)
@@ -202,6 +236,7 @@ def main():
         training_log.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss})
         print(f"Epoch {epoch:3d}/{epochs}  Train Loss: {train_loss:.6f}  Val Loss: {val_loss:.6f}")
 
+        # Save checkpoint if validation loss improved, else increment patience
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_epoch = epoch
@@ -217,6 +252,7 @@ def main():
                 print(f"Early stopping at epoch {epoch}")
                 break
 
+    # Always save the final model (may be later used for resuming)
     save_checkpoint(
         os.path.join(checkpoints_dir, "last_model.pt"),
         model, optimizer, epoch, stats, config,
@@ -230,6 +266,7 @@ def main():
 
     if test_loader:
         print("Running test evaluation...")
+        # Reload the best checkpoint for test evaluation
         model.load_state_dict(
             torch.load(os.path.join(checkpoints_dir, "best_model.pt"), map_location=device, weights_only=False)["model_state_dict"],
         )
@@ -249,11 +286,13 @@ def main():
         all_pred = torch.cat(all_pred, dim=0)
         all_true = torch.cat(all_true, dim=0)
 
+        # Denormalise predictions back to original dBm scale
         mean_t = torch.from_numpy(stats["mean"]).float()
         std_t = torch.from_numpy(stats["std"]).float()
         pred_dbm = denormalize(all_pred, mean_t, std_t).numpy()
         true_dbm = denormalize(all_true, mean_t, std_t).numpy()
 
+        # Compute multi-granularity metrics
         n_nodes = len(data_cfg.get("node_names", ["CC2"]))
         bins_per_node = data_cfg.get("bins_per_node", data_cfg["n_features"] // n_nodes)
         node_names = data_cfg.get("node_names", [f"Node{i}" for i in range(n_nodes)])
@@ -267,6 +306,7 @@ def main():
         metrics.update(per_horizon)
         metrics.update(per_node)
 
+        # Additional metrics at specific forecast horizons
         eval_horizons = eval_cfg.get("eval_horizons", [1, 3, 6, 12])
         for h in eval_horizons:
             if h <= all_pred.shape[1]:
@@ -277,12 +317,14 @@ def main():
 
         save_metrics_json(metrics, os.path.join(evaluation_dir, "metrics.json"))
 
+        # Save flat predictions and ground truth as CSV
         B, T_out, D = pred_dbm.shape
         pred_flat = pred_dbm.reshape(-1, D)
         true_flat = true_dbm.reshape(-1, D)
         save_csv(pred_flat, os.path.join(evaluation_dir, "predictions.csv"))
         save_csv(true_flat, os.path.join(evaluation_dir, "ground_truth.csv"))
 
+        # Reshape to (time, node, bin) for per-node visualisation
         pred_3d = pred_dbm.reshape(B * T_out, n_nodes, bins_per_node)
         true_3d = true_dbm.reshape(B * T_out, n_nodes, bins_per_node)
 
@@ -293,6 +335,7 @@ def main():
                 os.path.join(evaluation_dir, f"spectrogram_{node_name}.png"),
             )
 
+        # Aggregate across all nodes for overall error heatmap
         all_nodes_pred = pred_3d.reshape(-1, bins_per_node * n_nodes)
         all_nodes_true = true_3d.reshape(-1, bins_per_node * n_nodes)
         plot_error_analysis(all_nodes_pred, all_nodes_true, os.path.join(evaluation_dir, "error_analysis.png"))

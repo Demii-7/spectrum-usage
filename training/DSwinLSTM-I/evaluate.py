@@ -1,3 +1,11 @@
+"""
+Evaluation script for the DSwinLSTM-I spectrum prediction model.
+
+Loads a trained checkpoint, runs inference on the test set, computes
+metrics (RMSE, MAE, R2, NRMSE), and generates visualizations including
+spectrogram comparisons and error analysis plots.
+"""
+
 import os
 import sys
 import argparse
@@ -19,6 +27,16 @@ from model import DSwinLSTM_I
 
 @torch.no_grad()
 def evaluate(model, loader, device):
+    """Run the model in evaluation mode over a DataLoader and collect predictions.
+
+    Args:
+        model: Trained DSwinLSTM-I model.
+        loader: DataLoader for evaluation.
+        device: Torch device.
+
+    Returns:
+        Tuple of (predictions, targets) tensors with shape (B, T_out, C, H, W).
+    """
     model.eval()
     all_pred = []
     all_target = []
@@ -70,6 +88,7 @@ def main():
     target_flat = target_np.reshape(B, T_out, -1)
     pred_flat = pred_np.reshape(B, T_out, -1)
 
+    # Denormalize from [-1,1] back to original dBm scale for interpretability
     target_dbm = denormalize(target_np, stats)
     pred_dbm = denormalize(pred_np, stats)
     target_dbm_flat = target_dbm.reshape(B, T_out, -1)

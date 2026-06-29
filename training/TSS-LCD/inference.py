@@ -1,3 +1,11 @@
+"""
+Standalone inference script for TSS-LCD.
+
+Loads trained checkpoints and runs the full prediction pipeline on a
+given CSV file (or the path from config), saving results as a .npy
+array of shape (num_windows, T_out, L*F) in dBm units.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -17,6 +25,7 @@ from utils import load_config, set_seed, get_device, load_checkpoint
 
 
 def main():
+    """Load checkpoints, build windows from CSV, run inference, save predictions."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument("--checkpoint", type=str, required=True,
@@ -42,7 +51,7 @@ def main():
     L = data_cfg["n_nodes"]
     F = data_cfg["n_bins_per_node"]
 
-    # Load data
+    # Load data from CSV (either explicit --input_csv or config path)
     csv_path = args.input_csv or data_cfg["dataset_path"]
     data = load_csv_numpy(
         csv_path, data_cfg["n_nodes"], data_cfg["n_bins_per_node"],
@@ -111,6 +120,7 @@ def main():
     diff_ckpt = load_checkpoint(args.checkpoint, map_location=device)
     diffusion.load_state_dict(diff_ckpt["diffusion_state_dict"])
 
+    # TSS-CC weights from its own checkpoint or embedded in diffusion ckpt
     if args.tss_checkpoint is not None:
         tss_ckpt = load_checkpoint(args.tss_checkpoint, map_location=device)
         tss_cc.load_state_dict(tss_ckpt["tss_cc_state_dict"])
@@ -125,6 +135,7 @@ def main():
     X_tensor = torch.from_numpy(X).float().to(device)
     all_preds = []
 
+    # Process in mini-batches to avoid OOM on large inputs
     with torch.no_grad():
         for i in range(0, len(X_tensor), 32):
             batch = X_tensor[i:i + 32]

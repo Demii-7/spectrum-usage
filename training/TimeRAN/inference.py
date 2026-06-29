@@ -1,3 +1,10 @@
+"""Inference script for running a trained TimeRAN model on arbitrary CSV data.
+
+Loads a checkpoint, runs a sliding-window forecast over the input CSV, and
+saves the flattened predictions.  Supports on-the-fly z-score denormalization
+if the checkpoint contains training-set statistics.
+"""
+
 import argparse
 from pathlib import Path
 
@@ -11,6 +18,7 @@ from utils import denormalize, get_device, load_checkpoint
 from momentfm import MOMENTPipeline
 
 
+# Mapping from user-facing size labels to HuggingFace Hub model identifiers.
 VARIANT_TO_MODEL = {
     "small": "AutonLab/MOMENT-1-small",
     "base": "AutonLab/MOMENT-1-base",
@@ -20,12 +28,27 @@ VARIANT_TO_MODEL = {
 
 @torch.no_grad()
 def predict(model, data: np.ndarray, t_in: int, t_out: int, stride: int, device: torch.device):
+    """Run the model over a sliding window of the input data.
+
+    Args:
+        model: The forecasting model in eval mode.
+        data: Input time-series of shape (T, C).
+        t_in: Number of input time steps per window.
+        t_out: Forecast horizon per window.
+        stride: Step between consecutive window starts.
+        device: Target torch device.
+
+    Returns:
+        Predictions array of shape (num_windows, C, t_out), or an empty array
+        if the input is too short for even one window.
+    """
     model.eval()
     T, C = data.shape
     predictions = []
 
     for start in range(0, T - t_in + 1, stride):
         window = data[start : start + t_in]
+        # Add batch dimension and transpose to (1, C, t_in).
         x = torch.as_tensor(window.T, dtype=torch.float32).unsqueeze(0).to(device)
         input_mask = torch.ones(1, t_in, device=device)
 
@@ -69,6 +92,7 @@ def main():
     T, C = data.shape
     print(f"Input shape: {data.shape}")
 
+    # Apply the same normalization that was used during training.
     if normalization == "train_zscore" and norm_stats:
         data = (data - norm_stats["mean"]) / norm_stats["std"]
 
@@ -91,9 +115,11 @@ def main():
 
     pred = predict(model, data, t_in, t_out, stride, device)
 
+    # Denormalise predictions back to the original scale for saved output.
     if normalization == "train_zscore" and norm_stats:
         pred = denormalize(pred, norm_stats["mean"], norm_stats["std"])
 
+    # Flatten to (windows * horizon, channels) for CSV export.
     B, C, H = pred.shape
     flat_pred = pred.transpose(0, 2, 1).reshape(B * H, C)
 

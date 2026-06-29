@@ -1,37 +1,62 @@
+"""
+Dataset loading, preprocessing, and splitting for STS-PredNet.
+
+Provides utilities to load raw CSV spectrograms, reshape to 3D tensor
+(nodes x frequency bins), normalize using minmax or z-score, split data
+chronologically or randomly, and build PyTorch Datasets with closeness /
+period / trend input branches.
+"""
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 
 
 def load_csv(csv_path):
+    """Load a CSV file as a float32 numpy array (rows = time steps, cols = features)."""
     return np.loadtxt(csv_path, delimiter=",").astype(np.float32)
 
 
 def reshape_to_3d(arr, n_nodes, bins_per_node):
+    """Reshape flat 2D array into (time, n_nodes, bins_per_node)."""
     return arr.reshape(-1, n_nodes, bins_per_node)
 
 
 def compute_minmax_stats(data_3d):
+    """Compute per-location min and max for minmax normalization."""
     dmin = data_3d.min(axis=0, keepdims=True)
     dmax = data_3d.max(axis=0, keepdims=True)
     return dmin.astype(np.float32), dmax.astype(np.float32)
 
 
 def minmax_neg1_pos1(data_3d, dmin, dmax):
+    """Normalize data to [-1, 1] range using precomputed min/max."""
     eps = 1e-8
     return (2.0 * (data_3d - dmin) / (dmax - dmin + eps) - 1.0).astype(np.float32)
 
 
 def denormalize(data, dmin, dmax):
+    """Reverse [-1, 1] normalization back to original scale."""
     eps = 1e-8
     return 0.5 * (data + 1.0) * (dmax - dmin + eps) + dmin
 
 
 def zscore(data_3d, mean, std):
+    """Standardize data to zero mean and unit variance."""
     return ((data_3d - mean) / (std + 1e-8)).astype(np.float32)
 
 
 def split_indices(n_total, train_ratio, val_ratio, chronological=True):
+    """Partition sample indices into train/val/test splits.
+
+    Args:
+        n_total: Total number of samples.
+        train_ratio: Fraction for training.
+        val_ratio: Fraction for validation.
+        chronological: If True, use sequential split preserving time order.
+
+    Returns:
+        Tuple of (train_idx, val_idx, test_idx) lists.
+    """
     if n_total <= 0:
         return [], [], []
     if chronological:
@@ -41,6 +66,7 @@ def split_indices(n_total, train_ratio, val_ratio, chronological=True):
         val_idx = list(range(n_train, n_train + n_val))
         test_idx = list(range(n_train + n_val, n_total))
     else:
+        # Random permutation with fixed seed for reproducibility
         perm = np.random.RandomState(42).permutation(n_total)
         n_train = int(n_total * train_ratio)
         n_val = int(n_total * val_ratio)
@@ -51,6 +77,14 @@ def split_indices(n_total, train_ratio, val_ratio, chronological=True):
 
 
 class STSPredNetDataset(Dataset):
+    """PyTorch Dataset for spectrum prediction with temporal branches.
+
+    For each target time step, constructs:
+      - closeness:  contiguous past frames up to 'lc' steps before the prediction point
+      - period:     frames sampled with 'period_interval' spacing (e.g., daily pattern)
+      - trend:      frames sampled with 'trend_interval' spacing (e.g., weekly pattern)
+    """
+
     def __init__(self, data_3d, target_indices,
                  use_closeness, use_period, use_trend,
                  lc, lp, lq, period_interval, trend_interval,
@@ -75,12 +109,14 @@ class STSPredNetDataset(Dataset):
         t = target_idx - self.prediction_offset
         result = {"target_idx": target_idx, "t": t}
 
+        # Contiguous closeness window: lc frames ending at time t
         if self.use_closeness:
             c_start = t - self.lc + 1
             c_seq = self.data[c_start:t + 1]
             c_seq = c_seq.unsqueeze(1)
             result["closeness"] = c_seq
 
+        # Period branch: frames spaced by period_interval (e.g. daily pattern)
         if self.use_period:
             p_indices = [target_idx - i * self.period_interval
                          for i in range(self.lp, 0, -1)]
@@ -88,6 +124,7 @@ class STSPredNetDataset(Dataset):
             p_seq = p_seq.unsqueeze(1)
             result["period"] = p_seq
 
+        # Trend branch: frames spaced by trend_interval (e.g. weekly pattern)
         if self.use_trend:
             q_indices = [target_idx - i * self.trend_interval
                          for i in range(self.lq, 0, -1)]
@@ -104,6 +141,11 @@ class STSPredNetDataset(Dataset):
 def generate_target_indices(total_len, prediction_offset,
                             use_closeness, use_period, use_trend,
                             lc, lp, lq, period_interval, trend_interval):
+    """Return indices for which all requested temporal branches have enough history.
+
+    Filters out target positions near the start of the time series where
+    the required look-back windows would exceed the available data.
+    """
     indices = []
     for target_idx in range(prediction_offset, total_len):
         t = target_idx - prediction_offset
@@ -123,6 +165,11 @@ def generate_target_indices(total_len, prediction_offset,
 
 
 def collate_branch_samples(batch):
+    """Custom collation for branch-structured samples.
+
+    Stack sequence tensors along the batch dimension while keeping
+    scalar indices as 1D tensors.
+    """
     keys = batch[0].keys()
     out = {}
     for k in keys:
@@ -136,6 +183,17 @@ def collate_branch_samples(batch):
 
 
 def create_datasets(csv_path, config):
+    """Load, normalize, split, and wrap data into train/val/test datasets.
+
+    Args:
+        csv_path: Path to raw CSV file.
+        config: Full configuration dictionary.
+
+    Returns:
+        Tuple (train_ds, val_ds, test_ds, stats) where each dataset is either
+        an STSPredNetDataset or None if the split has no samples, and stats
+        holds the normalization parameters for later denormalization.
+    """
     dcfg = config["data"]
     pcfg = config["preprocessing"]
     scfg = config["splits"]
@@ -157,6 +215,7 @@ def create_datasets(csv_path, config):
     trend_interval = bcfg["trend_interval"]
     prediction_offset = bcfg.get("prediction_offset", 1)
 
+    # Optional sub-sampling stride within each split
     train_stride = wcfg.get("train_stride", 1)
     val_stride = wcfg.get("val_stride", 1)
     test_stride = wcfg.get("test_stride", 1)
@@ -164,6 +223,7 @@ def create_datasets(csv_path, config):
     raw = load_csv(csv_path)
     data_3d = reshape_to_3d(raw, n_nodes, bins_per_node)
 
+    # Determine which time indices are valid (enough history for all branches)
     all_targets = generate_target_indices(
         len(data_3d), prediction_offset,
         use_c, use_p, use_t,
@@ -176,10 +236,12 @@ def create_datasets(csv_path, config):
         scfg.get("chronological_split", True),
     )
 
+    # Apply stride to reduce temporal density of each split
     train_targets = [all_targets[i] for i in train_idx_list][::train_stride]
     val_targets = [all_targets[i] for i in val_idx_list][::val_stride]
     test_targets = [all_targets[i] for i in test_idx_list][::test_stride]
 
+    # Normalize using either minmax [-1,1] or z-score
     if normalization == "minmax_neg1_pos1":
         if fit_on_train_only and train_targets:
             train_data_end = max(train_targets) + 1

@@ -2,16 +2,24 @@
 Dataset loading, normalization, and PyTorch Dataset creation for spectrum data.
 
 This module handles:
-- Reading raw CSV spectrum traces
-- Reshaping flat arrays into 3D tensors (time × nodes × frequency bins)
+- Reading raw CSV spectrum traces (CSV mode)
+- Loading pre-interpolated .npz map data (interpolated_map mode)
 - Computing normalization statistics (z-score or min-max)
 - Creating train/val/test PyTorch Datasets with sliding-window sequences
 
 Data shape conventions:
+
+CSV mode:
 - Raw CSV: (total_time_steps, n_nodes * n_bins)
 - Reshaped 3D: (total_time_steps, n_nodes, n_bins)
 - Dataset sample x: (t_in, 1, n_nodes, n_bins)  -- model input sequence
 - Dataset sample y: (t_out, 1, n_nodes, n_bins) -- target sequence
+
+Interpolated-map mode:
+- Raw NPZ: (T, H, W, F)  -- time, grid_y, grid_x, freq/channel
+- After transpose: (T, F, H, W) -- time, channel, grid_y, grid_x
+- Dataset sample x: (t_in, F, H, W)
+- Dataset sample y: (t_out, F, H, W)
 """
 
 import numpy as np
@@ -50,12 +58,62 @@ class SpectrumDataset(Dataset):
             y: Target sequence, shape (t_out, 1, n_nodes, n_bins).
         """
         i = self.indices[idx]
+        # Slice input window: [i : i + t_in] and target window immediately following.
         x = self.data[i : i + self.t_in]
         y = self.data[i + self.t_in : i + self.t_in + self.t_out]
-        # Add a channel dimension (C=1) and swap so time is dim 0, channel is dim 1.
+        # Unsqueeze adds a channel dimension at dim 0, then transpose(0,1) moves
+        # it to dim 1, yielding (T, C=1, n_nodes, n_bins) as expected by the model.
         x = x.unsqueeze(0).transpose(0, 1)
         y = y.unsqueeze(0).transpose(0, 1)
         return x, y
+
+
+class InterpolatedMapDataset(Dataset):
+    """PyTorch Dataset for pre-interpolated spectrogram maps stored as NPZ archives.
+
+    The NPZ file contains a 4D array with shape (T, H, W, F) where:
+    - T: number of time steps (minutes)
+    - H: spatial grid height
+    - W: spatial grid width
+    - F: number of frequency channels
+
+    After loading and transposing, the internal shape is (T, F, H, W).
+    Each sample yields:
+        x: (t_in, F, H, W)  -- input sequence
+        y: (t_out, F, H, W) -- target sequence
+    """
+
+    def __init__(self, data_4d, t_in, t_out, start_indices):
+        """
+        Args:
+            data_4d: Normalized map data, shape (T, F, H, W).
+            t_in: Number of input time steps per sample.
+            t_out: Number of target time steps per sample.
+            start_indices: List of time indices marking the start of each window.
+        """
+        self.data = torch.from_numpy(data_4d).float()
+        self.t_in = t_in
+        self.t_out = t_out
+        self.indices = start_indices
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, idx):
+        i = self.indices[idx]
+        x = self.data[i : i + self.t_in]
+        y = self.data[i + self.t_in : i + self.t_in + self.t_out]
+        return x, y
+
+
+def load_map_npz(npz_path, map_key):
+    """Load an interpolated map from a .npz file.
+
+    Expected raw shape: (T, H, W, F).
+    Returns array transposed to (T, F, H, W) so that F maps to the channel dimension.
+    """
+    data = np.load(npz_path)[map_key].astype(np.float32)
+    return data.transpose(0, 3, 1, 2)
 
 
 def load_csv(csv_path):
@@ -76,6 +134,23 @@ def reshape_to_3d(arr, n_nodes, n_bins):
     from all nodes; this reverses that flattening.
     """
     return arr.reshape(-1, n_nodes, n_bins)
+
+
+def compute_norm_stats_freq(data_4d):
+    """Compute per-frequency-channel mean and std, broadcastable as (F, 1, 1).
+
+    Args:
+        data_4d: array of shape (T, F, H, W).
+
+    Returns:
+        mean: (F, 1, 1) float32.
+        std:  (F, 1, 1) float32, floor at 1e-8.
+    """
+    axes = (0, 2, 3)
+    mean = np.mean(data_4d, axis=axes, keepdims=True).astype(np.float32)
+    std = np.std(data_4d, axis=axes, keepdims=True).astype(np.float32)
+    std = np.where(std < 1e-8, 1e-8, std)
+    return mean, std
 
 
 def compute_norm_stats(data_3d):
@@ -203,7 +278,9 @@ def create_datasets(csv_path, n_nodes, n_bins, t_in, t_out, stride=1,
     val_starts = _make_windows(len(val_range), t_in, t_out, val_stride)
     test_starts = _make_windows(len(test_range), t_in, t_out, test_stride)
 
-    # Create Datasets, translating window start offsets from split-relative to absolute indices.
+    # Create Datasets: translate window start offsets from split-relative to absolute indices.
+    # e.g., if val_range = [100, 101, ...], a window starting at offset 0 in val_range
+    # corresponds to absolute index 100 in data_norm.
     train_ds = SpectrumDataset(data_norm, t_in, t_out,
                                [train_range[s] for s in train_starts]) if train_starts else None
     val_ds = SpectrumDataset(data_norm, t_in, t_out,
@@ -212,4 +289,56 @@ def create_datasets(csv_path, n_nodes, n_bins, t_in, t_out, stride=1,
                               [test_range[s] for s in test_starts]) if test_starts else None
 
     stats = {"mean": mean, "std": std, "n_nodes": n_nodes, "n_bins": n_bins}
+    return train_ds, val_ds, test_ds, stats
+
+
+def create_interpolated_map_datasets(map_path, map_key, t_in, t_out, stride=1,
+                                     train_stride=None, val_stride=None, test_stride=None,
+                                     train_ratio=0.8, val_ratio=0.1, chronological=True,
+                                     normalization="zscore", fit_on_train_only=True):
+    """Full pipeline for interpolated-map mode: load NPZ, normalize, split, create Datasets.
+
+    Returns:
+        train_ds, val_ds, test_ds: InterpolatedMapDataset instances (may be None).
+        stats: dict with keys "mean", "std", "n_freq", "grid_h", "grid_w".
+    """
+    train_stride = stride if train_stride is None else train_stride
+    val_stride = stride if val_stride is None else val_stride
+    test_stride = stride if test_stride is None else test_stride
+
+    data_4d = load_map_npz(map_path, map_key)
+    T, F, H, W = data_4d.shape
+
+    # Compute per-frequency normalization stats on training portion only to prevent leakage.
+    if fit_on_train_only:
+        n_train_raw = int(T * train_ratio)
+        train_segment_end = n_train_raw
+        train_segment = data_4d[:train_segment_end] if train_segment_end > 0 else data_4d[:1]
+        mean, std = compute_norm_stats_freq(train_segment)
+    else:
+        mean, std = compute_norm_stats_freq(data_4d)
+
+    if normalization == "zscore":
+        data_norm = zscore(data_4d, mean, std)
+    else:
+        data_norm = data_4d.astype(np.float32)
+        mean = np.zeros((1, F, 1, 1), dtype=np.float32)
+        std = np.ones((1, F, 1, 1), dtype=np.float32)
+
+    train_range, val_range, test_range = _split_time_ranges(
+        T, train_ratio, val_ratio, chronological,
+    )
+
+    train_starts = _make_windows(len(train_range), t_in, t_out, train_stride)
+    val_starts = _make_windows(len(val_range), t_in, t_out, val_stride)
+    test_starts = _make_windows(len(test_range), t_in, t_out, test_stride)
+
+    train_ds = InterpolatedMapDataset(data_norm, t_in, t_out,
+                                      [train_range[s] for s in train_starts]) if train_starts else None
+    val_ds = InterpolatedMapDataset(data_norm, t_in, t_out,
+                                    [val_range[s] for s in val_starts]) if val_starts else None
+    test_ds = InterpolatedMapDataset(data_norm, t_in, t_out,
+                                     [test_range[s] for s in test_starts]) if test_starts else None
+
+    stats = {"mean": mean, "std": std, "n_freq": F, "grid_h": H, "grid_w": W}
     return train_ds, val_ds, test_ds, stats

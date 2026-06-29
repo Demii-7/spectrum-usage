@@ -1,3 +1,11 @@
+"""
+Stage 1 training: Latent Space Autoencoder (LSE + LSD).
+
+Trains the Convolutional autoencoder that maps future spectrogram slices
+to/from a compact latent representation. The trained encoder is frozen
+in later stages to provide latent targets for the conditioner.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -14,6 +22,19 @@ from utils import load_config, set_seed, get_device, save_checkpoint
 
 
 def train_epoch(enc, dec, loader, optimizer, device, clip):
+    """Run one training epoch over the autoencoder.
+
+    Args:
+        enc: LatentSpaceEncoder.
+        dec: LatentSpaceDecoder.
+        loader: DataLoader for training.
+        optimizer: Optimizer for both encoder and decoder.
+        device: torch device.
+        clip: max gradient norm (0 = no clipping).
+
+    Returns:
+        Average MSE loss over the epoch.
+    """
     enc.train()
     dec.train()
     total_loss = 0.0
@@ -34,6 +55,16 @@ def train_epoch(enc, dec, loader, optimizer, device, clip):
 
 
 def validate(enc, dec, loader, device):
+    """Compute validation MSE for the autoencoder.
+
+    Args:
+        enc, dec: autoencoder modules.
+        loader: DataLoader for validation.
+        device: torch device.
+
+    Returns:
+        Average MSE loss over the validation set.
+    """
     enc.eval()
     dec.eval()
     total_loss = 0.0
@@ -48,6 +79,7 @@ def validate(enc, dec, loader, device):
 
 
 def main():
+    """Entry point: parse args, build autoencoder, train & save best checkpoint."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True, help="Path to config YAML")
     args = parser.parse_args()
@@ -96,6 +128,7 @@ def main():
         train_loss = train_epoch(enc, dec, train_loader, optimizer, device, clip)
         val_loss = validate(enc, dec, val_loader, device)
         print(f"[AE] Epoch {epoch:3d}/{epochs}  train={train_loss:.6f}  val={val_loss:.6f}")
+        # Save checkpoint only when validation loss improves
         if val_loss < best_val:
             best_val = val_loss
             save_checkpoint(ckpt_dir / "best_autoencoder.pt", {
