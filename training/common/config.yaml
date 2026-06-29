@@ -72,6 +72,23 @@ stsprednet:
     kernel_size: [1, 3]
     output_activation: tanh
     fusion_weight_shape: per_location
+    # Output channels for the PredRNN 1x1 output projection.
+    #   1        — single-channel CSV mode (default, backward-compatible)
+    #   >1       — multi-channel map mode (e.g., 200 for (F, H, W) maps)
+    output_channels: 1
+  # Interpolated-map input mode (alternative to the CSV-based pipeline).
+  # Set enabled: true to use pre-interpolated .npz grid maps instead of
+  # per-chunk AERPAW data.  shape: (T, H, W, F) -> (T, F, H, W).
+  interpolated_map:
+    enabled: false
+    map_path: "evaluation/interpolated_maps/idw_ames_curtiss_600_800.npz"
+    map_key: "map_db"
+    # Temporal overrides for shorter map-mode datasets (~244 timesteps).
+    # The default CSV params (lc=36, period_interval=1440) are too large.
+    temporal_overrides:
+      lc: 6
+      lp: 2
+      period_interval: 6
 
 timeran:
   batch_size: 1

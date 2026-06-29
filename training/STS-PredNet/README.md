@@ -292,6 +292,10 @@ All STS-PredNet settings are under `stsprednet:` in `training/common/config.yaml
 | `model.output_activation` | tanh | Output activation |
 | `model.fusion_weight_shape` | per_location | Fusion weight shape |
 | `model.output_channels` | 1 | PredRNN output channels (1 for single-channel CSV, >1 for multi-channel maps) |
+| `interpolated_map.enabled` | false | Enable interpolated .npz map input mode |
+| `interpolated_map.map_path` | — | Path to .npz file with grid map data |
+| `interpolated_map.map_key` | map_db | Key inside .npz for the 4D array |
+| `interpolated_map.temporal_overrides` | — | Override lc/lp/period_interval for short map datasets |
 
 ---
 
