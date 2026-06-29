@@ -82,6 +82,12 @@ model:
   fc_hidden_channels: 0
   # FC layer intermediate kernel size (only used if fc_hidden_channels > 0)
   fc_kernel_size: [3, 3]
+  # Activation for ConvLSTM cell candidate (g) and output (h = o * activation(c)).
+  # Options: relu, tanh, sigmoid, gelu, leaky_relu, elu
+  cell_activation: "relu"
+  # Activation for the optional FC intermediate layer (only used if fc_hidden_channels > 0).
+  # Options: relu, tanh, sigmoid, gelu, leaky_relu, elu
+  fc_intermediate_activation: "relu"
 
 training:
   # Batch size

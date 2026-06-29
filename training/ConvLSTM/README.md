@@ -223,6 +223,8 @@ All hyperparameters are in `config.yaml`. Key settings:
 | Model | `decoder_lstm_hidden` | 128 | Regular LSTM hidden size in decoder |
 | Model | `fc_hidden_channels` | 0 | FC intermediate channels (0 = single 1×1 Conv2d; >0 enables 2-layer MLP) |
 | Model | `fc_kernel_size` | [3,3] | FC intermediate kernel (only if `fc_hidden_channels > 0`) |
+| Model | `cell_activation` | `relu` | ConvLSTM cell activation (g candidate and h = o·activation(c)). Options: `relu`, `tanh`, `sigmoid`, `gelu`, `leaky_relu`, `elu` |
+| Model | `fc_intermediate_activation` | `relu` | Activation for the optional FC intermediate layer (only if `fc_hidden_channels > 0`). Same options |
 | Training | `batch_size` | 32 | Mini-batch size |
 | Training | `epochs` | 100 | Max training epochs |
 | Training | `learning_rate` | 0.0002 | Initial learning rate |
@@ -475,8 +477,8 @@ Output: (B, T_out, C, H, W)
 | Padding | `(1, 1)` (same convolution, preserves H×W) |
 | Bias | True |
 | Activation (gates) | Sigmoid |
-| Activation (cell candidate g) | ReLU (per paper §III-A, replaces tanh) |
-| Activation (output H) | ReLU (per paper §III-A, replaces tanh) |
+| Activation (cell candidate g) | Configurable (`cell_activation`; default ReLU per paper §III-A) |
+| Activation (output H) | Configurable (`cell_activation`; default ReLU per paper §III-A) |
 | Output shape | `(B, T_in, 32, H, W)` |
 
 **Role**: Learns low-level spatial-spectral features. The `3×3` kernel captures local correlations between adjacent spatial positions and adjacent spectral bins simultaneously. Padding of 1 preserves the `H×W` spatial dimensions.
@@ -520,8 +522,8 @@ This LSTM layer acts as the memory-capture mechanism referenced in the paper: it
 | Padding | `(0, 0)` |
 | Bias | True |
 | Activation (gates) | Sigmoid |
-| Activation (cell candidate g) | ReLU (per paper §III-A, replaces tanh) |
-| Activation (output H) | ReLU (per paper §III-A, replaces tanh) |
+| Activation (cell candidate g) | Configurable (`cell_activation`; default ReLU per paper §III-A) |
+| Activation (output H) | Configurable (`cell_activation`; default ReLU per paper §III-A) |
 | Dropout | `p = 0.3` (after hidden state, before output) |
 | Batch norm | Layer-wise batch normalization on hidden states |
 | Output shape | `(B, T_out, 32, H, W)` |
@@ -547,29 +549,29 @@ Output: `(B, C, H, W)` — squeezed to `(B, H, W)` in CSV mode.
 | Layer | Type | Input → Output | Kernel | Padding |
 |-------|------|----------------|--------|---------|
 | FC1 | `Conv2d` | 32 → 16 | (3, 3) | (1, 1) |
-| Activation | ReLU | — | — | — |
+| Activation | Configurable (`fc_intermediate_activation`; default ReLU) | — | — | — |
 | FC2 | `Conv2d` | 16 → 1 | (1, 1) | (0, 0) |
 
 This version incorporates local spatial-spectral context (via the 3×3 kernel) before the final projection. Enabled by setting `fc_hidden_channels > 0` in config.yaml.
 
 ### 3.3 ConvLSTM Equations
 
-Each ConvLSTMCell follows the formulation from Shi et al. (2015), modified per paper §III-A to use ReLU instead of tanh for the output and cell candidate activations:
+Each ConvLSTMCell follows the formulation from Shi et al. (2015), with configurable cell candidate and output activations (`cell_activation`, default ReLU per paper §III-A):
 
 ```
 i_t = σ(W_xi ∗ X_t + W_hi ∗ H_{t-1} + b_i)
 f_t = σ(W_xf ∗ X_t + W_hf ∗ H_{t-1} + b_f)
 o_t = σ(W_xo ∗ X_t + W_ho ∗ H_{t-1} + b_o)
-g_t = ReLU(W_xg ∗ X_t + W_hg ∗ H_{t-1} + b_g)
+g_t = activation(W_xg ∗ X_t + W_hg ∗ H_{t-1} + b_g)
 C_t = f_t ⊙ C_{t-1} + i_t ⊙ g_t
-H_t = o_t ⊙ ReLU(C_t)
+H_t = o_t ⊙ activation(C_t)
 ```
 
 where:
 - `∗` = 2D convolution
 - `⊙` = Hadamard (element-wise) product
 - `σ` = sigmoid gate activation
-- `ReLU` = rectified linear unit (output and cell candidate, per paper §III-A)
+- `activation` = configurable function (`cell_activation`; default ReLU per paper §III-A)
 - `i, f, o, g` = input gate, forget gate, output gate, cell candidate
 - `C, H` = cell state, hidden state
 
@@ -790,7 +792,7 @@ Metrics are computed:
 | Encoder layers | 2 ConvLSTM | 2 ConvLSTM | Same |
 | Decoder layers | LSTM + ConvLSTM + FC | LSTM + ConvLSTM + FC (1×1 Conv2d; 2-layer MLP optional) | Same structure; FC details are our interpretation |
 | Input channels | 1 (power per grid point) | 1 (CSV) or n_freq_bins (map) | Map mode uses frequency as channel dimension |
-| Activation | ReLU (output, per §III-A) | ReLU (output) | Same |
+| Activation | ReLU (output, per §III-A) | Configurable (`cell_activation`; default ReLU) | Config-driven; matches paper at default |
 | Optimizer | NADAM | Adam | NADAM not in standard PyTorch |
 | Framework | R + TensorFlow | Python + PyTorch | Our stack |
 
