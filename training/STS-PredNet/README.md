@@ -61,13 +61,15 @@ python3 training/STS-PredNet/inference.py \
 
 ## Scripts Reference
 
-### `dataset.py` — Load and prepare AERPAW spectrum data
+### `dataset.py` — Load and prepare spectrum data (CSV or interpolated map)
 
 | Responsibility | Description |
 |----------------|-------------|
 | Load CSV | Read `(T, 750)` raw dBm values |
-| Reshape | Convert to `(T, 3, 250)` spectrum maps |
-| Normalize | Min-max normalization to `[-1, 1]` (fit on training split) |
+| Load map | Read `.npz` grid, transpose `(T, H, W, F)` → `(T, F, H, W)` |
+| NaN handling | Drop fully-NaN timesteps, nearest-neighbour fill, per-freq mean fill |
+| Reshape | Convert CSV to `(T, 3, 250)` spectrum maps |
+| Normalize | Min-max or per-frequency z-score (fit on training split) |
 | Split | Chronological train/val/test split |
 | Generate branches | Sliding-window construction of closeness, period, trend sequences |
 | Batch | Yield `(S_c, S_p, S_q, target)` tuples with configurable branch usage |
@@ -197,6 +199,10 @@ See `config.yaml` for the full configuration. Key fields:
 
 | Section | Field | Default | Description |
 |---------|-------|---------|-------------|
+| `data` | `format` | `csv` | Data source: `"csv"` or `"interpolated_map"` |
+| `data` | `map_path` | — | Path to `.npz` file in map mode |
+| `data` | `map_key` | `map_db` | Key inside `.npz` for the map array |
+| `data` | `temporal_overrides` | — | Map-mode overrides for `lc`, `lp`, `period_interval` |
 | `branches` | `use_closeness` | `true` | Enable closeness branch |
 | `branches` | `use_period` | `true` | Enable daily period branch |
 | `branches` | `use_trend` | `false` | Enable weekly trend branch (requires >1 week of data) |
@@ -206,6 +212,8 @@ See `config.yaml` for the full configuration. Key fields:
 | `branches` | `period_interval` | `1440` | Minutes between period samples (1 day at 1-min resolution) |
 | `branches` | `trend_interval` | `10080` | Minutes between trend samples (1 week at 1-min resolution) |
 | `branches` | `share_branch_weights` | `false` | Share PredRNN weights across branches |
+| `model` | `input_channels` | `1` | Channels (1 for CSV, auto-set to `F` for map) |
+| `model` | `map_height` / `map_width` | `3` / `250` | Spatial dims (auto-set to `H`, `W` in map mode) |
 | `model` | `num_layers` | `4` | STS-ConvLSTM layers per branch |
 | `model` | `hidden_dim` | `128` | Hidden dimension per layer |
 | `model` | `kernel_size` | `[3, 3]` | Convolution kernel size |
@@ -271,13 +279,13 @@ For model input, add a channel dimension:
 
 where:
 
-| Dim | Value | Meaning |
-|-----|-------|---------|
-| B | batch size | Number of samples |
-| T_branch | lc / lp / lq | Branch sequence length |
-| C | 1 | Input channel (power) |
-| H | 3 | Spatial nodes |
-| W | 250 | Frequency bins |
+| Dim | Value (CSV) | Value (Map) | Meaning |
+|-----|-------------|-------------|---------|
+| B | batch size | batch size | Number of samples |
+| T_branch | lc / lp / lq | lc / lp / lq | Branch sequence length |
+| C | 1 | 200 | Input channels (power / frequency channels) |
+| H | 3 | 50 | Spatial height (nodes / grid rows) |
+| W | 250 | 50 | Spatial width (frequency bins / grid cols) |
 
 ### 2.3 Temporal Branch Inputs
 
@@ -318,6 +326,37 @@ use_closeness: true
 use_period: true    # feasible with reduced lp (from paper's lp=7)
 use_trend: false    # not feasible (< 1 week of data)
 ```
+
+### 2.4 Interpolated Map Format
+
+The model also accepts pre-interpolated `.npz` grid maps as an alternative to CSV node traces. Switched via `data.format`:
+
+```yaml
+data:
+  format: interpolated_map   # "csv" (default) or "interpolated_map"
+  map_path: evaluation/interpolated_maps/idw_ames_curtiss_600_800.npz
+  map_key: map_db
+```
+
+| Step | Shape | Description |
+|------|-------|-------------|
+| Raw `.npz` load | `(T, H, W, F)` | Timesteps × grid rows × grid cols × frequency channels |
+| Transpose | `(T, F, H, W)` | Channels-first for Conv2d consumption |
+| Model input | `(B, T_branch, F, H, W)` | Batch × branch length × freqs × grid |
+
+Default map: `H=50, W=50, F=200` (IDW-interpolated from AERPAW captures). In map mode, `input_channels`, `map_height`, `map_width`, and `kernel_size` are auto-overridden from the data shape.
+
+Map-mode datasets are typically shorter (~244 usable timesteps after NaN dropping). The CSV temporal defaults (`lc=36`, `lp=3`, `period_interval=1440`) are too large, so `temporal_overrides` provides per-format overrides:
+
+```yaml
+data:
+  temporal_overrides:
+    lc: 6
+    lp: 2
+    period_interval: 6
+```
+
+These override `branches.lc`, `branches.lp`, and `branches.period_interval` when `format: interpolated_map`.
 
 ---
 
@@ -403,6 +442,7 @@ The zigzag memory flow works as follows:
 * Layers 1..L-1: receive `M` from the previous layer of the *current* time step (vertical flow)
 * The output is the hidden state `H` of the top layer after processing all input frames
 * The final hidden state is passed through a `1×1` convolution to produce the branch output
+  with shape `(B, C_out, H, W)`, where `C_out = output_channels` (1 for CSV, 200 for map)
 
 The three branches (closeness, period, trend) have the same architecture but independent weights by default. Set `share_branch_weights: true` to share weights across branches.
 
@@ -485,7 +525,9 @@ Spectrogram comparison plots showing predicted vs. ground truth for each node an
 
 ### 5.1 Data Loading
 
-Load the CSV file with `numpy.loadtxt()` or `pandas.read_csv()`. The data has shape `(T, 750)` and is reshaped to `(T, 3, 250)`.
+**CSV mode:** Load the CSV file with `numpy.loadtxt()` or `pandas.read_csv()`. The data has shape `(T, 750)` and is reshaped to `(T, 3, 250)`.
+
+**Map mode:** Load the `.npz` file and transpose from `(T, H, W, F)` to `(T, F, H, W)`. NaNs are handled in three stages (see §9).
 
 ### 5.2 Normalization
 
@@ -500,7 +542,7 @@ Min/max are computed from the training split only to avoid data leakage. Configu
 | Method | Description |
 |--------|-------------|
 | `minmax_neg1_pos1` | Paper default, scales to `[-1, 1]` |
-| `zscore` | Zero-mean unit-variance |
+| `zscore` | Zero-mean unit-variance (per-frequency in map mode with `(1, F, 1, 1)` stats) |
 | `none` | Raw dBm values |
 
 ### 5.3 Train / Validation / Test Split
@@ -620,6 +662,9 @@ MAPE (mean absolute percentage error) is documented as optional because it is un
 | Epochs | 500 | 500 | Same as paper (but configurable with early stopping) |
 | Loss | MSE | MSE | Same as paper |
 | Output activation | tanh | tanh | Same as paper (linear available) |
+| Input source | CSV node traces only | CSV + interpolated `.npz` grids | Support pre-interpolated spatial maps for denser coverage |
+| Output channels | 1 (single power map) | 1 (CSV) or 200 (map) | Map mode predicts per-frequency-channel maps directly |
+| NaN handling | N/A (CSV has no NaN) | 3-stage pipeline | Interpolated maps contain missing cells from partial sensor coverage |
 
 ---
 
@@ -639,7 +684,19 @@ MAPE (mean absolute percentage error) is documented as optional because it is un
 
 ---
 
-## 9. Implementation Notes
+## 9. NaN Handling (Interpolated Map Mode)
+
+The interpolated-map pipeline handles missing entries in three stages:
+
+1. **Drop fully-NaN timesteps** — Any time frame where every `(H, W, F)` cell is NaN is removed entirely.
+2. **Nearest-neighbour fill** — Remaining NaN cells are filled per `(H, W, F)` slice using `scipy.interpolate.NearestNDInterpolator` over valid spatial positions.
+3. **Per-frequency mean fill** — Any cells still NaN after stage 2 (e.g., an entire frequency channel is missing at a timestep) are filled with the per-frequency training-set mean.
+
+Per-frequency z-score normalisation uses stats of shape `(1, F, 1, 1)` broadcast over `(T, C, H, W)`.
+
+---
+
+## 10. Implementation Notes
 
 1. **Paper equations are sufficient.** The original paper provides enough detail for a faithful reconstruction of the cell equations, fusion mechanism, and training procedure.
 

@@ -15,7 +15,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from dataset import create_datasets, collate_branch_samples
+from dataset import create_datasets, create_interpolated_map_datasets, collate_branch_samples
 from stsprednet import STSPredNet
 from utils import (
     set_seed, get_device, compute_metrics, compute_metrics_per_node,
@@ -137,13 +137,32 @@ def main():
 
     dcfg = config["data"]
     tcfg = config["training"]
+    data_format = dcfg.get("format", "csv")
 
-    csv_path = dcfg["dataset_path"]
-    if not os.path.exists(csv_path):
-        csv_path = os.path.join(os.path.dirname(__file__), "..", "..", csv_path)
-
-    print("Loading data...")
-    train_ds, val_ds, test_ds, stats = create_datasets(csv_path, config)
+    if data_format == "interpolated_map":
+        map_path = dcfg["map_path"]
+        if not os.path.exists(map_path):
+            map_path = os.path.join(os.path.dirname(__file__), "..", "..", map_path)
+        print("Loading interpolated map data...")
+        train_ds, val_ds, test_ds, stats = create_interpolated_map_datasets(map_path, config)
+        F, H, W = stats.get("n_freq", 200), stats.get("grid_h", 50), stats.get("grid_w", 50)
+        config["model"]["input_channels"] = F
+        config["model"]["map_height"] = H
+        config["model"]["map_width"] = W
+        config["model"]["kernel_size"] = dcfg.get("kernel_size_map", [3, 3])
+        bcfg = config["branches"]
+        temporal = dcfg.get("temporal_overrides", {})
+        if temporal:
+            bcfg["lc"] = int(temporal.get("lc", bcfg["lc"]))
+            bcfg["lp"] = int(temporal.get("lp", bcfg["lp"]))
+            bcfg["period_interval"] = int(temporal.get("period_interval", bcfg["period_interval"]))
+            print(f"  Temporal overrides: lc={bcfg['lc']}, lp={bcfg['lp']}, period_interval={bcfg['period_interval']}")
+    else:
+        csv_path = dcfg["dataset_path"]
+        if not os.path.exists(csv_path):
+            csv_path = os.path.join(os.path.dirname(__file__), "..", "..", csv_path)
+        print("Loading CSV data...")
+        train_ds, val_ds, test_ds, stats = create_datasets(csv_path, config)
 
     # Build dataloaders; skip if a split has no samples
     train_loader = DataLoader(
@@ -236,9 +255,10 @@ def main():
         print(f"Test R²:   {test_metrics['r2']:.4f}")
 
         node_names = dcfg.get("node_names", None)
-        per_node = compute_metrics_per_node(pred, target, node_names)
-        for k, v in per_node.items():
-            print(f"  {k}: {v:.4f}")
+        if data_format != "interpolated_map" and node_names:
+            per_node = compute_metrics_per_node(pred, target, node_names)
+            for k, v in per_node.items():
+                print(f"  {k}: {v:.4f}")
 
         per_freq = compute_metrics_per_frequency(pred, target)
         freq_rmse = [v for k, v in per_freq.items() if "rmse" in k]

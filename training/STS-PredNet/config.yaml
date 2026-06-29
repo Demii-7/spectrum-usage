@@ -9,11 +9,17 @@
 # =============================================================================
 
 data:
-  # Path to the processed AERPAW CSV (6839 rows × 750 cols, no header, dBm)
+  # Data format: "csv" (AERPAW node-frequency traces) or "interpolated_map" (pre-interpolated .npz grids)
+  format: "csv"
+  # CSV mode: path to the processed AERPAW CSV (6839 rows × 750 cols, no header, dBm)
   dataset_path: "training/data/merged_power_data_sub6GHz_avg_per_minute.csv"
-  # Number of sensor nodes
+  # Interpolated-map mode: path to .npz with pre-interpolated map data
+  map_path: "evaluation/interpolated_maps/idw_ames_curtiss_600_800.npz"
+  # Key inside the .npz file containing the map array
+  map_key: "map_db"
+  # Number of sensor nodes (CSV mode)
   n_nodes: 3
-  # Frequency bins per node
+  # Frequency bins per node (CSV mode)
   bins_per_node: 250
   # Total feature columns (3 nodes × 250 bins)
   n_features: 750

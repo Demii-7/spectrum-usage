@@ -6,6 +6,7 @@ Provides utilities to load raw CSV spectrograms, reshape to 3D tensor
 chronologically or randomly, and build PyTorch Datasets with closeness /
 period / trend input branches.
 """
+import os
 import numpy as np
 import torch
 from torch.utils.data import Dataset
@@ -88,7 +89,7 @@ class STSPredNetDataset(Dataset):
     def __init__(self, data_3d, target_indices,
                  use_closeness, use_period, use_trend,
                  lc, lp, lq, period_interval, trend_interval,
-                 prediction_offset):
+                 prediction_offset, add_channel_dim=True):
         self.data = torch.from_numpy(data_3d).float()
         self.target_indices = target_indices
         self.use_closeness = use_closeness
@@ -100,6 +101,7 @@ class STSPredNetDataset(Dataset):
         self.period_interval = period_interval
         self.trend_interval = trend_interval
         self.prediction_offset = prediction_offset
+        self.add_channel_dim = add_channel_dim
 
     def __len__(self):
         return len(self.target_indices)
@@ -113,7 +115,8 @@ class STSPredNetDataset(Dataset):
         if self.use_closeness:
             c_start = t - self.lc + 1
             c_seq = self.data[c_start:t + 1]
-            c_seq = c_seq.unsqueeze(1)
+            if self.add_channel_dim:
+                c_seq = c_seq.unsqueeze(1)
             result["closeness"] = c_seq
 
         # Period branch: frames spaced by period_interval (e.g. daily pattern)
@@ -121,7 +124,8 @@ class STSPredNetDataset(Dataset):
             p_indices = [target_idx - i * self.period_interval
                          for i in range(self.lp, 0, -1)]
             p_seq = torch.stack([self.data[i] for i in p_indices], dim=0)
-            p_seq = p_seq.unsqueeze(1)
+            if self.add_channel_dim:
+                p_seq = p_seq.unsqueeze(1)
             result["period"] = p_seq
 
         # Trend branch: frames spaced by trend_interval (e.g. weekly pattern)
@@ -129,10 +133,13 @@ class STSPredNetDataset(Dataset):
             q_indices = [target_idx - i * self.trend_interval
                          for i in range(self.lq, 0, -1)]
             q_seq = torch.stack([self.data[i] for i in q_indices], dim=0)
-            q_seq = q_seq.unsqueeze(1)
+            if self.add_channel_dim:
+                q_seq = q_seq.unsqueeze(1)
             result["trend"] = q_seq
 
         target = self.data[target_idx]
+        if self.add_channel_dim:
+            target = target.unsqueeze(0)
         result["target"] = target
 
         return result
@@ -175,11 +182,143 @@ def collate_branch_samples(batch):
     for k in keys:
         if k in ("target_idx", "t"):
             out[k] = torch.tensor([b[k] for b in batch])
-        elif k == "target":
-            out[k] = torch.stack([b[k] for b in batch], dim=0).unsqueeze(1)
         else:
             out[k] = torch.stack([b[k] for b in batch], dim=0)
     return out
+
+
+def load_map_npz(npz_path: str | os.PathLike, map_key: str = "map_db") -> np.ndarray:
+    """Load interpolated map from .npz and transpose to (T, F, H, W).
+
+    Expected raw shape: (T, H, W, F). Returns (T, F, H, W).
+    """
+    data = np.load(npz_path)[map_key].astype(np.float32)
+    return data.transpose(0, 3, 1, 2)
+
+
+def compute_norm_stats_freq(data_4d: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Per-frequency mean/std, broadcastable as (1, F, 1, 1)."""
+    mean = np.mean(data_4d, axis=(0, 2, 3), keepdims=True).astype(np.float32)
+    std = np.std(data_4d, axis=(0, 2, 3), keepdims=True).astype(np.float32)
+    std = np.where(std < 1e-8, 1e-8, std)
+    return mean, std
+
+
+def fill_map_nan(map_4d: np.ndarray, train_ratio: float = 0.8) -> np.ndarray:
+    """Drop fully-NaN timesteps, then fill remaining NaNs per spatial slice."""
+    from scipy.interpolate import NearestNDInterpolator
+    n_time = map_4d.shape[0]
+    fully_nan = np.isnan(map_4d).reshape(n_time, -1).all(axis=1)
+    if fully_nan.any():
+        n_drop = int(fully_nan.sum())
+        print(f"  Dropping {n_drop}/{n_time} fully-NaN timesteps")
+        map_4d = map_4d[~fully_nan]
+        n_time = map_4d.shape[0]
+    for t in range(n_time):
+        for f in range(map_4d.shape[3]):
+            slc = map_4d[t, :, :, f]
+            nan = np.isnan(slc)
+            if nan.any():
+                good = np.argwhere(~nan)
+                bad = np.argwhere(nan)
+                if len(good) > 0:
+                    slc[nan] = NearestNDInterpolator(good, slc[~nan])(bad[:, 0], bad[:, 1])
+    remain = np.isnan(map_4d)
+    if remain.any():
+        train_end = int(n_time * train_ratio)
+        for f in range(map_4d.shape[3]):
+            vals = map_4d[:train_end, :, :, f]
+            v = np.nanmean(vals)
+            map_4d[:, :, :, f][np.isnan(map_4d[:, :, :, f])] = 0.0 if np.isnan(v) else v
+        print(f"  Filled {int(remain.sum())} remaining NaNs with per-frequency train mean")
+    return map_4d
+
+
+def create_interpolated_map_datasets(
+    map_path: str | os.PathLike,
+    config: dict,
+) -> tuple:
+    """Create train/val/test datasets from an interpolated-map .npz file.
+
+    Returns (train_ds, val_ds, test_ds, stats) matching the CSV-mode interface.
+    """
+    dcfg = config["data"]
+    pcfg = config["preprocessing"]
+    scfg = config["splits"]
+    bcfg = config["branches"]
+    wcfg = config.get("windowing", {})
+
+    temporal = dcfg.get("temporal_overrides", {})
+    if temporal:
+        bcfg["lc"] = int(temporal.get("lc", bcfg["lc"]))
+        bcfg["lp"] = int(temporal.get("lp", bcfg["lp"]))
+        bcfg["period_interval"] = int(temporal.get("period_interval", bcfg["period_interval"]))
+
+    use_c = bcfg["use_closeness"]
+    use_p = bcfg["use_period"]
+    use_t = bcfg["use_trend"]
+    lc = bcfg["lc"]
+    lp = bcfg["lp"]
+    lq = bcfg["lq"]
+    period_interval = bcfg["period_interval"]
+    trend_interval = bcfg["trend_interval"]
+    prediction_offset = bcfg.get("prediction_offset", 1)
+
+    train_stride = wcfg.get("train_stride", 1)
+    val_stride = wcfg.get("val_stride", 1)
+    test_stride = wcfg.get("test_stride", 1)
+
+    data_4d = load_map_npz(map_path, dcfg.get("map_key", "map_db"))
+    T, F, H, W = data_4d.shape
+
+    # Fill NaN (operates on (T, H, W, F) layout)
+    data_4d = fill_map_nan(data_4d.transpose(0, 2, 3, 1))
+    T = data_4d.shape[0]
+    data_4d = data_4d.transpose(0, 3, 1, 2)
+
+    # Filter to indices with enough history for all requested branches
+    all_valid = generate_target_indices(
+        len(data_4d), prediction_offset,
+        use_c, use_p, use_t,
+        lc, lp, lq, period_interval, trend_interval,
+    )
+    n_valid = len(all_valid)
+    train_idx_list, val_idx_list, test_idx_list = split_indices(
+        n_valid, scfg["train_ratio"], scfg["val_ratio"],
+        scfg.get("chronological_split", True),
+    )
+
+    train_targets = [all_valid[i] for i in train_idx_list][::train_stride]
+    val_targets = [all_valid[i] for i in val_idx_list][::val_stride]
+    test_targets = [all_valid[i] for i in test_idx_list][::val_stride]
+
+    if pcfg["normalization"] == "zscore":
+        if pcfg["fit_on_train_only"] and train_targets:
+            train_end = max(train_targets) + 1
+            mean, std = compute_norm_stats_freq(data_4d[:train_end])
+        else:
+            mean, std = compute_norm_stats_freq(data_4d)
+        data_norm = zscore(data_4d, mean, std)
+        stats = {"mean": mean, "std": std, "method": "zscore"}
+    else:
+        data_norm = data_4d.astype(np.float32)
+        stats = {"method": "none"}
+
+    stats["n_freq"] = F
+    stats["grid_h"] = H
+    stats["grid_w"] = W
+
+    train_ds = STSPredNetDataset(data_norm, train_targets, use_c, use_p, use_t,
+                                  lc, lp, lq, period_interval, trend_interval,
+                                  prediction_offset, add_channel_dim=False) if train_targets else None
+    val_ds = STSPredNetDataset(data_norm, val_targets, use_c, use_p, use_t,
+                                lc, lp, lq, period_interval, trend_interval,
+                                prediction_offset, add_channel_dim=False) if val_targets else None
+    test_ds = STSPredNetDataset(data_norm, test_targets, use_c, use_p, use_t,
+                                 lc, lp, lq, period_interval, trend_interval,
+                                 prediction_offset, add_channel_dim=False) if test_targets else None
+
+    return train_ds, val_ds, test_ds, stats
 
 
 def create_datasets(csv_path, config):

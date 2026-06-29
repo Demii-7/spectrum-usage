@@ -45,6 +45,7 @@ class STSPredNet(nn.Module):
             "hidden_dim": self.hidden_dim,
             "num_layers": self.num_layers,
             "kernel_size": self.kernel_size,
+            "output_channels": self.input_channels,
         }
 
         if self.share_weights:
