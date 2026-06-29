@@ -5,3 +5,6 @@ __pycache__/
 *.pt
 *.pth
 *.zip
+*.pdf
+training/DeepSPred/FM-S*
+*.xls

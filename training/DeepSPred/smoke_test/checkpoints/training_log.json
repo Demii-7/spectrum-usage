@@ -1,0 +1,17 @@
+[
+  {
+    "epoch": 1,
+    "train_loss": 0.16628387570381165,
+    "val_loss": NaN
+  },
+  {
+    "epoch": 2,
+    "train_loss": 0.16512806713581085,
+    "val_loss": NaN
+  },
+  {
+    "epoch": 3,
+    "train_loss": 0.16277414560317993,
+    "val_loss": NaN
+  }
+]

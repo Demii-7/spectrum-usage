@@ -1,0 +1,49 @@
+data:
+  dataset_path: "training/data/merged_power_data_sub6GHz_avg_per_minute.csv"
+  nodes:
+    CC1: {col_start: 0,   col_end: 250}
+    CC2: {col_start: 250, col_end: 500}
+    LW1: {col_start: 500, col_end: 750}
+  bins_per_node: 250
+
+preprocessing:
+  colormap: "jet"
+  normalization: "minmax"
+
+frames:
+  minutes_per_frame: 256
+  w_pad: 256
+  w_orig: 250
+
+windowing:
+  input_frames: 8
+  stride: 1
+
+split:
+  train_ratio: 0.8
+  val_ratio: 0.1
+
+model:
+  embed_dim: 96
+  depths: [2, 4, 2]
+  num_heads: [4, 8, 16]
+  patch_size: [2, 2, 4]
+  window_size: [2, 2, 4]
+  mlp_ratio: 4.0
+  drop_rate: 0.0
+  attn_drop_rate: 0.0
+  drop_path_rate: 0.1
+
+training:
+  batch_size: 4
+  epochs: 50
+  learning_rate: 0.001
+  weight_decay: 0.05
+  patience: 10
+  seed: 42
+
+device: "auto"
+
+checkpoints:
+  dir: "training/DeepSPred/checkpoints"
+  save_best: true
