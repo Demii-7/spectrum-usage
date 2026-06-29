@@ -146,15 +146,29 @@ class ConvLSTMPredictor(nn.Module):
         super().__init__()
         self.config = config
         c = config["model"]
+        d = config["data"]
         self.input_channels = c.get("input_channels", 1)
-        self.n_nodes = config["data"]["n_nodes"]
-        self.n_bins = config["data"]["n_bins_per_node"]
+        self.n_nodes = d.get("n_nodes", 1)
+        self.n_bins = d.get("n_bins_per_node", 1)
+        self.grid_h = d.get("grid_height", self.n_nodes)
+        self.grid_w = d.get("grid_width", self.n_bins)
+        self.spatial_h = self.grid_h
+        self.spatial_w = self.grid_w
         self.t_in = config["windowing"]["input_sequence_length"]
         self.t_out = config["windowing"]["prediction_horizon"]
         cell_act = c.get("cell_activation", "relu")
         fc_act = c.get("fc_intermediate_activation", "relu")
         self.activation = _get_activation(cell_act)
         self.fc_activation = _get_activation(fc_act)
+
+        enc_input_dim = self.input_channels
+        use_proj = c.get("use_channel_projection", False)
+        if use_proj:
+            proj_dim = c.get("channel_projection_dim", 16)
+            self.channel_proj = nn.Conv2d(self.input_channels, proj_dim, kernel_size=1)
+            enc_input_dim = proj_dim
+        else:
+            self.channel_proj = nn.Identity()
 
         hidden = c["hidden_channels"]
         kernels = [tuple(k) for k in c["kernel_size"]]
@@ -168,7 +182,7 @@ class ConvLSTMPredictor(nn.Module):
         use_bn = c.get("use_batch_norm", False)
 
         self.encoder = ConvLSTM(
-            input_dim=self.input_channels,
+            input_dim=enc_input_dim,
             hidden_dim=hidden,
             kernel_size=kernels,
             num_layers=num_enc,
@@ -178,13 +192,13 @@ class ConvLSTMPredictor(nn.Module):
             activation=self.activation,
         )
 
-        enc_flat_dim = hidden[-1] * self.n_nodes * self.n_bins
+        enc_flat_dim = hidden[-1] * self.spatial_h * self.spatial_w
         self.transfer_lstm = nn.LSTM(
             input_size=enc_flat_dim,
             hidden_size=dec_lstm_hidden,
             batch_first=True,
         )
-        self.transfer_proj = nn.Linear(dec_lstm_hidden, dec_hidden * self.n_nodes * self.n_bins)
+        self.transfer_proj = nn.Linear(dec_lstm_hidden, dec_hidden * self.spatial_h * self.spatial_w)
 
         self.decoder_cell = ConvLSTMCell(
             input_dim=1,
@@ -206,19 +220,26 @@ class ConvLSTMPredictor(nn.Module):
             self.output_head = nn.Conv2d(dec_hidden, 1, kernel_size=1)
 
     def forward(self, x, y_teacher=None, teacher_forcing_ratio=0.0):
+        b, t_in, c_in, h, w = x.shape
+        x_2d = x.reshape(b * t_in, c_in, h, w)
+        x_proj = self.channel_proj(x_2d)
+        _, c_proj, _, _ = x_proj.shape
+        x = x_proj.reshape(b, t_in, c_proj, h, w)
+
         _, enc_states = self.encoder(x)
         h_enc, c_enc = enc_states[0]
-        b = x.size(0)
 
         h_enc_flat = h_enc.reshape(b, 1, -1)
         c_enc_flat = c_enc.reshape(b, 1, -1)
         lstm_out, (h_lstm, c_lstm) = self.transfer_lstm(h_enc_flat)
-        h_dec_init = self.transfer_proj(h_lstm.squeeze(0)).reshape(b, self.decoder_cell.hidden_dim, self.n_nodes, self.n_bins)
-        c_dec_init = self.transfer_proj(c_lstm.squeeze(0)).reshape(b, self.decoder_cell.hidden_dim, self.n_nodes, self.n_bins)
+        h_dec_init = self.transfer_proj(h_lstm.squeeze(0)).reshape(
+            b, self.decoder_cell.hidden_dim, self.spatial_h, self.spatial_w)
+        c_dec_init = self.transfer_proj(c_lstm.squeeze(0)).reshape(
+            b, self.decoder_cell.hidden_dim, self.spatial_h, self.spatial_w)
 
         h_dec, c_dec = h_dec_init, c_dec_init
         outputs = []
-        decoder_input = torch.zeros(b, 1, self.n_nodes, self.n_bins, device=x.device)
+        decoder_input = torch.zeros(b, 1, self.spatial_h, self.spatial_w, device=x.device)
 
         for t in range(self.t_out):
             if y_teacher is not None and torch.rand(1).item() < teacher_forcing_ratio:

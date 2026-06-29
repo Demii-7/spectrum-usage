@@ -277,6 +277,14 @@ All ConvLSTM settings are under `convlstm:` in `training/common/config.yaml`:
 | `model.fc_kernel_size` | [1, 3] | FC kernel (only if fc_hidden_channels > 0) |
 | `model.cell_activation` | `"relu"` | ConvLSTM cell activation (g candidate and h output). Options: `relu`, `tanh`, `sigmoid`, `gelu`, `leaky_relu`, `elu` |
 | `model.fc_intermediate_activation` | `"relu"` | Activation for optional FC intermediate layer (only if fc_hidden_channels > 0). Same options |
+| `model.use_channel_projection` | `false` | Apply 1×1 Conv2d before encoder to reduce channel count (map mode) |
+| `model.channel_projection_dim` | 16 | Target channel count after projection (only if `use_channel_projection: true`) |
+| `interpolated_map.enabled` | `false` | Enable interpolated-map mode |
+| `interpolated_map.map_path` | `"evaluation/...npz"` | Path to .npz with pre-interpolated spatial map |
+| `interpolated_map.map_key` | `"map_db"` | Key inside the .npz |
+| `interpolated_map.n_freq_bins` | 200 | Number of frequency channels (becomes ConvLSTM input channels) |
+| `interpolated_map.grid_height` | 50 | Spatial grid height/rows |
+| `interpolated_map.grid_width` | 50 | Spatial grid width/columns |
 
 ---
 
