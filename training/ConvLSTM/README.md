@@ -135,7 +135,7 @@ Output: (B, 60, 1, 1, 200)
 | Padding | `(0, 1)` | `(0, 0)` |
 | Output shape | `(B, 60, 32, 1, 200)` | `(B, 60, 64, 1, 200)` |
 
-**Activation:** ReLU for output and cell candidate (per paper §III-A, replaces tanh).
+**Activation:** Configurable via `convlstm.model.cell_activation` (default `relu`, per paper §III-A). Options: `relu`, `tanh`, `sigmoid`, `gelu`, `leaky_relu`, `elu`.
 
 ### 3.3 State Transfer — LSTM Bottleneck
 
@@ -152,18 +152,20 @@ This LSTM layer is our interpretation of the paper's "LSTM hidden layer to captu
 
 The decoder generates the output sequence autoregressively. Teacher forcing (default ratio 1.0) feeds ground-truth frames during training.
 
+When `model.fc_hidden_channels > 0`, the output head becomes a two-layer MLP (`Conv2d → Conv2d`) with configurable intermediate activation (`model.fc_intermediate_activation`, default `relu`).
+
 ### 3.5 ConvLSTM Cell Equations
 
 ```
 i_t = σ(W_xi ∗ X_t + W_hi ∗ H_{t-1} + b_i)
 f_t = σ(W_xf ∗ X_t + W_hf ∗ H_{t-1} + b_f)
 o_t = σ(W_xo ∗ X_t + W_ho ∗ H_{t-1} + b_o)
-g_t = ReLU(W_xg ∗ X_t + W_hg ∗ H_{t-1} + b_g)
+g_t = activation(W_xg ∗ X_t + W_hg ∗ H_{t-1} + b_g)
 C_t = f_t ⊙ C_{t-1} + i_t ⊙ g_t
-H_t = o_t ⊙ ReLU(C_t)
+H_t = o_t ⊙ activation(C_t)
 ```
 
-where `∗` = 2D convolution, `⊙` = element-wise product, `σ` = sigmoid.
+where `∗` = 2D convolution, `⊙` = element-wise product, `σ` = sigmoid, `activation` = configurable (`convlstm.model.cell_activation`, default ReLU per paper §III-A).
 
 ---
 
@@ -270,6 +272,8 @@ All ConvLSTM settings are under `convlstm:` in `training/common/config.yaml`:
 | `model.decoder_lstm_hidden` | 128 | LSTM hidden size after encoder |
 | `model.fc_hidden_channels` | 0 | FC intermediate (0 = single 1×1 Conv2d) |
 | `model.fc_kernel_size` | [1, 3] | FC kernel (only if fc_hidden_channels > 0) |
+| `model.cell_activation` | `"relu"` | ConvLSTM cell activation (g candidate and h output). Options: `relu`, `tanh`, `sigmoid`, `gelu`, `leaky_relu`, `elu` |
+| `model.fc_intermediate_activation` | `"relu"` | Activation for optional FC intermediate layer (only if fc_hidden_channels > 0). Same options |
 
 ---
 
@@ -283,7 +287,7 @@ All ConvLSTM settings are under `convlstm:` in `training/common/config.yaml`:
 | Prediction horizon | 50 steps (150 min) | 60 steps (60 min) | Configurable via shared config |
 | Encoder layers | 2 ConvLSTM | 2 ConvLSTM | Same structure |
 | Decoder layers | LSTM + ConvLSTM + FC | LSTM + ConvLSTM + FC (1×1 Conv2d) | Same structure |
-| Activation | ReLU (output, per §III-A) | ReLU (output) | Same |
+| Activation | ReLU (output, per §III-A) | Configurable (`cell_activation`; default ReLU) | Config-driven; matches paper at default |
 | Optimizer | NADAM | Adam | NADAM not in standard PyTorch |
 | Framework | R + TensorFlow | Python + PyTorch | Our stack |
 

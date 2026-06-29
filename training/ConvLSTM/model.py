@@ -2,6 +2,24 @@ import torch
 import torch.nn as nn
 
 
+def _get_activation(name):
+    name = name.lower()
+    if name == "relu":
+        return nn.ReLU()
+    elif name == "tanh":
+        return nn.Tanh()
+    elif name == "sigmoid":
+        return nn.Sigmoid()
+    elif name == "gelu":
+        return nn.GELU()
+    elif name == "leaky_relu":
+        return nn.LeakyReLU()
+    elif name == "elu":
+        return nn.ELU()
+    else:
+        raise ValueError(f"Unsupported activation: {name}")
+
+
 class ConvLSTMCell(nn.Module):
     def __init__(self, input_dim, hidden_dim, kernel_size, bias=True, activation=nn.ReLU()):
         super().__init__()
@@ -133,7 +151,10 @@ class ConvLSTMPredictor(nn.Module):
         self.n_bins = config["data"]["n_bins_per_node"]
         self.t_in = config["windowing"]["input_sequence_length"]
         self.t_out = config["windowing"]["prediction_horizon"]
-        self.activation = nn.ReLU()
+        cell_act = c.get("cell_activation", "relu")
+        fc_act = c.get("fc_intermediate_activation", "relu")
+        self.activation = _get_activation(cell_act)
+        self.fc_activation = _get_activation(fc_act)
 
         hidden = c["hidden_channels"]
         kernels = [tuple(k) for k in c["kernel_size"]]
@@ -178,7 +199,7 @@ class ConvLSTMPredictor(nn.Module):
         if fc_hidden > 0:
             self.output_head = nn.Sequential(
                 nn.Conv2d(dec_hidden, fc_hidden, kernel_size=fc_kernel, padding=(fc_kernel[0] // 2, fc_kernel[1] // 2)),
-                nn.ReLU(),
+                self.fc_activation,
                 nn.Conv2d(fc_hidden, 1, kernel_size=1),
             )
         else:

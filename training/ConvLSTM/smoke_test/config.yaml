@@ -35,6 +35,8 @@ model:
   decoder_lstm_hidden: 128
   fc_hidden_channels: 0
   fc_kernel_size: [3, 3]
+  cell_activation: "relu"
+  fc_intermediate_activation: "relu"
 
 training:
   batch_size: 32
