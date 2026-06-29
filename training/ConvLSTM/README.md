@@ -86,6 +86,9 @@ The integrated pipeline uses `load_chunk()` from `training/common/data.py`. For 
 4. Applies z-score normalization per frequency bin
 5. Splits into train and test sets chronologically
 
+**NaN handling (``clean_interpolated_map`` in ``training/common/data.py``):**
+   When the integrated pipeline eventually supports the pre-interpolated map format (``.npz``), loaded arrays are cleaned before normalization: fully-NaN timesteps are dropped, partial-NaN spatial slices are filled via nearest-neighbor interpolation, and any remaining NaNs are imputed with the per-frequency training-set mean. An assertion guarantees no NaNs enter training.
+
 ### 2.2 Expected Tensor Shapes
 
 ```
