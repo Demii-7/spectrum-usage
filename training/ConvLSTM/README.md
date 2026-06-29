@@ -122,6 +122,7 @@ Imported by `train.py` and `evaluate.py`. Key functions:
 | `InterpolatedMapDataset(data_4d, t_in, t_out, indices)` | PyTorch `Dataset` | Returns `(X, y)` of shape `(T_in, F, H, W)` and `(T_out, F, H, W)` (map mode) |
 | `load_csv(path)` | `ndarray (T, 750)` | Loads CSV via `numpy.loadtxt` |
 | `load_map_npz(path, key)` | `ndarray (T, F, H, W)` | Loads `.npz`, transposes from `(T, H, W, F)` to `(T, F, H, W)` |
+| `clean_map_npz(data_4d, ...)` | `ndarray (T', F, H, W)` | Drops fully-NaN timesteps, fills partial NaNs via nearest-neighbor, imputes remaining with per-frequency mean; asserts no NaNs remain |
 | `denormalize(data, mean, std)` | `ndarray` | Reverses z-score normalization |
 
 `stats` dict (`{"mean": ndarray, "std": ndarray}`) is saved alongside checkpoints and used by `evaluate.py` and `inference.py` for denormalization.
@@ -369,8 +370,14 @@ On load, the array is transposed to `(T, F, H, W)` so frequency becomes the chan
 **Map → Tensor Conversion:**
 
 1. **Load**: `load_map_npz(path, key)` — loads `.npz`, extracts the key (default `map_db`), transposes `(T, H, W, F)` → `(T, F, H, W)`.
-2. **Normalize**: Per-frequency z-score normalized across the time dimension, using stats `(F, 1, 1)` (broadcast over H×W).
-3. **Window**: Identical sliding-window logic as CSV mode, producing `X: (T_in, F, H, W)` and `y: (T_out, F, H, W)`.
+2. **Clean NaNs**: `clean_map_npz()` — removes or imputes all NaN values before any further processing:
+   - Fully-NaN timesteps (where every cell in the 4D slice is NaN) are dropped entirely.
+   - Per-(time, frequency) spatial slices (`F` × `H` × `W`) with partial NaNs have missing cells filled via nearest-neighbor interpolation using `scipy.ndimage.distance_transform_edt`.
+   - Any remaining NaN values (e.g. a (t, f) slice that was fully NaN) are imputed with the per-frequency mean computed from the training-set portion.
+   - Asserts zero NaNs remain before proceeding with normalization and windowing.
+   - A detailed log is printed showing original timestep count, dropped timesteps, and the number/percentage of NaN cells filled at each step.
+3. **Normalize**: Per-frequency z-score normalized across the time dimension, using stats `(F, 1, 1)` (broadcast over H×W).
+4. **Window**: Identical sliding-window logic as CSV mode, producing `X: (T_in, F, H, W)` and `y: (T_out, F, H, W)`.
 
 **Expected Tensor Shape (Map Mode):**
 
