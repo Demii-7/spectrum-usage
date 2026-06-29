@@ -1,475 +1,440 @@
-# TSS-LCD Spectrum Prediction — Adaptation
+# TSS-LCD Spectrum Prediction — Integrated Pipeline
 
-Adaptation plan for integrating TSS-LCD (Temporal–Spectral–Spatial Guided Latent Conditional Diffusion Model) into the AERPAW spectrum prediction pipeline. The **paper** (IEEE TCCN 2026) is the primary architecture reference. Where the original repository differs from the paper, those differences are documented separately under *Repo-Specific Implementation Notes*.
+> **Based on:** *TSS-LCD: A Temporal–Spectral–Spatial-Guided Latent Conditional Diffusion Model for Spectrum Prediction Under Incomplete Observations* — Cheng, Li, Lin, Ding, Sun (IEEE TCCN 2026)
+>
+> **Original repository:** https://github.com/Xlab2024/TSS-LCD
+>
+> **Target dataset:** AERPAW sub-6 GHz spectrum monitoring dataset — Fixed nodes CC1, CC2, LW1 (Feb 2022)
+
+---
 
 ## Quick Start
 
 ```bash
-# 1. Activate environment
-python3 -m venv .venv
-source .venv/bin/activate
-
-# 2. Install dependencies
-pip install torch numpy pandas scipy scikit-learn pyyaml matplotlib
-
-# 3. Place CSV at expected path
-#    training/data/merged_power_data_sub6GHz_avg_per_minute.csv
-
-# -------------------------------------------------------------------
-# 4. Run training (three stages)
-#    NOTE: These are future commands only. The scripts do not yet
-#    exist. They are documented here to define the intended
-#    workflow before implementation begins.
-# -------------------------------------------------------------------
-python3 training/TSS-LCD/train_autoencoder.py    # Stage 1 — latent autoencoder
-python3 training/TSS-LCD/train_tss_condition.py  # Stage 2 — TSS condition stage
-python3 training/TSS-LCD/train_diffusion.py      # Stage 3 — LCD noise-estimation
-
-# 5. Evaluate
-python3 training/TSS-LCD/evaluate.py
+python3 training/TSS-LCD/train_integrated.py
 ```
+
+Outputs go to `training/results/TSS-LCD/` by default:
+
+```
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+models/<chunk_id>_tss_lcd_autoencoder.pt
+models/<chunk_id>_tss_lcd_tss.pt
+models/<chunk_id>_tss_lcd_diffusion.pt
+<chunk_id>_training_log.csv
+```
+
+---
 
 ## Scripts Reference
 
-| Script | Purpose |
-|--------|---------|
-| `dataset.py` | Dataset class, windowing, masking, reshaping |
-| `model.py` | All model components (TSS-CC, LSE, LSD, NEN) |
-| `train_autoencoder.py` | Stage 1: latent autoencoder pretraining (LSE + LSD) |
-| `train_tss_condition.py` | Stage 2: TSS-CC condition training (TemFE, SpeFE, SpaFE, FFM) |
-| `train_diffusion.py` | Stage 3: LCD noise-estimation training (NEN only) |
-| `evaluate.py` | Evaluation on test split with metric computation |
-| `inference.py` | Online inference from incomplete observations |
-| `utils.py` | Normalization, metrics, checkpointing, config loading |
+### `train_integrated.py` — 3-stage training and evaluation per chunk
 
-## File Structure
+The integrated runner trains all three stages sequentially per 200 MHz chunk:
 
-```text
-training/TSS-LCD/
-├── README.md              # This file
-├── config.yaml            # Full configuration (all tunable parameters)
-├── dataset.py             # Dataset and dataloading
-├── model.py               # TSS-LCD model definition
-├── train_autoencoder.py   # Stage 1 training script
-├── train_tss_condition.py # Stage 2 training script
-├── train_diffusion.py     # Stage 3 training script
-├── evaluate.py            # Evaluation script
-├── inference.py           # Inference script
-├── utils.py               # Utilities
-├── checkpoints/           # Saved model weights (created during training)
-└── results/               # Metric CSVs, plots (created during evaluation)
-```
+1. **Autoencoder** — LSE + LSD reconstruct future windows
+2. **TSS-CC** — Condition constructor predicts latent from lookback
+3. **Diffusion** — Noise estimation network with conditioned denoising
 
-## Configuration Reference
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--config` | `training/common/config.yaml` | Shared config |
+| `--output-dir` | `training/results/TSS-LCD/` | Output directory |
 
-All hyperparameters are in `config.yaml`. Key settings:
+### `model.py` — All model components
 
-| Category | Parameter | Default | Description |
-|----------|-----------|---------|-------------|
-| Data | `dataset_path` | `training/data/merged_power_data_sub6GHz_avg_per_minute.csv` | Input CSV path |
-| Data | `n_nodes` | 3 | Number of sensor nodes |
-| Data | `n_bins_per_node` | 250 | Frequency bins per node |
-| Data | `node_names` | `["CC1","CC2","LW1"]` | Node labels for plots (must match n_nodes length) |
-| Data | `selected_nodes` | `["CC1","CC2","LW1"]` | Subset of nodes to use for ablation |
-| Data | `cc2_only_smoke_test` | false | Restrict to CC2 columns only (overrides selected_nodes) |
-| Windowing | `input_sequence_length` | 50 | Past minutes (T_in) |
-| Windowing | `prediction_horizon` | 10 | Future minutes (T_out) |
-| Windowing | `train_stride` | 1 | Training window stride |
-| Windowing | `val_stride` | 1 | Validation window stride |
-| Windowing | `test_stride` | 1 | Test window stride |
-| Split | `train_ratio` | 0.7 | Training set fraction |
-| Split | `val_ratio` | 0.15 | Validation set fraction |
-| Split | `test_ratio` | 0.15 | Test set fraction |
-| Split | `chronological_split` | true | Chronological (true) or random (false) split |
-| Preprocessing | `normalization` | minmax | Normalization method (`zscore`, `minmax`, or `none`) |
-| Preprocessing | `fit_on_train_only` | true | Compute normalization stats on training set only |
-| Preprocessing | `missing_rate` | 0.25 | Fraction of historical entries masked |
-| Preprocessing | `masking_strategy` | random | Masking strategy (`random` or `continuous`) |
-| Preprocessing | `zero_pad_missing` | true | Replace masked entries with 0.0 |
-| Preprocessing | `complete_observation_baseline` | false | Disable masking for baseline debugging |
-| Model | `latent_dim` | 32 | Dimensionality of TSS-CC conditional latent |
-| Model | `hidden_dim` | 256 | Hidden dimension in TSS attention branches |
-| Model | `attention_heads` | 4 | Self-attention heads per branch (must divide hidden_dim) |
-| Model | `ffn_dim` | 1024 | Inner dimension of position-wise FFN |
-| Model | `num_attention_layers` | 2 | Stacked transformer encoder layers per branch |
-| Model | `dropout` | 0.1 | Dropout probability |
-| Model | `use_temporal_branch` | true | Toggle TemFE branch |
-| Model | `use_spectral_branch` | true | Toggle SpeFE branch |
-| Model | `use_spatial_branch` | true | Toggle SpaFE branch |
-| Model | `autoencoder_num_blocks` | 3 | Conv2D down/up blocks in LSE/LSD |
-| Model | `autoencoder_hidden_channels` | 64 | Channel progression in autoencoder |
-| Model | `autoencoder_initial_channels` | 32 | Initial output channels in first autoencoder block |
-| Model | `diffusion_steps` | 1000 | Forward/reverse diffusion steps (N) |
-| Model | `noise_schedule` | cosine | Noise schedule (`cosine` or `linear`) |
-| Model | `nen_num_blocks` | 2 | NEN U-Net encoder/decoder block count |
-| Model | `nen_encoder_channels` | `[64, 128]` | NEN encoder channel counts per block |
-| Model | `nen_bottleneck_channels` | 256 | NEN bottleneck channel count |
-| Model | `nen_decoder_channels` | `[128, 64]` | NEN decoder channel counts per block |
-| Model | `nen_kernel_size` | 3 | NEN Conv1d kernel size |
-| Model | `time_embed_dim` | 32 | Sinusoidal time embedding dimension |
-| Training | `autoencoder_epochs` | 300 | Stage 1 (autoencoder) max epochs |
-| Training | `autoencoder_learning_rate` | 0.0001 | Stage 1 learning rate |
-| Training | `tss_epochs` | 200 | Stage 2 (TSS-CC) max epochs |
-| Training | `tss_learning_rate` | 0.0001 | Stage 2 learning rate |
-| Training | `tss_condition_objective` | projection_to_latent | Stage 2 objective (`projection_to_latent`, `joint_with_diffusion`, or `repo_context_ae`) |
-| Training | `diffusion_epochs` | 1000 | Stage 3 (diffusion) max epochs |
-| Training | `diffusion_learning_rate` | 0.0001 | Stage 3 learning rate |
-| Training | `batch_size` | 32 | Mini-batch size |
-| Training | `optimizer` | adam | Optimizer (`adam` or `adamw`) |
-| Training | `weight_decay` | 0.0 | L2 weight decay |
-| Training | `gradient_clip` | 5.0 | Max gradient norm for clipping (0 = disabled) |
-| Training | `lr_scheduler` | none | LR scheduler (`none`, `cosine`, or `plateau`) |
-| Training | `checkpoint_dir` | checkpoints | Per-stage checkpoint save/load directory |
-| Evaluation | `metrics` | `["rmse","mae","r2"]` | Metrics to report |
-| Evaluation | `eval_horizons` | `[1, 5, 10]` | Specific future time steps for per-horizon reporting |
-| Evaluation | `output_dir` | evaluation | Results output directory |
-| Device | `device` | auto | `cuda`, `cpu`, or `auto` |
-| Seed | `seed` | 42 | Random seed for reproducibility (null = non-deterministic) |
+| Component | Description |
+|-----------|-------------|
+| `TemporalFE` | Multi-head self-attention along time axis |
+| `SpectralFE` | Multi-head self-attention along frequency axis |
+| `SpatialFE` | Multi-head self-attention along spatial (node) axis |
+| `TSSConditionConstructor` | All three TSS branches + cross-attention fusion + latent projection |
+| `LatentSpaceEncoder` | Conv2D encoder compressing `(T_out, F)` → latent |
+| `LatentSpaceDecoder` | ConvTranspose2D decoder reconstructing latent → `(T_out, F)` |
+| `DiffusionModel` | Forward/reverse diffusion with cosine/linear schedule |
+| `EnhancedNoiseNet` | Conv1D U-Net for noise prediction |
+
+### `dataset.py` / `utils.py` — Library modules
+
+Used by the standalone evaluation scripts. The integrated runner uses `load_chunk()` from the shared pipeline instead.
+
+---
 
 ## 1. What the Model Is Intended to Do
 
-TSS-LCD is a **two-stage generative model** for spectrum prediction under incomplete historical observations, as described in the paper:
+TSS-LCD is a two-stage generative model for spectrum prediction:
 
-- **Predict future spectrum RSS/PSD** across multiple nodes and frequency bins given a window of past measurements
-- **Handle incomplete historical observations** where entries are missing (zero-padded) due to partial-band scanning, hardware constraints, or scheduling policies
-- **Preserve fine-grained RSS variations** (2–5 dBm fluctuations) that regression-based models typically over-smooth
-- **Model temporal, spectral, and spatial dependencies jointly** using dedicated self-attention branches per dimension, then guide a latent diffusion process
+- **Predict future spectrum PSD** across frequency bins given a window of past measurements
+- **Handle incomplete observations** via configurable input masking
+- **Preserve fine-grained RSS variations** (2–5 dBm) that regression models over-smooth
+- **Model temporal, spectral, and spatial dependencies jointly** via dedicated self-attention branches
 
-The paper reports TSS-LCD outperforming ConvLSTM, CSMA, STS-PredNet, DSwinLSTM, and 3D-SwinSTB under missing rates from 15% to 35%, for both random and continuous missing patterns.
+The integrated version trains per 200 MHz chunk on a single node (CC2) with `L=1, F=200`.
 
-### Target Architecture (Paper-Faithful)
+### Architecture Overview
 
-The implementation targets the architecture described in the paper (Section IV, Figs. 3–7):
+```
+Stage 1 (Autoencoder):  Y → LSE → z → LSD → Y_hat    (MSE reconstruction)
+Stage 2 (TSS-CC):       X → TSS-CC → z_pred, LSE(Y) → z_target    (MSE in latent space)
+Stage 3 (Diffusion):    z_target + noise + cond_z → NEN → noise_pred    (MSE noise)
+Evaluation:             X → TSS-CC → cond_z → p_sample_loop → z_sample → LSD → Y_hat
+```
 
-1. **TSS-CC Stage** — Three parallel multi-head self-attention branches (TemFE, SpeFE, SpaFE) extract temporal, spectral, and spatial dependencies from the incomplete input `X`. A cross-attention Feature Fusion Module (FFM) integrates them into a unified conditional representation `H_fusion`.
-2. **LCD-SP Stage** — A Latent Space Encoder (LSE) compresses the ground-truth future `Y` into a latent `z0`. A forward diffusion process adds noise to `z0`. A Noise Estimation Network (NEN) — conditioned on `H_fusion` and the diffusion step — predicts the added noise. The reverse denoising process reconstructs `z0_hat`, and a Latent Space Decoder (LSD) maps it back to spectrum domain `Y_hat`.
-
-No intermediate context autoencoder is used in the paper-faithful design. The condition comes directly from TSS-CC.
+---
 
 ## 2. Input Format
 
-### Raw CSV — AERPAW-Specific Layout
+### 2.1 Per-Chunk Data Loading
 
-```text
-Path:    training/data/merged_power_data_sub6GHz_avg_per_minute.csv
-Shape:   (6839, 750)
-Layout:  [CC1_cols_0_249 | CC2_cols_250_499 | LW1_cols_500_749]
+```python
+data = load_chunk(config, chunk)
+train_input = data.splits[data.train_split].model_input   # (T_train, 200)
 ```
 
-The CSV has **no header row**. Each row is per-minute averaged RSS in dBm across three fixed AERPAW nodes. Column ordering:
+Each window pair `(X, Y)`:
+- `X = data[i : i + T_in]` — lookback of shape `(T_in, 200)`, L=1
+- `Y = data[i + T_in : i + T_in + T_out]` — future of shape `(T_out, 200)`, L=1
 
-| Columns | Node | Approx. frequency range | Note |
-|---------|------|------------------------|------|
-| 0–249 | CC1 | ~1347–1362 MHz | Per-node selected 250-bin offset (bin 21000) |
-| 250–499 | CC2 | ~2082–2097 MHz | Per-node selected 250-bin offset (bin 33250) |
-| 500–749 | LW1 | ~1737–1752 MHz | Per-node selected 250-bin offset (bin 27500) |
+### 2.2 TSS Branch Input
 
-**Important:** The paper describes a unified 85–335 MHz band with 250 uniformly discretized bins for all three nodes. Our processed CSV uses **different frequency ranges per node**, determined by reverse-engineering the original TSS-LCD repository CSV (see `training/build_training_csv.py`). This is an **AERPAW-specific adaptation** — do not claim exact reproduction of the paper's frequency band.
+The TSS-CC expects input of shape `(B, T_in, L, F)` where:
+- `B` = batch size
+- `T_in` = lookback (60)
+- `L` = 1 (single node)
+- `F` = 200 (frequency bins per chunk)
 
-### Paper Setting vs Our Setting
+### 2.3 Autoencoder Input
 
-| Property | Paper | Our CSV | Impact |
-|----------|-------|---------|--------|
-| Time points | 10,080 (1 week) | 6,839 (~4.75 days) | Fewer total windows; window count = 6839 − T_in − T_out + 1 |
-| Frequency coverage | 85–335 MHz (unified) | Per-node offsets (L-band / lower S-band) | Model still receives 250 bins per node; spatial branch captures per-location differences |
-| Sensors | 3 fixed nodes (CC1, CC2, LW1) | 3 fixed nodes (CC1, CC2, LW1) | Matches paper |
+The LSE/LSD expects input of shape `(B, T_out, D)` where `D = L * F = 200`.
 
-The implementation must use the actual processed CSV shape (6839 rows), not assume 10080.
+Internally, the encoder reshapes to `(B, 1, T_out, D)` as a 2D image, applies Conv2D downsampling, pools to `(1, 1)`, and projects to latent_dim.
 
-### Reshaped Tensor
+---
 
-```text
-Raw:  (T, D)         = (6839, 750)
-Step: reshape to     = (T, L, F)  = (6839, 3, 250)
-```
+## 3. Model Architecture
 
-Where `L = 3` (CC1, CC2, LW1) and `F = 250` frequency bins per node.
+### 3.1 TSS-CC — Condition Constructor
 
-### Windowing
-
-- Input window `X: (T_in, L, F)` — historical observations
-- Target window `Y: (T_out, L, F)` — future ground truth
-- Total windows: `(6839 - T_in - T_out + 1)` with stride 1
-- Chronological train/val/test split (ratios configurable)
-
-### Incomplete Observation Simulation
-
-Missing entries are simulated on input `X` only (target `Y` is always complete):
-
-- **Random missing**: Each entry has probability `missing_rate` of being zero-padded
-- **Continuous missing**: A contiguous block of length proportional to `missing_rate` is zero-padded
-- A configurable binary observation mask tensor is returned alongside `X` and `Y` to support masked-loss training if needed
-- A `complete_observation_baseline` mode (`missing_rate=0`) should be supported first for pipeline debugging
-
-## 3. Model Architecture (Paper-Faithful Target)
-
-TSS-LCD is a two-stage network (paper Fig. 3). This section describes the **paper architecture** as the implementation target. See *Repo-Specific Implementation Notes* for differences in the original repository.
-
-### Stage 1: TSS-CC — Condition Construction
-
-Three parallel multi-head self-attention branches extract dimension-specific features from the incomplete input tensor `X ∈ R^(T_in × L × F)`:
+Three parallel multi-head self-attention branches (paper Fig. 3, Section IV-B):
 
 #### Temporal Feature Extraction (TemFE)
 
-- Flattens spatial and spectral dims: `X → X_temp ∈ R^(T_in × (L·F))`
-- Adds sinusoidal positional encoding
-- Multi-head self-attention along the time axis
-- Output: `H_temp ∈ R^(T_in × (L·F))`
+```
+Input: (B, T_in, L, F) → reshape (B, L*F, T_in)
+                         → proj → pos_enc → TransformerEncoder
+                         → output (B, L*F, hidden_dim)
+```
 
 #### Spectral Feature Extraction (SpeFE)
 
-- Permutes tensor: `X → X_spec ∈ R^(F × (L·T_in))`
-- Adds sinusoidal positional encoding
-- Multi-head self-attention along the frequency axis
-- Output: `H_spec ∈ R^(F × (L·T_in))`
+```
+Input: (B, T_in, L, F) → reshape (B, T_in, L*F)
+                         → proj → pos_enc → TransformerEncoder
+                         → output (B, T_in, hidden_dim)
+```
 
 #### Spatial Feature Extraction (SpaFE)
 
-- Permutes tensor: `X → X_spat ∈ R^(L × (F·T_in))`
-- Adds sinusoidal positional encoding
-- Multi-head self-attention along the location axis
-- Output: `H_spat ∈ R^(L × (F·T_in))`
+```
+Input: (B, T_in, L, F) → permute (B, F, T_in*L)
+                         → proj → pos_enc → TransformerEncoder
+                         → output (B, F, hidden_dim)
+```
 
 #### Feature Fusion Module (FFM)
 
-- Cross-attention: temporal feature as query, spectral as key, reshaped spatial as value
-- Residual connections + layer norm + FFN
-- Output: `H_fusion ∈ R^(T_in × (L·F))` — the unified conditional representation
+Cross-attention between branches (paper Fig. 4):
+- Query = spectral features (default dominant branch)
+- Key/value = concatenation of temporal + spatial
+- Output: `H_fusion` → pooled → projected to `latent_dim`
 
-### Stage 2: LCD-SP — Latent Diffusion Prediction
+#### ConditionToLatentProjection
 
-#### Latent Space Encoder (LSE)
+```python
+z_pred = Linear(mean_pool(H_fusion))   # (B, latent_dim)
+```
 
-- 2D convolutional encoder with stacked downsampling blocks (Conv2d + BN + ReLU)
-- Number of blocks and channel progression are configurable
-- Maps ground-truth `Y ∈ R^(T_out × L × F)` → latent `z0 ∈ R^(1 × d_latent)`
+This projection head is our implementation bridge — the paper describes TSS-CC producing `H_fusion` but does not specify how it aligns with the diffusion latent `z0`.
 
-#### Forward Diffusion Process
+### 3.2 Latent Space Encoder / Decoder (Conv2D)
 
-- Adds Gaussian noise progressively over `N` steps: `zn = sqrt(ᾱ_n) · z0 + sqrt(1 − ᾱ_n) · ε`
-- Noise schedule is configurable (cosine default, linear alternative)
+Based on paper Figs. 5 and 7, using Conv2D (not the original repo's Conv1D).
+
+#### Encoder (LSE)
+
+```
+Input: (B, T_out, D)  → reshape → (B, 1, T_out, D)
+       ┌────────────────────────────────────┐
+       │ Conv2d(1 → 32, k=3) + BN + ReLU    │
+       │ MaxPool2d(2)                       │
+       │ Conv2d(32 → 64, k=3) + BN + ReLU   │
+       │ MaxPool2d(2)                       │
+       │ Conv2d(64 → 128, k=3) + BN + ReLU  │
+       │ MaxPool2d(2)                       │
+       │ AdaptiveAvgPool2d(1, 1)            │
+       │ Flatten → Linear(128 → latent_dim) │
+       └────────────────────────────────────┘
+Output: (B, latent_dim)
+```
+
+#### Decoder (LSD)
+
+```
+Input: (B, latent_dim)
+       ┌────────────────────────────────────────┐
+       │ Linear(latent_dim → 128*4*4)           │
+       │ Reshape → (B, 128, 4, 4)               │
+       │ ConvTranspose2d(128 → 64, k=4, s=2)    │
+       │ BN + ReLU                              │
+       │ ConvTranspose2d(64 → 32, k=4, s=2)     │
+       │ BN + ReLU                              │
+       │ ConvTranspose2d(32 → 1, k=4, s=2)      │
+       │ Interpolate → (T_out, D)               │
+       └────────────────────────────────────────┘
+Output: (B, T_out, D)
+```
+
+### 3.3 Diffusion Model
+
+Based on paper Fig. 6 and the original repo's `NoiseNet.py`.
+
+#### Noise Schedule
+
+Default: cosine schedule (from repo). Configurable to linear.
+
+```
+cosine:  β_n = clip(1 - α̅_n / α̅_{n-1}, 1e-8, 0.999)
+         α̅_n = cos²((n/N + s) / (1+s) * π/2) / cos²(s / (1+s) * π/2)
+```
+
+#### Sinusoidal Time Embedding
+
+```python
+t_emb = [sin(t * ω_k), cos(t * ω_k)]   for k = 0..half_dim-1
+```
 
 #### Noise Estimation Network (NEN)
 
-- Takes concatenation of `[zn, W_cond(H_fusion), time_embedding(n)]`
-- Conv1D-based U-Net with downsampling, bottleneck, upsampling, and skip connections
-- Number of encoder/decoder channels and bottleneck depth are configurable
-- **Note:** The exact Conv1D U-Net skip-connection implementation should be verified against the repository (`NoiseNet.py`) before scripting
+Conv1D U-Net with encoder-bottleneck-decoder and skip connections:
 
-#### Reverse Denoising Process
+```
+Input: [z_t, cond_proj(cond_z), t_emb] concatenated → (B, 2*latent_dim + time_embed_dim)
 
-- Starts from pure Gaussian noise `zN`
-- Iteratively denoises using NEN: `z_{n-1} = µ_n + σ_n · η`
-- `N` steps total, guided by `H_fusion` at each step
-- Recovers denoised latent `ẑ_0`
+Encoder:
+  Conv1d(1 → 64, k=3) + BN + ReLU + MaxPool
+  Conv1d(64 → 128, k=3) + BN + ReLU + MaxPool
 
-#### Latent Space Decoder (LSD)
+Bottleneck:
+  Conv1d(128 → 256, k=3) + ReLU
 
-- Mirrors LSE structure: FC layer + ConvTranspose2d upsampling blocks
-- Maps `ẑ_0` → `Ŷ ∈ R^(T_out × L × F)`
+Decoder:
+  ConvTranspose1d(256 → 128, k=2, s=2) + skip from encoder
+  Conv1d(128+128 → 64, k=3) + BN + ReLU
+  ConvTranspose1d(64 → 32, k=2, s=2) + skip from encoder
+  Conv1d(32+64 → 32, k=3) + BN + ReLU
+
+Output: AdaptiveAvgPool1d → Linear(32 → latent_dim)
+```
+
+### 3.4 Forward / Reverse Diffusion
+
+#### Forward (q_sample)
+
+```python
+z_t = sqrt(α̅_t) * z_0 + sqrt(1 - α̅_t) * ε
+```
+
+#### Reverse (p_sample)
+
+Uses the paper's derived closed-form denoising step:
+
+```python
+z_{t-1} = A_t * z_t - B_t * ε_θ(z_t, cond_z, t) + σ_t * η
+```
+
+#### p_sample_loop
+
+Full reverse chain from `z_N ~ N(0, I)` to `z_0`:
+
+```python
+z = randn(B, latent_dim)
+for t in reversed(range(N)):
+    z = p_sample(z, cond_z, t)
+return z
+```
+
+---
 
 ## 4. Output Format
 
-```text
-Shape:   (T_out, L, F)   e.g. (10, 3, 250)
-Flatten: (T_out, 750)
+```
+Full pipeline:  X → TSS-CC → cond_z → p_sample_loop → z_sample → LSD → Y_hat
+Y_hat shape:    (B, T_out, 200)
+Per horizon h:  (B, 200)    — extracted at index h-1
+Denormalized:   dBm via shared pipeline
 ```
 
-Output is the predicted future RSS/PSD in the same scale as the preprocessed input (normalized or raw dBm depending on config). During evaluation, predictions are inverse-transformed to dBm for metric computation.
+---
 
 ## 5. Training Pipeline
 
-Three separate training stages, each with its own script and checkpoint. All stage-specific hyperparameters (epochs, learning rate, etc.) are independently configurable.
+### 5.1 Stage 1: Autoencoder (LSE + LSD)
 
-### Stage 1: Latent Autoencoder Pretraining
+| Parameter | Value |
+|-----------|-------|
+| Input | `Y` — future window `(B, T_out, 200)` |
+| Loss | MSE: `||Y - LSD(LSE(Y))||²` |
+| Optimizer | Adam, lr=1e-4 |
+| Epochs | 300 (configurable) |
+| Early stopping | Patience 30 on val loss |
 
-```text
-Script:  train_autoencoder.py
-Input:   Y (complete future ground truth)
-Loss:    MSE reconstruction: ||Y - LSD(LSE(Y))||²
-Freezes: none
-Output:  checkpoints/ae_lse.pth, checkpoints/ae_lsd.pth
-```
+The LSE/LSD learn to compress and reconstruct future spectrum windows in a compact `latent_dim` space.
 
-The LSE and LSD are trained end-to-end to compress and reconstruct future spectrum data in a compact latent space. The number of downsampling blocks and channels are configurable.
+### 5.2 Stage 2: TSS-CC Condition Training
 
-### Stage 2: TSS Condition Stage Training
+| Parameter | Value |
+|-----------|-------|
+| Input | `X` (lookback) + frozen `LSE(Y)` (target latent) |
+| Loss | MSE: `||z_pred - z_target||²` where `z_target = LSE(Y)` |
+| Optimizer | Adam, lr=1e-4 |
+| Frozen | LSE, LSD (from Stage 1) |
+| Epochs | 200 (configurable) |
 
-```text
-Script:  train_tss_condition.py
-Input:   X (incomplete historical) + Y (complete future)
-Freezes: LSE, LSD (from Stage 1)
-Output:  checkpoints/tss_cc.pth
-```
+The TSS-CC learns to predict the latent `z` from the lookback window, approximating the encoding of the future window.
 
-The paper states that the TSS modules are trained to provide reliable conditional information for the diffusion stage while LSE/LSD remain frozen. However, the exact supervised objective for `H_fusion` requires verification — the paper does not specify a direct loss between `H_fusion ∈ R^(T_in × L·F)` and `z0 ∈ R^(1 × d_latent)`, and those shapes do not naturally align.
+### 5.3 Stage 3: Diffusion Training
 
-Implementation options (set via `config.yaml` → `training.tss_condition_objective`):
+| Parameter | Value |
+|-----------|-------|
+| Input | `X` (lookback) + `Y` (future), cond from frozen TSS-CC, latent from frozen LSE |
+| Loss | MSE: `||ε - NEN(z_t, cond_z, t)||²` |
+| Optimizer | Adam, lr=1e-4 |
+| Frozen | LSE, LSD, TSS-CC |
+| Epochs | 1000 (configurable) |
 
-1. **`projection_to_latent`** (default target): Add a learnable projection head (e.g., pooling + FC) that maps `H_fusion` → `z_pred ∈ R^(d_latent)`, then train with MSE against `z0 = LSE(Y)`.
-   * **Note:** This projection head is **our implementation bridge**, not something explicitly specified in the paper. It exists to reconcile the dimensional mismatch between `H_fusion ∈ R^(T_in × L·F)` and the latent representation `z0 ∈ R^(d_latent)`.
-2. **`joint_with_diffusion`**: Skip standalone Stage 2. Train TSS-CC jointly with NEN during Stage 3 (the condition is only supervised by the diffusion loss).
-3. **`repo_context_ae`**: Fall back to the repository's context-autoencoder strategy if the paper-faithful approach proves unstable.
+At each training step:
+1. Encode `Y → z_target` (frozen LSE)
+2. Encode `X → cond_z` (frozen TSS-CC)
+3. Sample random `t`, noise `ε`
+4. Compute `z_t = q_sample(z_target, t, ε)`
+5. Predict noise: `ε_pred = NEN(z_t, cond_z, t)`
+6. Loss: `MSE(ε_pred, ε)`
 
-The final Stage 2 objective must be confirmed before scripting. Individual TSS branches can be toggled via config for ablation.
+### 5.4 Evaluation
 
-### Stage 3: LCD Diffusion Training
+For each horizon `h`:
+1. Build test windows `(X, Y)`
+2. Run full pipeline: `X → TSS-CC → cond_z → p_sample_loop → z_sample → LSD → Y_hat`
+3. Extract `Y_hat[:, h-1, :]` as the prediction at horizon `h`
+4. Denormalize and compute metrics
 
-The freezing behavior during Stage 3 depends on `training.tss_condition_objective`:
+---
 
-- **`projection_to_latent`** (default): TSS-CC is frozen after Stage 2. Only the NEN is trained.
-- **`joint_with_diffusion`**: No separate Stage 2 runs. TSS-CC is trained jointly with the NEN in Stage 3. LSE and LSD remain frozen in both cases.
+## 6. Changes from Main Branch (Standalone TSS-LCD)
 
-```text
-Script:  train_diffusion.py
-Input:   X (incomplete historical) + Y (complete future)
-Loss:    MSE between true and predicted noise: ||ε - NEN(z_n, n, H_fusion)||²
-Freezes: LSE, LSD (always); TSS-CC only when objective = projection_to_latent
-Output:  checkpoints/diffusion.pth
-```
+| Aspect | Main Branch | Integrate Branch |
+|--------|------------|------------------|
+| **Data loading** | `get_dataloaders()` from dataset.py — 750-col CSV, `(T, 3, 250)`, masking | Shared `load_chunk()`, single CC2 node, `(T, 200)`, no masking |
+| **T_in / T_out** | Configurable independently (e.g., 50 / 10) | From shared config: `T_in = lookback = 60`, `T_out = max_horizons = 60` |
+| **L** (nodes) | 3 (CC1, CC2, LW1) | 1 (CC2 only) |
+| **F** (bins) | 250 | 200 (per chunk) |
+| **Missing rate** | Configurable (e.g., 0.25) with masking | 0 (complete observation) |
+| **Training** | 3 separate scripts (train_autoencoder.py, train_tss_condition.py, train_diffusion.py) | Single `train_integrated.py` that runs all 3 stages |
+| **Diffusion steps** | 1000 | 1000 (configurable) |
+| **Normalization** | Min-max (TSS-LCD Normalizer) | Z-score via `load_chunk()` |
+| **Config** | Per-model `config.yaml` (178 fields) | Shared `config.yaml`, `tss_lcd:` section (28 fields) |
+| **Evaluation** | Evaluate.py on all T_out steps at once | Per-horizon extraction (1, 5, 15, 60 min) |
 
-The frozen LSE encodes the target latent, and the NEN (and optionally TSS-CC) learns to predict the injected noise at each diffusion step.
+### Rationale for Changes
 
-### Evaluation / Inference
+- **Single-node training:** The integrated pipeline trains per 200 MHz chunk on CC2. The TSS-CC's SpatialFE branch still operates (with L=1, it collapses to a temporal feature), but all three TSS branches remain active.
+- **No masking:** The integrated pipeline evaluates on complete observations to match the other models' setup. Masking can be added back by wrapping the dataset with the TSS-LCD dataset's masking logic.
+- **Unified training script:** The 3-stage training is combined into a single runner for simplicity. Each stage saves its own checkpoint.
+- **Reduced config surface:** Many TSS-LCD-specific params (masking rate, masking strategy, split ratios, etc.) are handled by the shared pipeline or kept with sensible defaults.
 
-```text
-Script:   evaluate.py / inference.py
-Process:  X → TSS-CC → H_fusion → (reverse diffusion) → Ŷ
-Metrics:  RMSE, MAE, R² per evaluation horizon, per node, per frequency bin
-```
+---
 
-## 6. Assumptions and Design Decisions
+## 7. Configuration Reference
 
-- **CSV has no header**: The loader reads raw float32 values directly
-- **Chronological split**: Always chronological for time series; no random shuffle across time
-- **Masking applied only to input X**: Target Y is always fully observed (matching the paper setup)
-- **Complete-observation baseline first**: Train with `missing_rate=0` first to verify the pipeline before introducing masking
-- **LSE/LSD operate on future data only**: They compress Y, never X; during inference they decode the denoised latent
-- **TSS-CC outputs a condition, not a direct prediction**: The condition guides diffusion rather than producing a direct forecast
-- **Normalization fit on training split only**: Avoids data leakage from test/val splits
-- **Batch size = 32 by default** (paper value), configurable because memory and training speed depend on GPU availability
-- **All tunable hyperparameters are in config.yaml**: No values hardcoded in scripts unless they are fixed architectural constraints
+All TSS-LCD settings are under `tss_lcd:` in `training/common/config.yaml`:
 
-## 7. AERPAW Dataset Adaptation
+| Field | Default | Description |
+|-------|---------|-------------|
+| `hidden_dim` | 256 | Transformer hidden dimension (all TSS branches) |
+| `attention_heads` | 4 | Self-attention heads (must divide hidden_dim) |
+| `ffn_dim` | 1024 | Transformer FFN inner dimension |
+| `num_attention_layers` | 2 | Stacked encoder layers per branch |
+| `dropout` | 0.1 | Dropout probability |
+| `use_temporal_branch` | true | Enable TemFE |
+| `use_spectral_branch` | true | Enable SpeFE |
+| `use_spatial_branch` | true | Enable SpaFE |
+| `latent_dim` | 32 | Latent space dimension (z) |
+| `autoencoder_num_blocks` | 3 | Conv2D down/up blocks in LSE/LSD |
+| `autoencoder_initial_channels` | 32 | Initial channels (doubled each block) |
+| `diffusion_steps` | 1000 | Number of noise levels N |
+| `noise_schedule` | cosine | `cosine` or `linear` |
+| `nen_encoder_channels` | [64, 128] | NEN U-Net encoder channel counts |
+| `nen_bottleneck_channels` | 256 | NEN bottleneck channels |
+| `nen_decoder_channels` | [128, 64] | NEN decoder channel counts |
+| `nen_kernel_size` | 3 | NEN Conv1D kernel size |
+| `time_embed_dim` | 32 | Sinusoidal time embedding dimension |
+| `batch_size` | 32 | Mini-batch size |
+| `autoencoder_epochs` | 300 | Stage 1 epochs |
+| `autoencoder_learning_rate` | 0.0001 | Stage 1 learning rate |
+| `tss_epochs` | 200 | Stage 2 epochs |
+| `tss_learning_rate` | 0.0001 | Stage 2 learning rate |
+| `diffusion_epochs` | 1000 | Stage 3 epochs |
+| `diffusion_learning_rate` | 0.0001 | Stage 3 learning rate |
+| `weight_decay` | 0.0 | L2 weight decay |
+| `gradient_clip_norm` | 5.0 | Max gradient norm |
+| `patience` | 30 | Early stopping patience |
 
-### Row-Count Mismatch
+---
 
-| Source | Time Points | Duration |
-|--------|-------------|----------|
-| Paper | 10,080 | One week of continuous collection per node |
-| Our CSV | 6,839 | Common minutes across CC1, CC2, LW1 intersections |
+## 8. Deviations from Original Paper
 
-The paper's 10,080 value assumes individual per-node time series. Our CSV contains only the intersection of minute buckets that exist in all three nodes simultaneously, which reduces the count to 6,839. The implementation uses the actual CSV shape — it does not assume 10080.
+| Aspect | Paper | Our Integrated Version | Reason |
+|--------|-------|------------------------|--------|
+| Dataset | Custom dataset, 10,080 timesteps, unified 85–335 MHz | AERPAW, 6,839 timesteps, per-node offsets | Different data source |
+| Nodes | 3 fixed nodes | 1 per chunk (CC2) | Per-chunk single-node pipeline |
+| Frequency | 250 bins (unified band) | 200 bins per chunk | 200 MHz per chunk at 1 MHz resolution |
+| T_in | Configurable (e.g., 50) | 60 (shared lookback) | Shared config standardization |
+| T_out | Configurable (e.g., 10) | 60 (max horizon) | Multi-horizon evaluation |
+| Missing rate | 0–35% with masking | 0 (complete observations) | Match other models' setup |
+| LSE architecture | Conv1D per original repo | Conv2D (paper-faithful) | Paper describes Conv2D |
+| Training scripts | 3 separate scripts | 1 integrated runner (3 stages inline) | Simplified workflow |
+| Evaluation | Evaluate.py tests all T_out steps at once | Per-horizon extraction from full T_out output | Multi-horizon framework |
 
-### Frequency-Band Mismatch
+### Repo-Specific Differences (vs Original TSS-LCD Repository)
 
-| Source | Frequency Coverage | Bins | Per-Node |
-|--------|-------------------|------|----------|
-| Paper | 85–335 MHz (unified) | 250 uniform bins | Same 250 bins for all nodes |
-| Our CSV | Per-node offsets (CC1: ~1347, CC2: ~2082, LW1: ~1737 MHz) | 250 bins each | Different frequency ranges per node |
+The original repository at github.com/Xlab2024/TSS-LCD differs from the paper in several ways. Our implementation follows the paper:
 
-This is an **AERPAW-specific adaptation**. The per-node offsets were reverse-engineered from the original TSS-LCD repository CSV (see `training/build_training_csv.py` for details). The model architecture itself is agnostic to the actual frequency values — it receives `F=250` bins per node regardless. However, this means results are not directly comparable to the paper's published numbers.
+| Aspect | Original Repository | Our Implementation |
+|--------|-------------------|-------------------|
+| LSE/LSD | Conv1D (treats freq as channels) | Conv2D (paper-faithful) |
+| Condition mechanism | ContextTransformerAE (reconstructs X) | TSS-CC direct condition (paper-faithful) |
+| Autoencoder | FutureAutoencoder (Conv1D) | LSE/LSD (Conv2D, paper-faithful) |
+| Noise schedule | Cosine (same) | Cosine (same, configurable) |
+| NEN architecture | Conv1D U-Net with skip connections | Same structure |
+| Fusion | Cross-attention FFM | Same |
 
-### What Remains the Same
-
-- 3 nodes (CC1, CC2, LW1) — matches paper
-- 250 frequency bins per node — matches paper
-- 750 total feature dimension — matches paper
-- Per-minute sampling interval — matches paper
-
-## 8. Repo-Specific Implementation Notes
-
-The original repository at `github.com/Xlab2024/TSS-LCD` contains implementations that differ from the paper in several ways. These are **not** part of the paper-faithful target architecture, but are documented here for reference since they may influence implementation decisions. (A local working copy was cloned to `/tmp/opencode/TSS-LCD` during adaptation.)
-
-### Context Autoencoder (Not in Paper)
-
-The repo's `Context2CondNew.py` implements a `ContextTransformerAE` — a Transformer-based autoencoder that reconstructs `X` and produces a latent `z_ctx`. This module is **not described in the paper**. The paper's TSS-CC produces `H_fusion` directly from `X` without a reconstruction objective.
-
-- **Paper**: TemFE + SpeFE + SpaFE → FFM → `H_fusion` (no reconstruction loss on X)
-- **Repo**: `ContextTransformerAE` encodes `X` into latent `z_ctx` with MSE reconstruction of `X`, then `z_ctx` is used as condition
-- **Our target**: Paper-faithful TSS-CC (direct condition, no context AE)
-
-### Future Autoencoder (Conv1D vs Paper's Conv2D)
-
-The repo's `F2Cnet.py` implements `FutureAutoencoder` using **Conv1d** layers (treating frequency bins as channels and time as sequence length). The paper describes the LSE/LSD using **Conv2d** layers operating on the `(T_out, L, F)` tensor directly.
-
-- **Paper**: LSE uses stacked Conv2d downsampling blocks (Fig. 5); LSD uses ConvTranspose2d upsampling blocks (Fig. 7)
-- **Repo**: `FutureAutoencoder` uses Conv1d with `kernel_size=4, stride=2` across the time dimension
-- **Our target**: Paper-faithful Conv2d-based LSE/LSD
-
-### Noise Schedule Default
-
-The repo's `NoiseNet.py` implements a **cosine** beta schedule. The paper does not explicitly specify the noise schedule type. We adopt the repo's cosine schedule as default, with a linear schedule available as a configurable alternative.
-
-### NEN Architecture
-
-The repo's `EnhancedNoiseNet` uses a Conv1D U-Net with:
-- Encoder: Conv1d(1→64), MaxPool, Conv1d(64→128), MaxPool
-- Bottleneck: Conv1d(128→256)
-- Decoder: ConvTranspose1d(256→128), Conv1d(128→64), Linear(64*T → latent_dim)
-- Skip connections from encoder to decoder at each level
-
-The paper's Fig. 6 also describes a Conv1D U-Net but specific channel counts and skip-connection topology may differ. **The exact skip-connection implementation should be verified against the paper's Fig. 6 before scripting.**
-
-### Diffusion Model
-
-The repo's `DiffusionModel` uses:
-- A learned `cond_proj` (Linear) to project `H_fusion` to `latent_dim`
-- Sinusoidal time embedding (dim=32)
-- Concatenation of `[z_t, cond_proj(cond), time_emb]` as input to NEN
-- Cosine beta schedule with cumulative product computation
-
-This is largely consistent with the paper description and can be used as reference.
+---
 
 ## 9. Known Limitations
 
-- **Complex and slow training**: Diffusion training can be substantially slower because each training step samples diffusion noise, and inference may require many reverse denoising steps (e.g., 1000). This is inherent to iterative generative models and differs from one-shot regression.
-- **Multi-stage checkpoint management**: Three separate training stages with careful freeze/thaw logic; a failed mid-stage requires partial restart
-- **Incomplete-observation masking must be standardized**: Masking strategy (random vs continuous) and missing rate must be consistent across all experiments for fair comparison
-- **CPU training is impractical**: The Conv1D U-Net in NEN and multi-head attention in TSS-CC are compute-intensive; a GPU (>= 8 GB VRAM) is strongly recommended
-- **Evaluation must distinguish two scenarios**: (a) Complete-observation prediction baseline, (b) Incomplete-observation recovery; the same model is evaluated under both
-- **Diffusion sampling is slow at inference time**: 1000 reverse steps per prediction; techniques like DDIM or step distillation could be added later
-- **Frequency-band mismatch vs paper**: Our CSV uses different frequency bands per node (reverse-engineered offsets), not the unified 85–335 MHz band described in the paper; performance may differ from published results
-- **One-week claim vs 6839 rows**: The paper claims 10,080 time points (one week), but our CSV has only 6,839 rows after intersecting common minutes across nodes; this affects total window count and should be documented in results
+1. **Slow training and inference** — diffusion requires 1000 reverse steps per prediction. Each chunk trains in ~hours (Stage 1 + 2 + 3).
+2. **Multi-stage checkpoint management** — three stages with freeze/thaw logic; failure mid-stage requires partial restart.
+3. **No input masking in integrated pipeline** — the TSS-LCD paper's core contribution is handling incomplete observations. The integrated version trains on complete observations only, matching the other models.
+4. **SpatialFE branch has trivial input with L=1** — with a single node, the spatial branch sees a single "location," making it effectively another temporal feature extractor.
+5. **Diffusion sampling is slow** — 1000 reverse steps at inference time. Techniques like DDIM could accelerate this.
+6. **CPU training is impractical** — the Conv1D U-Net and multi-head attention require a GPU.
 
-## 10. Items to Verify Before Scripting
-
-1. **TSS-CC paper description vs implementation**: Confirm from paper Section IV-B that TemFE, SpeFE, SpaFE all use identical multi-head self-attention (just permuted axes) and that FFM uses temporal→query, spectral→key, spatial→value cross-attention
-2. **NEN skip-connection details**: Verify the exact U-Net skip wiring against the paper's Fig. 6 and repo's `NoiseNet.py`. The repo uses simple concatenation skip connections — confirm this matches the paper.
-3. **LSE/LSD Conv2D parameterization**: Determine the number of downsampling blocks, kernel sizes, stride, and channel progression from the paper's Fig. 5/7 (the paper shows "multiple stacked blocks" without exact counts)
-4. **Conditioning mechanism in NEN**: Verify whether `H_fusion` is projected and concatenated directly with `z_t` (as in the repo) or if there is a different conditioning mechanism (e.g., adaptive layer norm) described in the paper
-5. **FFM cross-attention dimensionality**: Confirm the exact reshaping of spatial features before cross-attention (paper says `H_spat` is reshaped from `L×(T·F)` to `F×(T·L)`)
-6. **Stage 2 objective**: The paper does not specify an explicit loss between `H_fusion` and `z0`; their shapes differ. Decide which implementation option to adopt from the three listed in the Stage 2 section (`projection_to_latent`, `joint_with_diffusion`, or `repo_context_ae`) before scripting.
-7. **Diffusion step count in paper**: The paper text mentions 500 epochs total training (line 1007) but does not explicitly state the number of diffusion steps N. The repo defaults to 1000. Verify if the paper provides a specific N value.
-8. **Normalization details**: The paper mentions min-max normalization to [0,1] (implied by the min-max scaler in `DataSetPrepare.py`) but does not specify this explicitly. Confirm whether z-score or min-max is more appropriate.
-
-## 11. Implementation Notes
-
-### Proposed file responsibilities
-
-| File | Responsibility |
-|------|---------------|
-| `dataset.py` | `TSSLCDDataset` — loads CSV, reshapes to (T, L, F), applies sliding window with configurable strides, simulates missing entries, returns (X, Y, mask) tensors |
-| `model.py` | `PositionalEncoding`, `MultiHeadSelfAttention`, `TransformerEncoderLayer` (for TemFE/SpeFE/SpaFE), `TemporalFE`, `SpectralFE`, `SpatialFE`, `CrossAttentionFFM`, `TSSEncoder`, `LSE` (Conv2d), `LSD` (ConvTranspose2d), `SinusoidalTimeEmbedding`, `NEN` (Conv1D U-Net), `DiffusionModel` |
-| `train_autoencoder.py` | Loads config, creates dataset, instantiates LSE+LSD, trains with MSE reconstruction, saves checkpoints |
-| `train_tss_condition.py` | Loads pretrained LSE/LSD, instantiates TSS-CC components, freezes autoencoder, trains condition mapping |
-| `train_diffusion.py` | Loads LSE/LSD + TSS-CC, instantiates NEN + DiffusionModel, freezes prior stages, trains noise prediction |
-| `evaluate.py` | Chronological test split, loads all checkpoints, full inference, computes metrics per horizon/node/bin, writes CSV + plots |
-| `inference.py` | Standalone entry point for online inference from incomplete observations |
-| `utils.py` | Config loading, normalization (min-max / z-score), metric computation (RMSE/MAE/R²), checkpoint save/load, seed setting |
-
-### Smoke-test config
-
-For rapid validation before full training, use a reduced config (example in the smoke test section). A CC2-only mode can be enabled by setting `n_nodes: 1` in config and slicing only columns 250–499 from the CSV.
-
-### Reproducibility
-
-Set a fixed random seed in config for Python, NumPy, and PyTorch to ensure reproducible data splits and masking patterns across runs.
+---
 
 ## References
 
-- S. Cheng, X. Li, X. Lin, H. Ding, and Y. Sun, "TSS-LCD: A Temporal–Spectral–Spatial-Guided Latent Conditional Diffusion Model for Spectrum Prediction Under Incomplete Observations," *IEEE Trans. Cogn. Commun. Netw.*, vol. 12, 2026.
-- Original repository (paper authors): [https://github.com/Xlab2024/TSS-LCD](https://github.com/Xlab2024/TSS-LCD)
-- Local working clone (during adaptation): `/tmp/opencode/TSS-LCD`
-- Dataset: AERPAW sub-6 GHz spectrum monitoring dataset, [DOI: 10.5061/dryad.hmgqnk9zn](https://doi.org/10.5061/dryad.hmgqnk9zn)
-- AERPAW: [https://aerpaw.org/dataset/february-2022-cc1-cc2-lw1-spectrum-measurements/](https://aerpaw.org/dataset/february-2022-cc1-cc2-lw1-spectrum-measurements/)
+1. **TSS-LCD paper:** S. Cheng, X. Li, X. Lin, H. Ding, Y. Sun, "TSS-LCD: A Temporal–Spectral–Spatial-Guided Latent Conditional Diffusion Model for Spectrum Prediction Under Incomplete Observations," IEEE TCCN, 2026.
+2. **Original repository:** https://github.com/Xlab2024/TSS-LCD
+3. **AERPAW dataset:** DOI: [10.5061/dryad.hmgqnk9zn](https://doi.org/10.5061/dryad.hmgqnk9zn)

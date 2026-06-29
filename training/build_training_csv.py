@@ -63,27 +63,16 @@ NODE_RAW_BIN_OFFSETS = {
     "LW1": 27500,  # ~1737-1752 MHz — quiet L/S-band, near thermal noise floor
 }
 
-N_BINS_PER_NODE = 250  # Number of consecutive frequency bins extracted per node
+N_BINS_PER_NODE = 250
 
 
 def parse_archive_arg(value):
-    """Parse 'LABEL=PATH' or bare PATH (uses filename stem as label).
-
-    Args:
-        value: Command-line argument string, either 'LABEL=PATH' or just 'PATH'.
-
-    Returns:
-        Tuple of (label: str, path: Path).
-
-    Raises:
-        argparse.ArgumentTypeError: If label is empty after parsing.
-    """
+    """Parse 'LABEL=PATH' or bare PATH (uses filename stem as label)."""
     if "=" in value:
         label, path = value.split("=", 1)
         label = label.strip()
         path = path.strip()
     else:
-        # No label prefix — derive label from the zip filename's stem
         path = value.strip()
         label = Path(path).stem
     if not label:
@@ -92,96 +81,39 @@ def parse_archive_arg(value):
 
 
 def list_sigmf_meta_names(zip_file):
-    """List all .sigmf-meta file paths in a zip archive, excluding macOS artifacts.
-
-    SigMF archives contain paired .sigmf-meta (JSON metadata) and .sigmf-data
-    (binary float32) files. macOS __MACOSX/ and ._ files are excluded.
-
-    Args:
-        zip_file: An opened ZipFile object.
-
-    Returns:
-        Sorted list of .sigmf-meta member names within the archive.
-    """
     return sorted(
         name
         for name in zip_file.namelist()
         if name.endswith(".sigmf-meta")
-        and "__MACOSX/" not in name       # Skip macOS resource fork directories
-        and "/._" not in name             # Skip Apple Double files
+        and "__MACOSX/" not in name
+        and "/._" not in name
     )
 
 
 def read_json(zip_file, member_name):
-    """Read and parse a JSON member from a zip archive.
-
-    Args:
-        zip_file: An opened ZipFile object.
-        member_name: Path of the JSON member inside the archive.
-
-    Returns:
-        Parsed dictionary from the JSON content.
-    """
     return json.loads(zip_file.read(member_name).decode("utf-8"))
 
 
 def read_float32_array(zip_file, member_name):
-    """Read a binary float32 array member from a zip archive.
-
-    SigMF stores spectral data as little-endian 32-bit IEEE float arrays.
-    This function handles byte-order correction on big-endian platforms.
-
-    Args:
-        zip_file: An opened ZipFile object.
-        member_name: Path of the .sigmf-data member inside the archive.
-
-    Returns:
-        array.array of type 'f' containing the raw float32 values.
-    """
     values = array("f")
     values.frombytes(zip_file.read(member_name))
-    # SigMF data is always little-endian; byteswap if this host is big-endian
     if sys.byteorder != "little":
         values.byteswap()
     return values
 
 
 def floor_to_minute_utc(dt_str):
-    """Parse an ISO-8601 timestamp and floor it to the nearest whole minute UTC.
-
-    The TSS-LCD pipeline aggregates sweeps by whole-minute buckets, so all
-    captures within the same minute are averaged together in the linear domain.
-
-    Args:
-        dt_str: ISO-8601 datetime string (e.g. '2022-02-01T12:34:56.123456').
-
-    Returns:
-        Naive datetime in UTC with seconds and microseconds zeroed.
-    """
     dt = datetime.fromisoformat(dt_str)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
-    # Convert to UTC, then drop sub-minute precision
     return dt.astimezone(timezone.utc).replace(second=0, microsecond=0)
 
 
 def process_archive_at_offset(label, archive_path, bin_offset, n_bins):
-    """Extract n_bins consecutive raw float32 values starting at bin_offset from
+    """
+    Extract n_bins consecutive raw float32 values starting at bin_offset from
     each SigMF sweep. Accumulate in linear power domain, average per minute,
     return {minute_key: [dBm_values]}.
-
-    The pipeline converts dBm → milliwatts (linear) before averaging, because
-    averaging in dB directly introduces a positive bias (Jensen's inequality).
-    After averaging, the result is converted back to dBm.
-
-    Args:
-        label: Node label (e.g. 'CC1') for diagnostics.
-        archive_path: Path to the SigMF zip archive.
-        bin_offset: Start bin index in the raw frequency sweep.
-        n_bins: Number of consecutive bins to extract.
-
-    Returns:
-        Dictionary mapping minute datetime keys to lists of dBm values (length n_bins).
     """
     with ZipFile(archive_path) as zip_file:
         meta_names = list_sigmf_meta_names(zip_file)
@@ -189,14 +121,13 @@ def process_archive_at_offset(label, archive_path, bin_offset, n_bins):
             raise ValueError(f"No SigMF metadata files found in {archive_path}")
 
         # Accumulate per minute in linear (mW) domain
-        minute_lin_sums = {}             # minute_key → [lin_sum_per_bin]
+        minute_lin_sums = {}       # minute_key → [lin_sum_per_bin]
         minute_sweep_counts = defaultdict(int)
 
         for meta_name in meta_names:
             meta = read_json(zip_file, meta_name)
             capture = meta["captures"][0]
             minute_key = floor_to_minute_utc(capture["core:datetime"])
-            # Each .sigmf-meta has a paired .sigmf-data file with the same stem
             data_name = meta_name.replace(".sigmf-meta", ".sigmf-data")
             raw_powers_db = read_float32_array(zip_file, data_name)
 
@@ -216,7 +147,6 @@ def process_archive_at_offset(label, archive_path, bin_offset, n_bins):
             minute_sweep_counts[minute_key] += 1
 
     # Step 5 & 6: average linear sums → convert back to dBm
-    # Use 1e-30 floor to avoid log10(0) for bins that are all zero
     minute_rows_db = {}
     for minute_key, lin_sum in minute_lin_sums.items():
         sweep_count = minute_sweep_counts[minute_key]
@@ -229,15 +159,7 @@ def process_archive_at_offset(label, archive_path, bin_offset, n_bins):
 
 
 def write_output_csv_no_header(output_path, merged_rows):
-    """Write merged rows as CSV with 6 decimal places, NO header.
-
-    The repo CSV format has no header row — the column layout is implicit:
-    [CC1_250_bins | CC2_250_bins | LW1_250_bins].
-
-    Args:
-        output_path: Path to write the output CSV file.
-        merged_rows: List of rows, where each row is a list of float values.
-    """
+    """Write merged rows as CSV with 6 decimal places, NO header."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as f:
         for row in merged_rows:
@@ -245,16 +167,6 @@ def write_output_csv_no_header(output_path, merged_rows):
 
 
 def write_manifest(output_path, archive_specs, n_common_rows):
-    """Write a JSON manifest alongside the CSV recording pipeline parameters.
-
-    This provides provenance for reproducibility: which archives were used,
-    which bin offsets were applied, and how many common-minute rows resulted.
-
-    Args:
-        output_path: Path of the CSV file (manifest gets .json suffix appended).
-        archive_specs: List of (label, Path) tuples for all input archives.
-        n_common_rows: Number of rows in the final merged output.
-    """
     manifest = {
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "method": "per-node-raw-bin-offsets",
@@ -275,7 +187,6 @@ def write_manifest(output_path, archive_specs, n_common_rows):
 
 
 def main():
-    """Parse arguments, process each archive, intersect common minutes, write output."""
     parser = argparse.ArgumentParser(
         description="Build training CSV using per-node raw-bin offsets (reverse-engineered)"
     )
@@ -313,7 +224,6 @@ def main():
         print(f"  → {len(minute_rows)} minutes with data", flush=True)
 
     # Step 7: intersect common minutes across all nodes
-    # Only timestamps present in ALL nodes are kept, ensuring aligned time series
     common_minutes = set(archives[0]["minute_rows_db"])
     for a in archives[1:]:
         common_minutes &= set(a["minute_rows_db"])
@@ -342,15 +252,7 @@ def main():
 
 def n_bins_to_freq(bin_index):
     """Convert raw SigMF bin index to approximate MHz.
-
-    SigMF: 98868 bins, 87-6019 MHz → ~0.06 MHz per bin.
-
-    Args:
-        bin_index: Raw bin index in the SigMF frequency sweep.
-
-    Returns:
-        Approximate frequency in MHz corresponding to the bin center.
-    """
+    SigMF: 98868 bins, 87-6019 MHz → ~0.06 MHz per bin."""
     return 87 + bin_index * (6019 - 87) / 98868
 
 

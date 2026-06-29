@@ -1,10 +1,3 @@
-"""
-Utility functions for the TSS-LCD pipeline.
-
-Provides configuration loading, seeding, device selection, checkpoint
-I/O, metric computation, and plotting utilities for evaluation.
-"""
-
 from __future__ import annotations
 
 import json
@@ -14,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import matplotlib
-matplotlib.use("Agg")  # Non-interactive backend for headless environments
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -22,14 +15,12 @@ import yaml
 
 
 def load_config(path: str | Path) -> dict[str, Any]:
-    """Load a YAML configuration file and return it as a dictionary."""
     with open(path, "r") as f:
         cfg = yaml.safe_load(f)
     return cfg
 
 
 def set_seed(seed: int | None) -> None:
-    """Set random seed for reproducibility across Python, NumPy, and PyTorch."""
     if seed is not None:
         random.seed(seed)
         np.random.seed(seed)
@@ -38,44 +29,22 @@ def set_seed(seed: int | None) -> None:
 
 
 def get_device(device_setting: str) -> torch.device:
-    """Resolve device from config string; 'auto' picks CUDA if available.
-
-    Args:
-        device_setting: 'auto', 'cpu', or 'cuda'.
-
-    Returns:
-        A torch.device.
-    """
     if device_setting == "auto":
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
     return torch.device(device_setting)
 
 
 def save_checkpoint(path: str | Path, state: dict[str, Any]) -> None:
-    """Save a training checkpoint dictionary to disk.
-
-    Creates parent directories if they don't exist.
-    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(state, path)
 
 
 def load_checkpoint(path: str | Path, map_location: str | None = None) -> dict[str, Any]:
-    """Load a checkpoint dictionary from disk.
-
-    Args:
-        path: Path to the .pt file.
-        map_location: Device mapping (e.g. 'cpu') for loading on different devices.
-
-    Returns:
-        The checkpoint dictionary.
-    """
     return torch.load(path, map_location=map_location)
 
 
 def compute_metrics(pred: np.ndarray, target: np.ndarray) -> dict[str, float]:
-    """Compute MSE, RMSE, MAE, and R² between flattened predictions and targets."""
     err = pred - target
     mse = float(np.mean(err ** 2))
     rmse = float(np.sqrt(mse))
@@ -87,14 +56,6 @@ def compute_metrics(pred: np.ndarray, target: np.ndarray) -> dict[str, float]:
 
 
 def compute_metrics_per_horizon(pred: np.ndarray, target: np.ndarray) -> dict[int, dict[str, float]]:
-    """Compute metrics for each prediction horizon independently.
-
-    Args:
-        pred, target: arrays of shape (B, T, D).
-
-    Returns:
-        Dict mapping horizon (1-indexed) to its metric dict.
-    """
     T = pred.shape[1]
     results = {}
     for t in range(T):
@@ -103,10 +64,6 @@ def compute_metrics_per_horizon(pred: np.ndarray, target: np.ndarray) -> dict[in
 
 
 def compute_metrics_per_node(pred: np.ndarray, target: np.ndarray, L: int) -> dict[int, dict[str, float]]:
-    """Compute metrics for each spatial node independently.
-
-    Splits the last dimension into L equal-sized groups (one per node).
-    """
     F = pred.shape[-1] // L
     results = {}
     for l in range(L):
@@ -116,7 +73,6 @@ def compute_metrics_per_node(pred: np.ndarray, target: np.ndarray, L: int) -> di
 
 
 def compute_metrics_per_frequency(pred: np.ndarray, target: np.ndarray) -> dict[int, dict[str, float]]:
-    """Compute metrics for each frequency bin independently."""
     D = pred.shape[-1]
     results = {}
     for d in range(D):
@@ -132,15 +88,6 @@ def plot_spectrogram_comparison(
     t_in: int,
     save_path: str | Path,
 ) -> None:
-    """Side-by-side spectrogram plot: ground truth vs prediction for one node.
-
-    Args:
-        ground_truth, prediction: arrays of shape (T_out, L, F).
-        node_idx: Which node to plot.
-        node_name: Label for the node.
-        t_in: Input length (used only in title context).
-        save_path: Where to save the PNG.
-    """
     gt_node = ground_truth[:, node_idx, :].T
     pred_node = prediction[:, node_idx, :].T
     vmin = min(gt_node.min(), pred_node.min())
@@ -168,13 +115,6 @@ def plot_error_analysis(
     node_names: list[str],
     save_path: str | Path,
 ) -> None:
-    """Error heatmaps for each node (prediction minus ground truth).
-
-    Args:
-        errors: array of shape (T_out, L, F).
-        node_names: Labels for each node.
-        save_path: Where to save the PNG.
-    """
     n = len(node_names)
     fig, axes = plt.subplots(1, n, figsize=(5 * n, 4), squeeze=False,
                               constrained_layout=True)

@@ -24,7 +24,7 @@ from tqdm import tqdm
 from dataset import create_datasets, create_interpolated_map_datasets
 from model import ConvLSTMPredictor
 from utils import (
-    set_seed, get_device, compute_metrics, compute_metrics_per_horizon,
+    set_seed, get_device, compute_metrics,
     compute_metrics_per_node, save_checkpoint,
 )
 
@@ -265,24 +265,6 @@ def main():
         os.path.join(ckpt_dir, "last_model.pt"),
         model, optimizer, epoch, stats, config, val_metrics,
     )
-
-    # Final evaluation on the held-out test set.
-    if test_loader:
-        print("\n=== Test Set Evaluation ===")
-        test_metrics, pred, target = validate(model, test_loader, criterion, device)
-        print(f"Test RMSE: {test_metrics['rmse']:.4f}")
-        print(f"Test MAE:  {test_metrics['mae']:.4f}")
-        print(f"Test R²:   {test_metrics['r2']:.4f}")
-        horizons = compute_metrics_per_horizon(pred, target)
-        for k, v in horizons.items():
-            print(f"  {k}: {v:.4f}")
-
-        # Overwrite best_model.pt with test metrics (it previously had val metrics)
-        # so the final checkpoint reflects performance on unseen data.
-        save_checkpoint(
-            os.path.join(ckpt_dir, "best_model.pt"),
-            model, optimizer, best_epoch, stats, config, test_metrics,
-        )
 
     print(f"\nDone. Best epoch: {best_epoch}. Checkpoints in {ckpt_dir}/")
 

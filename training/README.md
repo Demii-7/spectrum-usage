@@ -1,5 +1,291 @@
 # Training Data Pipeline
 
+## Integrated 200 MHz Chunk Models
+
+The integrated training path uses the AERPAW CSV files under `evaluation/aerpaw/` and trains one model per 200 MHz chunk. Each model sees one CC2 chunk as a tensor with shape `(T, 1, 1, 200)`, where `T` is minutes and `200` is the number of 1 MHz bins in the chunk. The shared settings live in `training/common/config.yaml`.
+
+The default chunks are `600-800 MHz`, `2400-2600 MHz`, and `3500-3700 MHz`. The default lookback is 60 minutes. The reported horizons are 1, 5, 15, and 60 minutes. Training can use normalized inputs, but all metrics are written in denormalized dBm.
+
+### Inputs
+
+Put the AERPAW per-minute CSV files in `evaluation/aerpaw/`:
+
+```text
+evaluation/aerpaw/ResultsCC1Feb2022_SigMF_power_1mhz_avg_per_minute.csv
+evaluation/aerpaw/ResultsCC2Feb2022_SigMF_power_1mhz_avg_per_minute.csv
+evaluation/aerpaw/ResultsLW1Feb2022_SigMF_power_1mhz_avg_per_minute.csv
+```
+
+Generate these files from the downloaded SigMF ZIP archives with `evaluation/sigmf_zip_to_csv.py`:
+
+```bash
+python3 evaluation/sigmf_zip_to_csv.py ResultsCC1Feb2022_SigMF.zip --full-band \
+  --output evaluation/aerpaw/ResultsCC1Feb2022_SigMF_power_1mhz_avg_per_minute.csv
+python3 evaluation/sigmf_zip_to_csv.py ResultsCC2Feb2022_SigMF.zip --full-band \
+  --output evaluation/aerpaw/ResultsCC2Feb2022_SigMF_power_1mhz_avg_per_minute.csv
+python3 evaluation/sigmf_zip_to_csv.py ResultsLW1Feb2022_SigMF.zip --full-band \
+  --output evaluation/aerpaw/ResultsLW1Feb2022_SigMF_power_1mhz_avg_per_minute.csv
+```
+
+Omit `--full-band` to export the default 250 MHz slice.
+
+The training loader reads the configured reference site, interpolates missing values per frequency, selects that site's columns in each configured chunk, and creates chronological train/test splits. The default reference site is `CC2`; the final two days form `CC2_test`.
+
+Per-band metrics use `evaluation/results/step2/band_definitions.csv` when that file exists. The model runners still produce aggregate and per-frequency metrics when band definitions are absent.
+
+### Environment (Docker)
+
+Training was performed inside a Jupyter PyTorch Docker container with CUDA 12 support:
+
+```bash
+docker run -d -p 8888:8888 --name jupyter \
+  -v /home/cc/spectrum-usage:/home/jovyan/work/spectrum-usage \
+  --rm --gpus all \
+  quay.io/jupyter/pytorch-notebook:cuda12-python-3.11.8
+```
+
+The container image includes PyTorch (CUDA-enabled), numpy, pandas, scikit-learn, matplotlib, and Jupyter. After starting the container, attach a shell and navigate to the repo:
+
+```bash
+docker exec -it jupyter bash
+cd ~/work/spectrum-usage
+```
+
+Install additional dependencies:
+
+```bash
+pip install pyyaml momentfm==0.1.4 gdown
+```
+
+Install `screen` for long-running training jobs (required inside the container):
+
+```bash
+apt-get update && apt-get install -y screen
+```
+
+### Run Baselines
+
+The evaluation baseline script writes persistence, historical mean, lookback mean, same-time last-3-days mean, AutoReg(60), and LAR metrics. Use `--normalize` to train the learned baselines on normalized inputs and report dBm metrics.
+
+```bash
+python3 evaluation/scripts/run_spectrum_steps_5_6.py \
+  --normalize \
+  --output-dir training/results/baselines
+```
+
+### Run LinearAutoRegressive
+
+This runner uses the shared config and trains one direct Ridge autoregressive model per frequency bin, per chunk, and per horizon.
+
+```bash
+python3 training/LinearAutoRegressive/train.py
+```
+
+Outputs go to `training/results/LinearAutoRegressive/` by default:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+models/<chunk_id>_linear_autoregressive.pkl
+```
+
+### Run ConvLSTM
+
+The integrated ConvLSTM runner trains one model per chunk using `(T, 1, 1, 200)` inputs. It predicts 60 consecutive future minutes and evaluates the configured horizons from that sequence.
+
+```bash
+python3 training/ConvLSTM/train_integrated.py
+```
+
+Outputs go to `training/results/ConvLSTM/` by default:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+models/<chunk_id>_convlstm.pt
+<chunk_id>_training_log.csv
+```
+
+For a shorter smoke run, copy `training/common/config.yaml`, reduce `convlstm.epochs`, and pass it with `--config`:
+
+```bash
+python3 training/ConvLSTM/train_integrated.py --config /path/to/smoke_config.yaml
+```
+
+### Run STS-PredNet
+
+The integrated STS-PredNet runner trains one model per chunk using recursive single-step prediction with closeness and period branches. It evaluates each horizon from the configured list.
+
+```bash
+python3 training/STS-PredNet/train_integrated.py
+```
+
+Outputs go to `training/results/STS-PredNet/` by default:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+models/<chunk_id>_stsprednet.pt
+<chunk_id>_training_log.csv
+```
+
+### Run TimeRAN
+
+The integrated TimeRAN runner trains a MOMENT forecasting head per chunk using the shared lookback and horizon values.
+
+#### Prerequisites — Download Pretrained Checkpoint
+
+TimeRAN's pretrained backbone weights exceed GitHub's file size limits and must be downloaded from Google Drive before training. The checkpoint path is derived automatically from `config.timeran.checkpoint_size` (default: `base`).
+
+```bash
+# Install gdown for Google Drive downloads
+pip install momentfm==0.1.4 gdown
+
+# Create checkpoint directories
+mkdir -p training/TimeRAN/checkpoints/{small,base,large}
+
+# Download checkpoints from the upstream TimeRAN repository.
+#
+# NOTE: The upstream TimeRAN README mislabels these file IDs.
+# ID 1fJNCk... is the small variant (d_model=512, ~145 MB), NOT base.
+# ID 1gz23m... is the base variant (d_model=768, ~433 MB), NOT small.
+# We save them with correct names here.
+gdown 1fJNCkufmfWC6zHecz10PUyreD0PhBOMJ -O training/TimeRAN/checkpoints/small/TimeRAN_small.pth
+gdown 1gz23mmP4ZiNznCloObEaSlVaJH21fyxJ -O training/TimeRAN/checkpoints/base/TimeRAN_base.pth
+gdown 1We9zE5BV6Iwkc_EKSAhP28B3wcM7RZRd -O training/TimeRAN/checkpoints/large/TimeRAN_large.pth
+```
+
+Without these checkpoints, the pipeline falls back to raw MOMENT weights (no TimeRAN pretraining).
+
+#### Run
+
+```bash
+python3 training/TimeRAN/train_integrated.py
+```
+
+Outputs go to `training/results/TimeRAN/` by default:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+models/<chunk_id>_timeran.pt
+<chunk_id>_training_log.csv
+```
+
+### Run TSS-LCD
+
+The integrated TSS-LCD runner trains a 3-stage latent-conditioned diffusion model per chunk.
+
+Stage 1 trains a Conv2D autoencoder (LSE/LSD) to compress future windows into a latent space.
+Stage 2 trains the TSS-CC condition constructor (Temporal/Spectral/Spatial transformer branches) to predict the latent from the lookback window.
+Stage 3 trains the diffusion noise-estimation network (Conv1D U-Net) using the latent and TSS-CC condition.
+
+```bash
+python3 training/TSS-LCD/train_integrated.py
+```
+
+Outputs go to `training/results/TSS-LCD/` by default:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+models/<chunk_id>_tss_lcd_autoencoder.pt
+models/<chunk_id>_tss_lcd_tss.pt
+models/<chunk_id>_tss_lcd_diffusion.pt
+<chunk_id>_training_log.csv
+```
+
+### Assemble Overall Results
+
+After the baseline, LinearAutoRegressive, ConvLSTM, STS-PredNet, TimeRAN, and TSS-LCD jobs finish, combine their metric files:
+
+```bash
+python3 -m training.common.assemble_results
+```
+
+The assembler reads these directories by default:
+
+```text
+training/results/baselines/
+training/results/LinearAutoRegressive/
+training/results/ConvLSTM/
+training/results/STS-PredNet/
+training/results/TimeRAN/
+training/results/TSS-LCD/
+```
+
+It writes combined outputs to `training/results/overall/`:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+metrics_summary.md
+```
+
+Use `--input-dir` to combine a different set of model output directories:
+
+```bash
+python3 -m training.common.assemble_results \
+  --input-dir training/results/baselines \
+  --input-dir training/results/LinearAutoRegressive \
+  --input-dir training/results/ConvLSTM \
+  --output-dir training/results/overall
+```
+
+### Long-Interval Forecast Plots
+
+The long-interval plot script creates horizon-by-horizon forecast plots for AutoReg, LAR, and lookback mean on a selected CC2 test interval. It writes PNG and CSV files under `evaluation/results/figures/long_interval_forecasts/`.
+
+```bash
+python3 evaluation/scripts/plot_autoreg_long_interval_by_horizon.py --transition variable
+python3 evaluation/scripts/plot_autoreg_long_interval_by_horizon.py --transition falling
+python3 evaluation/scripts/plot_autoreg_long_interval_by_horizon.py --transition rising
+```
+
+The `variable` run also writes the compatibility filenames `cc2_autoreg_by_horizon_long_interval.png` and `cc2_autoreg_by_horizon_long_interval.csv`.
+
+### Shared Config
+
+Edit `training/common/config.yaml` to change chunks, horizons, lookback, normalization, or model hyperparameters. The model runners also accept `--config /path/to/config.yaml`.
+
+Key fields:
+
+```yaml
+windowing:
+  lookback: 60
+  horizons: [1, 5, 15, 60]
+
+preprocessing:
+  normalize: true
+
+convlstm:
+  input_sequence_length: 60
+  prediction_horizon: 60
+
+stsprednet:
+  lc: 36
+  lp: 3
+  period_interval: 1440
+  epochs: 25
+  learning_rate: 0.0002
+
+timeran:
+  checkpoint_size: base
+  epochs: 10
+  learning_rate: 1.0e-5
+  training_mode: linear_probing
+```
+
+Set each model's prediction/input length to at least the largest configured horizon.
+
+## Legacy TSS-LCD Reconstruction
+
 This directory contains the pipeline for acquiring the AERPAW sub-6 GHz spectrum
 monitoring dataset and preprocessing it into the format used by the TSS-LCD (https://github.com/Xlab2024/TSS-LCD)
 repository. The raw dataset consists of spectrum sweeps collected by three fixed

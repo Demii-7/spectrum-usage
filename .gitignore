@@ -3,7 +3,6 @@ __pycache__/
 *.pyo
 .venv/
 *.pt
-*.pth
 *.zip
 *.pdf
 training/DeepSPred/FM-S*

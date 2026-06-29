@@ -1,6 +1,0 @@
-2026-06-26 19:41:19 Training DSwinLSTM-I on cpu | epochs=2 batch=2 lr=0.0001
-2026-06-26 19:41:19 Data: train=139 val=29 test=29
-2026-06-26 19:41:19 Map shape: 1x250 T_in=10 T_out=10
-2026-06-26 19:42:08 Epoch 001/2  Train Loss: 0.097023  Val Loss: 0.165034  (saved best)
-2026-06-26 19:43:00 Epoch 002/2  Train Loss: 0.105881  Val Loss: 0.042377  (saved best)
-2026-06-26 19:43:00 Training complete. Best val loss: 0.042377
