@@ -294,7 +294,7 @@ class ConvLSTMPredictor(nn.Module):
         self.transfer_proj = nn.Linear(dec_lstm_hidden, dec_hidden * self.spatial_h * self.spatial_w)
 
         self.decoder_cell = ConvLSTMCell(
-            input_dim=1,
+            input_dim=self.input_channels,
             hidden_dim=dec_hidden,
             kernel_size=dec_kernel,
             bias=True,
@@ -309,10 +309,10 @@ class ConvLSTMPredictor(nn.Module):
             self.output_head = nn.Sequential(
                 nn.Conv2d(dec_hidden, fc_hidden, kernel_size=fc_kernel, padding=(fc_kernel[0] // 2, fc_kernel[1] // 2)),
                 self.fc_activation,
-                nn.Conv2d(fc_hidden, 1, kernel_size=1),
+                nn.Conv2d(fc_hidden, self.input_channels, kernel_size=1),
             )
         else:
-            self.output_head = nn.Conv2d(dec_hidden, 1, kernel_size=1)
+            self.output_head = nn.Conv2d(dec_hidden, self.input_channels, kernel_size=1)
 
     def forward(self, x, y_teacher=None, teacher_forcing_ratio=0.0):
         """
@@ -356,7 +356,7 @@ class ConvLSTMPredictor(nn.Module):
         h_dec, c_dec = h_dec_init, c_dec_init
         outputs = []
         # Start with a zero input; the decoder will use its own output as the next input.
-        decoder_input = torch.zeros(b, 1, self.spatial_h, self.spatial_w, device=x.device)
+        decoder_input = torch.zeros(b, self.input_channels, self.spatial_h, self.spatial_w, device=x.device)
 
         for t in range(self.t_out):
             # Teacher forcing: replace decoder input with ground truth with given probability.
