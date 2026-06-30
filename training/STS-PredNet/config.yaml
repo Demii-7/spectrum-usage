@@ -34,6 +34,10 @@ preprocessing:
   normalization: "minmax_neg1_pos1"
   # Fit normalization on training set only (true) or full dataset (false)
   fit_on_train_only: true
+  # NaN imputation for interpolated-map mode.
+  imputation:
+    enabled: true
+    window_steps: 2
 
 splits:
   # Train/validation/test split ratios (applied chronologically to raw time series)

@@ -24,7 +24,6 @@ Interpolated-map mode:
 
 import numpy as np
 import torch
-from scipy import ndimage
 from torch.utils.data import Dataset
 
 
@@ -152,22 +151,6 @@ def compute_norm_stats_freq(data_4d):
     std = np.std(data_4d, axis=axes, keepdims=True).astype(np.float32)
     std = np.where(std < 1e-8, 1e-8, std)
     return mean, std
-
-
-def _fill_nearest_neighbor_2d(arr):
-    """Fill NaN values in a 2D array using nearest-neighbor interpolation.
-
-    Uses ``scipy.ndimage.distance_transform_edt`` to find the closest
-    non-NaN cell for each NaN cell.
-    """
-    mask = ~np.isnan(arr)
-    if mask.all() or not mask.any():
-        return arr
-    inverted = (~mask).astype(np.uint8)
-    indices = ndimage.distance_transform_edt(
-        inverted, return_distances=False, return_indices=True,
-    )
-    return arr[tuple(indices)]
 
 
 def impute_nan_local_time(data_4d: np.ndarray, window_steps: int = 2) -> np.ndarray:
