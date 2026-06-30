@@ -20,6 +20,10 @@ windowing:
 
 preprocessing:
   normalize: true
+  # NaN imputation for interpolated-map mode.
+  imputation:
+    enabled: true
+    window_steps: 2
 
 outputs:
   root_dir: training/results
