@@ -1,0 +1,69 @@
+branches:
+  lc: 6
+  lp: 2
+  lq: 4
+  period_interval: 10
+  prediction_offset: 1
+  share_branch_weights: false
+  trend_interval: 20
+  use_closeness: true
+  use_period: true
+  use_trend: false
+data:
+  bins_per_node: 250
+  dataset_path: training/data/cc2_smoke_test.csv
+  format: interpolated_map
+  map_key: map_db
+  map_path: evaluation/interpolated_maps/idw_ames_curtiss_600_800.npz
+  n_features: 250
+  n_nodes: 1
+  node_names:
+  - CC2
+  temporal_overrides:
+    lc: 6
+    lp: 2
+    period_interval: 6
+device:
+  device: auto
+evaluation:
+  metrics:
+  - rmse
+  - mae
+  - r2
+  optional_metrics:
+  - mape
+  per_frequency_metrics: true
+  per_node_metrics: true
+model:
+  fusion_weight_shape: per_location
+  hidden_dim: 16
+  input_channels: 1
+  kernel_size:
+  - 3
+  - 3
+  map_height: 1
+  map_width: 250
+  num_layers: 1
+  output_activation: tanh
+preprocessing:
+  fit_on_train_only: true
+  normalization: zscore
+splits:
+  chronological_split: true
+  test_ratio: 0.1
+  train_ratio: 0.8
+  val_ratio: 0.1
+training:
+  batch_size: 4
+  beta1: 0.9
+  beta2: 0.999
+  early_stopping: true
+  epochs: 3
+  epsilon: 1.0e-08
+  gradient_clip_norm: 5.0
+  learning_rate: 0.001
+  loss: mse
+  optimizer: adam
+  patience: 5
+  seed: 42
+  weight_decay: 0.0

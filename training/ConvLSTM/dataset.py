@@ -170,97 +170,47 @@ def _fill_nearest_neighbor_2d(arr):
     return arr[tuple(indices)]
 
 
-def clean_map_npz(data_4d, train_ratio=0.8, fit_on_train_only=True):
-    """Remove or impute all NaN values in a (T, F, H, W) map array.
+def impute_nan_local_time(data_4d: np.ndarray, window_steps: int = 2) -> np.ndarray:
+    """Impute NaN values along the time axis using local neighbours.
 
-    Pipeline:
-      1. Drop timesteps that are entirely NaN (all F×H×W values).
-      2. Per (time, frequency) spatial slice, fill partial-NaN cells using
-         nearest-neighbor interpolation (``_fill_nearest_neighbor_2d``).
-      3. Impute any remaining NaN (e.g. slices that were fully NaN in step 2)
-         with the per-frequency mean computed from the training portion.
-      4. Assert that zero NaN cells remain.
+    For each (F, H, W) cell, for each NaN at time t, compute the mean of
+    valid values in the window [t-window_steps, t-1] ∪ [t+1, t+window_steps].
+    All imputation values are computed from the *original* neighbors at each
+    position and applied simultaneously, avoiding cascading propagation.
+    If no valid neighbours exist within the window, the NaN is left as-is
+    (no fallback imputation).
 
-    Args:
-        data_4d: (T, F, H, W) float32 NumPy array, possibly containing NaN.
-        train_ratio: Fraction of timesteps used as the training set (used
-                     for computing per-frequency means in step 3).
-        fit_on_train_only: If True, compute frequency means only from the
-                           first ``train_ratio`` fraction of timesteps.
-
-    Returns:
-        Cleaned array of shape (T', F, H, W) with no NaN values.  T' ≤ T.
-
-    Side effect:
-        Prints a detailed log of the cleaning process.
+    Operates on (T, F, H, W) layout.  Does not drop any timesteps.
     """
     T, F, H, W = data_4d.shape
-    total_cells = T * F * H * W
-    initial_nan = np.isnan(data_4d)
-    initial_nan_count = initial_nan.sum()
-
-    if initial_nan_count == 0:
-        print("[clean_map_npz] No NaN values found; no cleaning needed.")
+    total_nan = int(np.isnan(data_4d).sum())
+    if total_nan == 0:
         return data_4d
 
-    print(f"[clean_map_npz] Original shape ({T}, {F}, {H}, {W}), "
-          f"NaN cells: {initial_nan_count}/{total_cells} "
-          f"({100.0 * initial_nan_count / total_cells:.2f}%).")
+    fill_coords = []
+    fill_vals = []
 
-    # ---- Step 1: drop fully-NaN timesteps ----
-    all_nan_t = initial_nan.all(axis=(1, 2, 3))
-    drop_count = int(all_nan_t.sum())
-    nan_in_dropped = int(initial_nan[all_nan_t].sum()) if drop_count else 0
-    data_4d = data_4d[~all_nan_t]
-    T = data_4d.shape[0]
-    if drop_count:
-        print(f"[clean_map_npz]  Step 1: dropped {drop_count} fully-NaN "
-              f"timestep(s) ({nan_in_dropped} NaN cells).  New T={T}.")
+    for f in range(F):
+        for h in range(H):
+            for w in range(W):
+                series = data_4d[:, f, h, w]
+                if not np.isnan(series).any():
+                    continue
+                for t in np.where(np.isnan(series))[0]:
+                    left = slice(max(0, t - window_steps), t)
+                    right = slice(t + 1, min(T, t + window_steps + 1))
+                    vals = np.concatenate([series[left], series[right]])
+                    valid = vals[~np.isnan(vals)]
+                    if len(valid) > 0:
+                        fill_coords.append((t, f, h, w))
+                        fill_vals.append(valid.mean())
 
-    # ---- Step 2: nearest-neighbour fill per (t, f) slice ----
-    before_nn = int(np.isnan(data_4d).sum())
-    for t in range(T):
-        for f in range(F):
-            sl = data_4d[t, f]
-            if np.isnan(sl).any():
-                data_4d[t, f] = _fill_nearest_neighbor_2d(sl)
-    after_nn = int(np.isnan(data_4d).sum())
-    nn_filled = before_nn - after_nn
-    if nn_filled:
-        print(f"[clean_map_npz]  Step 2: filled {nn_filled} cell(s) via "
-              f"nearest-neighbour per (t,f) slice.")
+    for (t, f, h, w), v in zip(fill_coords, fill_vals):
+        data_4d[t, f, h, w] = v
 
-    # ---- Step 3: impute remaining NaNs with per-frequency mean ----
-    remaining = np.isnan(data_4d)
-    remaining_count = int(remaining.sum())
-    if remaining_count:
-        if fit_on_train_only:
-            n_train = max(1, int(T * train_ratio))
-            train_seg = data_4d[:n_train]
-        else:
-            train_seg = data_4d
-        freq_means = np.nanmean(train_seg, axis=(0, 2, 3), keepdims=True)
-        data_4d = np.where(remaining, freq_means, data_4d)
-        print(f"[clean_map_npz]  Step 3: filled {remaining_count} cell(s) "
-              f"with per-frequency training-set mean.")
-
-    # ---- Step 4: assert no NaNs remain and data is non-empty ----
-    if T == 0:
-        raise AssertionError(
-            "[clean_map_npz] All timesteps were fully NaN — no usable data remains!"
-        )
-    final_nan = np.isnan(data_4d).any()
-    if final_nan:
-        raise AssertionError(
-            f"[clean_map_npz] {int(np.isnan(data_4d).sum())} NaN cell(s) "
-            f"remain after cleaning!"
-        )
-    print("[clean_map_npz]  Step 4: PASS — zero NaN cells remain.")
-
-    total_filled = initial_nan_count - nan_in_dropped
-    print(f"[clean_map_npz] Done — original NaN cells: {initial_nan_count}, "
-          f"removed by drop: {nan_in_dropped}, "
-          f"imputed: {total_filled}.")
+    remaining = int(np.isnan(data_4d).sum())
+    print(f"  Imputed {len(fill_coords)} NaN cell(s) via local time-axis (window={window_steps})."
+          + (f"  Remaining: {remaining}" if remaining else ""))
     return data_4d
 
 
@@ -406,14 +356,16 @@ def create_datasets(csv_path, n_nodes, n_bins, t_in, t_out, stride=1,
 def create_interpolated_map_datasets(map_path, map_key, t_in, t_out, stride=1,
                                      train_stride=None, val_stride=None, test_stride=None,
                                      train_ratio=0.8, val_ratio=0.1, chronological=True,
-                                     normalization="zscore", fit_on_train_only=True):
-    """Full pipeline for interpolated-map mode: load NPZ, clean NaNs, normalize, split, create Datasets.
+                                     normalization="zscore", fit_on_train_only=True,
+                                     imputation_cfg=None):
+    """Full pipeline for interpolated-map mode: load NPZ, impute NaNs, normalize, split, create Datasets.
 
-    NaN handling (via ``clean_map_npz``):
-      1. Fully-NaN timesteps are dropped.
-      2. Per-(time, frequency) spatial slices have NaNs filled via nearest-neighbour.
-      3. Remaining NaNs are imputed with the per-frequency training-set mean.
-      4. Asserts zero NaNs remain before proceeding.
+    NaN handling (via ``impute_nan_local_time``):
+      Fills NaN cells along the time axis using the mean of neighbouring
+      valid values within a configurable window.  No timesteps are dropped.
+
+    Args:
+        imputation_cfg: dict with keys ``enabled`` (bool) and ``window_steps`` (int).
 
     Returns:
         train_ds, val_ds, test_ds: InterpolatedMapDataset instances (may be None).
@@ -426,8 +378,15 @@ def create_interpolated_map_datasets(map_path, map_key, t_in, t_out, stride=1,
     data_4d = load_map_npz(map_path, map_key)
     print(f"[create_interpolated_map_datasets] Loaded map: shape {data_4d.shape}")
 
-    # Clean NaN values before any further processing.
-    data_4d = clean_map_npz(data_4d, train_ratio, fit_on_train_only)
+    # Impute NaN values along time axis (configurable window size).
+    ipcfg = imputation_cfg or {}
+    if ipcfg.get("enabled", True):
+        window = int(ipcfg.get("window_steps", 2))
+        data_4d = impute_nan_local_time(data_4d, window)
+    else:
+        nan_count = int(np.isnan(data_4d).sum())
+        if nan_count:
+            print(f"  WARNING: imputation disabled, {nan_count} NaN(s) remain in data")
 
     T, F, H, W = data_4d.shape
 

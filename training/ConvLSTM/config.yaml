@@ -32,6 +32,10 @@ preprocessing:
   normalization: "zscore"
   # Fit normalization on training set only (true) or full dataset (false)
   fit_on_train_only: true
+  # NaN imputation for interpolated-map mode.
+  imputation:
+    enabled: true
+    window_steps: 2
 
 windowing:
   # Number of past time steps (minutes) used as input

@@ -204,34 +204,48 @@ def compute_norm_stats_freq(data_4d: np.ndarray) -> tuple[np.ndarray, np.ndarray
     return mean, std
 
 
-def fill_map_nan(map_4d: np.ndarray, train_ratio: float = 0.8) -> np.ndarray:
-    """Drop fully-NaN timesteps, then fill remaining NaNs per spatial slice."""
-    from scipy.interpolate import NearestNDInterpolator
-    n_time = map_4d.shape[0]
-    fully_nan = np.isnan(map_4d).reshape(n_time, -1).all(axis=1)
-    if fully_nan.any():
-        n_drop = int(fully_nan.sum())
-        print(f"  Dropping {n_drop}/{n_time} fully-NaN timesteps")
-        map_4d = map_4d[~fully_nan]
-        n_time = map_4d.shape[0]
-    for t in range(n_time):
-        for f in range(map_4d.shape[3]):
-            slc = map_4d[t, :, :, f]
-            nan = np.isnan(slc)
-            if nan.any():
-                good = np.argwhere(~nan)
-                bad = np.argwhere(nan)
-                if len(good) > 0:
-                    slc[nan] = NearestNDInterpolator(good, slc[~nan])(bad[:, 0], bad[:, 1])
-    remain = np.isnan(map_4d)
-    if remain.any():
-        train_end = int(n_time * train_ratio)
-        for f in range(map_4d.shape[3]):
-            vals = map_4d[:train_end, :, :, f]
-            v = np.nanmean(vals)
-            map_4d[:, :, :, f][np.isnan(map_4d[:, :, :, f])] = 0.0 if np.isnan(v) else v
-        print(f"  Filled {int(remain.sum())} remaining NaNs with per-frequency train mean")
-    return map_4d
+def impute_nan_local_time(data_4d: np.ndarray, window_steps: int = 2) -> np.ndarray:
+    """Impute NaN values along the time axis using local neighbours.
+
+    For each (F, H, W) cell, for each NaN at time t, compute the mean of
+    valid values in the window [t-window_steps, t-1] ∪ [t+1, t+window_steps].
+    All imputation values are computed from the *original* neighbors at each
+    position and applied simultaneously, avoiding cascading propagation.
+    If no valid neighbours exist within the window, the NaN is left as-is
+    (no fallback imputation).
+
+    Operates on (T, F, H, W) layout.  Does not drop any timesteps.
+    """
+    T, F, H, W = data_4d.shape
+    total_nan = int(np.isnan(data_4d).sum())
+    if total_nan == 0:
+        return data_4d
+
+    fill_coords = []
+    fill_vals = []
+
+    for f in range(F):
+        for h in range(H):
+            for w in range(W):
+                series = data_4d[:, f, h, w]
+                if not np.isnan(series).any():
+                    continue
+                for t in np.where(np.isnan(series))[0]:
+                    left = slice(max(0, t - window_steps), t)
+                    right = slice(t + 1, min(T, t + window_steps + 1))
+                    vals = np.concatenate([series[left], series[right]])
+                    valid = vals[~np.isnan(vals)]
+                    if len(valid) > 0:
+                        fill_coords.append((t, f, h, w))
+                        fill_vals.append(valid.mean())
+
+    for (t, f, h, w), v in zip(fill_coords, fill_vals):
+        data_4d[t, f, h, w] = v
+
+    remaining = int(np.isnan(data_4d).sum())
+    print(f"  Imputed {len(fill_coords)} NaN cell(s) via local time-axis (window={window_steps})."
+          + (f"  Remaining: {remaining}" if remaining else ""))
+    return data_4d
 
 
 def create_interpolated_map_datasets(
@@ -271,10 +285,15 @@ def create_interpolated_map_datasets(
     data_4d = load_map_npz(map_path, dcfg.get("map_key", "map_db"))
     T, F, H, W = data_4d.shape
 
-    # Fill NaN (operates on (T, H, W, F) layout)
-    data_4d = fill_map_nan(data_4d.transpose(0, 2, 3, 1))
-    T = data_4d.shape[0]
-    data_4d = data_4d.transpose(0, 3, 1, 2)
+    # Impute NaNs along time axis (configurable window size)
+    ipcfg = dcfg.get("imputation", {})
+    if ipcfg.get("enabled", True):
+        window = int(ipcfg.get("window_steps", 2))
+        data_4d = impute_nan_local_time(data_4d, window)
+    else:
+        nan_count = int(np.isnan(data_4d).sum())
+        if nan_count:
+            print(f"  WARNING: imputation disabled, {nan_count} NaN(s) remain in data")
 
     # Filter to indices with enough history for all requested branches
     all_valid = generate_target_indices(

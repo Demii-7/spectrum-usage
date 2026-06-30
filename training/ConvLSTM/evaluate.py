@@ -223,6 +223,7 @@ def main():
             chronological=scfg["chronological_split"],
             normalization=config["preprocessing"]["normalization"],
             fit_on_train_only=config["preprocessing"]["fit_on_train_only"],
+            imputation_cfg=config["preprocessing"].get("imputation"),
         )
     else:
         csv_path = dcfg["dataset_path"]
