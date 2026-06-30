@@ -122,7 +122,7 @@ Imported by `train.py` and `evaluate.py`. Key functions:
 | `InterpolatedMapDataset(data_4d, t_in, t_out, indices)` | PyTorch `Dataset` | Returns `(X, y)` of shape `(T_in, F, H, W)` and `(T_out, F, H, W)` (map mode) |
 | `load_csv(path)` | `ndarray (T, 750)` | Loads CSV via `numpy.loadtxt` |
 | `load_map_npz(path, key)` | `ndarray (T, F, H, W)` | Loads `.npz`, transposes from `(T, H, W, F)` to `(T, F, H, W)` |
-| `clean_map_npz(data_4d, ...)` | `ndarray (T', F, H, W)` | Drops fully-NaN timesteps, fills partial NaNs via nearest-neighbor, imputes remaining with per-frequency mean; asserts no NaNs remain |
+| `impute_nan_local_time(data_4d, ...)` | `ndarray (T, F, H, W)` | Fills NaNs along the time axis from nearby valid timesteps within a configurable local window; does not drop timesteps and has no fallback imputation |
 | `denormalize(data, mean, std)` | `ndarray` | Reverses z-score normalization |
 
 `stats` dict (`{"mean": ndarray, "std": ndarray}`) is saved alongside checkpoints and used by `evaluate.py` and `inference.py` for denormalization.
@@ -205,6 +205,8 @@ All hyperparameters are in `config.yaml`. Key settings:
 | Data | `grid_width` | 50 | Spatial grid width / columns (map mode) |
 | Preprocessing | `normalization` | `zscore` | Normalization method (`zscore`, `minmax`, or `none`) |
 | Preprocessing | `fit_on_train_only` | true | Compute normalization stats on training set only (true) or full dataset (false) |
+| Preprocessing | `imputation.impute` | true | In map mode, fill missing values from local temporal neighbours before normalization; if false, leave NaNs in place and warn |
+| Preprocessing | `imputation.window_steps` | 2 | Number of timesteps to look backward and forward when imputing map NaNs |
 | Windowing | `input_sequence_length` | 12 | Past minutes (T_in) |
 | Windowing | `prediction_horizon` | 6 | Future minutes (T_out) |
 | Windowing | `stride` | 1 | Window stride |
@@ -370,12 +372,12 @@ On load, the array is transposed to `(T, F, H, W)` so frequency becomes the chan
 **Map → Tensor Conversion:**
 
 1. **Load**: `load_map_npz(path, key)` — loads `.npz`, extracts the key (default `map_db`), transposes `(T, H, W, F)` → `(T, F, H, W)`.
-2. **Clean NaNs**: `clean_map_npz()` — removes or imputes all NaN values before any further processing:
-   - Fully-NaN timesteps (where every cell in the 4D slice is NaN) are dropped entirely.
-   - Per-(time, frequency) spatial slices (`F` × `H` × `W`) with partial NaNs have missing cells filled via nearest-neighbor interpolation using `scipy.ndimage.distance_transform_edt`.
-   - Any remaining NaN values (e.g. a (t, f) slice that was fully NaN) are imputed with the per-frequency mean computed from the training-set portion.
-   - Asserts zero NaNs remain before proceeding with normalization and windowing.
-   - A detailed log is printed showing original timestep count, dropped timesteps, and the number/percentage of NaN cells filled at each step.
+2. **Handle Missing Values**: `impute_nan_local_time()` optionally fills NaNs before normalization and windowing:
+   - If `preprocessing.imputation.impute: true`, each missing `(t, f, h, w)` value is filled from valid neighbours within the local time window `[t-window_steps, t-1] ∪ [t+1, t+window_steps]`.
+   - The fill value is the mean of those local valid neighbours.
+   - No timesteps are dropped, so chronology is preserved.
+   - There is no fallback imputation strategy.
+   - If `preprocessing.imputation.impute: false`, NaNs are left in place and a warning is printed.
 3. **Normalize**: Per-frequency z-score normalized across the time dimension, using stats `(F, 1, 1)` (broadcast over H×W).
 4. **Window**: Identical sliding-window logic as CSV mode, producing `X: (T_in, F, H, W)` and `y: (T_out, F, H, W)`.
 
@@ -811,5 +813,3 @@ Metrics are computed:
 2. **ConvLSTM paper:** X. Shi, Z. Chen, H. Wang, D.-Y. Yeung, W.-K. Wong, W.-C. Woo, "Convolutional LSTM Network: A Machine Learning Approach for Precipitation Nowcasting," NIPS 2015.
 3. **Reference implementation:** [ndrplz/ConvLSTM_pytorch](https://github.com/ndrplz/ConvLSTM_pytorch) — base for our `ConvLSTMCell` / `ConvLSTM` modules.
 4. **AERPAW dataset:** AERPAW sub-6 GHz spectrum monitoring dataset — Fixed nodes CC1, CC2, LW1 (Feb 2022). DOI: [10.5061/dryad.hmgqnk9zn](https://doi.org/10.5061/dryad.hmgqnk9zn).
-
-

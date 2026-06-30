@@ -348,7 +348,7 @@ def create_interpolated_map_datasets(map_path, map_key, t_in, t_out, stride=1,
       valid values within a configurable window.  No timesteps are dropped.
 
     Args:
-        imputation_cfg: dict with keys ``enabled`` (bool) and ``window_steps`` (int).
+        imputation_cfg: dict with keys ``impute`` (bool) and ``window_steps`` (int).
 
     Returns:
         train_ds, val_ds, test_ds: InterpolatedMapDataset instances (may be None).
@@ -363,13 +363,14 @@ def create_interpolated_map_datasets(map_path, map_key, t_in, t_out, stride=1,
 
     # Impute NaN values along time axis (configurable window size).
     ipcfg = imputation_cfg or {}
-    if ipcfg.get("enabled", True):
+    should_impute = ipcfg.get("impute", ipcfg.get("enabled", True))
+    if should_impute:
         window = int(ipcfg.get("window_steps", 2))
         data_4d = impute_nan_local_time(data_4d, window)
     else:
         nan_count = int(np.isnan(data_4d).sum())
         if nan_count:
-            print(f"  WARNING: imputation disabled, {nan_count} NaN(s) remain in data")
+            print(f"  WARNING: impute=false, {nan_count} NaN(s) remain in data")
 
     T, F, H, W = data_4d.shape
 

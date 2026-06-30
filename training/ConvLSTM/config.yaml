@@ -32,9 +32,9 @@ preprocessing:
   normalization: "zscore"
   # Fit normalization on training set only (true) or full dataset (false)
   fit_on_train_only: true
-  # NaN imputation for interpolated-map mode.
+  # Missing-value handling for interpolated-map mode.
   imputation:
-    enabled: true
+    impute: true
     window_steps: 2
 
 windowing:
