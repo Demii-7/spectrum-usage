@@ -1,17 +1,11 @@
-import os, sys, argparse, json, copy
-import numpy as np
+import os, sys, argparse, json, time
 import torch
 import torch.nn as nn
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dataset import create_datasets
-from utils import (
-    set_seed, get_device, compute_metrics, compute_metrics_per_horizon,
-    compute_metrics_per_node, save_checkpoint, load_checkpoint,
-    denormalize, save_metrics_json, save_csv,
-    plot_spectrogram_comparison, plot_error_analysis,
-)
+from utils import set_seed, get_device, compute_metrics, save_checkpoint
 
 
 class DotDict(dict):
@@ -20,18 +14,17 @@ class DotDict(dict):
             return self[k]
         except KeyError:
             raise AttributeError(k)
+
     def __setattr__(self, k, v):
         self[k] = v
-    def __delattr__(self, k):
-        del self[k]
 
 
 def build_model(config, device):
     arch = config.get("architecture", {})
     variant = arch.get("model_variant", "autoformer_csa")
-
-    cfg = config["model"]
+    cfg = dict(config["model"])
     windowing = config["windowing"]
+
     model_cfg = DotDict({
         "seq_len": windowing["seq_len"],
         "label_len": windowing["label_len"],
@@ -56,24 +49,83 @@ def build_model(config, device):
     })
 
     if variant == "autoformer":
-        if "AUTOFORMER_REPO" in os.environ or os.path.isdir(
-            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "..", "extern", "Autoformer")
-        ):
-            from model import AutoformerVanilla
-        else:
-            _repo = os.environ.get(
-                "AUTOFORMER_REPO",
-                os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "..", "extern", "Autoformer"),
-            )
-            if os.path.isdir(_repo) and _repo not in sys.path:
-                sys.path.insert(0, _repo)
-            from models.Autoformer import Model as AutoformerVanilla
+        from model import AutoformerVanilla
         model = AutoformerVanilla(model_cfg).to(device)
     else:
         from model import AutoformerCSA
         model = AutoformerCSA(model_cfg).to(device)
-
     return model, model_cfg
+
+
+def resolve_feature_dims(config, stats):
+    feat_dim = int(stats["n_features"])
+    config["model"]["enc_in"] = feat_dim
+    config["model"]["dec_in"] = feat_dim
+    config["model"]["c_out"] = feat_dim
+    return feat_dim
+
+
+def make_loss(name):
+    loss_name = str(name).lower()
+    if loss_name == "mse":
+        return lambda pred, target: torch.mean((pred - target) ** 2)
+    if loss_name == "rmse":
+        return lambda pred, target: torch.sqrt(torch.mean((pred - target) ** 2) + 1e-12)
+    if loss_name == "mae":
+        return lambda pred, target: torch.mean(torch.abs(pred - target))
+    raise ValueError(f"Unsupported loss: {name}")
+
+
+def build_optimizer(name, params, lr):
+    opt_name = str(name).lower()
+    if opt_name == "adam":
+        return torch.optim.Adam(params, lr=lr)
+    if opt_name == "nadam":
+        return torch.optim.NAdam(params, lr=lr)
+    if opt_name == "adamw":
+        return torch.optim.AdamW(params, lr=lr)
+    raise ValueError(f"Unsupported optimizer: {name}")
+
+
+def build_scheduler(train_cfg, optimizer):
+    sched_name = str(train_cfg.get("lr_scheduler", "none")).lower()
+    if sched_name == "reduce_on_plateau":
+        return torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            factor=float(train_cfg.get("lr_factor", 0.5)),
+            patience=int(train_cfg.get("lr_patience", 5)),
+        )
+    if sched_name == "none":
+        return None
+    raise ValueError(f"Unsupported lr_scheduler: {train_cfg.get('lr_scheduler')}")
+
+
+def run_model(model, model_cfg, seq_x, seq_y, device):
+    x_mark_enc = torch.zeros(seq_x.shape[0], seq_x.shape[1], 4, device=device)
+    x_mark_dec = torch.zeros(seq_y.shape[0], seq_y.shape[1], 4, device=device)
+    dec_input = seq_y[:, : model_cfg.label_len + model_cfg.pred_len, :]
+    return model(seq_x, x_mark_enc, dec_input, x_mark_dec)
+
+
+def evaluate_loss(model, model_cfg, loader, device, loss_fn):
+    model.eval()
+    total_loss = 0.0
+    all_pred, all_true = [], []
+    with torch.no_grad():
+        for seq_x, seq_y in loader:
+            seq_x, seq_y = seq_x.to(device), seq_y.to(device)
+            output = run_model(model, model_cfg, seq_x, seq_y, device)
+            target = seq_y[:, -model_cfg.pred_len:, :]
+            loss = loss_fn(output, target)
+            total_loss += loss.item() * seq_x.size(0)
+            all_pred.append(output.cpu())
+            all_true.append(target.cpu())
+    pred = torch.cat(all_pred, dim=0)
+    true = torch.cat(all_true, dim=0)
+    metrics = compute_metrics(pred, true)
+    metrics["loss"] = total_loss / len(loader.dataset)
+    return metrics
 
 
 def main():
@@ -107,16 +159,14 @@ def main():
     split_cfg = config["split"]
     preproc_cfg = config["preprocessing"]
     train_cfg = config["training"]
-    eval_cfg = config["evaluation"]
     paths = config["paths"]
-    arch = config.get("architecture", {})
+    data_format = data_cfg.get("format", "csv")
+    dataset_path = data_cfg["map_path"] if data_format == "interpolated_map" else data_cfg["dataset_path"]
 
-    cc2_only = data_cfg.get("cc2_only_smoke_test", False)
-    csv_path = data_cfg["dataset_path"]
-
-    print(f"Loading data from {csv_path}")
+    print(f"Loading data from {dataset_path}")
     train_ds, val_ds, test_ds, stats = create_datasets(
-        csv_path=csv_path,
+        data_format=data_format,
+        dataset_path=dataset_path,
         seq_len=windowing["seq_len"],
         label_len=windowing["label_len"],
         pred_len=windowing["pred_len"],
@@ -128,79 +178,80 @@ def main():
         chronological=split_cfg.get("chronological_split", True),
         normalization=preproc_cfg.get("normalization", "zscore"),
         fit_on_train_only=preproc_cfg.get("fit_on_train_only", True),
+        data_cfg=data_cfg,
     )
 
+    feat_dim = resolve_feature_dims(config, stats)
     batch_size = args.batch_size or train_cfg["batch_size"]
     train_loader = torch.utils.data.DataLoader(train_ds, batch_size=batch_size, shuffle=True, drop_last=True)
     val_loader = torch.utils.data.DataLoader(val_ds, batch_size=batch_size, shuffle=False) if val_ds else None
-    test_loader = torch.utils.data.DataLoader(test_ds, batch_size=batch_size, shuffle=False) if test_ds else None
 
-    print(f"Train samples: {len(train_ds)}, Val samples: {len(val_ds) if val_ds else 0}, "
-          f"Test samples: {len(test_ds) if test_ds else 0}")
+    print(f"Train samples: {len(train_ds)}, Val samples: {len(val_ds) if val_ds else 0}, Test samples: {len(test_ds) if test_ds else 0}")
+    print(f"Feature dimension: {feat_dim}, Data format: {data_format}")
 
     model, model_cfg = build_model(config, device)
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"Model: {arch.get('model_variant', 'autoformer_csa')}, Parameters: {n_params:,}")
+    print(f"Model: {config.get('architecture', {}).get('model_variant', 'autoformer_csa')}, Parameters: {n_params:,}")
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr or train_cfg["learning_rate"])
+    optimizer = build_optimizer(train_cfg.get("optimizer", "adam"), model.parameters(), args.lr or train_cfg["learning_rate"])
+    scheduler = build_scheduler(train_cfg, optimizer)
+    loss_fn = make_loss(train_cfg.get("loss", "rmse"))
 
     epochs = args.epochs or train_cfg["epochs"]
     patience = train_cfg.get("patience", 6)
     grad_clip = train_cfg.get("gradient_clip")
-    loss_fn = nn.MSELoss()
-
     checkpoints_dir = os.path.abspath(paths["checkpoints_dir"])
-    evaluation_dir = os.path.abspath(paths["evaluation_dir"])
     os.makedirs(checkpoints_dir, exist_ok=True)
-    os.makedirs(evaluation_dir, exist_ok=True)
-
     with open(os.path.join(checkpoints_dir, "config.yaml"), "w") as f:
         yaml.dump(config, f)
 
     best_val_loss = float("inf")
     patience_counter = 0
     best_epoch = 0
-    training_log = []
+    training_log = {"epochs": [], "summary": {}}
+    training_start = time.perf_counter()
 
     for epoch in range(1, epochs + 1):
+        epoch_start = time.perf_counter()
         model.train()
-        train_loss = 0.0
+        train_loss_sum = 0.0
         for seq_x, seq_y in train_loader:
             seq_x, seq_y = seq_x.to(device), seq_y.to(device)
-
-            x_mark_enc = torch.zeros(seq_x.shape[0], seq_x.shape[1], 4, device=device)
-            x_mark_dec = torch.zeros(seq_y.shape[0], seq_y.shape[1], 4, device=device)
-
-            dec_input = seq_y[:, :model_cfg.label_len + model_cfg.pred_len, :]
             optimizer.zero_grad()
-            output = model(seq_x, x_mark_enc, dec_input, x_mark_dec)
-            loss = loss_fn(output, seq_y[:, -model_cfg.pred_len:, :])
+            output = run_model(model, model_cfg, seq_x, seq_y, device)
+            target = seq_y[:, -model_cfg.pred_len:, :]
+            loss = loss_fn(output, target)
             loss.backward()
             if grad_clip:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             optimizer.step()
-            train_loss += loss.item() * seq_x.size(0)
+            train_loss_sum += loss.item() * seq_x.size(0)
 
-        train_loss /= len(train_loader.dataset)
-
+        train_loss = train_loss_sum / len(train_loader.dataset)
         if val_loader:
-            model.eval()
-            val_loss = 0.0
-            with torch.no_grad():
-                for seq_x, seq_y in val_loader:
-                    seq_x, seq_y = seq_x.to(device), seq_y.to(device)
-                    x_mark_enc = torch.zeros(seq_x.shape[0], seq_x.shape[1], 4, device=device)
-                    x_mark_dec = torch.zeros(seq_y.shape[0], seq_y.shape[1], 4, device=device)
-                    dec_input = seq_y[:, :model_cfg.label_len + model_cfg.pred_len, :]
-                    output = model(seq_x, x_mark_enc, dec_input, x_mark_dec)
-                    loss = loss_fn(output, seq_y[:, -model_cfg.pred_len:, :])
-                    val_loss += loss.item() * seq_x.size(0)
-            val_loss /= len(val_loader.dataset)
+            val_metrics = evaluate_loss(model, model_cfg, val_loader, device, loss_fn)
+            val_loss = val_metrics["loss"]
         else:
+            val_metrics = {"loss": train_loss, "rmse": train_loss, "mae": train_loss, "r2": 0.0}
             val_loss = train_loss
 
-        training_log.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss})
-        print(f"Epoch {epoch:3d}/{epochs}  Train Loss: {train_loss:.6f}  Val Loss: {val_loss:.6f}")
+        if scheduler is not None:
+            scheduler.step(val_loss)
+
+        epoch_time = time.perf_counter() - epoch_start
+        lr = optimizer.param_groups[0]["lr"]
+        training_log["epochs"].append({
+            "epoch": epoch,
+            "train_loss": train_loss,
+            "val_loss": val_loss,
+            "val_rmse": val_metrics.get("rmse"),
+            "epoch_time_seconds": epoch_time,
+            "learning_rate": lr,
+        })
+        print(
+            f"Epoch {epoch:3d}/{epochs} | LR: {lr:.2e} | Train Loss: {train_loss:.6f} | "
+            f"Val Loss: {val_loss:.6f} | Val RMSE: {val_metrics.get('rmse', 0):.4f} | Epoch Time: {epoch_time:.2f}s"
+        )
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -208,7 +259,11 @@ def main():
             patience_counter = 0
             save_checkpoint(
                 os.path.join(checkpoints_dir, "best_model.pt"),
-                model, optimizer, epoch, stats, config,
+                model,
+                optimizer,
+                epoch,
+                stats,
+                config,
                 {"val_loss": val_loss, "train_loss": train_loss},
             )
         else:
@@ -219,86 +274,30 @@ def main():
 
     save_checkpoint(
         os.path.join(checkpoints_dir, "last_model.pt"),
-        model, optimizer, epoch, stats, config,
+        model,
+        optimizer,
+        epoch,
+        stats,
+        config,
         {"val_loss": val_loss, "train_loss": train_loss},
     )
 
+    total_training_time = time.perf_counter() - training_start
+    mean_epoch_time = sum(entry["epoch_time_seconds"] for entry in training_log["epochs"]) / len(training_log["epochs"])
+    training_log["summary"] = {
+        "epochs_completed": len(training_log["epochs"]),
+        "best_epoch": best_epoch,
+        "best_val_loss": best_val_loss,
+        "elapsed_training_time_seconds": total_training_time,
+        "mean_epoch_time_seconds": mean_epoch_time,
+    }
     with open(os.path.join(checkpoints_dir, "training_log.json"), "w") as f:
         json.dump(training_log, f, indent=2)
 
-    print(f"\nBest epoch: {best_epoch} (val_loss={best_val_loss:.6f})")
-
-    if test_loader:
-        print("Running test evaluation...")
-        model.load_state_dict(
-            torch.load(os.path.join(checkpoints_dir, "best_model.pt"), map_location=device, weights_only=False)["model_state_dict"],
-        )
-        model.eval()
-
-        all_pred, all_true = [], []
-        with torch.no_grad():
-            for seq_x, seq_y in test_loader:
-                seq_x, seq_y = seq_x.to(device), seq_y.to(device)
-                x_mark_enc = torch.zeros(seq_x.shape[0], seq_x.shape[1], 4, device=device)
-                x_mark_dec = torch.zeros(seq_y.shape[0], seq_y.shape[1], 4, device=device)
-                dec_input = seq_y[:, :model_cfg.label_len + model_cfg.pred_len, :]
-                output = model(seq_x, x_mark_enc, dec_input, x_mark_dec)
-                all_pred.append(output.cpu())
-                all_true.append(seq_y[:, -model_cfg.pred_len:, :].cpu())
-
-        all_pred = torch.cat(all_pred, dim=0)
-        all_true = torch.cat(all_true, dim=0)
-
-        mean_t = torch.from_numpy(stats["mean"]).float()
-        std_t = torch.from_numpy(stats["std"]).float()
-        pred_dbm = denormalize(all_pred, mean_t, std_t).numpy()
-        true_dbm = denormalize(all_true, mean_t, std_t).numpy()
-
-        n_nodes = len(data_cfg.get("node_names", ["CC2"]))
-        bins_per_node = data_cfg.get("bins_per_node", data_cfg["n_features"] // n_nodes)
-        node_names = data_cfg.get("node_names", [f"Node{i}" for i in range(n_nodes)])
-
-        overall = compute_metrics(all_pred, all_true)
-        per_horizon = compute_metrics_per_horizon(all_pred, all_true)
-        per_node = compute_metrics_per_node(all_pred, all_true, n_nodes, bins_per_node, node_names)
-
-        metrics = {}
-        metrics.update({f"overall_{k}": v for k, v in overall.items()})
-        metrics.update(per_horizon)
-        metrics.update(per_node)
-
-        eval_horizons = eval_cfg.get("eval_horizons", [1, 3, 6, 12])
-        for h in eval_horizons:
-            if h <= all_pred.shape[1]:
-                h_idx = h - 1
-                m = compute_metrics(all_pred[:, h_idx], all_true[:, h_idx])
-                for k, v in m.items():
-                    metrics[f"h{h}_{k}"] = v
-
-        save_metrics_json(metrics, os.path.join(evaluation_dir, "metrics.json"))
-
-        B, T_out, D = pred_dbm.shape
-        pred_flat = pred_dbm.reshape(-1, D)
-        true_flat = true_dbm.reshape(-1, D)
-        save_csv(pred_flat, os.path.join(evaluation_dir, "predictions.csv"))
-        save_csv(true_flat, os.path.join(evaluation_dir, "ground_truth.csv"))
-
-        pred_3d = pred_dbm.reshape(B * T_out, n_nodes, bins_per_node)
-        true_3d = true_dbm.reshape(B * T_out, n_nodes, bins_per_node)
-
-        for n in range(n_nodes):
-            node_name = node_names[n] if n < len(node_names) else f"Node{n}"
-            plot_spectrogram_comparison(
-                pred_3d[:, n, :], true_3d[:, n, :], node_name,
-                os.path.join(evaluation_dir, f"spectrogram_{node_name}.png"),
-            )
-
-        all_nodes_pred = pred_3d.reshape(-1, bins_per_node * n_nodes)
-        all_nodes_true = true_3d.reshape(-1, bins_per_node * n_nodes)
-        plot_error_analysis(all_nodes_pred, all_nodes_true, os.path.join(evaluation_dir, "error_analysis.png"))
-
-        print(f"Test metrics saved to {evaluation_dir}")
-        print(json.dumps(metrics, indent=2))
+    print(
+        f"\nBest epoch: {best_epoch} (val_loss={best_val_loss:.6f}) | "
+        f"Total training time: {total_training_time:.2f}s | Mean epoch time: {mean_epoch_time:.2f}s"
+    )
 
 
 if __name__ == "__main__":

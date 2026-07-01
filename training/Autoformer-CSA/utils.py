@@ -72,6 +72,19 @@ def compute_metrics_per_node(pred, target, n_nodes, bins_per_node, node_names=No
     return metrics
 
 
+def compute_metrics_per_frequency(pred, target, n_nodes=1, bins_per_node=None):
+    b, t_out, d = pred.shape
+    if bins_per_node is None:
+        bins_per_node = d
+    metrics = {}
+    for f in range(bins_per_node):
+        idx = list(range(f, d, bins_per_node)) if n_nodes > 1 else [f]
+        m = compute_metrics(pred[:, :, idx], target[:, :, idx])
+        for k, v in m.items():
+            metrics[f"{k}_freq{f}"] = v
+    return metrics
+
+
 def save_checkpoint(path, model, optimizer, epoch, stats, config, metrics=None):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     torch.save({

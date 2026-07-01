@@ -1,13 +1,14 @@
 data:
-  format: "csv"
+  format: "interpolated_map"
   dataset_path: "training/data/cc2_smoke_test.csv"
   map_path: "evaluation/interpolated_maps/idw_ames_curtiss_600_800.npz"
   map_key: "map_db"
-  n_features: 250
+  max_grid_points: 64
+  n_features: 200
   n_nodes: 1
-  bins_per_node: 250
-  node_names: ["CC2"]
-  selected_nodes: ["CC2"]
+  bins_per_node: 200
+  node_names: ["grid"]
+  selected_nodes: ["grid"]
   cc2_only_smoke_test: false
 
 windowing:
@@ -30,9 +31,9 @@ preprocessing:
 
 model:
   model_name: "autoformer_csa"
-  enc_in: 250
-  dec_in: 250
-  c_out: 250
+  enc_in: 200
+  dec_in: 200
+  c_out: 200
   d_model: 32
   d_ff: 128
   encoder_layers: 1
@@ -56,13 +57,13 @@ architecture:
   decoder_layer_type: "csam"
 
 training:
-  batch_size: 8
-  epochs: 3
+  batch_size: 16
+  epochs: 2
   learning_rate: 0.001
   optimizer: "adam"
   loss: "rmse"
   early_stopping: true
-  patience: 10
+  patience: 5
   gradient_clip: 5.0
   lr_scheduler: "none"
   lr_patience: 5
@@ -72,10 +73,12 @@ training:
 evaluation:
   metrics: ["rmse", "mae", "r2"]
   eval_horizons: [1, 3, 6]
+  export_predictions: true
+  plot_denormalized_dbm: true
 
 paths:
-  checkpoints_dir: "training/Autoformer-CSA/checkpoints"
-  evaluation_dir: "training/Autoformer-CSA/evaluation"
+  checkpoints_dir: "training/Autoformer-CSA/smoke_test_map/checkpoints"
+  evaluation_dir: "training/Autoformer-CSA/smoke_test_map/evaluation"
 
 device:
   device: "auto"

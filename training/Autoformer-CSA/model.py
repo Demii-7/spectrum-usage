@@ -18,6 +18,22 @@ from layers.Autoformer_EncDec import (
 from layers.AutoCorrelation import AutoCorrelation, AutoCorrelationLayer
 from layers.Embed import DataEmbedding_wo_pos
 
+try:
+    from models.Autoformer import Model as UpstreamAutoformerModel
+except Exception:
+    UpstreamAutoformerModel = None
+
+
+class AutoformerVanilla(nn.Module):
+    def __init__(self, configs):
+        super().__init__()
+        if UpstreamAutoformerModel is None:
+            raise ImportError("Upstream Autoformer model is not available")
+        self.model = UpstreamAutoformerModel(configs)
+
+    def forward(self, *args, **kwargs):
+        return self.model(*args, **kwargs)
+
 
 class ChannelAttention(nn.Module):
     def __init__(self, channels, reduction=16):

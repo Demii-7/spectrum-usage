@@ -10,11 +10,13 @@
 
 ## Quick Start
 
-*Implementation scripts not yet created. This document describes the planned adaptation.*
+The implementation is available in this folder.
 
 ```bash
-# Planned invocation (once implemented):
 python3 training/Autoformer-CSA/train.py --config training/Autoformer-CSA/config.yaml
+python3 training/Autoformer-CSA/evaluate.py \
+  --config training/Autoformer-CSA/config.yaml \
+  --checkpoint training/results/Autoformer-CSA/checkpoints/best_model.pt
 ```
 
 Outputs will go to `training/results/Autoformer-CSA/` by default.
@@ -23,7 +25,10 @@ Outputs will go to `training/results/Autoformer-CSA/` by default.
 
 ## Scripts Reference
 
-*To be implemented — see Section 11 for planned file responsibilities.*
+- `train.py` trains with validation only, saves best/last checkpoints, and writes timing to `training_log.json`.
+- `evaluate.py` loads a saved checkpoint and performs final test evaluation only.
+- `inference.py` runs unseen-data prediction for CSV or interpolated-map inputs.
+- `dataset.py` provides CSV-mode and interpolated-map-mode loaders.
 
 ---
 
@@ -31,14 +36,14 @@ Outputs will go to `training/results/Autoformer-CSA/` by default.
 
 ```
 training/Autoformer-CSA/
-├── README.md           # This file — adaptation plan and architecture reference
+├── README.md           # This file
 ├── config.yaml         # Tunable hyperparameters and pipeline configuration
-├── dataset.py          # AERPAW dataset loader with sliding windows (planned)
-├── model.py            # Autoformer, AutoformerCSA, CSAM (planned)
-├── train.py            # Training loop, checkpointing, evaluation (planned)
-├── evaluate.py         # Standalone evaluation on test split (planned)
-├── inference.py        # Forward pass on new CSV data (planned)
-└── utils.py            # Metrics, visualization, helpers (planned)
+├── dataset.py          # CSV/map loaders and sliding-window construction
+├── model.py            # Autoformer, AutoformerCSA, CSAM
+├── train.py            # Training loop and checkpointing
+├── evaluate.py         # Standalone evaluation on test split
+├── inference.py        # Forward pass on new CSV or NPZ data
+└── utils.py            # Metrics, visualization, helpers
 ```
 
 ---
@@ -49,13 +54,13 @@ All settings live in `config.yaml`. See that file for detailed descriptions.
 
 | Section | Key Fields |
 |---------|------------|
-| `data` | dataset_path, n_features, n_nodes, bins_per_node, cc2_only_smoke_test |
+| `data` | format, dataset_path, map_path, map_key, n_features, n_nodes, bins_per_node, selected_nodes, max_grid_points, cc2_only_smoke_test |
 | `windowing` | seq_len, label_len, pred_len, train_stride, val_stride, test_stride |
 | `split` | train_ratio, val_ratio, test_ratio, chronological_split |
 | `preprocessing` | normalization (zscore), fit_on_train_only |
 | `model` | enc_in, dec_in, c_out, d_model, d_ff, encoder_layers, decoder_layers, n_heads, moving_avg, dropout, csam_kernel_size, csam_reduction |
 | `architecture` | model_variant, use_csam, preserve_original_autoformer, encoder_layer_type, decoder_layer_type |
-| `training` | batch_size, epochs, learning_rate, optimizer, loss, early_stopping, patience |
+| `training` | batch_size, epochs, learning_rate, optimizer, loss, early_stopping, patience, gradient_clip, lr_scheduler |
 | `evaluation` | metrics, eval_horizons, export_predictions, plot_denormalized_dbm |
 | `paths` | checkpoints_dir, evaluation_dir |
 | `device` | device (auto / cuda / cpu) |
@@ -90,7 +95,7 @@ Where:
 - `M` = input time steps (default 96)
 - `F` = number of frequency channels (Electrosense sensors)
 
-### AERPAW Format
+### AERPAW CSV Format
 
 The raw merged CSV after combining three nodes:
 
@@ -113,11 +118,35 @@ X: (T_in, 750)    — encoder input
 Y: (T_out, 750)   — decoder target (and prediction)
 ```
 
-### Dataset Representation
+### CSV-Mode Dataset Representation
 
-The model treats the input as a **multivariate time series** with 750 channels. Node identity is encoded exclusively through the fixed column ordering — CC1 occupies columns 0–249, CC2 columns 250–499, LW1 columns 500–749. There is no spatial or graph structure imposed on the channels.
+The CSV adaptation treats the input as a **multivariate time series** with 750 channels. Node identity is encoded exclusively through the fixed column ordering — CC1 occupies columns 0–249, CC2 columns 250–499, LW1 columns 500–749. There is no spatial or graph structure imposed on the channels.
 
-The `(3, 250)` representation (3 nodes × 250 frequency bins) is **only** used for evaluation and visualization. Training always operates on `(T, 750)` tensors. This avoids conflating node identity with spatial adjacency and keeps the model architecture independent of the number of nodes.
+The `(3, 250)` representation (3 nodes × 250 frequency bins) is **only** used for evaluation and visualization in CSV mode. Training operates on `(T, 750)` tensors for CSV datasets.
+
+### Interpolated-Map Mode
+
+The paper-faithful path uses a precomputed interpolated map loaded from NPZ with shape:
+
+```text
+(T, H, W, F)
+```
+
+This is reshaped internally to:
+
+```text
+(G, T, F)   where G = H * W
+```
+
+Each grid location is treated as an independent sample stream over time. Sliding windows are built per grid stream:
+
+```text
+Input  = (M, F)
+Target = (K, F)
+Batch  = (B, M, F)
+```
+
+This matches the paper-style handling more closely than flattening the whole map into one feature vector.
 
 ### Key Design Choices
 
@@ -270,7 +299,7 @@ After:   attention → decomp1 → CSAM → decomp2 → output
 |----------|-------------|-------|--------------|
 | EncoderLayer forward | `layers/Autoformer_EncDec.py` | 75–78 | Replace `conv1 → activation → dropout → conv2 → dropout` with CSAM |
 | DecoderLayer forward | `layers/Autoformer_EncDec.py` | 143–146 | Same replacement |
-| New module | `model.py` (planned) | — | Define `CSAM`, `ChannelAttention`, `SpatialAttention`, `EncoderLayerCSA`, `DecoderLayerCSA`, `AutoformerCSA` |
+| New module | `model.py` | — | Defines `CSAM`, `ChannelAttention`, `SpatialAttention`, `EncoderLayerCSA`, `DecoderLayerCSA`, `AutoformerCSA` |
 
 ---
 
@@ -284,13 +313,14 @@ Raw prediction: (B, T_out, 750)
 
 ### Standardized Evaluation Artifacts
 
-Autoformer-CSA must produce exactly the same evaluation artifacts as ConvLSTM, STS-PredNet, TimeRAN, and TSS-LCD. No model should have a unique evaluation format.
+CSV mode writes flattened CSV outputs; interpolated-map inference writes NPZ outputs so the `(streams, horizon, F)` structure is preserved.
 
 | Artifact | Description |
 |----------|-------------|
-| `metrics.json` | RMSE, MAE, R² per node, per horizon, and overall |
-| `predictions.csv` | Denormalized predictions, shape `(T_test, 750)` |
-| `ground_truth.csv` | Denormalized ground truth, shape `(T_test, 750)` |
+| `metrics.json` | RMSE, MAE, R², timing, and per node/frequency/horizon metrics where applicable |
+| `predictions.csv` / `predictions.npz` | Denormalized predictions |
+| `ground_truth.csv` | Denormalized ground truth |
+| `metadata.json` | Data format, shapes, and stream layout |
 | `spectrogram_{Node}.png` | Spectrogram comparison plot per node (CC1, CC2, LW1) — predicted vs actual PSD over time |
 | `error_analysis.png` | Per-frequency-bin error heatmap or MAE across the spectrum |
 
@@ -318,7 +348,17 @@ Allows slicing `[node_idx, :]` for per-node evaluation without modifying model i
 
 ## 5. Training Pipeline
 
+Training and evaluation are separate:
+
+- `train.py` performs training + validation only.
+- `evaluate.py` loads a saved checkpoint and performs final test evaluation only.
+- `inference.py` handles unseen-data prediction only.
+
+Training logs include per-epoch time, total training time, and mean epoch time.
+
 ### 5.1 Data Flow
+
+CSV mode:
 
 ```
 CSV (6839, 750)
@@ -326,7 +366,19 @@ CSV (6839, 750)
   → Z-score normalization (fit on train only)
   → Sliding window generation
   → Encoder input X: (B, T_in, 750)
-  → Decoder target Y: (B, T_out, 750)
+  → Decoder target Y: (B, label_len + T_out, 750)
+```
+
+Interpolated-map mode:
+
+```
+NPZ (T, H, W, F)
+  → Reshape to (G, T, F)
+  → Chronological split (train / val / test)
+  → Z-score normalization (fit on train only)
+  → Sliding window generation per grid stream
+  → Encoder input X: (B, T_in, F)
+  → Decoder target Y: (B, label_len + T_out, F)
 ```
 
 ### 5.2 Encoder/Decoder Construction for Training
@@ -341,16 +393,16 @@ seq_y_mark = time_features[s_end - label_len : s_end + pred_len]  # decoder time
 Loss is computed only on the final `pred_len` steps of the decoder output:
 
 ```
-loss = MSE(model(seq_x)[:, -pred_len:, :], seq_y[:, -pred_len:, :])
+loss = RMSE(model(seq_x)[:, -pred_len:, :], seq_y[:, -pred_len:, :])
 ```
 
 ### 5.3 Training Loop
 
 | Component | Detail |
 |-----------|--------|
-| **Loss** | MSE during training |
+| **Loss** | RMSE during training (configurable) |
 | **Optimizer** | Adam |
-| **Scheduler** | ReduceLROnPlateau (optional, per repo default) |
+| **Scheduler** | Configurable (`none` or `ReduceLROnPlateau`) |
 | **Early stopping** | Patience-based on val loss |
 | **Checkpointing** | Save best model by val loss |
 | **Evaluation metrics** | RMSE, MAE, R² (computed on denormalized predictions) |
@@ -606,7 +658,7 @@ Before writing any implementation code, verify the following unresolved items:
 
 ## 13. Implementation Notes
 
-*The following files are planned but not yet created.*
+The implementation is present in this folder. The notes below describe the roles of the main files.
 
 ### `dataset.py`
 
