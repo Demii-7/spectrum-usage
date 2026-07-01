@@ -27,6 +27,96 @@ import torch
 from torch.utils.data import Dataset
 
 
+def _trim_trailing_all_nan_timesteps(data: np.ndarray):
+    """Drop only all-NaN timesteps at the end of the series.
+
+    Internal missing timesteps are preserved so chronology stays intact and can
+    be handled by local interpolation.
+    """
+    if data.size == 0:
+        return data, 0
+
+    valid_mask = ~np.isnan(data).all(axis=tuple(range(1, data.ndim)))
+    if valid_mask.all():
+        return data, 0
+
+    last_valid = np.where(valid_mask)[0]
+    if len(last_valid) == 0:
+        return data[:0], data.shape[0]
+
+    trimmed_len = int(data.shape[0] - (last_valid[-1] + 1))
+    if trimmed_len <= 0:
+        return data, 0
+    return data[:last_valid[-1] + 1], trimmed_len
+
+
+def _impute_local_temporal_and_frequency(data: np.ndarray, freq_axis: int, window_steps: int = 2):
+    """Impute NaNs with time-neighbour fill, then frequency-neighbour fallback.
+
+    The first pass fills each missing cell from nearby timesteps while keeping
+    the frequency/spatial location fixed. Remaining NaNs are then filled from
+    nearby frequencies at the same timestep and spatial location. Any NaNs that
+    still cannot be resolved are left in place and reported.
+    """
+    total_nan = int(np.isnan(data).sum())
+    if total_nan == 0:
+        return data, {
+            "initial_nan_count": 0,
+            "temporal_imputed": 0,
+            "frequency_imputed": 0,
+            "remaining_nan_count": 0,
+        }
+
+    temporal_fill_coords = []
+    temporal_fill_vals = []
+    trailing_axes = tuple(range(1, data.ndim))
+    spatial_shape = data.shape[2:]
+
+    for freq_idx in range(data.shape[freq_axis]):
+        for spatial_idx in np.ndindex(spatial_shape):
+            series = data[(slice(None), freq_idx, *spatial_idx)]
+            if not np.isnan(series).any():
+                continue
+            for t in np.where(np.isnan(series))[0]:
+                left = slice(max(0, t - window_steps), t)
+                right = slice(t + 1, min(data.shape[0], t + window_steps + 1))
+                vals = np.concatenate([series[left], series[right]])
+                valid = vals[~np.isnan(vals)]
+                if len(valid) > 0:
+                    temporal_fill_coords.append((t, freq_idx, *spatial_idx))
+                    temporal_fill_vals.append(valid.mean())
+
+    for coord, value in zip(temporal_fill_coords, temporal_fill_vals):
+        data[coord] = value
+
+    frequency_fill_coords = []
+    frequency_fill_vals = []
+    remaining_nan_coords = np.argwhere(np.isnan(data))
+    max_freq = data.shape[freq_axis]
+    for coord in remaining_nan_coords:
+        t = int(coord[0])
+        freq_idx = int(coord[freq_axis])
+        spatial_idx = tuple(int(v) for v in coord[2:])
+        low = max(0, freq_idx - window_steps)
+        high = min(max_freq, freq_idx + window_steps + 1)
+        freq_values = data[(t, slice(low, high), *spatial_idx)]
+        valid = freq_values[~np.isnan(freq_values)]
+        if len(valid) > 0:
+            frequency_fill_coords.append((t, freq_idx, *spatial_idx))
+            frequency_fill_vals.append(valid.mean())
+
+    for coord, value in zip(frequency_fill_coords, frequency_fill_vals):
+        data[coord] = value
+
+    stats = {
+        "initial_nan_count": total_nan,
+        "temporal_imputed": len(temporal_fill_coords),
+        "frequency_imputed": len(frequency_fill_coords),
+        "remaining_nan_count": int(np.isnan(data).sum()),
+    }
+    return data, stats
+
+
 class SpectrumDataset(Dataset):
     """PyTorch Dataset that yields (input, target) sliding-window pairs from 3D spectrum data.
 
@@ -153,48 +243,32 @@ def compute_norm_stats_freq(data_4d):
     return mean, std
 
 
-def impute_nan_local_time(data_4d: np.ndarray, window_steps: int = 2) -> np.ndarray:
-    """Impute NaN values along the time axis using local neighbours.
+def clean_nan_csv(data_3d: np.ndarray, window_steps: int = 2) -> tuple[np.ndarray, dict]:
+    """Clean CSV-mode NaNs while preserving chronology.
 
-    For each (F, H, W) cell, for each NaN at time t, compute the mean of
-    valid values in the window [t-window_steps, t-1] ∪ [t+1, t+window_steps].
-    All imputation values are computed from the *original* neighbors at each
-    position and applied simultaneously, avoiding cascading propagation.
-    If no valid neighbours exist within the window, the NaN is left as-is
-    (no fallback imputation).
-
-    Operates on (T, F, H, W) layout.  Does not drop any timesteps.
+    The data is shaped as (T, nodes, bins). Only trailing all-NaN timesteps are
+    removed. Internal missing values are filled locally in time, then by nearby
+    frequency bins within the same node and timestep.
     """
-    T, F, H, W = data_4d.shape
-    total_nan = int(np.isnan(data_4d).sum())
-    if total_nan == 0:
-        return data_4d
+    trimmed, trimmed_count = _trim_trailing_all_nan_timesteps(data_3d)
+    transposed = trimmed.transpose(0, 2, 1)
+    cleaned_t, stats = _impute_local_temporal_and_frequency(transposed.copy(), freq_axis=1, window_steps=window_steps)
+    cleaned = cleaned_t.transpose(0, 2, 1)
+    stats["trimmed_trailing_timesteps"] = trimmed_count
+    return cleaned, stats
 
-    fill_coords = []
-    fill_vals = []
 
-    for f in range(F):
-        for h in range(H):
-            for w in range(W):
-                series = data_4d[:, f, h, w]
-                if not np.isnan(series).any():
-                    continue
-                for t in np.where(np.isnan(series))[0]:
-                    left = slice(max(0, t - window_steps), t)
-                    right = slice(t + 1, min(T, t + window_steps + 1))
-                    vals = np.concatenate([series[left], series[right]])
-                    valid = vals[~np.isnan(vals)]
-                    if len(valid) > 0:
-                        fill_coords.append((t, f, h, w))
-                        fill_vals.append(valid.mean())
+def clean_nan_map(data_4d: np.ndarray, window_steps: int = 2) -> tuple[np.ndarray, dict]:
+    """Clean map-mode NaNs while preserving chronology.
 
-    for (t, f, h, w), v in zip(fill_coords, fill_vals):
-        data_4d[t, f, h, w] = v
-
-    remaining = int(np.isnan(data_4d).sum())
-    print(f"  Imputed {len(fill_coords)} NaN cell(s) via local time-axis (window={window_steps})."
-          + (f"  Remaining: {remaining}" if remaining else ""))
-    return data_4d
+    The data is shaped as (T, F, H, W). Only trailing all-NaN timesteps are
+    removed. Internal missing values are filled locally in time, then by nearby
+    frequency channels at the same spatial location and timestep.
+    """
+    trimmed, trimmed_count = _trim_trailing_all_nan_timesteps(data_4d)
+    cleaned, stats = _impute_local_temporal_and_frequency(trimmed.copy(), freq_axis=1, window_steps=window_steps)
+    stats["trimmed_trailing_timesteps"] = trimmed_count
+    return cleaned, stats
 
 
 def compute_norm_stats(data_3d):
@@ -266,7 +340,8 @@ def _split_time_ranges(total_len, train_ratio, val_ratio, chronological=True):
 def create_datasets(csv_path, n_nodes, n_bins, t_in, t_out, stride=1,
                     train_stride=None, val_stride=None, test_stride=None,
                     train_ratio=0.8, val_ratio=0.1, chronological=True,
-                    normalization="zscore", fit_on_train_only=True):
+                    normalization="zscore", fit_on_train_only=True,
+                    nan_window_steps=2):
     """
     Full pipeline: load CSV, reshape, normalize, split, and create Datasets.
 
@@ -288,6 +363,15 @@ def create_datasets(csv_path, n_nodes, n_bins, t_in, t_out, stride=1,
 
     raw = load_csv(csv_path)
     data_3d = reshape_to_3d(raw, n_nodes, n_bins)
+    data_3d, nan_stats = clean_nan_csv(data_3d, window_steps=nan_window_steps)
+    print(
+        "  CSV NaN cleanup: "
+        f"trimmed_trailing_timesteps={nan_stats['trimmed_trailing_timesteps']}, "
+        f"initial_nan_count={nan_stats['initial_nan_count']}, "
+        f"temporal_imputed={nan_stats['temporal_imputed']}, "
+        f"frequency_imputed={nan_stats['frequency_imputed']}, "
+        f"remaining_nan_count={nan_stats['remaining_nan_count']}"
+    )
     T = len(data_3d)
 
     # Compute normalization statistics on the training portion only to prevent leakage.
@@ -332,7 +416,7 @@ def create_datasets(csv_path, n_nodes, n_bins, t_in, t_out, stride=1,
     test_ds = SpectrumDataset(data_norm, t_in, t_out,
                               [test_range[s] for s in test_starts]) if test_starts else None
 
-    stats = {"mean": mean, "std": std, "n_nodes": n_nodes, "n_bins": n_bins}
+    stats = {"mean": mean, "std": std, "n_nodes": n_nodes, "n_bins": n_bins, "nan_stats": nan_stats}
     return train_ds, val_ds, test_ds, stats
 
 
@@ -366,8 +450,23 @@ def create_interpolated_map_datasets(map_path, map_key, t_in, t_out, stride=1,
     should_impute = ipcfg.get("impute", ipcfg.get("enabled", True))
     if should_impute:
         window = int(ipcfg.get("window_steps", 2))
-        data_4d = impute_nan_local_time(data_4d, window)
+        data_4d, nan_stats = clean_nan_map(data_4d, window)
+        print(
+            "  Map NaN cleanup: "
+            f"trimmed_trailing_timesteps={nan_stats['trimmed_trailing_timesteps']}, "
+            f"initial_nan_count={nan_stats['initial_nan_count']}, "
+            f"temporal_imputed={nan_stats['temporal_imputed']}, "
+            f"frequency_imputed={nan_stats['frequency_imputed']}, "
+            f"remaining_nan_count={nan_stats['remaining_nan_count']}"
+        )
     else:
+        nan_stats = {
+            "trimmed_trailing_timesteps": 0,
+            "initial_nan_count": int(np.isnan(data_4d).sum()),
+            "temporal_imputed": 0,
+            "frequency_imputed": 0,
+            "remaining_nan_count": int(np.isnan(data_4d).sum()),
+        }
         nan_count = int(np.isnan(data_4d).sum())
         if nan_count:
             print(f"  WARNING: impute=false, {nan_count} NaN(s) remain in data")
@@ -405,5 +504,5 @@ def create_interpolated_map_datasets(map_path, map_key, t_in, t_out, stride=1,
     test_ds = InterpolatedMapDataset(data_norm, t_in, t_out,
                                      [test_range[s] for s in test_starts]) if test_starts else None
 
-    stats = {"mean": mean, "std": std, "n_freq": F, "grid_h": H, "grid_w": W}
+    stats = {"mean": mean, "std": std, "n_freq": F, "grid_h": H, "grid_w": W, "nan_stats": nan_stats}
     return train_ds, val_ds, test_ds, stats

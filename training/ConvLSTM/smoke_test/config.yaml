@@ -3,6 +3,7 @@
 # =============================================================================
 
 data:
+  format: "csv"
   dataset_path: "training/data/cc2_smoke_test.csv"
   n_bins_per_node: 250
   n_nodes: 1
@@ -11,6 +12,9 @@ data:
 preprocessing:
   normalization: "zscore"
   fit_on_train_only: true
+  imputation:
+    impute: true
+    window_steps: 2
 
 windowing:
   input_sequence_length: 12
@@ -43,7 +47,7 @@ training:
   batch_size: 32
   epochs: 200
   learning_rate: 0.0002
-  optimizer: "adam"
+  optimizer: "nadam"
   beta1: 0.9
   beta2: 0.999
   epsilon: 1.0e-8
@@ -55,6 +59,7 @@ training:
   loss: "mse"
   teacher_forcing_ratio: 1.0
   noise_std: 0.2
+  seed: 42
 
 evaluation:
   metrics: ["rmse", "mae", "r2"]

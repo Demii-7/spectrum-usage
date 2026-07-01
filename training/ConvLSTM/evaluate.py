@@ -13,6 +13,7 @@ import os
 import sys
 import json
 import argparse
+import time
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -27,6 +28,33 @@ from utils import (
     get_device, compute_metrics, compute_metrics_per_horizon,
     compute_metrics_per_node, load_checkpoint, denormalize,
 )
+
+
+def save_sequence_outputs(output_dir, pred_dbm, target_dbm, data_format, config):
+    """Save all predicted and target frames plus metadata."""
+    bs, t_out, c, h, w = pred_dbm.shape
+    pred_rows = pred_dbm.reshape(bs * t_out, -1)
+    target_rows = target_dbm.reshape(bs * t_out, -1)
+    np.savetxt(os.path.join(output_dir, "predictions.csv"), pred_rows, delimiter=",", fmt="%.6f")
+    np.savetxt(os.path.join(output_dir, "ground_truth.csv"), target_rows, delimiter=",", fmt="%.6f")
+
+    metadata = {
+        "num_samples": bs,
+        "prediction_horizon": t_out,
+        "channels": c,
+        "height": h,
+        "width": w,
+        "data_format": data_format,
+        "flatten_order": "rows are ordered by sample-major then horizon-major; columns flatten (C, H, W)",
+    }
+    if data_format == "csv":
+        metadata["node_names"] = config["data"].get("node_names")
+        metadata["column_layout"] = "channel=1, then node-major x frequency-bin"
+    else:
+        metadata["column_layout"] = "channel-major over frequency x grid_height x grid_width"
+
+    with open(os.path.join(output_dir, "metadata.json"), "w") as f:
+        json.dump(metadata, f, indent=2)
 
 
 def plot_spectrogram_comparison(ground_truth, prediction, node_idx, node_name,
@@ -184,7 +212,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--config")
-    parser.add_argument("--horizons", type=int, nargs="+", default=[1, 3, 6])
+    parser.add_argument("--horizons", type=int, nargs="+")
     parser.add_argument("--output", default=None)
     args = parser.parse_args()
 
@@ -203,7 +231,9 @@ def main():
     dcfg = config["data"]
     wcfg = config["windowing"]
     scfg = config["split"]
+    ecfg = config.get("evaluation", {})
     data_format = dcfg.get("format", "csv")
+    horizons = args.horizons or ecfg.get("eval_horizons", [1, 3, wcfg["prediction_horizon"]])
 
     if data_format == "interpolated_map":
         map_path = dcfg["map_path"]
@@ -244,6 +274,7 @@ def main():
             chronological=scfg["chronological_split"],
             normalization=config["preprocessing"]["normalization"],
             fit_on_train_only=config["preprocessing"]["fit_on_train_only"],
+            nan_window_steps=int(config["preprocessing"].get("imputation", {}).get("window_steps", 2)),
         )
 
     if test_ds is None or len(test_ds) == 0:
@@ -258,15 +289,20 @@ def main():
 
     # Run inference on the entire test set.
     all_pred, all_target = [], []
+    evaluation_start_time = time.perf_counter()
+    inference_time_seconds = 0.0
     with torch.no_grad():
         for x, y in loader:
             x, y = x.to(device), y.to(device)
+            batch_start_time = time.perf_counter()
             pred = model(x)
+            inference_time_seconds += time.perf_counter() - batch_start_time
             all_pred.append(pred)
             all_target.append(y)
 
     pred = torch.cat(all_pred, dim=0)
     target = torch.cat(all_target, dim=0)
+    total_evaluation_time_seconds = time.perf_counter() - evaluation_start_time
 
     overall = compute_metrics(pred, target)
     per_horizon = compute_metrics_per_horizon(pred, target)
@@ -292,19 +328,17 @@ def main():
     pred_flat = pred_dbm.reshape(bs, t_out, -1)
     target_flat = target_dbm.reshape(bs, t_out, -1)
 
-    # Save only the first test sample's predictions as a human-readable CSV.
-    np.savetxt(os.path.join(output_dir, "predictions.csv"),
-               pred_flat[0], delimiter=",", fmt="%.6f")
-    np.savetxt(os.path.join(output_dir, "ground_truth.csv"),
-               target_flat[0], delimiter=",", fmt="%.6f")
+    save_sequence_outputs(output_dir, pred_dbm, target_dbm, data_format, config)
 
     print("=== Evaluation Report ===")
     print(f"Overall RMSE: {overall['rmse']:.4f}")
     print(f"Overall MAE:  {overall['mae']:.4f}")
     print(f"Overall R²:   {overall['r2']:.4f}")
+    print(f"Inference Time: {inference_time_seconds:.2f}s")
+    print(f"Total Evaluation Time: {total_evaluation_time_seconds:.2f}s")
     print()
     print("Per-horizon RMSE:")
-    for h_val in args.horizons:
+    for h_val in horizons:
         key = f"rmse_t{h_val}"
         if key in per_horizon:
             print(f"  t={h_val}: {per_horizon[key]:.4f}")
@@ -345,6 +379,11 @@ def main():
                 print(f"  {name}: {per_node[key]:.4f}")
 
         all_metrics = {**overall, **per_horizon, **per_node}
+
+    all_metrics["inference_time_seconds"] = inference_time_seconds
+    all_metrics["total_evaluation_time_seconds"] = total_evaluation_time_seconds
+    all_metrics["mean_batch_inference_time_seconds"] = inference_time_seconds / len(loader) if len(loader) > 0 else 0.0
+    all_metrics["mean_sample_inference_time_seconds"] = inference_time_seconds / len(test_ds) if len(test_ds) > 0 else 0.0
 
     metrics_path = os.path.join(output_dir, "metrics.json")
     with open(metrics_path, "w") as f:

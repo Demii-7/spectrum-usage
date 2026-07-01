@@ -38,13 +38,17 @@ preprocessing:
   imputation:
     enabled: true
     window_steps: 2
+    frequency_window_steps: 2
 
 splits:
-  # Train/validation/test split ratios (applied chronologically to raw time series)
-  # Split FIRST, then generate branch samples inside each split
-  train_ratio: 0.8
-  val_ratio: 0.1
-  test_ratio: 0.1
+  # Paper-aligned adaptation:
+  #   total train:test = 10:2
+  #   within train, train:val = 9:1
+  # Equivalent explicit ratios are 0.75 / 0.083333... / 0.166666...
+  # Split FIRST, then generate branch samples inside each split.
+  train_ratio: 0.75
+  val_ratio: 0.0833333333
+  test_ratio: 0.1666666667
   # If true, split chronologically (recommended for time series).
   # If false, splits are random.
   chronological_split: true
@@ -122,6 +126,8 @@ training:
 evaluation:
   # Metrics to compute during evaluation
   metrics: ["rmse", "mae", "r2"]
+  # Evaluate the direct single-step model at multiple prediction offsets.
+  eval_horizons: [1, 5, 15, 60]
   # Optional metrics (may be unstable for negative/zero dBm values)
   optional_metrics: ["mape"]
   # Report per-node metrics (separate RMSE/MAE/R² for CC1, CC2, LW1)

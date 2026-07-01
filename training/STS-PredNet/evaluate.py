@@ -1,15 +1,15 @@
-"""
-Evaluation script for a trained STS-PredNet checkpoint.
+"""Evaluation script for a trained STS-PredNet checkpoint.
 
-Generates predictions on the test set, computes metrics (RMSE, MAE, R²),
-produces per-node and per-frequency breakdowns, saves CSV outputs in
-denormalized dBm units, and creates visualisations (spectrograms, error maps).
+Runs final test evaluation only. The underlying model is a direct single-step
+predictor; multi-horizon benchmarking is implemented by rebuilding the test set
+with different ``prediction_offset`` values and evaluating each horizon
+independently.
 """
 import copy
 import os
-import sys
 import json
 import argparse
+import time
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -20,43 +20,29 @@ import matplotlib.pyplot as plt
 from dataset import create_datasets, create_interpolated_map_datasets, collate_branch_samples
 from stsprednet import STSPredNet
 from utils import (
-    get_device, compute_metrics, compute_metrics_per_node,
-    compute_metrics_per_frequency, load_checkpoint, denormalize,
+    get_device,
+    compute_metrics,
+    compute_metrics_per_node,
+    compute_metrics_per_frequency,
+    load_checkpoint,
+    denormalize,
 )
 
 
-def load_config(config_path):
-    """Load YAML configuration file from disk."""
-    import yaml
-    with open(config_path) as f:
-        return yaml.safe_load(f)
-
-
-def plot_spectrogram_comparison(ground_truth, prediction, node_idx, node_name,
-                                 save_path):
-    """Plot side-by-side spectrograms of ground truth and prediction for one node.
-
-    Args:
-        ground_truth: Array of shape (time, nodes, frequencies).
-        prediction: Array of same shape as ground_truth.
-        node_idx: Index of the node to plot.
-        node_name: Human-readable name for the node.
-        save_path: Destination file path for the PNG.
-    """
+def plot_spectrogram_comparison(ground_truth, prediction, node_idx, node_name, save_path):
+    """Plot side-by-side spectrograms of ground truth and prediction for one node."""
     gt_node = ground_truth[:, node_idx, :].T
     pred_node = prediction[:, node_idx, :].T
-    # Use a shared color range so the two plots are directly comparable
     vmin = min(gt_node.min(), pred_node.min())
     vmax = max(gt_node.max(), pred_node.max())
 
-    fig, axes = plt.subplots(2, 1, figsize=(12, 6), sharex=True, sharey=True,
-                              constrained_layout=True)
-    im0 = axes[0].imshow(gt_node, aspect="auto", cmap="viridis", vmin=vmin, vmax=vmax)
-    axes[0].set_title(f"{node_name} — Ground Truth")
+    fig, axes = plt.subplots(2, 1, figsize=(12, 6), sharex=True, sharey=True, constrained_layout=True)
+    axes[0].imshow(gt_node, aspect="auto", cmap="viridis", vmin=vmin, vmax=vmax)
+    axes[0].set_title(f"{node_name} - Ground Truth")
     axes[0].set_ylabel("Frequency Bin")
     im1 = axes[1].imshow(pred_node, aspect="auto", cmap="viridis", vmin=vmin, vmax=vmax)
-    axes[1].set_title(f"{node_name} — Prediction")
-    axes[1].set_xlabel("Time Step (future minutes)")
+    axes[1].set_title(f"{node_name} - Prediction")
+    axes[1].set_xlabel("Sample")
     axes[1].set_ylabel("Frequency Bin")
     fig.colorbar(im1, ax=axes.ravel().tolist(), label="Power (dBm)")
     fig.savefig(save_path, dpi=150)
@@ -64,59 +50,30 @@ def plot_spectrogram_comparison(ground_truth, prediction, node_idx, node_name,
 
 
 def plot_error_analysis(errors, node_names, save_path):
-    """Plot prediction error heatmaps for every node.
-
-    Args:
-        errors: Array of (prediction - ground_truth) of shape (samples, nodes, freqs).
-        node_names: List of node label strings.
-        save_path: Destination PNG path.
-    """
+    """Plot prediction error heatmaps for every node."""
     n = len(node_names)
-    fig, axes = plt.subplots(1, n, figsize=(5 * n, 4), squeeze=False,
-                              constrained_layout=True)
+    fig, axes = plt.subplots(1, n, figsize=(5 * n, 4), squeeze=False, constrained_layout=True)
     im = None
     for i, name in enumerate(node_names):
         ax = axes[0, i]
-        err = errors[:, i, :]
-        # Symmetric color scale around zero to highlight over-/under-prediction
+        err = errors[i, :]
         vmax = max(abs(err.min()), abs(err.max()))
         im = ax.imshow(err.T, aspect="auto", cmap="RdBu_r", vmin=-vmax, vmax=vmax)
-        ax.set_title(f"{name} — Error (Pred − GT)")
+        ax.set_title(f"{name} - Error (Pred - GT)")
         ax.set_xlabel("Sample")
         ax.set_ylabel("Frequency Bin")
-    fig.colorbar(im, ax=axes.ravel().tolist(), label="Normalized Error")
+    fig.colorbar(im, ax=axes.ravel().tolist(), label="dBm Error")
     fig.savefig(save_path, dpi=150)
     plt.close(fig)
 
 
-def main():
-    """Load a trained checkpoint, run evaluation on the test set, and save results."""
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint", required=True)
-    parser.add_argument("--config")
-    parser.add_argument("--output", default=None)
-    args = parser.parse_args()
-
-    device = get_device("auto")
-
-    ckpt = load_checkpoint(args.checkpoint, device)
-    config = ckpt["config"]
-    stats = ckpt["norm_stats"]
-    if args.config:
-        import yaml
-        with open(args.config) as f:
-            config = yaml.safe_load(f)
-
-    dcfg = config["data"]
-    data_format = dcfg.get("format", "csv")
-    prediction_horizon = config.get("windowing", {}).get("prediction_horizon", 1)
-    is_multistep = prediction_horizon > 1
-
+def load_test_dataset(config, horizon):
+    """Build the test dataset for a specific direct-prediction horizon."""
     eval_config = copy.deepcopy(config)
-    if is_multistep:
-        eval_config["branches"]["prediction_offset"] = prediction_horizon
+    eval_config["branches"]["prediction_offset"] = int(horizon)
+    dcfg = eval_config["data"]
+    data_format = dcfg.get("format", "csv")
 
-    print("Loading data...")
     if data_format == "interpolated_map":
         map_path = dcfg["map_path"]
         if not os.path.exists(map_path):
@@ -127,27 +84,29 @@ def main():
         if not os.path.exists(csv_path):
             csv_path = os.path.join(os.path.dirname(__file__), "..", "..", csv_path)
         _, _, test_ds, _ = create_datasets(csv_path, eval_config)
-    if test_ds is None or len(test_ds) == 0:
-        print("No test samples available. Check config.")
-        return
 
-    test_loader = DataLoader(
-        test_ds, batch_size=config["training"]["batch_size"],
-        shuffle=False, collate_fn=collate_branch_samples,
-    )
+    return test_ds, eval_config
 
-    model = STSPredNet(config).to(device)
-    model.load_state_dict(ckpt["model_state_dict"])
-    model.eval()
 
+def prepare_model_config(config, stats):
+    """Restore architecture fields needed to instantiate the trained model."""
+    model_config = copy.deepcopy(config)
+    if model_config["data"].get("format", "csv") == "interpolated_map":
+        model_config["model"]["input_channels"] = int(stats["n_freq"])
+        model_config["model"]["map_height"] = int(stats["grid_h"])
+        model_config["model"]["map_width"] = int(stats["grid_w"])
+    return model_config
+
+
+def run_single_horizon(model, loader, device):
+    """Run direct single-step evaluation for one horizon."""
     all_pred, all_target = [], []
     with torch.no_grad():
-        for batch in test_loader:
+        for batch in loader:
             closeness = batch.get("closeness")
             period = batch.get("period")
             trend = batch.get("trend")
-            target_idx = batch.get("target_idx")
-            t_tensor = batch.get("t")
+            target = batch["target"].to(device)
 
             if closeness is not None:
                 closeness = closeness.to(device)
@@ -156,90 +115,171 @@ def main():
             if trend is not None:
                 trend = trend.to(device)
 
-            if is_multistep and t_tensor is not None:
-                # Multi-step: iteratively predict one step at a time and gather
-                # targets from the pre-loaded dataset tensor
-                bs = closeness.shape[0] if closeness is not None else period.shape[0]
-                bs_preds, bs_targets = [], []
-                for o in range(1, prediction_horizon + 1):
-                    actual_idx = t_tensor + o
-                    target_o = test_ds.data[actual_idx].unsqueeze(1)
-                    pred_o = model(closeness, period, trend)
-                    bs_preds.append(pred_o.cpu())
-                    bs_targets.append(target_o.cpu())
-                all_pred.append(torch.stack(bs_preds, dim=1))
-                all_target.append(torch.stack(bs_targets, dim=1))
-            else:
-                # Single-step prediction
-                target = batch["target"].to(device)
-                pred = model(closeness, period, trend)
-                all_pred.append(pred.cpu().unsqueeze(1))
-                all_target.append(target.cpu().unsqueeze(1))
+            pred = model(closeness, period, trend)
+            all_pred.append(pred.cpu())
+            all_target.append(target.cpu())
 
     pred = torch.cat(all_pred, dim=0)
     target = torch.cat(all_target, dim=0)
+    return pred, target
 
-    pred_np = pred.numpy()
-    target_np = target.numpy()
 
-    B, T, C, H, W = pred.shape
-    # Flatten time and channels for overall metric computation
-    pred_2d = pred.reshape(B * T, C * H * W)
-    target_2d = target.reshape(B * T, C * H * W)
+def save_full_outputs(output_dir, horizon_records, data_format, config):
+    """Save all horizon predictions and targets with metadata."""
+    prediction_rows = []
+    target_rows = []
+    row_index = []
 
-    flat_metrics = compute_metrics(pred_2d, target_2d)
-    print("=== Test Set Metrics ===")
-    for k, v in flat_metrics.items():
-        print(f"  {k}: {v:.4f}")
+    for record in horizon_records:
+        horizon = record["horizon"]
+        pred_dbm = record["pred_dbm"]
+        target_dbm = record["target_dbm"]
+        num_samples = pred_dbm.shape[0]
+        prediction_rows.append(pred_dbm.reshape(num_samples, -1))
+        target_rows.append(target_dbm.reshape(num_samples, -1))
+        for sample_idx in range(num_samples):
+            row_index.append({"horizon": horizon, "sample_index": sample_idx})
 
-    node_names = dcfg.get("node_names", None)
-    if data_format != "interpolated_map" and node_names:
-        per_node = compute_metrics_per_node(pred.reshape(B * T, C, H, W), target.reshape(B * T, C, H, W), node_names)
-        print("\nPer-Node Metrics:")
-        for k, v in per_node.items():
-            print(f"  {k}: {v:.4f}")
+    np.savetxt(os.path.join(output_dir, "predictions.csv"), np.concatenate(prediction_rows, axis=0), delimiter=",", fmt="%.6f")
+    np.savetxt(os.path.join(output_dir, "ground_truth.csv"), np.concatenate(target_rows, axis=0), delimiter=",", fmt="%.6f")
 
-    per_freq = compute_metrics_per_frequency(pred.reshape(B * T, C, H, W), target.reshape(B * T, C, H, W))
-    freq_rmse = [v for k, v in per_freq.items() if "rmse" in k]
-    if freq_rmse:
-        print(f"\nPer-Frequency RMSE: min={min(freq_rmse):.4f}  max={max(freq_rmse):.4f}")
+    example = horizon_records[0]["pred_dbm"]
+    metadata = {
+        "data_format": data_format,
+        "row_order": "rows are grouped by requested horizon order, then sample index",
+        "row_index": row_index,
+        "channels": int(example.shape[1]),
+        "height": int(example.shape[2]),
+        "width": int(example.shape[3]),
+    }
+    if data_format != "interpolated_map":
+        metadata["node_names"] = config["data"].get("node_names")
+        metadata["column_layout"] = "channel-major over node x frequency-bin"
+    else:
+        metadata["column_layout"] = "channel-major over frequency x grid_height x grid_width"
 
+    with open(os.path.join(output_dir, "metadata.json"), "w") as f:
+        json.dump(metadata, f, indent=2)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--checkpoint", required=True)
+    parser.add_argument("--config")
+    parser.add_argument("--horizons", type=int, nargs="+")
+    parser.add_argument("--output", default=None)
+    args = parser.parse_args()
+
+    device = get_device("auto")
+    ckpt = load_checkpoint(args.checkpoint, device)
+    config = ckpt["config"]
+    stats = ckpt["norm_stats"]
+    if args.config:
+        import yaml
+        with open(args.config) as f:
+            config = yaml.safe_load(f)
+
+    data_format = config["data"].get("format", "csv")
+    horizons = args.horizons or config.get("evaluation", {}).get("eval_horizons", [config["branches"].get("prediction_offset", 1)])
     output_dir = args.output or os.path.join(os.path.dirname(__file__), "evaluation")
     os.makedirs(output_dir, exist_ok=True)
 
-    # Convert back from normalized space to physical dBm units
-    pred_dbm = denormalize(pred_np, stats)
-    target_dbm = denormalize(target_np, stats)
-    pred_dbm_2d = pred_dbm.reshape(B, T, -1)
-    target_dbm_2d = target_dbm.reshape(B, T, -1)
+    model_config = prepare_model_config(config, stats)
+    model = STSPredNet(model_config).to(device)
+    model.load_state_dict(ckpt["model_state_dict"])
+    model.eval()
 
-    np.savetxt(os.path.join(output_dir, "predictions.csv"),
-               pred_dbm_2d[0], delimiter=",", fmt="%.6f")
-    np.savetxt(os.path.join(output_dir, "ground_truth.csv"),
-               target_dbm_2d[0], delimiter=",", fmt="%.6f")
-    np.savetxt(os.path.join(output_dir, "predictions_dbm.csv"),
-               pred_dbm_2d.reshape(-1, pred_dbm_2d.shape[-1]), delimiter=",", fmt="%.2f")
-    np.savetxt(os.path.join(output_dir, "ground_truth_dbm.csv"),
-               target_dbm_2d.reshape(-1, target_dbm_2d.shape[-1]), delimiter=",", fmt="%.2f")
+    metrics_by_horizon = {}
+    horizon_records = []
+    evaluation_start_time = time.perf_counter()
+    total_inference_time_seconds = 0.0
+    for horizon in horizons:
+        print(f"Loading data for horizon t+{horizon}...")
+        test_ds, eval_config = load_test_dataset(config, horizon)
+        if test_ds is None or len(test_ds) == 0:
+            print(f"No test samples available for horizon t+{horizon}. Skipping.")
+            continue
 
-    if data_format != "interpolated_map" and node_names:
-        for n, name in enumerate(node_names):
-            plot_spectrogram_comparison(
-                target_dbm[0, :, 0], pred_dbm[0, :, 0], n, name,
-                os.path.join(output_dir, f"spectrogram_{name}.png"),
+        loader = DataLoader(
+            test_ds,
+            batch_size=config["training"]["batch_size"],
+            shuffle=False,
+            collate_fn=collate_branch_samples,
+        )
+        horizon_start_time = time.perf_counter()
+        pred, target = run_single_horizon(model, loader, device)
+        horizon_inference_time = time.perf_counter() - horizon_start_time
+        total_inference_time_seconds += horizon_inference_time
+        pred_np = pred.numpy()
+        target_np = target.numpy()
+        pred_dbm = denormalize(pred_np, stats)
+        target_dbm = denormalize(target_np, stats)
+
+        overall = compute_metrics(pred, target)
+        horizon_key = f"t+{horizon}"
+        horizon_metrics = {"overall": overall}
+        horizon_metrics["timing"] = {
+            "inference_time_seconds": horizon_inference_time,
+            "mean_sample_inference_time_seconds": horizon_inference_time / len(test_ds),
+        }
+
+        if data_format != "interpolated_map":
+            node_names = config["data"].get("node_names")
+            if node_names is None:
+                node_names = [f"Node{i}" for i in range(pred.shape[2])]
+            per_node = compute_metrics_per_node(pred, target, node_names)
+            horizon_metrics["per_node"] = per_node
+
+            for node_idx, name in enumerate(node_names):
+                plot_spectrogram_comparison(
+                    target_dbm[:, 0],
+                    pred_dbm[:, 0],
+                    node_idx,
+                    name,
+                    os.path.join(output_dir, f"spectrogram_{name}_{horizon_key}.png"),
+                )
+
+            errors = pred_dbm[:, 0] - target_dbm[:, 0]
+            plot_error_analysis(
+                np.transpose(errors, (1, 0, 2)),
+                node_names,
+                os.path.join(output_dir, f"error_analysis_{horizon_key}.png"),
             )
+        else:
+            horizon_metrics["per_node"] = {}
 
-    if data_format != "interpolated_map":
-        errors = pred_dbm - target_dbm
-        plot_error_analysis(errors[0, :, 0], node_names or [f"Node{i}" for i in range(H)],
-                            os.path.join(output_dir, "error_analysis.png"))
+        per_frequency = compute_metrics_per_frequency(pred, target)
+        horizon_metrics["per_frequency"] = per_frequency
 
-    all_metrics = {
-        "overall": flat_metrics,
-        "per_node": per_node,
-    }
+        metrics_by_horizon[horizon_key] = horizon_metrics
+        horizon_records.append({
+            "horizon": horizon,
+            "pred_dbm": pred_dbm,
+            "target_dbm": target_dbm,
+        })
+
+        print(f"=== Horizon {horizon_key} ===")
+        for key, value in overall.items():
+            print(f"  {key}: {value:.4f}")
+
+    if not horizon_records:
+        print("No evaluation outputs were generated.")
+        return
+
+    save_full_outputs(output_dir, horizon_records, data_format, config)
+    total_evaluation_time_seconds = time.perf_counter() - evaluation_start_time
     with open(os.path.join(output_dir, "metrics.json"), "w") as f:
-        json.dump(all_metrics, f, indent=2)
+        json.dump({
+            "summary": {
+                "total_inference_time_seconds": total_inference_time_seconds,
+                "total_evaluation_time_seconds": total_evaluation_time_seconds,
+                "evaluated_horizons": horizons,
+            },
+            "per_horizon": metrics_by_horizon,
+        }, f, indent=2)
+
+    print(f"Total inference time: {total_inference_time_seconds:.2f}s")
+    print(f"Total evaluation time: {total_evaluation_time_seconds:.2f}s")
 
     print(f"\nResults saved to {output_dir}/")
 

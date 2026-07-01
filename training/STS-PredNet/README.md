@@ -12,8 +12,6 @@
 
 ## Quick Start
 
-The following commands are proposed — scripts do not exist yet and will be created in a future step.
-
 ### Setup
 
 ```bash
@@ -37,7 +35,7 @@ python3 training/STS-PredNet/train.py \
     --lp 5
 ```
 
-Training creates `training/STS-PredNet/checkpoints/` with `best_model.pt`, `last_model.pt`, and `normalization_stats.pt`.
+Training creates `training/STS-PredNet/checkpoints/` with `best_model.pt`, `last_model.pt`, `normalization_stats.pt`, and `training_log.json`.
 
 ### Evaluate
 
@@ -46,7 +44,7 @@ python3 training/STS-PredNet/evaluate.py \
     --checkpoint training/STS-PredNet/checkpoints/best_model.pt
 ```
 
-Output: per-node and per-frequency-bin RMSE/MAE/R², spectrogram plots, and `predictions.csv`.
+Output: multi-horizon RMSE/MAE/R² with per-node and per-frequency breakdowns, spectrogram plots, error heatmaps, `predictions.csv`, `ground_truth.csv`, and `metadata.json`.
 
 ### Run Inference on New Data
 
@@ -55,6 +53,11 @@ python3 training/STS-PredNet/inference.py \
     --checkpoint training/STS-PredNet/checkpoints/best_model.pt \
     --input /path/to/new_measurements.csv \
     --output predictions.csv
+
+python3 training/STS-PredNet/inference.py \
+    --checkpoint training/STS-PredNet/checkpoints/best_model.pt \
+    --input evaluation/interpolated_maps/idw_ames_curtiss_600_800.npz \
+    --output predictions.npz
 ```
 
 ---
@@ -67,7 +70,7 @@ python3 training/STS-PredNet/inference.py \
 |----------------|-------------|
 | Load CSV | Read `(T, 750)` raw dBm values |
 | Load map | Read `.npz` grid, transpose `(T, H, W, F)` → `(T, F, H, W)` |
-| NaN handling | Drop fully-NaN timesteps, nearest-neighbour fill, per-freq mean fill |
+| NaN handling | Local time-axis before/after imputation, then frequency-neighbour fallback; only trailing unresolved NaN timesteps may be dropped |
 | Reshape | Convert CSV to `(T, 3, 250)` spectrum maps |
 | Normalize | Min-max or per-frequency z-score (fit on training split) |
 | Split | Chronological train/val/test split |
@@ -143,9 +146,9 @@ python3 training/STS-PredNet/evaluate.py --checkpoint CHECKPOINT [options]
 | `--config` | from checkpoint | Path to config (overrides embedded config) |
 | `--output` | `evaluation/` | Output directory for metrics, plots, and CSVs |
 
-Output: `evaluation/metrics.json`, `evaluation/predictions.csv`, `evaluation/ground_truth.csv`, `evaluation/spectrogram_*.png`, `evaluation/per_node_rmse.png`, `evaluation/per_frequency_rmse.png`.
+Output: `evaluation/metrics.json`, `evaluation/predictions.csv`, `evaluation/ground_truth.csv`, `evaluation/metadata.json`, `evaluation/spectrogram_*.png`, `evaluation/error_analysis_*.png`.
 
-### `inference.py` — Predict on new CSV data
+### `inference.py` — Predict on new CSV or interpolated-map data
 
 ```bash
 python3 training/STS-PredNet/inference.py \
@@ -155,11 +158,10 @@ python3 training/STS-PredNet/inference.py \
 | Argument | Default | Description |
 |----------|---------|-------------|
 | `--checkpoint` | — | Path to `.pt` checkpoint (required) |
-| `--input` | — | Path to new CSV file (required) |
-| `--output` | `predictions.csv` | Output CSV path |
-| `--config` | from checkpoint | Path to config |
+| `--input` | — | Path to new CSV or NPZ input (required) |
+| `--output` | `predictions.csv` / `predictions.npz` | Output path matching the input mode |
 
-Output: CSV with same `750` column layout as input (CC1[0:250], CC2[250:500], LW1[500:750]).
+Output: CSV for CSV mode or NPZ for interpolated-map mode, plus companion metadata JSON.
 
 ### `utils.py` — Shared utilities
 
@@ -686,11 +688,13 @@ MAPE (mean absolute percentage error) is documented as optional because it is un
 
 ## 9. NaN Handling (Interpolated Map Mode)
 
-The interpolated-map pipeline handles missing entries in three stages:
+The interpolated-map pipeline handles missing entries while preserving chronology:
 
-1. **Drop fully-NaN timesteps** — Any time frame where every `(H, W, F)` cell is NaN is removed entirely.
-2. **Nearest-neighbour fill** — Remaining NaN cells are filled per `(H, W, F)` slice using `scipy.interpolate.NearestNDInterpolator` over valid spatial positions.
-3. **Per-frequency mean fill** — Any cells still NaN after stage 2 (e.g., an entire frequency channel is missing at a timestep) are filled with the per-frequency training-set mean.
+1. **Full-frame temporal fill** — If an internal timestep is entirely NaN, it is imputed from neighbouring valid timesteps within `window_steps` (averaging before/after frames when both exist).
+2. **Local time-axis fill** — For each remaining `(F, H, W)` cell, missing values are filled from valid samples in the window `[t-window_steps, t-1] ∪ [t+1, t+window_steps]`.
+3. **Local frequency-axis fallback** — If a cell is still NaN after the temporal pass, it is filled from nearby frequency channels at the same timestep and spatial location using `frequency_window_steps`.
+4. **Preserve internal chronology** — Internal timesteps are never dropped. If any internal timestep still contains NaNs after all passes, dataset construction should fail rather than compress the time axis.
+5. **Trim only trailing unresolved timesteps** — If unresolved NaNs remain only at the end of the series, those trailing timesteps may be removed safely.
 
 Per-frequency z-score normalisation uses stats of shape `(1, F, 1, 1)` broadcast over `(T, C, H, W)`.
 

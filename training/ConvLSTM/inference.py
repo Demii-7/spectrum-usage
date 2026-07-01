@@ -12,6 +12,7 @@ without requiring the full training/evaluation pipeline.
 import os
 import sys
 import argparse
+import json
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, TensorDataset
@@ -19,6 +20,27 @@ from torch.utils.data import DataLoader, TensorDataset
 from model import ConvLSTMPredictor
 from utils import get_device, load_checkpoint, denormalize
 from dataset import load_csv, reshape_to_3d, compute_norm_stats, zscore
+
+
+def save_prediction_outputs(output_path, pred_dbm, config):
+    """Save all inference windows plus metadata."""
+    b, t_out, c, h, w = pred_dbm.shape
+    pred_rows = pred_dbm.reshape(b * t_out, -1)
+    np.savetxt(output_path, pred_rows, delimiter=",", fmt="%.6f")
+
+    metadata = {
+        "num_windows": b,
+        "prediction_horizon": t_out,
+        "channels": c,
+        "height": h,
+        "width": w,
+        "data_format": config["data"].get("format", "csv"),
+        "flatten_order": "rows are ordered by window-major then horizon-major; columns flatten (C, H, W)",
+    }
+    metadata_path = os.path.splitext(output_path)[0] + ".metadata.json"
+    with open(metadata_path, "w") as f:
+        json.dump(metadata, f, indent=2)
+    return metadata_path
 
 
 def main():
@@ -72,8 +94,8 @@ def main():
             raise ValueError(f"Input too short ({len(data_3d)} steps). Need at least {t_in + t_out}.")
 
     windows = np.stack([data_norm[i:i + t_in] for i in range(total_windows)], axis=0)
-    # Add channel dimension and permute to (batch, channels, time, height, width).
-    windows = torch.from_numpy(windows).float().unsqueeze(2).transpose(1, 2)
+    # Match training/evaluation layout: (batch, time, channels, height, width).
+    windows = torch.from_numpy(windows).float().unsqueeze(2)
     loader = DataLoader(windows, batch_size=32, shuffle=False)
 
     model = ConvLSTMPredictor(config).to(device)
@@ -96,10 +118,9 @@ def main():
     else:
         pred_dbm = pred.numpy()
 
-    pred_flat = pred_dbm.reshape(b, to, -1)
-    # Save the first window's predictions; multi-window outputs are not concatenated.
-    np.savetxt(args.output, pred_flat[0], delimiter=",", fmt="%.6f")
+    metadata_path = save_prediction_outputs(args.output, pred_dbm, config)
     print(f"Predictions saved to {args.output} ({b} windows × {to} time steps × {h * w} columns)")
+    print(f"Metadata saved to {metadata_path}")
 
 
 if __name__ == "__main__":

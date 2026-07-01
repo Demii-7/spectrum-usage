@@ -1,14 +1,14 @@
-"""
-Training script for STS-PredNet spectrum prediction model.
+"""Training script for STS-PredNet spectrum prediction model.
 
 Loads configuration, creates datasets and dataloaders, trains the
-STSPredNet model with early stopping, and evaluates on the test set.
-Logs training loss and validation metrics, and saves checkpoints.
+STSPredNet model with early stopping, and saves checkpoints selected by
+validation loss only. Final test evaluation is handled by ``evaluate.py``.
 """
 import os
 import sys
 import json
 import argparse
+import time
 import yaml
 import torch
 import torch.nn as nn
@@ -17,10 +17,7 @@ from tqdm import tqdm
 
 from dataset import create_datasets, create_interpolated_map_datasets, collate_branch_samples
 from stsprednet import STSPredNet
-from utils import (
-    set_seed, get_device, compute_metrics, compute_metrics_per_node,
-    compute_metrics_per_frequency, save_checkpoint,
-)
+from utils import set_seed, get_device, compute_metrics, save_checkpoint
 
 
 def load_config(config_path):
@@ -173,11 +170,6 @@ def main():
         val_ds, batch_size=tcfg["batch_size"], shuffle=False,
         collate_fn=collate_branch_samples,
     ) if val_ds else None
-    test_loader = DataLoader(
-        test_ds, batch_size=tcfg["batch_size"], shuffle=False,
-        collate_fn=collate_branch_samples,
-    ) if test_ds else None
-
     print(f"Train: {len(train_ds)} samples" if train_ds else "No training set")
     print(f"Val:   {len(val_ds)} samples" if val_ds else "No validation set")
     print(f"Test:  {len(test_ds)} samples" if test_ds else "No test set")
@@ -187,13 +179,19 @@ def main():
     print(f"Model parameters: {total_params:,}")
 
     criterion = nn.MSELoss() if tcfg.get("loss", "mse") == "mse" else nn.L1Loss()
-    optimizer = torch.optim.Adam(
-        model.parameters(),
-        lr=tcfg["learning_rate"],
-        betas=(tcfg.get("beta1", 0.9), tcfg.get("beta2", 0.999)),
-        eps=tcfg.get("epsilon", 1e-8),
-        weight_decay=tcfg.get("weight_decay", 0.0),
-    )
+    optimizer_name = str(tcfg.get("optimizer", "adam")).lower()
+    optimizer_kwargs = {
+        "lr": tcfg["learning_rate"],
+        "betas": (tcfg.get("beta1", 0.9), tcfg.get("beta2", 0.999)),
+        "eps": tcfg.get("epsilon", 1e-8),
+        "weight_decay": tcfg.get("weight_decay", 0.0),
+    }
+    if optimizer_name == "adam":
+        optimizer = torch.optim.Adam(model.parameters(), **optimizer_kwargs)
+    elif optimizer_name == "nadam":
+        optimizer = torch.optim.NAdam(model.parameters(), **optimizer_kwargs)
+    else:
+        raise ValueError(f"Unsupported optimizer: {tcfg.get('optimizer')}")
 
     best_val_loss = float("inf")
     best_epoch = 0
@@ -203,9 +201,16 @@ def main():
     ckpt_dir = os.path.join(os.path.dirname(__file__), "checkpoints")
     os.makedirs(ckpt_dir, exist_ok=True)
     log_path = os.path.join(ckpt_dir, "training_log.json")
-    log_data = {"train_loss": [], "val_metrics": []}
+    log_data = {
+        "train_loss": [],
+        "val_metrics": [],
+        "epoch_time_seconds": [],
+        "summary": {},
+    }
 
+    training_start_time = time.perf_counter()
     for epoch in range(1, tcfg["epochs"] + 1):
+        epoch_start_time = time.perf_counter()
         train_loss = train_epoch(
             model, train_loader, optimizer, criterion, device, clip_norm,
         ) if train_loader else 0
@@ -214,8 +219,17 @@ def main():
         if val_loader:
             val_metrics, _, _ = validate(model, val_loader, criterion, device)
 
+        epoch_time_seconds = time.perf_counter() - epoch_start_time
         log_data["train_loss"].append(train_loss)
         log_data["val_metrics"].append(val_metrics)
+        log_data["epoch_time_seconds"].append(epoch_time_seconds)
+        log_data["summary"] = {
+            "epochs_completed": epoch,
+            "best_epoch": best_epoch,
+            "best_val_loss": best_val_loss,
+            "elapsed_training_time_seconds": time.perf_counter() - training_start_time,
+            "mean_epoch_time_seconds": sum(log_data["epoch_time_seconds"]) / len(log_data["epoch_time_seconds"]),
+        }
         with open(log_path, "w") as f:
             json.dump(log_data, f, indent=2)
 
@@ -223,7 +237,7 @@ def main():
         print(
             f"Epoch {epoch:3d}/{tcfg['epochs']} | LR: {lr:.2e} | "
             f"Train Loss: {train_loss:.6f} | Val Loss: {val_metrics.get('loss', 0):.6f} | "
-            f"Val RMSE: {val_metrics.get('rmse', 0):.4f}"
+            f"Val RMSE: {val_metrics.get('rmse', 0):.4f} | Epoch Time: {epoch_time_seconds:.2f}s"
         )
 
         if val_metrics.get("loss", float("inf")) < best_val_loss:
@@ -247,31 +261,22 @@ def main():
         model, optimizer, epoch, stats, config, val_metrics,
     )
 
-    if test_loader:
-        print("\n=== Test Set Evaluation ===")
-        test_metrics, pred, target = validate(model, test_loader, criterion, device)
-        print(f"Test RMSE: {test_metrics['rmse']:.4f}")
-        print(f"Test MAE:  {test_metrics['mae']:.4f}")
-        print(f"Test R²:   {test_metrics['r2']:.4f}")
+    total_training_time = time.perf_counter() - training_start_time
+    mean_epoch_time = sum(log_data["epoch_time_seconds"]) / len(log_data["epoch_time_seconds"]) if log_data["epoch_time_seconds"] else 0.0
+    log_data["summary"] = {
+        "epochs_completed": epoch,
+        "best_epoch": best_epoch,
+        "best_val_loss": best_val_loss,
+        "elapsed_training_time_seconds": total_training_time,
+        "mean_epoch_time_seconds": mean_epoch_time,
+    }
+    with open(log_path, "w") as f:
+        json.dump(log_data, f, indent=2)
 
-        node_names = dcfg.get("node_names", None)
-        if data_format != "interpolated_map" and node_names:
-            per_node = compute_metrics_per_node(pred, target, node_names)
-            for k, v in per_node.items():
-                print(f"  {k}: {v:.4f}")
-
-        per_freq = compute_metrics_per_frequency(pred, target)
-        freq_rmse = [v for k, v in per_freq.items() if "rmse" in k]
-        if freq_rmse:
-            print(f"  Per-frequency RMSE: min={min(freq_rmse):.4f} max={max(freq_rmse):.4f}")
-
-        # Overwrite best model checkpoint with test metrics for downstream use
-        save_checkpoint(
-            os.path.join(ckpt_dir, "best_model.pt"),
-            model, optimizer, best_epoch, stats, config, test_metrics,
-        )
-
-    print(f"\nDone. Best epoch: {best_epoch}. Checkpoints in {ckpt_dir}/")
+    print(
+        f"\nDone. Best epoch: {best_epoch}. Total training time: {total_training_time:.2f}s. "
+        f"Mean epoch time: {mean_epoch_time:.2f}s. Checkpoints in {ckpt_dir}/"
+    )
 
 
 if __name__ == "__main__":

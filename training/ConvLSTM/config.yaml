@@ -32,7 +32,9 @@ preprocessing:
   normalization: "zscore"
   # Fit normalization on training set only (true) or full dataset (false)
   fit_on_train_only: true
-  # Missing-value handling for interpolated-map mode.
+  # Missing-value handling for both CSV and interpolated-map modes.
+  # Trailing all-NaN timesteps are trimmed; internal NaNs are filled first
+  # from nearby timesteps, then from nearby frequency bins/channels.
   imputation:
     impute: true
     window_steps: 2
@@ -100,8 +102,8 @@ training:
   epochs: 100
   # Initial learning rate
   learning_rate: 0.0002
-  # Optimizer: "adam" or "nadam" (NADAM requires third-party lib)
-  optimizer: "adam"
+  # Optimizer: "adam" or "nadam"
+  optimizer: "nadam"
   # Adam/NADAM beta1
   beta1: 0.9
   # Adam/NADAM beta2
@@ -124,6 +126,8 @@ training:
   teacher_forcing_ratio: 1.0
   # Gaussian noise std added to training inputs (regularization, paper §III-B)
   noise_std: 0.2
+  # Random seed for reproducibility
+  seed: 42
 
 evaluation:
   # Metrics to compute during evaluation

@@ -26,6 +26,9 @@ data:
 device:
   device: auto
 evaluation:
+  eval_horizons:
+  - 1
+  - 3
   metrics:
   - rmse
   - mae
@@ -47,6 +50,10 @@ model:
   output_activation: tanh
 preprocessing:
   fit_on_train_only: true
+  imputation:
+    enabled: true
+    window_steps: 2
+    frequency_window_steps: 2
   normalization: zscore
 splits:
   chronological_split: true

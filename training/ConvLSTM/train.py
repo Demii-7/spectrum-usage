@@ -14,6 +14,7 @@ import os
 import sys
 import json
 import argparse
+import time
 import yaml
 import torch
 import torch.nn as nn
@@ -132,15 +133,15 @@ def main():
     if args.pred_horizon:
         config["windowing"]["prediction_horizon"] = args.pred_horizon
 
-    set_seed()
-    device = get_device(config["device"]["device"])
-    print(f"Device: {device}")
-
     dcfg = config["data"]
     wcfg = config["windowing"]
     scfg = config["split"]
     tcfg = config["training"]
     data_format = dcfg.get("format", "csv")
+
+    set_seed(int(tcfg.get("seed", 42)))
+    device = get_device(config["device"]["device"])
+    print(f"Device: {device}")
 
     print("Loading data...")
     if data_format == "interpolated_map":
@@ -182,6 +183,7 @@ def main():
             chronological=scfg["chronological_split"],
             normalization=config["preprocessing"]["normalization"],
             fit_on_train_only=config["preprocessing"]["fit_on_train_only"],
+            nan_window_steps=int(config["preprocessing"].get("imputation", {}).get("window_steps", 2)),
         )
 
     # Shuffle training data for stochasticity; drop_last avoids ragged batches
@@ -199,13 +201,19 @@ def main():
     print(f"Model parameters: {total_params:,}")
 
     criterion = nn.MSELoss() if tcfg.get("loss", "mse") == "mse" else nn.L1Loss()
-    optimizer = torch.optim.Adam(
-        model.parameters(),
-        lr=tcfg["learning_rate"],
-        betas=(tcfg["beta1"], tcfg["beta2"]),
-        eps=tcfg["epsilon"],
-        weight_decay=tcfg["weight_decay"],
-    )
+    optimizer_name = str(tcfg.get("optimizer", "nadam")).lower()
+    optimizer_kwargs = {
+        "lr": tcfg["learning_rate"],
+        "betas": (tcfg["beta1"], tcfg["beta2"]),
+        "eps": tcfg["epsilon"],
+        "weight_decay": tcfg["weight_decay"],
+    }
+    if optimizer_name == "adam":
+        optimizer = torch.optim.Adam(model.parameters(), **optimizer_kwargs)
+    elif optimizer_name == "nadam":
+        optimizer = torch.optim.NAdam(model.parameters(), **optimizer_kwargs)
+    else:
+        raise ValueError(f"Unsupported optimizer: {tcfg.get('optimizer')}")
     # Reduce LR by 50% when validation loss plateaus to help fine-tune convergence.
     scheduler = ReduceLROnPlateau(optimizer, mode="min", factor=0.5,
                                   patience=tcfg.get("lr_patience", 10)) \
@@ -217,14 +225,21 @@ def main():
     ckpt_dir = os.path.join(os.path.dirname(__file__), "checkpoints")
     os.makedirs(ckpt_dir, exist_ok=True)
     log_path = os.path.join(ckpt_dir, "training_log.json")
-    log_data = {"train_loss": [], "val_metrics": []}
+    log_data = {
+        "train_loss": [],
+        "val_metrics": [],
+        "epoch_time_seconds": [],
+        "summary": {},
+    }
 
     teacher_forcing = tcfg["teacher_forcing_ratio"]
     noise_std = tcfg.get("noise_std", 0.0)
     clip_norm = tcfg.get("gradient_clip_norm", 0.0)
     patience = tcfg.get("early_stopping_patience", 20)
 
+    training_start_time = time.perf_counter()
     for epoch in range(1, tcfg["epochs"] + 1):
+        epoch_start_time = time.perf_counter()
         train_loss = train_epoch(
             model, train_loader, optimizer, criterion, device,
             teacher_forcing, noise_std, clip_norm,
@@ -234,14 +249,28 @@ def main():
         if val_loader:
             val_metrics, _, _ = validate(model, val_loader, criterion, device)
 
+        epoch_time_seconds = time.perf_counter() - epoch_start_time
+
         # Persist training progress after every epoch for crash recovery.
         log_data["train_loss"].append(train_loss)
         log_data["val_metrics"].append(val_metrics)
+        log_data["epoch_time_seconds"].append(epoch_time_seconds)
+        log_data["summary"] = {
+            "epochs_completed": epoch,
+            "best_epoch": best_epoch,
+            "best_val_loss": best_val_loss,
+            "elapsed_training_time_seconds": time.perf_counter() - training_start_time,
+            "mean_epoch_time_seconds": sum(log_data["epoch_time_seconds"]) / len(log_data["epoch_time_seconds"]),
+        }
         with open(log_path, "w") as f:
             json.dump(log_data, f, indent=2)
 
         lr = optimizer.param_groups[0]["lr"]
-        print(f"Epoch {epoch:3d}/{tcfg['epochs']} | LR: {lr:.2e} | Train Loss: {train_loss:.6f} | Val Loss: {val_metrics.get('loss', 0):.6f} | Val RMSE: {val_metrics.get('rmse', 0):.4f}")
+        print(
+            f"Epoch {epoch:3d}/{tcfg['epochs']} | LR: {lr:.2e} | "
+            f"Train Loss: {train_loss:.6f} | Val Loss: {val_metrics.get('loss', 0):.6f} | "
+            f"Val RMSE: {val_metrics.get('rmse', 0):.4f} | Epoch Time: {epoch_time_seconds:.2f}s"
+        )
 
         if scheduler:
             scheduler.step(val_metrics.get("loss", float("inf")))
@@ -267,7 +296,24 @@ def main():
         model, optimizer, epoch, stats, config, val_metrics,
     )
 
-    print(f"\nDone. Best epoch: {best_epoch}. Checkpoints in {ckpt_dir}/")
+    total_training_time = time.perf_counter() - training_start_time
+    mean_epoch_time = sum(log_data["epoch_time_seconds"]) / len(log_data["epoch_time_seconds"]) if log_data["epoch_time_seconds"] else 0.0
+    log_data["summary"] = {
+        "epochs_completed": epoch,
+        "best_epoch": best_epoch,
+        "best_val_loss": best_val_loss,
+        "elapsed_training_time_seconds": total_training_time,
+        "mean_epoch_time_seconds": mean_epoch_time,
+    }
+    with open(log_path, "w") as f:
+        json.dump(log_data, f, indent=2)
+
+    print(
+        f"\nDone. Best epoch: {best_epoch}. "
+        f"Total training time: {total_training_time:.2f}s. "
+        f"Mean epoch time: {mean_epoch_time:.2f}s. "
+        f"Checkpoints in {ckpt_dir}/"
+    )
 
 
 if __name__ == "__main__":

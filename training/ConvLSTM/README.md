@@ -45,7 +45,7 @@ python3 training/ConvLSTM/evaluate.py \
     --checkpoint training/ConvLSTM/checkpoints/best_model.pt
 ```
 
-Output: per-horizon and per-node RMSE/MAE/R², spectrogram plots, and `predictions.csv`.
+Output: per-horizon and per-node RMSE/MAE/R², spectrogram plots, full-test `predictions.csv` / `ground_truth.csv`, and `metadata.json`.
 
 ### Run Inference on New Data
 
@@ -90,7 +90,7 @@ python3 training/ConvLSTM/evaluate.py --checkpoint CHECKPOINT [options]
 | `--horizons` | `[1, 3, 6]` | Specific future time steps to report metrics for |
 | `--output` | `evaluation/` | Output directory for metrics, plots, and CSVs |
 
-Output (CSV mode): `evaluation/metrics.json`, `evaluation/predictions.csv`, `evaluation/ground_truth.csv`, `evaluation/spectrogram_*.png`, `evaluation/error_analysis.png`.
+Output (CSV mode): `evaluation/metrics.json`, `evaluation/predictions.csv`, `evaluation/ground_truth.csv`, `evaluation/metadata.json`, `evaluation/spectrogram_*.png`, `evaluation/error_analysis.png`.
 
 Output (map mode): `evaluation/metrics.json`, `evaluation/map_comparison_t*.png`, `evaluation/spatial_rmse_map.png`, `evaluation/per_frequency_rmse.png`.
 
@@ -108,7 +108,7 @@ python3 training/ConvLSTM/inference.py --checkpoint CHECKPOINT --input CSV [opti
 | `--t-in` | from checkpoint config | Input sequence length (must match training) |
 | `--t-out` | from checkpoint config | Prediction horizon (must match training) |
 
-Output: CSV with predicted PSD values, same column layout as input (750 cols, no header).
+Output: CSV with all predicted PSD frames flattened row-by-row plus a companion metadata JSON describing window/horizon layout.
 
 ### `dataset.py` — Data loading and preprocessing (library)
 
@@ -122,7 +122,7 @@ Imported by `train.py` and `evaluate.py`. Key functions:
 | `InterpolatedMapDataset(data_4d, t_in, t_out, indices)` | PyTorch `Dataset` | Returns `(X, y)` of shape `(T_in, F, H, W)` and `(T_out, F, H, W)` (map mode) |
 | `load_csv(path)` | `ndarray (T, 750)` | Loads CSV via `numpy.loadtxt` |
 | `load_map_npz(path, key)` | `ndarray (T, F, H, W)` | Loads `.npz`, transposes from `(T, H, W, F)` to `(T, F, H, W)` |
-| `impute_nan_local_time(data_4d, ...)` | `ndarray (T, F, H, W)` | Fills NaNs along the time axis from nearby valid timesteps within a configurable local window; does not drop timesteps and has no fallback imputation |
+| `clean_nan_csv(data_3d, ...)` / `clean_nan_map(data_4d, ...)` | `(cleaned, stats)` | Trims only trailing all-NaN timesteps, then fills internal NaNs from local time neighbours followed by nearby frequency bins/channels |
 | `denormalize(data, mean, std)` | `ndarray` | Reverses z-score normalization |
 
 `stats` dict (`{"mean": ndarray, "std": ndarray}`) is saved alongside checkpoints and used by `evaluate.py` and `inference.py` for denormalization.
@@ -205,8 +205,8 @@ All hyperparameters are in `config.yaml`. Key settings:
 | Data | `grid_width` | 50 | Spatial grid width / columns (map mode) |
 | Preprocessing | `normalization` | `zscore` | Normalization method (`zscore`, `minmax`, or `none`) |
 | Preprocessing | `fit_on_train_only` | true | Compute normalization stats on training set only (true) or full dataset (false) |
-| Preprocessing | `imputation.impute` | true | In map mode, fill missing values from local temporal neighbours before normalization; if false, leave NaNs in place and warn |
-| Preprocessing | `imputation.window_steps` | 2 | Number of timesteps to look backward and forward when imputing map NaNs |
+| Preprocessing | `imputation.impute` | true | In CSV and map modes, trim trailing all-NaN timesteps and fill internal NaNs; if false, leave NaNs in place and warn |
+| Preprocessing | `imputation.window_steps` | 2 | Radius for local time-neighbour fill and frequency-neighbour fallback |
 | Windowing | `input_sequence_length` | 12 | Past minutes (T_in) |
 | Windowing | `prediction_horizon` | 6 | Future minutes (T_out) |
 | Windowing | `stride` | 1 | Window stride |
@@ -231,7 +231,7 @@ All hyperparameters are in `config.yaml`. Key settings:
 | Training | `batch_size` | 32 | Mini-batch size |
 | Training | `epochs` | 100 | Max training epochs |
 | Training | `learning_rate` | 0.0002 | Initial learning rate |
-| Training | `optimizer` | adam | Optimizer choice (`adam` or `nadam`) |
+| Training | `optimizer` | nadam | Optimizer choice (`adam` or `nadam`) |
 | Training | `beta1` | 0.9 | Adam/NADAM beta1 |
 | Training | `beta2` | 0.999 | Adam/NADAM beta2 |
 | Training | `epsilon` | 1e-8 | Adam/NADAM epsilon |
@@ -243,6 +243,7 @@ All hyperparameters are in `config.yaml`. Key settings:
 | Training | `loss` | mse | Loss function (`mse` or `mae`) |
 | Training | `teacher_forcing_ratio` | 1.0 | Teacher forcing probability (1.0 = always on, 0 = pure autoregressive) |
 | Training | `noise_std` | 0.2 | Gaussian noise std added to training inputs (paper §III-B) |
+| Training | `seed` | 42 | Random seed for reproducible training |
 | Evaluation | `metrics` | `["rmse","mae","r2"]` | Metrics to report |
 | Evaluation | `eval_horizons` | `[1, 3, 6]` | Specific future time steps for per-horizon reporting |
 | Device | `device` | auto | `cuda`, `cpu`, or `auto` |
@@ -372,11 +373,11 @@ On load, the array is transposed to `(T, F, H, W)` so frequency becomes the chan
 **Map → Tensor Conversion:**
 
 1. **Load**: `load_map_npz(path, key)` — loads `.npz`, extracts the key (default `map_db`), transposes `(T, H, W, F)` → `(T, F, H, W)`.
-2. **Handle Missing Values**: `impute_nan_local_time()` optionally fills NaNs before normalization and windowing:
-   - If `preprocessing.imputation.impute: true`, each missing `(t, f, h, w)` value is filled from valid neighbours within the local time window `[t-window_steps, t-1] ∪ [t+1, t+window_steps]`.
-   - The fill value is the mean of those local valid neighbours.
-   - No timesteps are dropped, so chronology is preserved.
-   - There is no fallback imputation strategy.
+2. **Handle Missing Values**: `clean_nan_map()` optionally cleans NaNs before normalization and windowing:
+   - If `preprocessing.imputation.impute: true`, trailing timesteps that are entirely NaN are dropped.
+   - Internal missing `(t, f, h, w)` values are first filled from valid neighbours within the local time window `[t-window_steps, t-1] ∪ [t+1, t+window_steps]`.
+   - If temporal neighbours are unavailable, the loader falls back to nearby frequency channels at the same timestep and spatial location.
+   - Internal chronology is preserved because non-trailing timesteps are never removed.
    - If `preprocessing.imputation.impute: false`, NaNs are left in place and a warning is printed.
 3. **Normalize**: Per-frequency z-score normalized across the time dimension, using stats `(F, 1, 1)` (broadcast over H×W).
 4. **Window**: Identical sliding-window logic as CSV mode, producing `X: (T_in, F, H, W)` and `y: (T_out, F, H, W)`.
@@ -565,12 +566,12 @@ This version incorporates local spatial-spectral context (via the 3×3 kernel) b
 
 ### 3.3 ConvLSTM Equations
 
-Each ConvLSTMCell follows the formulation from Shi et al. (2015), with configurable cell candidate and output activations (`cell_activation`, default ReLU per paper §III-A):
+Each ConvLSTMCell follows the paper-style formulation with peephole connections from the previous cell state into the gates, and with configurable cell candidate and output activations (`cell_activation`, default ReLU per paper §III-A):
 
 ```
-i_t = σ(W_xi ∗ X_t + W_hi ∗ H_{t-1} + b_i)
-f_t = σ(W_xf ∗ X_t + W_hf ∗ H_{t-1} + b_f)
-o_t = σ(W_xo ∗ X_t + W_ho ∗ H_{t-1} + b_o)
+i_t = σ(W_xi ∗ X_t + W_hi ∗ H_{t-1} + W_ci ⊙ C_{t-1} + b_i)
+f_t = σ(W_xf ∗ X_t + W_hf ∗ H_{t-1} + W_cf ⊙ C_{t-1} + b_f)
+o_t = σ(W_xo ∗ X_t + W_ho ∗ H_{t-1} + W_co ⊙ C_{t-1} + b_o)
 g_t = activation(W_xg ∗ X_t + W_hg ∗ H_{t-1} + b_g)
 C_t = f_t ⊙ C_{t-1} + i_t ⊙ g_t
 H_t = o_t ⊙ activation(C_t)
@@ -581,6 +582,7 @@ where:
 - `⊙` = Hadamard (element-wise) product
 - `σ` = sigmoid gate activation
 - `activation` = configurable function (`cell_activation`; default ReLU per paper §III-A)
+- `W_ci, W_cf, W_co` = learned peephole weights applied element-wise to `C_{t-1}`
 - `i, f, o, g` = input gate, forget gate, output gate, cell candidate
 - `C, H` = cell state, hidden state
 
@@ -715,7 +717,7 @@ MSE penalizes larger errors more heavily, appropriate for PSD regression. MAE ca
 
 | Parameter | Value | Source |
 |-----------|-------|--------|
-| Optimizer | Adam (default) | Paper uses NADAM |
+| Optimizer | NADAM (default) | Paper §III-B |
 | Learning rate | 0.0002 | Paper §III-B |
 | β₁ | 0.9 | Paper §III-B |
 | β₂ | 0.999 | Paper §III-B |

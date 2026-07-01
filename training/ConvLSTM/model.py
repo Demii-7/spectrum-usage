@@ -60,7 +60,7 @@ class ConvLSTMCell(nn.Module):
         self.bias = bias
         self.activation = activation
 
-        # Single convolution produces all four gates (input, forget, output, cell).
+        # Single convolution produces the input/forget/output gates plus the cell candidate.
         # Concatenating input and hidden along the channel axis enables the convolution
         # to learn both input-to-state and state-to-state transitions jointly.
         self.conv = nn.Conv2d(
@@ -70,6 +70,12 @@ class ConvLSTMCell(nn.Module):
             padding=self.padding,
             bias=self.bias,
         )
+
+        # Peephole connections are learned Hadamard weights from the previous cell
+        # state into the input/forget/output gates, matching the paper's formulas.
+        self.w_ci = nn.Parameter(torch.zeros(1, self.hidden_dim, 1, 1))
+        self.w_cf = nn.Parameter(torch.zeros(1, self.hidden_dim, 1, 1))
+        self.w_co = nn.Parameter(torch.zeros(1, self.hidden_dim, 1, 1))
 
     def forward(self, input_tensor, cur_state):
         """
@@ -90,9 +96,9 @@ class ConvLSTMCell(nn.Module):
         combined_conv = self.conv(combined)
         # Split the 4*hidden_dim output into the four gates: input, forget, output, cell modulation.
         cc_i, cc_f, cc_o, cc_g = torch.split(combined_conv, self.hidden_dim, dim=1)
-        i = torch.sigmoid(cc_i)
-        f = torch.sigmoid(cc_f)
-        o = torch.sigmoid(cc_o)
+        i = torch.sigmoid(cc_i + self.w_ci * c_cur)
+        f = torch.sigmoid(cc_f + self.w_cf * c_cur)
+        o = torch.sigmoid(cc_o + self.w_co * c_cur)
         g = self.activation(cc_g)
         c_next = f * c_cur + i * g
         h_next = o * self.activation(c_next)

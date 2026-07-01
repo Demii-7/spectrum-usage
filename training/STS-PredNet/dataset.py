@@ -204,6 +204,13 @@ def compute_norm_stats_freq(data_4d: np.ndarray) -> tuple[np.ndarray, np.ndarray
     return mean, std
 
 
+def compute_minmax_stats_freq(data_4d: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Per-frequency min/max, broadcastable as (1, F, 1, 1)."""
+    dmin = np.min(data_4d, axis=(0, 2, 3), keepdims=True).astype(np.float32)
+    dmax = np.max(data_4d, axis=(0, 2, 3), keepdims=True).astype(np.float32)
+    return dmin, dmax
+
+
 def impute_nan_local_time(data_4d: np.ndarray, window_steps: int = 2) -> np.ndarray:
     """Impute NaN values along the time axis using local neighbours.
 
@@ -248,6 +255,106 @@ def impute_nan_local_time(data_4d: np.ndarray, window_steps: int = 2) -> np.ndar
     return data_4d
 
 
+def impute_full_nan_timesteps(data_4d: np.ndarray, window_steps: int = 2) -> np.ndarray:
+    """Impute fully missing internal timesteps from nearby valid timesteps.
+
+    For any timestep where every cell is NaN, search outward in time within the
+    configured radius. If both a previous and next valid frame exist, fill with
+    their mean. If only one valid neighbour exists, copy it.
+    """
+    full_nan_steps = np.where(np.isnan(data_4d).all(axis=(1, 2, 3)))[0]
+    if len(full_nan_steps) == 0:
+        return data_4d
+
+    filled = 0
+    T = data_4d.shape[0]
+    for t in full_nan_steps:
+        prev_frame = None
+        next_frame = None
+        for delta in range(1, window_steps + 1):
+            prev_idx = t - delta
+            next_idx = t + delta
+            if prev_frame is None and prev_idx >= 0 and not np.isnan(data_4d[prev_idx]).all():
+                prev_frame = data_4d[prev_idx]
+            if next_frame is None and next_idx < T and not np.isnan(data_4d[next_idx]).all():
+                next_frame = data_4d[next_idx]
+            if prev_frame is not None and next_frame is not None:
+                break
+
+        if prev_frame is not None and next_frame is not None:
+            data_4d[t] = ((prev_frame + next_frame) / 2.0).astype(np.float32)
+            filled += 1
+        elif prev_frame is not None:
+            data_4d[t] = prev_frame.copy()
+            filled += 1
+        elif next_frame is not None:
+            data_4d[t] = next_frame.copy()
+            filled += 1
+
+    if filled:
+        print(f"  Imputed {filled} fully-NaN timestep(s) from neighbouring frames (window={window_steps}).")
+    return data_4d
+
+
+def impute_nan_local_frequency(data_4d: np.ndarray, window_steps: int = 2) -> np.ndarray:
+    """Fill remaining NaNs from nearby frequency channels at the same timestep/location."""
+    total_nan = int(np.isnan(data_4d).sum())
+    if total_nan == 0:
+        return data_4d
+
+    T, F, H, W = data_4d.shape
+    fill_coords = []
+    fill_vals = []
+    for t in range(T):
+        for h in range(H):
+            for w in range(W):
+                series = data_4d[t, :, h, w]
+                if not np.isnan(series).any():
+                    continue
+                for f in np.where(np.isnan(series))[0]:
+                    left = slice(max(0, f - window_steps), f)
+                    right = slice(f + 1, min(F, f + window_steps + 1))
+                    vals = np.concatenate([series[left], series[right]])
+                    valid = vals[~np.isnan(vals)]
+                    if len(valid) > 0:
+                        fill_coords.append((t, f, h, w))
+                        fill_vals.append(valid.mean())
+
+    for (t, f, h, w), value in zip(fill_coords, fill_vals):
+        data_4d[t, f, h, w] = value
+
+    remaining = int(np.isnan(data_4d).sum())
+    print(f"  Imputed {len(fill_coords)} NaN cell(s) via local frequency-axis (window={window_steps})."
+          + (f"  Remaining: {remaining}" if remaining else ""))
+    return data_4d
+
+
+def trim_trailing_nan_timesteps(data_4d: np.ndarray) -> tuple[np.ndarray, list[int]]:
+    """Drop only trailing timesteps that still contain unresolved NaNs."""
+    nan_mask = np.isnan(data_4d).any(axis=(1, 2, 3))
+    if not nan_mask.any():
+        return data_4d, []
+
+    last_valid_indices = np.where(~nan_mask)[0]
+    if len(last_valid_indices) == 0:
+        dropped = list(range(data_4d.shape[0]))
+        print(f"  Dropped all timesteps due to unresolved NaN values: {dropped}")
+        return data_4d[:0], dropped
+
+    last_valid = int(last_valid_indices[-1])
+    trailing_unresolved = np.where(nan_mask & (np.arange(data_4d.shape[0]) > last_valid))[0].tolist()
+    # Any unresolved NaN before the last valid timestep is an internal chronology issue.
+    internal_unresolved = np.where(nan_mask & (np.arange(data_4d.shape[0]) <= last_valid))[0].tolist()
+    if internal_unresolved:
+        raise RuntimeError(
+            "Internal timesteps still contain unresolved NaNs after temporal/frequency imputation: "
+            f"{internal_unresolved}"
+        )
+    if trailing_unresolved:
+        print(f"  Dropped trailing timestep(s) with unresolved NaN values: {trailing_unresolved}")
+    return data_4d[: last_valid + 1], trailing_unresolved
+
+
 def create_interpolated_map_datasets(
     map_path: str | os.PathLike,
     config: dict,
@@ -286,10 +393,14 @@ def create_interpolated_map_datasets(
     T, F, H, W = data_4d.shape
 
     # Impute NaNs along time axis (configurable window size)
-    ipcfg = dcfg.get("imputation", {})
+    ipcfg = pcfg.get("imputation", {})
     if ipcfg.get("enabled", True):
-        window = int(ipcfg.get("window_steps", 2))
-        data_4d = impute_nan_local_time(data_4d, window)
+        time_window = int(ipcfg.get("window_steps", 2))
+        freq_window = int(ipcfg.get("frequency_window_steps", time_window))
+        data_4d = impute_full_nan_timesteps(data_4d, time_window)
+        data_4d = impute_nan_local_time(data_4d, time_window)
+        data_4d = impute_nan_local_frequency(data_4d, freq_window)
+        data_4d, _ = trim_trailing_nan_timesteps(data_4d)
     else:
         nan_count = int(np.isnan(data_4d).sum())
         if nan_count:
@@ -309,9 +420,17 @@ def create_interpolated_map_datasets(
 
     train_targets = [all_valid[i] for i in train_idx_list][::train_stride]
     val_targets = [all_valid[i] for i in val_idx_list][::val_stride]
-    test_targets = [all_valid[i] for i in test_idx_list][::val_stride]
+    test_targets = [all_valid[i] for i in test_idx_list][::test_stride]
 
-    if pcfg["normalization"] == "zscore":
+    if pcfg["normalization"] == "minmax_neg1_pos1":
+        if pcfg["fit_on_train_only"] and train_targets:
+            train_end = max(train_targets) + 1
+            dmin, dmax = compute_minmax_stats_freq(data_4d[:train_end])
+        else:
+            dmin, dmax = compute_minmax_stats_freq(data_4d)
+        data_norm = (2.0 * (data_4d - dmin) / (dmax - dmin + 1e-8) - 1.0).astype(np.float32)
+        stats = {"dmin": dmin, "dmax": dmax, "method": "minmax_neg1_pos1"}
+    elif pcfg["normalization"] == "zscore":
         if pcfg["fit_on_train_only"] and train_targets:
             train_end = max(train_targets) + 1
             mean, std = compute_norm_stats_freq(data_4d[:train_end])
