@@ -8,7 +8,7 @@
 
 **This is a paper reconstruction, not a direct adaptation of the SwinLSTM repo.** The repo provides vanilla SwinLSTM building blocks (Swin Transformer blocks, SwinLSTM cell, patch embedding/merging/expanding, reconstruction layer). The imputation unit (SwinLSTM-I), encoder-decoder separation, and mask-aware training pipeline are implemented from scratch following the DSwinLSTM-I paper. The repo is a supporting reference for the Swin Transformer mechanics only.
 
-> **Key difference from paper:** The paper uses hierarchical Patch Merging/Expanding with square 2×2 patches on a 64×64 grid. Our AERPAW pseudo-map `(3 nodes × 250 bins)` requires rectangular `(1, 2)` patches with no merging/expanding because `H=3` is odd and minimal.
+> **Primary path:** prepared interpolated maps with hierarchical patch merging/expanding enabled. CSV pseudo-maps remain available as an AERPAW adaptation path.
 
 ---
 
@@ -44,7 +44,7 @@ python3 training/DSwinLSTM-I/evaluate.py \
     --checkpoint training/DSwinLSTM-I/checkpoints/best_model.pt
 ```
 
-Output: per-node and per-horizon RMSE/MAE/R²/NRMSE(dB), spectrogram plots, and `predictions.csv`.
+Output: RMSE/MAE/R²/NRMSE(dB), timing metrics, full prediction exports, plots, and `metadata.json`.
 
 ### Run Inference on New Data
 
@@ -87,7 +87,7 @@ python3 training/DSwinLSTM-I/evaluate.py --checkpoint CHECKPOINT [options]
 
 Output: `evaluation/metrics.json`, `evaluation/predictions.csv`, `evaluation/ground_truth.csv`, `evaluation/predictions_dbm.csv`, `evaluation/ground_truth_dbm.csv`, `evaluation/spectrogram_*.png`, `evaluation/error_analysis.png`.
 
-### `inference.py` — Predict on new CSV data
+### `inference.py` — Predict on new CSV or interpolated-map data
 
 ```bash
 python3 training/DSwinLSTM-I/inference.py --checkpoint CHECKPOINT --input CSV [options]
@@ -96,11 +96,11 @@ python3 training/DSwinLSTM-I/inference.py --checkpoint CHECKPOINT --input CSV [o
 | Argument | Default | Description |
 |----------|---------|-------------|
 | `--checkpoint` | — | Path to `.pt` checkpoint (required) |
-| `--input` | — | Input CSV with same column layout as training data (required) |
-| `--output` | `predictions.csv` | Output CSV path |
+| `--input` | — | Input CSV or NPZ map matching the training mode (required) |
+| `--output` | `predictions.csv` / `predictions.npz` | Output path |
 | `--config` | from checkpoint | Config YAML (overrides checkpoint) |
 
-Output: CSV with predicted denormalized PSD values, first window only, same column layout as input.
+Output: full prediction export plus companion metadata JSON.
 
 ### `dataset.py` — Data loading and preprocessing (library)
 
@@ -108,15 +108,15 @@ Imported by `train.py`, `evaluate.py`, and `inference.py`. Key functions:
 
 | Function | Returns | Description |
 |----------|---------|-------------|
-| `load_and_split(config, cc2_only)` | `(train, val, test, stats, node_names)` | Loads CSV, selects node subset, reshapes to `(T, H, W, F)`, splits chronologically, normalizes to `[-1, 1]` |
-| `AERPAWDataset(data, config, split)` | PyTorch `Dataset` | Returns `(X_masked, mask, Y)` tuples of shape `(T_in, H, W, F)`, `(T_in, H, W, F)`, `(T_out, H, W, F)` |
+| `load_and_split(config, cc2_only)` | `(train, val, test, stats, node_names)` | Loads CSV pseudo-maps or prepared interpolated maps, cleans NaNs in map mode, splits chronologically, normalizes |
+| `SpectrumMapDataset(data, config, split)` | PyTorch `Dataset` | Returns `(X_masked, mask, Y)` tuples of shape `(T_in, H, W, F)`, `(T_in, H, W, F)`, `(T_out, H, W, F)` |
 | `random_mask(shape, missing_rate)` | `Tensor (T, H, W, F)` | Element-wise Bernoulli mask |
 | `block_mask(shape, missing_rate)` | `Tensor (T, H, W, F)` | Contiguous block mask |
 | `frequency_mask(shape, missing_rate)` | `Tensor (T, H, W, F)` | Masks entire frequency bins |
 | `node_mask(shape, missing_rate, n_nodes)` | `Tensor (T, H, W, F)` | Masks entire sensor nodes |
 | `node_column_slice(node_names, bins_per_node)` | `list[int]` | Maps node names to CSV column indices |
 
-`stats` dict (`{"method", "dmin", "dmax", "range"}`) is saved alongside checkpoints and used by `evaluate.py` and `inference.py` for denormalization.
+`stats` dict (for example `{"method", "dmin", "dmax", "range", "grid_height", "grid_width", "n_freq_bins"}`) is saved alongside checkpoints and used by `evaluate.py` and `inference.py` for denormalization and output reconstruction.
 
 ### `utils.py` — Metrics and helpers (library)
 
@@ -164,8 +164,8 @@ training/DSwinLSTM-I/
 |------|----------|
 | `dataset.py` | `AERPAWDataset` (torch `Dataset`), CSV loading, node selection, pseudo-map reshape, MinMax normalization, sliding windows, mask generators (random/block/frequency/node) |
 | `model.py` | `SwinLSTMCell` (vanilla), `SwinLSTMCellI` (with imputation), `PatchEmbed`, `MaskPool`, `Encoder` (SwinLSTMCellI stack), `Decoder` (SwinLSTMCell stack), `Reconstruction` (exact-size linear), `DSwinLSTM_I` (full model) |
-| `train.py` | Training loop, teacher forcing, gradient clipping, early stopping, checkpoint saving |
-| `evaluate.py` | Test set evaluation, RMSE/MAE/R²/NRMSE(dB) per horizon and per node, spectrogram visualization, CSV export |
+| `train.py` | Training loop, teacher forcing, gradient clipping, early stopping, checkpoint saving, timing logs |
+| `evaluate.py` | Final test evaluation only, RMSE/MAE/R²/NRMSE(dB), timing, full prediction export |
 | `utils.py` | Config loading, MinMax normalization, metrics, seed setting, device detection, denormalization, checkpointing, plotting |
 | `inference.py` | Load checkpoint + normalization stats, predict on arbitrary input, save predictions as CSV |
 | `config.yaml` | All hyperparameters (see Configuration Reference) |
@@ -363,7 +363,7 @@ Internally, the model permutes to channel-first: `(B, T, F, H, W)`.
 
 ### 3.1 Overview
 
-Shapes shown for **full 3-node mode** (`F=1, H=3, W=250`). The CC2 smoke test uses `H=1` with all other dimensions unchanged.
+Shapes shown for the primary interpolated-map path. CSV pseudo-map mode follows the same interface after conversion to `(T, H, W, F)`.
 
 ```
 Input X: (B, T_in, F=1, H=3, W=250)
@@ -375,15 +375,15 @@ Mask M:  (B, T_in, F=1, H=3, W=250)
  │  Conv2d(F → embed_dim, kernel=patch_shape,   │
  │         stride=patch_shape)                  │
  │  → LayerNorm                                 │
- │  Output: (B, L=3*125, embed_dim=128)          │
+ │  Output: (B, L0, embed_dim)                    │
  └──────────────────────┬──────────────────────┘
           │
  ┌─────────────────────────────────────────────┐
  │              MaskPool                        │
  │  AvgPool2d(kernel=patch_shape)              │
  │  Downsamples mask from pixel to token space  │
- │  Output: (B, T_in, L, 1) → expand to         │
- │          (B, T_in, L, embed_dim)             │
+ │  Output: (B, T_in, L0, 1) → expand to         │
+ │          (B, T_in, L0, embed_dim)             │
  └──────────────────────┬──────────────────────┘
           │
  ┌─────────────────────────────────────────────┐
@@ -399,8 +399,9 @@ Mask M:  (B, T_in, F=1, H=3, W=250)
  │       c_t = gate ⊙ (c_{t-1} + cell)          │
  │       h_t = gate ⊙ tanh(c_t)                 │
  │                                              │
- │  Units: configurable (default 2)             │
- │  No PatchMerging between units               │
+ │  Unit 0: SwinLSTM-I at stage 0               │
+ │  Patch Merging                               │
+ │  Unit 1: SwinLSTM-I at stage 1               │
  └──────────────────────┬──────────────────────┘
           │  (final h_t, c_t)
           ▼
@@ -413,9 +414,11 @@ Mask M:  (B, T_in, F=1, H=3, W=250)
  │    y_hat_t = Reconstruction(h_t)             │
  │    y_hat_t = tanh(y_hat_t)                   │
  │                                              │
- │  Units: configurable (default 2)             │
- │  No PatchExpanding between units             │
- │  Feedback: hidden_state (no round-trip)      │
+ │  Unit 1: SwinLSTM at stage 1                 │
+ │  Patch Expanding                             │
+ │  Unit 0: SwinLSTM at stage 0                 │
+ │  Feedback: pixel_feedback with teacher       │
+ │  forcing in training, autoregressive eval    │
  └──────────────────────┬──────────────────────┘
           │
           ▼
@@ -431,7 +434,7 @@ Output: (B, T_out, F=1, H=3, W=250)
 
 ### 3.2 Patch Embedding
 
-Each input map is divided into non-overlapping patches of shape `patch_shape = [1, 2]` (height=1, width=2). A Conv2d with `kernel_size = patch_shape, stride = patch_shape` projects each patch to `embed_dim` features:
+Each input map is divided into non-overlapping patches of configurable shape (paper default `2×2`). For arbitrary map sizes, the model pads the spatial dimensions to a hierarchy-compatible size before patch embedding and crops predictions back to the original size after reconstruction.
 
 ```
 Input:  (B, F, H, W)
@@ -441,7 +444,7 @@ Input:  (B, F, H, W)
 Output: (B, L=3×125=375, embed_dim=128)
 ```
 
-The rectangular `[1, 2]` patch shape is the only configuration that divides both `H=3` and `W=250` evenly, producing a token grid of `(3, 125)`.
+The paper-aligned interpolated-map path uses square `2×2` patches with patch merging/expanding enabled. CSV pseudo-map mode may use the same padding-aware patching as an adaptation.
 
 ### 3.3 MaskPool
 
@@ -518,14 +521,15 @@ Input:  (B, L=375, embed_dim=128)
 Output: (B, F=1, H=3, W=250)
 ```
 
-This exact-size projection uses an `nn.Linear` to directly predict the pixel values within each patch, avoiding the ConvTranspose2d stride-2 upsampling that would overshoot the target shape.
+The reconstruction layer predicts the padded map size and the final output is cropped back to the original spatial extent.
 
 ### 3.7 Decoder Feedback
 
 Two feedback modes control what the decoder receives at each autoregressive step:
 
-- **`hidden_state`** (default): The decoder cell's own hidden state `h_t` is used as the input for the next time step. No pixel round-trip. This is efficient and avoids redundant encode/decode cycles.
-- **`pixel_feedback`**: The reconstruction output `y_hat_t` is passed back through `patch_embed` to re-enter token space. This may improve stability but is more expensive.
+- **`pixel_feedback`** (default): The reconstruction output `y_hat_t` is passed back through the patch hierarchy to re-enter token space.
+- During training, teacher forcing can replace `y_hat_t` with the ground-truth target frame according to `teacher_forcing_ratio`.
+- During evaluation and inference, decoding is fully autoregressive.
 
 ---
 
@@ -572,11 +576,13 @@ Predicted data is written as CSV with the same format as the input:
 
 ### Data Loading Process
 
-The data pipeline in `load_and_split()`:
+The data pipeline in `load_and_split()` supports both modes:
 
-1. Load CSV as `numpy.ndarray` → shape `(T, 750)`.
-2. Select node subset columns via `node_column_slice()`.
-3. Reshape to pseudo-spectrum-map `(T, H, W, F=1)`.
+1. **CSV mode**: load CSV, select node subset columns, reshape to pseudo-spectrum-map `(T, H, W, F=1)`.
+2. **Interpolated-map mode**: load prepared NPZ `(T, H, W, F)` and clean NaNs while preserving chronology.
+3. Split chronologically.
+4. Normalize using training-only statistics.
+5. Build masked sliding windows for training/validation/testing.
 4. Compute MinMax stats on training split (when `fit_on_train_only: true`):
    - A single `dmin` and `dmax` across all dimensions of the training data.
 5. Normalize all splits to `[-1, 1]` using these stats.
@@ -657,13 +663,13 @@ Metrics are computed:
 
 1. **Pseudo-spectrum-map representation**: Sensor nodes are treated as rows and frequency bins as columns in a 2D map `(H=nodes, W=freq_bins, F=1)`. This allows 2D patch-based Swin Transformer processing despite lacking a true spatial grid.
 
-2. **Rectangular patches `[1, 2]`**: Height=1 divides H=3 evenly; width=2 divides W=250 evenly. Produces a token grid of `(3, 125)` with no padding required.
+2. **Padding-aware patch hierarchy**: arbitrary map sizes are padded to remain compatible with patch embedding, two merge stages, and the Swin window size. Final outputs are cropped back to the original extent.
 
-3. **No Patch Merging/Expanding**: Both are disabled because `H=3` is odd (PatchMerging asserts even H/W) and already minimal. All encoder/decoder cells operate at the same patch-embedded resolution.
+3. **Hierarchical patch merging/expanding enabled**: the primary interpolated-map path follows the paper's multi-scale encoder/decoder design.
 
 4. **MinMax normalization to `[-1, 1]`**: Matches the paper's normalization scheme. The tanh output activation is chosen to match this range.
 
-5. **Hidden-state decoder feedback**: Uses the decoder cell's own hidden state as the next input instead of reconstructing to pixels and re-embedding. More efficient while matching the repo's teacher-forcing pattern.
+5. **Pixel-feedback decoder with teacher forcing**: training can replace the autoregressive feedback frame with the ground-truth frame; evaluation and inference are autoregressive only.
 
 6. **Mask pooled to token space via AvgPool2d**: The pixel-resolution mask is downsampled to match the patch-embedded token grid via average pooling, then expanded to match the embedding dimension for the imputation linear layers.
 
@@ -677,11 +683,11 @@ Metrics are computed:
 
 | Aspect | Paper (DSwinLSTM-I) | Our Reconstruction | Reason |
 |--------|---------------------|-------------------|--------|
-| Dataset | Simulated spectrum maps (64×64 grid) | AERPAW (3 nodes × 250 bins, pseudo-map) | Our target dataset; AERPAW has sparse, fixed nodes |
-| Map shape | 64 × 64 spatial grid | 3 × 250 node-frequency pseudo-map | AERPAW has 3 nodes × 250 bins per node |
-| Patch size | 2 × 2 (square) | 1 × 2 (rectangular) | H=3 not divisible by 2; [1,2] divides both H and W evenly |
-| Patch Merging/Expanding | Used between encoder/decoder cells | Disabled | H=3 is odd and minimal; merging would collapse the node dimension |
-| Reconstruction | ConvTranspose2d (stride 2) | Linear + reshape (exact-size) | ConvTranspose2d stride 2 would overshoot (3→6); exact-size matches target |
+| Dataset | Simulated spectrum maps (64×64 grid) | Prepared interpolated maps or CSV pseudo-maps | Interpolated maps are the primary paper-aligned path; CSV is an AERPAW adaptation |
+| Map shape | 64 × 64 spatial grid | Arbitrary padded map sizes | Supports arbitrary prepared maps via padding/cropping |
+| Patch size | 2 × 2 (square) | Configurable (default 2 × 2) | Keeps paper default while supporting arbitrary sizes |
+| Patch Merging/Expanding | Used between encoder/decoder cells | Enabled in the primary path | Restored hierarchical multi-scale processing |
+| Reconstruction | ConvTranspose2d / hierarchical upsampling | Linear patch reconstruction + crop | Exact-size reconstruction for arbitrary padded shapes |
 | Normalization | MinMax [-1, 1] | MinMax [-1, 1] (same) | Same as paper |
 | Output activation | Sigmoid | tanh | tanh matches [-1, 1] range; sigmoid matches [0, 1] |
 | Optimizer | Adam | Adam | Same |
@@ -699,7 +705,7 @@ Metrics are computed:
 
 2. **AERPAW pseudo-map lacks true spatial structure.** Unlike the paper's 64×64 grid where adjacent cells represent nearby spatial locations, our pseudo-map has no spatial meaning along the height axis — node rows are categorical, not spatial.
 
-3. **No Patch Merging limits hierarchical feature learning.** The paper uses hierarchical down/up sampling for multi-scale features. Our flat encoder-decoder (same resolution throughout) may capture fewer scale-dependent patterns.
+3. **CSV pseudo-map is still an adaptation path.** The interpolated-map path is more paper-aligned because it preserves a real spatial grid.
 
 4. **Global normalization may not suit per-frequency power variations.** Unlike per-bin normalization (used by ConvLSTM), global MinMax applies the same transformation to all bins, potentially under-representing quieter frequency bands.
 

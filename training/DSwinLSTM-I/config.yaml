@@ -8,8 +8,17 @@
 # =============================================================================
 
 data:
+  # Data source format:
+  #   csv               -> AERPAW pseudo-map adaptation
+  #   interpolated_map  -> prepared NPZ spectrum map (paper-aligned path)
+  format: interpolated_map
+
   # Path to processed AERPAW CSV (6839 rows × 750 cols, no header, dBm)
   dataset_path: "training/data/merged_power_data_sub6GHz_avg_per_minute.csv"
+
+  # Prepared interpolated-map NPZ path and key, expected shape (T, H, W, F)
+  map_path: "evaluation/interpolated_maps/idw_ames_curtiss_600_800.npz"
+  map_key: "map_db"
 
   # Number of sensor nodes for pseudo-spectrum-map reshaping
   n_nodes: 3
@@ -36,6 +45,9 @@ data:
   # NOTE: node_frequency is the primary adaptation. Other options exist for
   # experimentation but may not match the paper's 2D patch-based design.
   map_representation: node_frequency
+
+  # Optional row/time cap for smoke tests
+  max_rows:
 
 windowing:
   # Number of historical time steps used as model input (paper: 10)
@@ -103,16 +115,20 @@ preprocessing:
   # Paper: target is always complete; masking only applied to input
   mask_targets: false
 
+  # Chronology-preserving NaN cleanup for interpolated-map inputs.
+  nan_time_window_steps: 2
+  nan_frequency_window_steps: 2
+
 model:
   # Model identifier (for checkpoint naming and logging)
   model_name: dswinlstm_i
 
-  # Pseudo-spectrum-map dimensions after reshaping
-  # Full mode:  H=3, W=250  |  CC2 smoke:  H=1, W=250
+  # Map dimensions after loading/selection. For interpolated_map mode these
+  # should match the prepared NPZ file and are used for reconstruction/cropping.
   map_height: 3
   map_width: 250
 
-  # Input channel dimension (F=1 for single-channel RSS/PSD)
+  # Input channel dimension (F=1 for CSV pseudo-map, F=n_freq_bins for map mode)
   input_channels: 1
 
   # Patch size for patch embedding (paper: patch_size=2 for 64×64 maps)
@@ -124,13 +140,16 @@ model:
   # Explicit patch shape as [height, width].
   # Allows rectangular patches: (1, 2), (2, 1), (1, 5), etc.
   # If both patch_size and patch_shape are null, default behavior applies.
-  patch_shape: [1, 2]
+  patch_shape: [2, 2]
 
   # Embedding dimension after patch projection (paper: 128 for SwinLSTM-D)
   embed_dim: 128
 
   # Hidden dimension of SwinLSTM cells (same as embed_dim by default)
   hidden_dim:
+
+  # Optional per-stage hidden dimensions. If null, derived from embed_dim.
+  hidden_dims:
 
   # Number of SwinLSTM-I units in the encoder (paper: 2)
   encoder_units: 2
@@ -153,11 +172,11 @@ model:
   # Whether to use patch merging (downsampling) between encoder cells
   # DISABLED: H=3 is odd (PatchMerging asserts even H,W) and already minimal.
   # Paper uses merging but AERPAW's 3-node pseudo-map cannot support it.
-  use_patch_merging: false
+  use_patch_merging: true
 
   # Whether to use patch expanding (upsampling) between decoder cells
   # DISABLED: pairs with patch_merging, both disabled for AERPAW.
-  use_patch_expanding: false
+  use_patch_expanding: true
 
   # Whether to use the imputation unit (SwinLSTM-I) in encoder cells
   # Paper: true for encoder, false for decoder
@@ -178,7 +197,7 @@ model:
   #   pixel_feedback  → reconstruct y_hat, then patch_embed it back to tokens
   # CONFIRMED DECISION: hidden_state — avoids redundant encode/decode round-trip,
   #   matching the repo's teacher-forcing pattern in functions.py.
-  decoder_feedback: hidden_state
+  decoder_feedback: pixel_feedback
 
   # Padding mode for spatial dimensions when H or W is not divisible
   # by patch_size. Options: "zero", "reflect", "replicate", or null (error)
@@ -209,6 +228,14 @@ training:
 
   # Gradient clipping max norm (optional, paper doesn't specify)
   gradient_clip: 5.0
+
+  # Optional learning-rate scheduler support. Paper does not specify one.
+  lr_scheduler: none
+  lr_patience: 5
+  lr_factor: 0.5
+
+  # Teacher forcing for decoder feedback during training.
+  teacher_forcing_ratio: 1.0
 
   # Random seed for reproducibility
   seed: 42

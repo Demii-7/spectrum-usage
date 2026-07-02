@@ -47,6 +47,8 @@ def denormalize(data, stats):
         eps = 1e-8
         data_01 = (data - lo) / (hi - lo + eps)
         return data_01 * (dmax - dmin + eps) + dmin
+    if method == "zscore":
+        return data * stats["std"] + stats["mean"]
     return data
 
 

@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 
 
@@ -193,8 +194,10 @@ class SwinLSTMCell(nn.Module):
                                     num_heads=num_heads, window_size=window_size, mlp_ratio=mlp_ratio,
                                     qkv_bias=qkv_bias, qk_scale=qk_scale, drop=drop, attn_drop=attn_drop,
                                     drop_path=drop_path, norm_layer=norm_layer)
+        self.mask_proj = nn.Linear(dim, dim)
+        self.mask_bias = nn.Parameter(torch.zeros(dim))
 
-    def forward(self, xt, hidden_states):
+    def forward(self, xt, hidden_states, mask=None):
         if hidden_states is None:
             B, L, C = xt.shape
             hx = torch.zeros(B, L, C, device=xt.device)
@@ -202,9 +205,13 @@ class SwinLSTMCell(nn.Module):
         else:
             hx, cx = hidden_states
         Ft = self.Swin(xt, hx)
+        if mask is not None:
+            Ft = Ft + self.mask_proj(mask) + self.mask_bias
         gate = torch.sigmoid(Ft)
         cell = torch.tanh(Ft)
-        cy = gate * (cx + cell)
+        cy = gate * cell + cx
+        if mask is not None:
+            cy = cy + self.mask_proj(mask) + self.mask_bias
         hy = gate * torch.tanh(cy)
         return hy, (hy, cy)
 
@@ -262,6 +269,49 @@ class PatchEmbed(nn.Module):
         return x
 
 
+class PatchMerging(nn.Module):
+    def __init__(self, input_resolution, dim, norm_layer=nn.LayerNorm):
+        super().__init__()
+        self.input_resolution = input_resolution
+        self.dim = dim
+        self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
+        self.norm = norm_layer(4 * dim)
+
+    def forward(self, x):
+        H, W = self.input_resolution
+        B, L, C = x.shape
+        assert L == H * W
+        x = x.view(B, H, W, C)
+        x0 = x[:, 0::2, 0::2, :]
+        x1 = x[:, 1::2, 0::2, :]
+        x2 = x[:, 0::2, 1::2, :]
+        x3 = x[:, 1::2, 1::2, :]
+        x = torch.cat([x0, x1, x2, x3], -1).view(B, -1, 4 * C)
+        x = self.norm(x)
+        x = self.reduction(x)
+        return x
+
+
+class PatchExpand(nn.Module):
+    def __init__(self, input_resolution, dim, out_dim=None, norm_layer=nn.LayerNorm):
+        super().__init__()
+        self.input_resolution = input_resolution
+        self.dim = dim
+        self.out_dim = out_dim or dim // 2
+        self.expand = nn.Linear(dim, 4 * self.out_dim, bias=False)
+        self.norm = norm_layer(self.out_dim)
+
+    def forward(self, x):
+        H, W = self.input_resolution
+        B, L, C = x.shape
+        assert L == H * W
+        x = self.expand(x).view(B, H, W, 2, 2, self.out_dim)
+        x = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(B, H * 2, W * 2, self.out_dim)
+        x = x.view(B, -1, self.out_dim)
+        x = self.norm(x)
+        return x
+
+
 class MaskPool(nn.Module):
     def __init__(self, patch_size):
         super().__init__()
@@ -274,9 +324,9 @@ class MaskPool(nn.Module):
         B, T, F, H, W = mask_5d.shape
         mask_4d = mask_5d.view(B * T, F, H, W)
         pooled = self.pool(mask_4d)
-        _, F_p, H_p, W_p = pooled.shape
-        pooled = pooled.view(B, T, F_p, H_p, W_p)
-        pooled = pooled.permute(0, 1, 3, 4, 2).contiguous()
+        pooled = pooled.mean(dim=1, keepdim=True)
+        _, _, H_p, W_p = pooled.shape
+        pooled = pooled.view(B, T, H_p, W_p, 1)
         pooled = pooled.view(B, T, -1, 1)
         return pooled
 
@@ -303,123 +353,121 @@ class Reconstruction(nn.Module):
         return x
 
 
-class Encoder(nn.Module):
-    def __init__(self, dim, input_resolution, num_heads_list, window_size, depths,
-                 mlp_ratio=4., drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1):
-        super().__init__()
-        self.num_layers = len(depths)
-        self.layers = nn.ModuleList()
-        for i in range(self.num_layers):
-            layer = SwinLSTMCellI(
-                dim=dim, input_resolution=input_resolution,
-                num_heads=num_heads_list[i] if num_heads_list is not None else 4,
-                window_size=window_size, depth=depths[i],
-                mlp_ratio=mlp_ratio, drop=drop_rate, attn_drop=attn_drop_rate,
-                drop_path=drop_path_rate)
-            self.layers.append(layer)
-
-    def forward(self, x, mask, hidden_states_list):
-        new_hidden = []
-        for i, layer in enumerate(self.layers):
-            h_prev = hidden_states_list[i] if i < len(hidden_states_list) else None
-            x, hs = layer(x, mask, h_prev)
-            new_hidden.append(hs)
-        return x, new_hidden
-
-
-class Decoder(nn.Module):
-    def __init__(self, dim, input_resolution, num_heads_list, window_size, depths,
-                 mlp_ratio=4., drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1):
-        super().__init__()
-        self.num_layers = len(depths)
-        self.layers = nn.ModuleList()
-        for i in range(self.num_layers):
-            layer = SwinLSTMCell(
-                dim=dim, input_resolution=input_resolution,
-                num_heads=num_heads_list[i] if num_heads_list is not None else 4,
-                window_size=window_size, depth=depths[i],
-                mlp_ratio=mlp_ratio, drop=drop_rate, attn_drop=attn_drop_rate,
-                drop_path=drop_path_rate)
-            self.layers.append(layer)
-
-    def forward(self, x, hidden_states_list):
-        new_hidden = []
-        for i, layer in enumerate(self.layers):
-            h_prev = hidden_states_list[i] if i < len(hidden_states_list) else None
-            x, hs = layer(x, h_prev)
-            new_hidden.append(hs)
-        return x, new_hidden
-
-
 class DSwinLSTM_I(nn.Module):
     def __init__(self, config):
         super().__init__()
         model_cfg = config["model"]
-        H = model_cfg["map_height"]
-        W = model_cfg["map_width"]
-        F = model_cfg["input_channels"]
-        patch_shape = model_cfg.get("patch_shape", [1, 2])
-        embed_dim = model_cfg.get("embed_dim", 128)
-        encoder_units = model_cfg.get("encoder_units", 2)
-        decoder_units = model_cfg.get("decoder_units", 2)
-        swin_depths = model_cfg.get("swin_depths", [2, 6, 6, 2])
-        num_heads = model_cfg.get("num_heads", [4, 8, 8, 4])
-        window_size = model_cfg.get("window_size", 4)
-        drop_rate = model_cfg.get("drop_rate", 0.)
-        attn_drop_rate = model_cfg.get("attn_drop_rate", 0.)
-        drop_path_rate = model_cfg.get("drop_path_rate", 0.1)
-        self.decoder_feedback = model_cfg.get("decoder_feedback", "hidden_state")
+        self.orig_H = model_cfg["map_height"]
+        self.orig_W = model_cfg["map_width"]
+        self.F = model_cfg["input_channels"]
+        self.patch_shape = tuple(model_cfg.get("patch_shape") or [2, 2])
+        self.base_dim = model_cfg.get("embed_dim", 128)
+        self.hidden_dims = model_cfg.get("hidden_dims") or [self.base_dim, self.base_dim * 2]
+        self.encoder_units = model_cfg.get("encoder_units", 2)
+        self.decoder_units = model_cfg.get("decoder_units", 2)
+        self.swin_depths = model_cfg.get("swin_depths", [2, 6, 6, 2])
+        self.num_heads = model_cfg.get("num_heads", [4, 8, 8, 4])
+        self.window_size = model_cfg.get("window_size", 4)
+        self.drop_rate = model_cfg.get("drop_rate", 0.)
+        self.attn_drop_rate = model_cfg.get("attn_drop_rate", 0.)
+        self.drop_path_rate = model_cfg.get("drop_path_rate", 0.1)
+        self.decoder_feedback = model_cfg.get("decoder_feedback", "pixel_feedback")
+        self.teacher_forcing_ratio = config.get("training", {}).get("teacher_forcing_ratio", 1.0)
         self.T_out = config["windowing"]["prediction_horizon"]
+        self.padding_mode = model_cfg.get("padding_mode", "reflect")
+        self.output_activation = model_cfg.get("output_activation", "tanh")
+        self.use_patch_merging = model_cfg.get("use_patch_merging", True)
+        self.use_patch_expanding = model_cfg.get("use_patch_expanding", True)
+        self.num_merge_stages = 2 if self.use_patch_merging else 0
 
-        enc_depths = swin_depths[:encoder_units]
-        dec_depths = swin_depths[encoder_units:encoder_units + decoder_units]
-        enc_heads = num_heads[:encoder_units] if len(num_heads) >= encoder_units else num_heads[:1] * encoder_units
-        dec_heads = num_heads[encoder_units:encoder_units + decoder_units] if len(num_heads) >= encoder_units + decoder_units else num_heads[:1] * decoder_units
+        self.padded_H, self.padded_W = self._compute_padded_shape(self.orig_H, self.orig_W)
+        self.patch_embed = PatchEmbed(img_size=(self.padded_H, self.padded_W), patch_size=self.patch_shape, in_chans=self.F, embed_dim=self.hidden_dims[0])
+        self.mask_pool_stage0 = MaskPool(patch_size=self.patch_shape)
+        self.stage0_resolution = tuple(self.patch_embed.patches_resolution)
+        self.stage1_resolution = (self.stage0_resolution[0] // 2, self.stage0_resolution[1] // 2)
+        self.mask_pool_stage1 = MaskPool(patch_size=(self.patch_shape[0] * 2, self.patch_shape[1] * 2))
 
-        self.patch_embed = PatchEmbed(img_size=(H, W), patch_size=patch_shape, in_chans=F, embed_dim=embed_dim)
-        patches_resolution = self.patch_embed.patches_resolution
+        self.merge = PatchMerging(self.stage0_resolution, self.hidden_dims[0])
+        self.expand = PatchExpand(self.stage1_resolution, self.hidden_dims[1], out_dim=self.hidden_dims[0])
 
-        self.mask_pool = MaskPool(patch_size=patch_shape)
+        self.enc_cell0 = SwinLSTMCellI(self.hidden_dims[0], self.stage0_resolution, self.num_heads[0], self.window_size, self.swin_depths[0], drop=self.drop_rate, attn_drop=self.attn_drop_rate, drop_path=self.drop_path_rate)
+        self.enc_cell1 = SwinLSTMCellI(self.hidden_dims[1], self.stage1_resolution, self.num_heads[1], self.window_size, self.swin_depths[1], drop=self.drop_rate, attn_drop=self.attn_drop_rate, drop_path=self.drop_path_rate)
+        self.dec_cell1 = SwinLSTMCell(self.hidden_dims[1], self.stage1_resolution, self.num_heads[2], self.window_size, self.swin_depths[2], drop=self.drop_rate, attn_drop=self.attn_drop_rate, drop_path=self.drop_path_rate)
+        self.dec_cell0 = SwinLSTMCell(self.hidden_dims[0], self.stage0_resolution, self.num_heads[3], self.window_size, self.swin_depths[3], drop=self.drop_rate, attn_drop=self.attn_drop_rate, drop_path=self.drop_path_rate)
 
-        self.encoder = Encoder(dim=embed_dim, input_resolution=tuple(patches_resolution),
-                               num_heads_list=enc_heads, window_size=window_size, depths=enc_depths,
-                               drop_rate=drop_rate, attn_drop_rate=attn_drop_rate, drop_path_rate=drop_path_rate)
+        self.reconstruction = Reconstruction(in_dim=self.hidden_dims[0], out_channels=self.F, map_size=(self.padded_H, self.padded_W), patch_size=self.patch_shape)
 
-        self.decoder = Decoder(dim=embed_dim, input_resolution=tuple(patches_resolution),
-                               num_heads_list=dec_heads, window_size=window_size, depths=dec_depths,
-                               drop_rate=drop_rate, attn_drop_rate=attn_drop_rate, drop_path_rate=drop_path_rate)
+    def _compute_padded_shape(self, H, W):
+        h_factor = self.patch_shape[0] * (2 ** self.num_merge_stages) * self.window_size
+        w_factor = self.patch_shape[1] * (2 ** self.num_merge_stages) * self.window_size
+        padded_H = ((H + h_factor - 1) // h_factor) * h_factor
+        padded_W = ((W + w_factor - 1) // w_factor) * w_factor
+        return padded_H, padded_W
 
-        self.reconstruction = Reconstruction(in_dim=embed_dim, out_channels=F,
-                                             map_size=(H, W), patch_size=patch_shape)
+    def _pad_frames(self, frames):
+        pad_h = self.padded_H - frames.shape[-2]
+        pad_w = self.padded_W - frames.shape[-1]
+        if pad_h == 0 and pad_w == 0:
+            return frames
+        mode = self.padding_mode
+        if mode == "reflect" and (frames.shape[-2] <= 1 or frames.shape[-1] <= 1 or pad_h >= frames.shape[-2] or pad_w >= frames.shape[-1]):
+            mode = "replicate"
+        return F.pad(frames, (0, pad_w, 0, pad_h), mode=mode)
 
-    def forward(self, x, mask):
-        B, T_in, F, H, W = x.shape
+    def _crop_frames(self, frames):
+        return frames[:, :, :self.orig_H, :self.orig_W]
 
-        pooled_mask = self.mask_pool(mask)
-        pooled_mask = pooled_mask.squeeze(-1)
-        pooled_mask = pooled_mask.unsqueeze(-1).expand(-1, -1, -1, self.patch_embed.embed_dim)
+    def _mask_tokens(self, mask):
+        stage0 = self.mask_pool_stage0(mask).squeeze(-1).unsqueeze(-1).expand(-1, -1, -1, self.hidden_dims[0])
+        stage1 = self.mask_pool_stage1(mask).squeeze(-1).unsqueeze(-1).expand(-1, -1, -1, self.hidden_dims[1])
+        return stage0, stage1
 
-        enc_hidden = [None] * len(self.encoder.layers)
+    def _embed_frame(self, frame):
+        tokens0 = self.patch_embed(frame)
+        tokens1 = self.merge(tokens0)
+        return tokens0, tokens1
+
+    def forward(self, x, mask, y_teacher=None, teacher_forcing_ratio=None):
+        teacher_forcing_ratio = self.teacher_forcing_ratio if teacher_forcing_ratio is None else teacher_forcing_ratio
+        B, T_in, F_ch, H, W = x.shape
+        x = self._pad_frames(x.view(B * T_in, F_ch, H, W)).view(B, T_in, F_ch, self.padded_H, self.padded_W)
+        mask_cf = mask.permute(0, 1, 4, 2, 3).contiguous()
+        mask_cf = self._pad_frames(mask_cf.view(B * T_in, F_ch, H, W)).view(B, T_in, F_ch, self.padded_H, self.padded_W)
+        mask_ch_last = mask_cf.permute(0, 1, 3, 4, 2).contiguous()
+        mask0, mask1 = self._mask_tokens(mask_ch_last)
+
+        enc0_state = None
+        enc1_state = None
+        last_frame = x[:, -1]
 
         for t in range(T_in):
-            xt = x[:, t]
-            xt_tokens = self.patch_embed(xt)
-            mt = pooled_mask[:, t]
-            xt_tokens, enc_hidden = self.encoder(xt_tokens, mt, enc_hidden)
+            tokens0 = self.patch_embed(x[:, t])
+            tokens0, enc0_state = self.enc_cell0(tokens0, mask0[:, t], enc0_state)
+            tokens1 = self.merge(tokens0)
+            tokens1, enc1_state = self.enc_cell1(tokens1, mask1[:, t], enc1_state)
 
-        dec_hidden = [None] * len(self.decoder.layers)
-        decoder_input = xt_tokens
+        dec1_state = enc1_state
+        dec0_state = enc0_state
+        feedback_frame = last_frame
         outputs = []
 
-        for t in range(self.T_out):
-            dec_tokens, dec_hidden = self.decoder(decoder_input, dec_hidden)
-            y_hat = self.reconstruction(dec_tokens)
-            y_hat = torch.tanh(y_hat)
-            outputs.append(y_hat.unsqueeze(1))
+        if y_teacher is not None:
+            B_y, T_y, C_y, H_y, W_y = y_teacher.shape
+            y_teacher = self._pad_frames(y_teacher.view(B_y * T_y, C_y, H_y, W_y)).view(B_y, T_y, C_y, self.padded_H, self.padded_W)
 
-            if self.decoder_feedback == "pixel_feedback":
-                decoder_input = self.patch_embed(y_hat)
-            else:
-                decoder_input = dec_tokens
+        for t in range(self.T_out):
+            teacher_frame = None
+            if y_teacher is not None and torch.rand(1).item() < teacher_forcing_ratio:
+                teacher_frame = y_teacher[:, t]
+            input_frame = teacher_frame if teacher_frame is not None else feedback_frame
+            _, input_tokens1 = self._embed_frame(input_frame)
+            dec1_tokens, dec1_state = self.dec_cell1(input_tokens1, dec1_state)
+            dec0_input = self.expand(dec1_tokens) if self.use_patch_expanding else dec1_tokens
+            dec0_tokens, dec0_state = self.dec_cell0(dec0_input, dec0_state)
+            y_hat = self.reconstruction(dec0_tokens)
+            if self.output_activation == "tanh":
+                y_hat = torch.tanh(y_hat)
+            outputs.append(self._crop_frames(y_hat).unsqueeze(1))
+            feedback_frame = y_hat
 
         return torch.cat(outputs, dim=1)

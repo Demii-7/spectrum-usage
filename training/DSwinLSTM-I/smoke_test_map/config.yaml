@@ -1,14 +1,14 @@
 data:
-  format: csv
+  format: interpolated_map
   dataset_path: "training/data/merged_power_data_sub6GHz_avg_per_minute.csv"
   map_path: "evaluation/interpolated_maps/idw_ames_curtiss_600_800.npz"
   map_key: "map_db"
   n_nodes: 1
-  bins_per_node: 250
-  node_names: ["CC2"]
-  selected_nodes: ["CC2"]
-  max_rows: 2000
-  cc2_only_smoke_test: true
+  bins_per_node: 200
+  node_names: ["grid"]
+  selected_nodes: ["grid"]
+  max_rows: 160
+  cc2_only_smoke_test: false
   map_representation: node_frequency
 
 windowing:
@@ -38,9 +38,9 @@ preprocessing:
 
 model:
   model_name: dswinlstm_i
-  map_height: 1
-  map_width: 250
-  input_channels: 1
+  map_height: 50
+  map_width: 50
+  input_channels: 200
   patch_size:
   patch_shape: [2, 2]
   embed_dim: 32
@@ -57,7 +57,7 @@ model:
   mask_as_input_channel: false
   output_activation: tanh
   decoder_feedback: pixel_feedback
-  padding_mode: "reflect"
+  padding_mode: reflect
 
 training:
   batch_size: 2
@@ -81,8 +81,8 @@ evaluation:
   plot_denormalized_dbm: true
 
 paths:
-  checkpoints_dir: checkpoints
-  evaluation_dir: evaluation
+  checkpoints_dir: smoke_test_map/checkpoints
+  evaluation_dir: smoke_test_map/evaluation
 
 device:
   device: auto
