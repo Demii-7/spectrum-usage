@@ -1,3 +1,11 @@
+"""
+Dataset loading, preprocessing, and windowing for TSS-LCD.
+
+Handles CSV loading, train/val/test splitting (chronological or random),
+normalization (min-max or z-score), sliding-window creation, missing
+data masking, and PyTorch DataLoader construction.
+"""
+
 from __future__ import annotations
 
 from typing import Callable
@@ -12,6 +20,23 @@ def load_csv_numpy(path: str, n_nodes: int, n_bins_per_node: int,
                    cc2_only: bool = False,
                    selected_nodes: list[str] | None = None,
                    node_names: list[str] | None = None) -> np.ndarray:
+    """Load a spectrogram CSV into a 2D NumPy array (time, features).
+
+    Supports optionally selecting a single CC2 node or specific named
+    nodes. The output is always flattened so that each row is a flat
+    concatenation of all node-frequency bins for one time step.
+
+    Args:
+        path: Path to the CSV file (no header).
+        n_nodes: Total number of nodes in the CSV.
+        n_bins_per_node: Frequency bins per node.
+        cc2_only: If True, extract only the second node (CC2).
+        selected_nodes: Subset of node names to keep.
+        node_names: Ordered list of all node names.
+
+    Returns:
+        Array of shape (T, L*F) where L is the (possibly filtered) node count.
+    """
     data = pd.read_csv(path, header=None).values.astype(np.float32)
     L = n_nodes
     F = n_bins_per_node
@@ -41,6 +66,10 @@ def split_series_chronological(
     train_ratio: float,
     val_ratio: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Split a time series chronologically into train/val/test.
+
+    Preserves temporal order. The remainder after train+val goes to test.
+    """
     T = data.shape[0]
     train_end = int(T * train_ratio)
     val_end = train_end + int(T * val_ratio)
@@ -56,6 +85,20 @@ def build_windows(
     T_out: int,
     stride: int,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Create input-target sliding windows from a time series.
+
+    Each window pair consists of T_in past steps (input) and T_out
+    future steps (target), sampled every `stride` time steps.
+
+    Args:
+        series: 2D array (T_total, D).
+        T_in: Number of input time steps.
+        T_out: Number of output (prediction) time steps.
+        stride: Step size between consecutive windows.
+
+    Returns:
+        X: (num_windows, T_in, D), Y: (num_windows, T_out, D).
+    """
     X_list, Y_list = [], []
     D = series.shape[1]
     for i in range(0, len(series) - T_in - T_out + 1, stride):
@@ -67,6 +110,13 @@ def build_windows(
 
 
 class Normalizer:
+    """Per-feature min-max or z-score normalizer.
+
+    Fitted on training data and applied to train/val/test. Handles
+    edge cases where min==max (min-max) or std==0 (z-score) by
+    substituting a small positive offset.
+    """
+
     def __init__(self, method: str = "minmax"):
         self.method = method
         self.min_ = None
@@ -75,11 +125,17 @@ class Normalizer:
         self.std_ = None
 
     def fit(self, data: np.ndarray) -> None:
+        """Compute normalization statistics from data (per-feature).
+
+        Args:
+            data: Array of any shape; last axis is the feature dimension.
+        """
         orig_shape = data.shape
         flat = data.reshape(-1, data.shape[-1])
         if self.method == "minmax":
             self.min_ = flat.min(axis=0, keepdims=True)
             self.max_ = flat.max(axis=0, keepdims=True)
+            # Avoid division by zero for constant features
             self.max_[self.max_ == self.min_] = self.min_[self.max_ == self.min_] + 1.0
         elif self.method == "zscore":
             self.mean_ = flat.mean(axis=0, keepdims=True)
@@ -87,12 +143,14 @@ class Normalizer:
             self.std_[self.std_ == 0] = 1.0
 
     def transform(self, data: np.ndarray) -> np.ndarray:
+        """Apply the fitted normalization."""
         if self.method == "minmax":
             return (data - self.min_) / (self.max_ - self.min_)
         elif self.method == "zscore":
             return (data - self.mean_) / self.std_
 
     def inverse_transform(self, data: np.ndarray) -> np.ndarray:
+        """Undo the normalization, restoring original scale."""
         if self.method == "minmax":
             return data * (self.max_ - self.min_) + self.min_
         elif self.method == "zscore":
@@ -101,6 +159,21 @@ class Normalizer:
 
 def create_masks(X: np.ndarray, missing_rate: float,
                  strategy: str = "random") -> np.ndarray:
+    """Generate a boolean mask indicating observed (True) vs missing (False) entries.
+
+    Two strategies are supported:
+      - 'random': independently mask each element with probability `missing_rate`.
+      - 'continuous': mask a contiguous block of length `missing_rate * T_in` per
+        feature per sample, simulating sensor dropouts.
+
+    Args:
+        X: (B, T_in, D) input windows.
+        missing_rate: Fraction of entries to mask.
+        strategy: 'random' or 'continuous'.
+
+    Returns:
+        Boolean array of same shape as X.
+    """
     if missing_rate <= 0:
         return np.ones_like(X, dtype=bool)
     if strategy == "random":
@@ -119,6 +192,12 @@ def create_masks(X: np.ndarray, missing_rate: float,
 
 
 class TSSLCDataset(Dataset):
+    """PyTorch Dataset for TSS-LCD with optional missing-data masking.
+
+    Each sample is an (input_window, target_window) pair. The input may
+    be partially masked to simulate missing observations during training.
+    """
+
     def __init__(
         self,
         X: np.ndarray,
@@ -131,6 +210,7 @@ class TSSLCDataset(Dataset):
     ):
         self.X = torch.from_numpy(X).float()
         self.Y = torch.from_numpy(Y).float()
+        # Disable masking entirely in complete-observation baseline mode
         self.missing_rate = missing_rate if not complete_observation_baseline else 0.0
         self.masking_strategy = masking_strategy
         self.zero_pad_missing = zero_pad_missing
@@ -150,6 +230,7 @@ class TSSLCDataset(Dataset):
                 self.masking_strategy,
             )[0]
             mask_t = torch.from_numpy(mask)
+            # Zero out masked entries instead of removing them
             if self.zero_pad_missing:
                 x = x * mask_t.float()
         if self.transform is not None:
@@ -161,13 +242,25 @@ def get_dataloaders(
     config: dict,
     normalizer: Normalizer | None = None,
 ) -> tuple[DataLoader, DataLoader, DataLoader, Normalizer, int, int, int]:
+    """Build train/val/test DataLoaders from a configuration dictionary.
+
+    The pipeline is: load CSV → split → normalize → build windows →
+    wrap in TSSLCDataset → create DataLoaders.
+
+    Args:
+        config: Full experiment configuration dict.
+        normalizer: Optional pre-fitted normalizer (reused across stages).
+
+    Returns:
+        (train_loader, val_loader, test_loader, normalizer, L, F, T_out).
+    """
     data_cfg = config["data"]
     window_cfg = config["windowing"]
     split_cfg = config["split"]
     preproc_cfg = config["preprocessing"]
     train_cfg = config["training"]
 
-    # Load
+    # Load raw CSV data
     data = load_csv_numpy(
         data_cfg["dataset_path"],
         data_cfg["n_nodes"],
@@ -190,7 +283,7 @@ def get_dataloaders(
     val_stride = window_cfg.get("val_stride", 1)
     test_stride = window_cfg.get("test_stride", 1)
 
-    # Split
+    # Split into train/val/test sets
     if split_cfg.get("chronological_split", True):
         train_series, val_series, test_series = split_series_chronological(
             data, split_cfg["train_ratio"], split_cfg["val_ratio"],
@@ -207,7 +300,7 @@ def get_dataloaders(
         val_series = data[val_idx]
         test_series = data[test_idx]
 
-    # Fit normalizer on train
+    # Fit normalizer on training data only (prevents data leakage)
     if normalizer is None:
         normalizer = Normalizer(method=preproc_cfg.get("normalization", "minmax"))
         normalizer.fit(train_series)
