@@ -44,7 +44,7 @@ def main():
         print(f"No samples for split '{args.split}'.")
         return
 
-    loader = DataLoader(ds, batch_size=4, shuffle=False, num_workers=0)
+    loader = DataLoader(ds, batch_size=config["training"].get("batch_size", 1), shuffle=False, num_workers=0)
 
     model = SwinSTB3D(config).to(device)
     model.load_state_dict(ckpt["model_state_dict"])
@@ -55,7 +55,7 @@ def main():
         for x, _ in loader:
             preds.append(model(x.to(device)).cpu().numpy())
 
-    out = np.concatenate(preds, axis=0)   # (N, T_in, 3, H, W_orig)
+    out = np.concatenate(preds, axis=0)   # (N, T_out, 3, H, W_orig)
     np.save(args.out, out)
     print(f"Predictions saved to {args.out}  shape={out.shape}")
 

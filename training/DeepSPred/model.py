@@ -6,7 +6,7 @@ Architecture (encoder-bottleneck-decoder with skip connections):
                → [PatchExpanding + SwinBlocks + skip] × 3 → ProjectionHead
 
 Input:  (B, T_in, 3, H, W_pad)
-Output: (B, T_in, 3, H, W_orig)  values in [0,1] (sigmoid, colormap space)
+Output: (B, T_out, 3, H, W_orig)  values in [0,1] (sigmoid, colormap space)
 
 References: arXiv:2408.06870v3, Liu et al. ICCV 2021 (3D Swin Transformer).
 """
@@ -315,12 +315,15 @@ class PatchExpanding3D(nn.Module):
 
 class ProjectionHead(nn.Module):
     """Map decoder tokens back to spectrogram frames."""
-    def __init__(self, dim, patch_size, w_orig):
+    def __init__(self, dim, patch_size, w_orig, input_frames, output_frames):
         super().__init__()
         self.patch_size = patch_size
         self.w_orig = w_orig
+        self.input_frames = input_frames
+        self.output_frames = output_frames
         mid = max(dim * 4, 64)
         self.deconv = nn.ConvTranspose3d(dim, mid, kernel_size=patch_size, stride=patch_size)
+        self.temporal_proj = nn.Linear(input_frames, output_frames)
         self.act    = nn.GELU()
         self.conv   = nn.Conv3d(mid, 3, kernel_size=1)
 
@@ -328,9 +331,13 @@ class ProjectionHead(nn.Module):
         B, _, C = x.shape
         x = x.view(B, T_tok, H_tok, W_tok, C).permute(0, 4, 1, 2, 3)  # (B, C, T', H', W')
         x = self.act(self.deconv(x))                # (B, mid, T_in, H, W_pad)
-        x = torch.sigmoid(self.conv(x))             # (B, 3, T_in, H, W_pad), values in [0,1]
+        # Learned one-pass temporal projection decouples horizon K from lookback T_in.
+        x = x.permute(0, 3, 4, 1, 2)
+        x = self.temporal_proj(x)
+        x = x.permute(0, 3, 4, 1, 2).contiguous()  # (B, mid, T_out, H, W_pad)
+        x = torch.sigmoid(self.conv(x))             # (B, 3, T_out, H, W_pad), values in [0,1]
         x = x[:, :, :, :, : self.w_orig]            # crop W_pad → W_orig
-        x = x.permute(0, 2, 1, 3, 4)               # (B, T_in, 3, H, W_orig)
+        x = x.permute(0, 2, 1, 3, 4)               # (B, T_out, 3, H, W_orig)
         return x
 
 
@@ -344,7 +351,7 @@ class SwinSTB3D(nn.Module):
 
     Encoder–bottleneck–decoder with skip connections.
     Input:  (B, T_in, 3, H, W_pad)
-    Output: (B, T_in, 3, H, W_orig)  in [0, 1]
+    Output: (B, T_out, 3, H, W_orig)  in [0, 1]
     """
 
     def __init__(self, config):
@@ -363,6 +370,8 @@ class SwinSTB3D(nn.Module):
         drop_path_r = mcfg.get("drop_path_rate", 0.1)
 
         self.w_orig  = fcfg.get("w_orig", 250)  # original W before padding
+        self.input_frames = config["windowing"]["input_frames"]
+        self.output_frames = config["windowing"]["output_frames"]
 
         # Channel dimensions at each stage.
         C0, C1, C2 = embed_dim, embed_dim * 2, embed_dim * 4
@@ -412,7 +421,7 @@ class SwinSTB3D(nn.Module):
                                      mlp_ratio, drop, attn_drop, _dp(depths[0]))
 
         # --- Head ---
-        self.head = ProjectionHead(C0, patch_size, self.w_orig)
+        self.head = ProjectionHead(C0, patch_size, self.w_orig, self.input_frames, self.output_frames)
 
         self._init_weights()
 

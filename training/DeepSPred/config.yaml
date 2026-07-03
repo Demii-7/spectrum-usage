@@ -16,30 +16,33 @@ frames:
   w_orig: 250
 
 windowing:
-  input_frames: 8
+  input_frames: 60
+  output_frames: 5
   stride: 1
 
 split:
-  train_ratio: 0.8
-  val_ratio: 0.1
+  train_ratio: 0.6666667
+  val_ratio: 0.1666667
 
 model:
   embed_dim: 96
   depths: [2, 4, 2]
   num_heads: [4, 8, 16]
-  patch_size: [2, 2, 4]
-  window_size: [2, 2, 4]
+  patch_size: [2, 4, 4]
+  window_size: [2, 7, 7]
   mlp_ratio: 4.0
   drop_rate: 0.0
   attn_drop_rate: 0.0
   drop_path_rate: 0.1
 
 training:
-  batch_size: 4
-  epochs: 50
+  batch_size: 1
+  epochs: 20
   learning_rate: 0.001
   weight_decay: 0.05
-  patience: 10
+  patience: 4
+  early_stopping_threshold: 0.01
+  early_stopping_epochs: 4
   seed: 42
 
 device: "auto"

@@ -7,13 +7,13 @@ Each node's dBm power data is independently:
   3. Grouped into H-minute spectrogram frames
   4. Width-padded from 250 to 256 for the model
   5. Split chronologically into train/val/test
-  6. Windowed into (x, y) pairs of T_in/T_out consecutive frames
+  6. Windowed into (x, y) pairs of T_in/K consecutive frames
 
 Multiple nodes are pooled as independent samples (windows never straddle nodes).
 
 Sample shapes:
   x: (T_in, 3, H, W_pad)   — padded input, channel-first
-  y: (T_in, 3, H, W_orig)  — unpadded target (same length as x; T_out == T_in)
+  y: (K,    3, H, W_orig)  — unpadded target
 """
 
 import os
@@ -81,12 +81,14 @@ class SpectrumFrameDataset(Dataset):
     (i.e., they never mix different nodes or different split partitions).
     """
 
-    def __init__(self, frames_padded, frames_orig, t_in, indices):
+    def __init__(self, frames_padded, frames_orig, t_in, t_out, indices, sample_nodes):
         # Convert to (N, 3, H, W) once — channel first.
         self.pad  = torch.from_numpy(frames_padded.transpose(0, 3, 1, 2))  # (N, 3, H, W_pad)
         self.orig = torch.from_numpy(frames_orig.transpose(0, 3, 1, 2))    # (N, 3, H, W_orig)
         self.t_in = t_in
+        self.t_out = t_out
         self.indices = indices
+        self.sample_nodes = sample_nodes
 
     def __len__(self):
         return len(self.indices)
@@ -94,7 +96,7 @@ class SpectrumFrameDataset(Dataset):
     def __getitem__(self, idx):
         i = self.indices[idx]
         x = self.pad [i : i + self.t_in]                      # (T_in, 3, H, W_pad)
-        y = self.orig[i + self.t_in : i + 2 * self.t_in]     # (T_in, 3, H, W_orig)
+        y = self.orig[i + self.t_in : i + self.t_in + self.t_out]  # (K, 3, H, W_orig)
         return x, y
 
 
@@ -124,6 +126,7 @@ def create_datasets(config, csv_path=None):
         csv_path = os.path.join(os.path.dirname(__file__), "..", "..", csv_path)
 
     t_in             = wcfg["input_frames"]
+    t_out            = wcfg["output_frames"]
     stride           = wcfg.get("stride", 1)
     H                = fcfg["minutes_per_frame"]
     w_pad            = fcfg["w_pad"]
@@ -138,6 +141,7 @@ def create_datasets(config, csv_path=None):
     tr_pad, tr_orig = [], []
     va_pad, va_orig = [], []
     te_pad, te_orig = [], []
+    tr_nodes, va_nodes, te_nodes = [], [], []
 
     for node_name, ncfg in nodes.items():
         col_start = ncfg["col_start"]
@@ -164,31 +168,36 @@ def create_datasets(config, csv_path=None):
 
         tr_pad.append(fp[:n_tr])
         tr_orig.append(fo[:n_tr])
+        tr_nodes.append(node_name)
         va_pad.append(fp[n_tr : n_tr + n_va])
         va_orig.append(fo[n_tr : n_tr + n_va])
+        va_nodes.append(node_name)
         te_pad.append(fp[n_tr + n_va :])
         te_orig.append(fo[n_tr + n_va :])
+        te_nodes.append(node_name)
 
-    def _build_ds(pad_list, orig_list):
+    def _build_ds(pad_list, orig_list, node_names):
         """Stack segments, build per-segment window indices (no cross-node windows)."""
-        if not any(len(p) >= 2 * t_in for p in pad_list):
+        if not any(len(p) >= t_in + t_out for p in pad_list):
             return None
         pad  = np.concatenate(pad_list,  axis=0)
         orig = np.concatenate(orig_list, axis=0)
         indices = []
+        sample_nodes = []
         offset = 0
-        for p in pad_list:
+        for p, node_name in zip(pad_list, node_names):
             n = len(p)
-            # Window requires t_in input frames + t_in output frames.
-            valid = list(range(0, n - 2 * t_in + 1, stride))
+            # Window requires t_in input frames + t_out output frames.
+            valid = list(range(0, n - (t_in + t_out) + 1, stride))
             indices.extend(i + offset for i in valid)
+            sample_nodes.extend([node_name] * len(valid))
             offset += n
         if not indices:
             return None
-        return SpectrumFrameDataset(pad, orig, t_in, indices)
+        return SpectrumFrameDataset(pad, orig, t_in, t_out, indices, sample_nodes)
 
-    train_ds = _build_ds(tr_pad, tr_orig)
-    val_ds   = _build_ds(va_pad, va_orig)
-    test_ds  = _build_ds(te_pad, te_orig)
+    train_ds = _build_ds(tr_pad, tr_orig, tr_nodes)
+    val_ds   = _build_ds(va_pad, va_orig, va_nodes)
+    test_ds  = _build_ds(te_pad, te_orig, te_nodes)
 
     return train_ds, val_ds, test_ds, stats

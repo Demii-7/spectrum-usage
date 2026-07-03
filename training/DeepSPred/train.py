@@ -3,7 +3,7 @@ Training script for DeepSPred (3D-SwinSTB).
 
 Usage:
     python training/DeepSPred/train.py --config training/DeepSPred/smoke_test/config.yaml
-    python training/DeepSPred/train.py --config training/DeepSPred/config.yaml --epochs 50
+    python training/DeepSPred/train.py --config training/DeepSPred/config.yaml --epochs 20
 """
 
 import argparse
@@ -64,6 +64,13 @@ def validate(model, loader, criterion, device):
     return metrics
 
 
+def has_significant_improvement(best_val_loss, val_loss, threshold):
+    if best_val_loss == float("inf"):
+        return True
+    relative_improvement = (best_val_loss - val_loss) / max(abs(best_val_loss), 1e-8)
+    return relative_improvement >= threshold
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config",     required=True, help="Path to config.yaml")
@@ -112,8 +119,13 @@ def main():
     os.makedirs(ckpt_dir, exist_ok=True)
 
     best_val_loss = float("inf")
-    patience_left = tcfg.get("patience", 10)
+    patience_limit = tcfg.get("patience", 4)
+    stop_threshold = tcfg.get("early_stopping_threshold", 0.01)
+    stop_epochs = tcfg.get("early_stopping_epochs", patience_limit)
+    patience_left = patience_limit
+    no_improve_epochs = 0
     log = []
+    train_start = time.time()
 
     for epoch in range(1, tcfg["epochs"] + 1):
         t0 = time.time()
@@ -126,13 +138,15 @@ def main():
             val_loss = val_metrics["loss"]
             scheduler.step(val_loss)
 
-            if val_loss < best_val_loss:
+            if has_significant_improvement(best_val_loss, val_loss, stop_threshold):
                 best_val_loss = val_loss
-                patience_left = tcfg.get("patience", 10)
+                patience_left = patience_limit
+                no_improve_epochs = 0
                 save_checkpoint(best_path, model, optimizer, epoch,
-                                norm_stats, config, val_metrics)
+                                 norm_stats, config, val_metrics)
             else:
                 patience_left -= 1
+                no_improve_epochs += 1
 
         elapsed = time.time() - t0
         print(f"Epoch {epoch:3d}/{tcfg['epochs']}  "
@@ -140,20 +154,39 @@ def main():
               f"rmse={val_metrics.get('rmse', float('nan')):.4f}  "
               f"lr={optimizer.param_groups[0]['lr']:.2e}  {elapsed:.1f}s")
 
-        log.append({"epoch": epoch, "train_loss": train_loss,
-                    "val_loss": val_loss, **val_metrics})
+        log.append({
+            "epoch": epoch,
+            "train_loss": train_loss,
+            "val_loss": val_loss,
+            "lr": optimizer.param_groups[0]["lr"],
+            "epoch_time_sec": elapsed,
+            "patience_left": patience_left,
+            "no_improve_epochs": no_improve_epochs,
+            **val_metrics,
+        })
 
-        if patience_left <= 0:
+        if patience_left <= 0 or no_improve_epochs >= stop_epochs:
             print("Early stopping.")
             break
 
     # Save final checkpoint and training log.
+    total_training_time = time.time() - train_start
     final_path = os.path.join(ckpt_dir, "final_model.pt")
     save_checkpoint(final_path, model, optimizer, epoch, norm_stats, config,
-                    {"val_loss": best_val_loss})
+                    {"val_loss": best_val_loss, "total_training_time_sec": total_training_time})
     log_path = os.path.join(ckpt_dir, "training_log.json")
     with open(log_path, "w") as f:
-        json.dump(log, f, indent=2)
+        json.dump({
+            "epochs": log,
+            "summary": {
+                "best_val_loss": best_val_loss,
+                "total_training_time_sec": total_training_time,
+                "patience": patience_limit,
+                "early_stopping_threshold": stop_threshold,
+                "early_stopping_epochs": stop_epochs,
+            },
+        }, f, indent=2)
+    print(f"Total training time: {total_training_time:.1f}s")
     print(f"Done. Best val_loss={best_val_loss:.5f}  checkpoint: {best_path}")
 
 

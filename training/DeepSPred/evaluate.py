@@ -15,6 +15,7 @@ import sys
 import numpy as np
 import torch
 import yaml
+import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -56,6 +57,30 @@ def rgb_to_dbm(rgb_tensor, norm_stats, node_name, cmap_name="jet"):
     return scalar * (vmax - vmin) + vmin
 
 
+def rgb_to_dbm_per_sample(rgb_tensor, norm_stats, node_names, cmap_name="jet"):
+    dbm_samples = []
+    for sample_idx, node_name in enumerate(node_names):
+        sample_dbm = rgb_to_dbm(rgb_tensor[sample_idx:sample_idx + 1], norm_stats, node_name, cmap_name)
+        dbm_samples.append(sample_dbm)
+    return np.concatenate(dbm_samples, axis=0)
+
+
+def save_tensor_csv(path, array, prefix, node_names=None):
+    rows = []
+    for sample_idx in range(array.shape[0]):
+        for horizon_idx in range(array.shape[1]):
+            row = {
+                "sample_idx": sample_idx,
+                "horizon_idx": horizon_idx,
+            }
+            if node_names is not None:
+                row["node_name"] = node_names[sample_idx]
+            flat = array[sample_idx, horizon_idx].reshape(-1)
+            row.update({f"{prefix}_{i}": float(v) for i, v in enumerate(flat)})
+            rows.append(row)
+    pd.DataFrame(rows).to_csv(path, index=False)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", required=True)
@@ -74,6 +99,7 @@ def main():
     if test_ds is None or len(test_ds) == 0:
         print("No test samples.")
         return
+    sample_node_names = test_ds.sample_nodes
 
     loader = DataLoader(test_ds, batch_size=config["training"]["batch_size"],
                         shuffle=False, num_workers=0)
@@ -87,19 +113,22 @@ def main():
     metrics = {}
 
     # RGB-space metrics.
-    metrics["rgb"] = compute_metrics(pred, tgt)
-    metrics["rgb_per_horizon"] = compute_metrics_per_horizon(pred, tgt)
+    metrics["rgb"] = compute_metrics(pred, tgt, include_perceptual=True)
+    metrics["rgb_per_horizon"] = compute_metrics_per_horizon(pred, tgt, include_perceptual=True)
 
-    # dBm-space metrics (per node; smoke test has one node).
+    # dBm-space metrics using the correct per-sample normalization stats.
     node_names = list(config["data"]["nodes"].keys())
     cmap = config["preprocessing"]["colormap"]
     metrics["dbm"] = {}
+    pred_dbm_all = rgb_to_dbm_per_sample(pred, norm_stats, sample_node_names, cmap)
+    tgt_dbm_all = rgb_to_dbm_per_sample(tgt, norm_stats, sample_node_names, cmap)
     for node in node_names:
         try:
-            pred_dbm = rgb_to_dbm(pred, norm_stats, node, cmap)
-            tgt_dbm  = rgb_to_dbm(tgt,  norm_stats, node, cmap)
-            pred_t   = torch.from_numpy(pred_dbm)
-            tgt_t    = torch.from_numpy(tgt_dbm)
+            node_indices = [i for i, sample_node in enumerate(sample_node_names) if sample_node == node]
+            if not node_indices:
+                continue
+            pred_t = torch.from_numpy(pred_dbm_all[node_indices])
+            tgt_t = torch.from_numpy(tgt_dbm_all[node_indices])
             metrics["dbm"][node] = compute_metrics(pred_t, tgt_t)
         except Exception as e:
             metrics["dbm"][node] = {"error": str(e)}
@@ -107,16 +136,31 @@ def main():
     out_dir = args.out_dir or os.path.join(os.path.dirname(args.checkpoint), "..", "evaluation")
     os.makedirs(out_dir, exist_ok=True)
 
+    pred_np = pred.numpy().astype(np.float32)
+    tgt_np = tgt.numpy().astype(np.float32)
+    np.save(os.path.join(out_dir, "predictions.npy"), pred_np)
+    np.save(os.path.join(out_dir, "targets.npy"), tgt_np)
+    save_tensor_csv(os.path.join(out_dir, "predictions_rgb.csv"), pred_np, "rgb", sample_node_names)
+    save_tensor_csv(os.path.join(out_dir, "targets_rgb.csv"), tgt_np, "rgb", sample_node_names)
+
+    np.save(os.path.join(out_dir, "predictions_dbm.npy"), pred_dbm_all.astype(np.float32))
+    np.save(os.path.join(out_dir, "targets_dbm.npy"), tgt_dbm_all.astype(np.float32))
+    save_tensor_csv(os.path.join(out_dir, "predictions_dbm.csv"), pred_dbm_all.astype(np.float32), "dbm", sample_node_names)
+    save_tensor_csv(os.path.join(out_dir, "targets_dbm.csv"), tgt_dbm_all.astype(np.float32), "dbm", sample_node_names)
+
     metrics_path = os.path.join(out_dir, "metrics.json")
     with open(metrics_path, "w") as f:
         json.dump(metrics, f, indent=2)
 
     print("=== RGB metrics ===")
     for k, v in metrics["rgb"].items():
-        print(f"  {k}: {v:.4f}")
+        if isinstance(v, (int, float)):
+            print(f"  {k}: {v:.4f}")
+        else:
+            print(f"  {k}: {v}")
     print("=== dBm metrics ===")
     for node, m in metrics["dbm"].items():
-        print(f"  {node}:", {k: f"{v:.4f}" for k, v in m.items() if k != "error"})
+        print(f"  {node}:", {k: (f"{v:.4f}" if isinstance(v, (int, float)) else v) for k, v in m.items() if k != "error"})
     print(f"Saved metrics: {metrics_path}")
 
     # Plot a sample prediction vs target (first sample, first time step, first node row).
