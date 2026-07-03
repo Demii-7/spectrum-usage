@@ -11,6 +11,7 @@ import argparse
 import copy
 import json
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -24,7 +25,6 @@ from dataset import create_datasets
 from utils import (
     compute_metrics,
     get_device,
-    load_checkpoint,
     save_checkpoint,
     set_seed,
 )
@@ -89,7 +89,8 @@ def build_model(config: dict, device: torch.device):
 
     # Load pre-trained TimeRAN encoder weights, discarding the head so it starts fresh.
     ckpt_path = Path(__file__).parent / "checkpoints" / variant / f"TimeRAN_{variant}.pth"
-    if ckpt_path.exists():
+    load_info = {"checkpoint_path": str(ckpt_path), "missing_keys": [], "unexpected_keys": [], "used_raw_moment": True}
+    if config["model"].get("use_timeran_checkpoint", True) and ckpt_path.exists():
         print(f"Loading TimeRAN checkpoint: {ckpt_path}")
         state_dict = torch.load(ckpt_path, map_location="cpu", weights_only=True)
         # Strip DataParallel wrapping prefix if present.
@@ -97,9 +98,19 @@ def build_model(config: dict, device: torch.device):
             state_dict = {k.replace("module.", "", 1): v for k, v in state_dict.items()}
         for k in ["head.linear.weight", "head.linear.bias"]:
             state_dict.pop(k, None)
-        model.load_state_dict(state_dict, strict=False)
+        missing, unexpected = model.load_state_dict(state_dict, strict=False)
+        load_info["missing_keys"] = list(missing)
+        load_info["unexpected_keys"] = list(unexpected)
+        load_info["used_raw_moment"] = False
+        if missing:
+            print(f"Missing keys from checkpoint load: {missing}")
+        if unexpected:
+            print(f"Unexpected keys from checkpoint load: {unexpected}")
     else:
-        print(f"TimeRAN checkpoint not found at {ckpt_path}, using raw MOMENT weights")
+        if config["model"].get("use_timeran_checkpoint", True):
+            print(f"TimeRAN checkpoint not found at {ckpt_path}, using raw MOMENT weights")
+        else:
+            print("Configured to use raw MOMENT weights (TimeRAN checkpoint loading disabled)")
 
     # Optionally wrap the encoder with LoRA adapters for parameter-efficient fine-tuning.
     if mode == "lora" and get_peft_model is not None:
@@ -115,7 +126,7 @@ def build_model(config: dict, device: torch.device):
         model.encoder.print_trainable_parameters()
 
     model = model.to(device)
-    return model
+    return model, load_info
 
 
 def train_epoch(
@@ -140,8 +151,10 @@ def train_epoch(
     """
     model.train()
     losses = []
+    batch_times = []
     pbar = tqdm(dataloader, desc="Train")
     for timeseries, forecast in pbar:
+        batch_start = time.perf_counter()
         timeseries = timeseries.to(device)
         forecast = forecast.to(device)
         # All time steps are observed (no padding mask needed).
@@ -172,9 +185,12 @@ def train_epoch(
             scheduler.step()
 
         losses.append(loss.item())
+        batch_times.append(time.perf_counter() - batch_start)
         pbar.set_postfix({"loss": f"{np.mean(losses):.4f}"})
 
-    return float(np.mean(losses))
+    mean_batch_time = float(np.mean(batch_times)) if batch_times else 0.0
+    batches_per_second = float(1.0 / mean_batch_time) if mean_batch_time > 0 else 0.0
+    return float(np.mean(losses)), batches_per_second
 
 
 @torch.no_grad()
@@ -196,7 +212,9 @@ def validate(model, dataloader, criterion, device):
     model.eval()
     losses = []
     all_pred, all_target = [], []
+    inference_time = 0.0
     for timeseries, forecast in dataloader:
+        batch_start = time.perf_counter()
         timeseries = timeseries.to(device)
         forecast = forecast.to(device)
         input_mask = torch.ones(timeseries.shape[0], timeseries.shape[-1], device=device)
@@ -212,12 +230,45 @@ def validate(model, dataloader, criterion, device):
         losses.append(loss.item())
         all_pred.append(out.forecast)
         all_target.append(forecast)
+        inference_time += time.perf_counter() - batch_start
 
     pred_cat = torch.cat(all_pred, dim=0)
     target_cat = torch.cat(all_target, dim=0)
     metrics = compute_metrics(pred_cat.cpu().numpy(), target_cat.cpu().numpy())
     metrics["loss"] = float(np.mean(losses))
+    metrics["inference_time_seconds"] = inference_time
+    metrics["mean_batch_inference_time_seconds"] = inference_time / len(dataloader) if len(dataloader) > 0 else 0.0
     return metrics, pred_cat, target_cat
+
+
+def build_optimizer(config: dict, model: torch.nn.Module):
+    name = str(config["training"].get("optimizer", "adam")).lower()
+    lr = config["training"]["learning_rate"]
+    if name == "adam":
+        return torch.optim.Adam(model.parameters(), lr=lr)
+    if name == "adamw":
+        return torch.optim.AdamW(model.parameters(), lr=lr)
+    if name == "nadam":
+        return torch.optim.NAdam(model.parameters(), lr=lr)
+    raise ValueError(f"Unsupported optimizer: {config['training'].get('optimizer')}")
+
+
+def build_scheduler(config: dict, optimizer, train_loader_len: int):
+    sched_name = str(config["training"].get("scheduler", "onecycle")).lower()
+    epochs = config["training"]["epochs"]
+    if sched_name == "onecycle":
+        total_steps = train_loader_len * epochs if train_loader_len > 0 else 0
+        return OneCycleLR(optimizer, max_lr=config["training"].get("max_learning_rate", config["training"]["learning_rate"]), total_steps=total_steps, pct_start=0.3) if total_steps > 0 else None
+    if sched_name == "plateau":
+        return torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            factor=float(config["training"].get("scheduler_factor", 0.5)),
+            patience=int(config["training"].get("scheduler_patience", 5)),
+        )
+    if sched_name == "none":
+        return None
+    raise ValueError(f"Unsupported scheduler: {config['training'].get('scheduler')}")
 
 
 def main():
@@ -276,52 +327,73 @@ def main():
     batch_size = config["training"]["batch_size"]
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, drop_last=True) if train_ds else None
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False) if val_ds else None
-    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False) if test_ds else None
 
     print(f"Train windows: {len(train_ds) if train_ds else 0}, Val: {len(val_ds) if val_ds else 0}, Test: {len(test_ds) if test_ds else 0}")
 
-    model = build_model(config, device)
+    model, load_info = build_model(config, device)
 
     total = sum(p.numel() for p in model.parameters())
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Total params: {total:,}, Trainable: {trainable:,}, Frozen: {total - trainable:,}")
 
     criterion = torch.nn.MSELoss().to(device)
-    lr = config["training"]["learning_rate"]
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    optimizer = build_optimizer(config, model)
 
     epochs = config["training"]["epochs"]
-    max_lr = config["training"].get("max_learning_rate", lr)
-    total_steps = len(train_loader) * epochs if train_loader else 0
-    scheduler = OneCycleLR(optimizer, max_lr=max_lr, total_steps=total_steps, pct_start=0.3) if total_steps > 0 else None
+    scheduler = build_scheduler(config, optimizer, len(train_loader) if train_loader else 0)
     scaler = torch.amp.GradScaler("cuda") if device.type == "cuda" else None
 
     ckpt_dir = Path(args.checkpoint_dir or Path(__file__).parent / "checkpoints")
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     log_path = ckpt_dir / "training_log.json"
-    log_data = {"train_loss": [], "val_metrics": []}
+    log_data = {"epochs": [], "summary": {}, "checkpoint_load": load_info}
+    with open(ckpt_dir / "config.yaml", "w") as f:
+        yaml.safe_dump(config, f)
 
     best_val_loss = float("inf")
     best_epoch = 0
+    train_start = time.perf_counter()
+
+    peak_gpu_memory_mb = 0.0
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
 
     for epoch in range(epochs):
-        train_loss = train_epoch(model, train_loader, criterion, optimizer, scheduler, scaler, device) if train_loader else 0.0
-        print(f"Epoch {epoch+1}/{epochs}: Train MSE: {train_loss:.6f}")
+        epoch_start = time.perf_counter()
+        train_loss, batches_per_second = train_epoch(model, train_loader, criterion, optimizer, scheduler if isinstance(scheduler, OneCycleLR) else None, scaler, device) if train_loader else (0.0, 0.0)
 
         val_metrics = {"loss": float("inf"), "rmse": 0.0, "mae": 0.0, "r2": 0.0}
         if val_loader:
             val_metrics, _, _ = validate(model, val_loader, criterion, device)
 
-        log_data["train_loss"].append(train_loss)
-        log_data["val_metrics"].append(val_metrics)
+        if scheduler is not None and not isinstance(scheduler, OneCycleLR):
+            scheduler.step(val_metrics.get("loss", float("inf")))
+
+        epoch_seconds = time.perf_counter() - epoch_start
+        if device.type == "cuda":
+            peak_gpu_memory_mb = max(peak_gpu_memory_mb, torch.cuda.max_memory_allocated(device) / (1024 * 1024))
+
+        epoch_log = {
+            "epoch": epoch + 1,
+            "train_loss": train_loss,
+            "val_loss": val_metrics.get("loss", float("inf")),
+            "val_rmse": val_metrics.get("rmse", 0.0),
+            "epoch_seconds": epoch_seconds,
+            "batches_per_second": batches_per_second,
+            "device": str(device),
+            "learning_rate": optimizer.param_groups[0]["lr"],
+        }
+        if device.type == "cuda":
+            epoch_log["peak_gpu_memory_mb"] = torch.cuda.max_memory_allocated(device) / (1024 * 1024)
+        log_data["epochs"].append(epoch_log)
         with open(log_path, "w") as f:
             json.dump(log_data, f, indent=2)
 
-        print(f"  Val Loss: {val_metrics.get('loss', 0):.6f} | Val RMSE: {val_metrics.get('rmse', 0):.4f}")
-
-        if test_loader:
-            test_metrics, _, _ = validate(model, test_loader, criterion, device)
-            print(f"  Test MSE: {test_metrics.get('loss', 0):.6f} | Test RMSE: {test_metrics.get('rmse', 0):.4f}")
+        print(
+            f"Epoch {epoch+1}/{epochs}: Train MSE: {train_loss:.6f} | "
+            f"Val Loss: {val_metrics.get('loss', 0):.6f} | Val RMSE: {val_metrics.get('rmse', 0):.4f} | "
+            f"Epoch Time: {epoch_seconds:.2f}s | Batches/s: {batches_per_second:.2f}"
+        )
 
         # Save checkpoint whenever validation loss improves.
         if val_metrics.get("loss", float("inf")) < best_val_loss:
@@ -334,19 +406,6 @@ def main():
             if norm_stats:
                 torch.save(norm_stats, ckpt_dir / "normalization_stats.pt")
 
-    # Final test evaluation after all epochs.
-    if test_loader:
-        print("\n=== Test Set Evaluation ===")
-        test_metrics, pred, target = validate(model, test_loader, criterion, device)
-        print(f"Test RMSE: {test_metrics['rmse']:.4f}")
-        print(f"Test MAE:  {test_metrics['mae']:.4f}")
-        print(f"Test R\u00b2:   {test_metrics['r2']:.4f}")
-
-        save_checkpoint(
-            str(ckpt_dir / "best_model.pt"),
-            model, optimizer, best_epoch, train_loss, test_metrics, config, norm_stats,
-        )
-
     save_checkpoint(
         str(ckpt_dir / "last_model.pt"),
         model, optimizer, epochs, train_loss,
@@ -354,7 +413,28 @@ def main():
         config, norm_stats,
     )
 
-    print(f"\nDone. Best epoch: {best_epoch}. Checkpoints in {ckpt_dir}/")
+    total_training_time = time.perf_counter() - train_start
+    mean_epoch_time = float(np.mean([entry["epoch_seconds"] for entry in log_data["epochs"]])) if log_data["epochs"] else 0.0
+    log_data["summary"] = {
+        "best_epoch": best_epoch,
+        "best_val_loss": best_val_loss,
+        "total_training_time_seconds": total_training_time,
+        "average_epoch_time_seconds": mean_epoch_time,
+        "device": str(device),
+        "peak_gpu_memory_mb": peak_gpu_memory_mb if device.type == "cuda" else None,
+        "total_params": total,
+        "trainable_params": trainable,
+        "frozen_params": total - trainable,
+        "dataset_path": csv_path,
+        "normalization": config["preprocessing"]["normalization"],
+    }
+    with open(log_path, "w") as f:
+        json.dump(log_data, f, indent=2)
+
+    print(
+        f"\nDone. Best epoch: {best_epoch}. Total training time: {total_training_time:.2f}s. "
+        f"Average epoch time: {mean_epoch_time:.2f}s. Checkpoints in {ckpt_dir}/"
+    )
 
 
 if __name__ == "__main__":

@@ -51,6 +51,8 @@ split:
 model:
   # TimeRAN variant: "small", "base", or "large"
   checkpoint_size: "base"
+  # If false, use raw MOMENT weights instead of loading a TimeRAN checkpoint.
+  use_timeran_checkpoint: true
   # Downstream task (must be "forecasting" for spectrum prediction)
   task: "forecasting"
   # Freeze encoder + embedder during training (linear probing mode)
@@ -69,10 +71,19 @@ training:
   max_learning_rate: 1.0e-4
   # Optimizer
   optimizer: "adam"
+  # Scheduler: "onecycle", "none", or "plateau"
+  scheduler: "onecycle"
+  # Plateau scheduler factor/patience
+  scheduler_factor: 0.5
+  scheduler_patience: 5
   # Gradient clipping max norm
   max_norm: 5.0
   # Random seed for reproducibility
   seed: 42
+
+comparison:
+  # If true, also train/evaluate a raw MOMENT baseline with the same settings.
+  compare_raw_moment: true
 
 evaluation:
   # Metrics to compute during evaluation

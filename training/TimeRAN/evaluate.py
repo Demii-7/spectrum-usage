@@ -8,6 +8,7 @@ Supports denormalization back to dBm when training used z-score normalization.
 import argparse
 import json
 import os
+import time
 from pathlib import Path
 
 import matplotlib
@@ -25,6 +26,7 @@ from utils import (
     compute_metrics,
     compute_metrics_per_horizon,
     compute_metrics_per_node,
+    compute_metrics_per_bin,
     denormalize,
     get_device,
     load_checkpoint,
@@ -75,6 +77,39 @@ def build_model_from_config(config: dict, device: torch.device):
     model = model.to(device)
     model.eval()
     return model
+
+
+def evaluate_checkpoint(checkpoint_path: str, config: dict, test_loader, device: torch.device, bins_per_node: int, node_names: list[str], output_dir: Path | None = None):
+    ckpt = load_checkpoint(checkpoint_path, device)
+    model = build_model_from_config(config, device)
+    missing, unexpected = model.load_state_dict(ckpt["model_state_dict"], strict=False)
+    if missing:
+        print(f"Missing keys while loading {checkpoint_path}: {missing}")
+    if unexpected:
+        print(f"Unexpected keys while loading {checkpoint_path}: {unexpected}")
+    pred_norm, target_norm, inference_time = evaluate(model, test_loader, device)
+    overall = compute_metrics(pred_norm, target_norm)
+    per_horizon = compute_metrics_per_horizon(pred_norm, target_norm)
+    per_node = compute_metrics_per_node(pred_norm, target_norm, bins_per_node, node_names)
+    rmse_per_bin, mae_per_bin = compute_metrics_per_bin(pred_norm, target_norm)
+    return {
+        "checkpoint": checkpoint_path,
+        "overall": overall,
+        "per_horizon": per_horizon,
+        "per_node": per_node,
+        "timing": {
+            "inference_time_seconds": inference_time,
+            "mean_batch_inference_time_seconds": inference_time / len(test_loader) if len(test_loader) > 0 else 0.0,
+            "mean_window_inference_time_seconds": inference_time / len(test_loader.dataset) if len(test_loader.dataset) > 0 else 0.0,
+        },
+        "per_frequency": {
+            **{f"rmse_freq{i}": float(v) for i, v in enumerate(rmse_per_bin)},
+            **{f"mae_freq{i}": float(v) for i, v in enumerate(mae_per_bin)},
+        },
+        "pred_norm": pred_norm,
+        "target_norm": target_norm,
+        "norm_stats": ckpt.get("norm_stats"),
+    }
 
 
 def plot_spectrogram_comparison(ground_truth, prediction, node_name, save_path):
@@ -151,7 +186,9 @@ def evaluate(model, dataloader, device):
     """
     all_preds = []
     all_targets = []
+    inference_time = 0.0
     for timeseries, forecast in tqdm(dataloader, desc="Evaluating"):
+        batch_start = time.perf_counter()
         timeseries = timeseries.to(device)
         forecast = forecast.to(device)
         input_mask = torch.ones(timeseries.shape[0], timeseries.shape[-1], device=device)
@@ -164,18 +201,20 @@ def evaluate(model, dataloader, device):
 
         all_preds.append(out.forecast.cpu().numpy())
         all_targets.append(forecast.cpu().numpy())
+        inference_time += time.perf_counter() - batch_start
 
     pred = np.concatenate(all_preds, axis=0)
     target = np.concatenate(all_targets, axis=0)
-    return pred, target
+    return pred, target, inference_time
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--config", default=None)
-    parser.add_argument("--horizons", type=int, nargs="+", default=[1, 3, 6])
+    parser.add_argument("--horizons", type=int, nargs="+")
     parser.add_argument("--output", default=None)
+    parser.add_argument("--compare-checkpoint", default=None)
     args = parser.parse_args()
 
     device = get_device("auto")
@@ -219,20 +258,25 @@ def main():
         return
 
     # Use batch_size=1 so the first sample can be directly plotted.
-    test_loader = DataLoader(test_ds, batch_size=1, shuffle=False)
+    batch_size = config["training"].get("batch_size", 1)
+    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False)
 
     n_nodes = dcfg.get("n_nodes", 1)
     bins_per_node = dcfg.get("bins_per_node", 250)
     node_names = dcfg.get("node_names", [f"Node_{i}" for i in range(n_nodes)])
 
-    model = build_model_from_config(config, device)
-    model.load_state_dict(ckpt["model_state_dict"], strict=False)
+    horizons = args.horizons or config.get("evaluation", {}).get("eval_horizons", [1, 3, 6])
+    eval_start = time.perf_counter()
+    primary = evaluate_checkpoint(args.checkpoint, config, test_loader, device, bins_per_node, node_names)
+    pred_norm = primary.pop("pred_norm")
+    target_norm = primary.pop("target_norm")
+    norm_stats = primary.pop("norm_stats")
+    inference_time = primary["timing"]["inference_time_seconds"]
+    total_evaluation_time = time.perf_counter() - eval_start
 
-    pred_norm, target_norm = evaluate(model, test_loader, device)
-
-    overall = compute_metrics(pred_norm, target_norm)
-    per_horizon = compute_metrics_per_horizon(pred_norm, target_norm)
-    per_node = compute_metrics_per_node(pred_norm, target_norm, bins_per_node, node_names)
+    overall = primary["overall"]
+    per_horizon = primary["per_horizon"]
+    per_node = primary["per_node"]
 
     print("=== Evaluation Report ===")
     print(f"Overall RMSE: {overall['rmse']:.4f}")
@@ -240,7 +284,7 @@ def main():
     print(f"Overall R\u00b2:   {overall['r2']:.4f}")
     print()
     print("Per-horizon RMSE:")
-    for h in args.horizons:
+    for h in horizons:
         key = f"rmse_t{h}"
         if key in per_horizon:
             print(f"  t={h}: {per_horizon[key]:.4f}")
@@ -263,14 +307,44 @@ def main():
     else:
         pred_dbm, target_dbm = pred_norm, target_norm
 
-    np.savetxt(output_dir / "predictions.csv",
-               pred_dbm[0].transpose(), delimiter=",", fmt="%.6f")
-    np.savetxt(output_dir / "ground_truth.csv",
-               target_dbm[0].transpose(), delimiter=",", fmt="%.6f")
+    pred_rows = pred_dbm.transpose(0, 2, 1).reshape(-1, pred_dbm.shape[1])
+    target_rows = target_dbm.transpose(0, 2, 1).reshape(-1, target_dbm.shape[1])
+    np.savetxt(output_dir / "predictions.csv", pred_rows, delimiter=",", fmt="%.6f")
+    np.savetxt(output_dir / "ground_truth.csv", target_rows, delimiter=",", fmt="%.6f")
+
+    rmse_per_bin, mae_per_bin = compute_metrics_per_bin(pred_norm, target_norm)
+
+    metadata = {
+        "num_windows": int(pred_norm.shape[0]),
+        "prediction_horizon": int(pred_norm.shape[2]),
+        "n_features": int(pred_norm.shape[1]),
+        "n_nodes": int(n_nodes),
+        "bins_per_node": int(bins_per_node),
+        "node_names": node_names,
+        "row_order": "rows are window-major then horizon-major with columns in node-frequency order",
+    }
+    with open(output_dir / "metadata.json", "w") as f:
+        json.dump(metadata, f, indent=2)
 
     metrics_path = output_dir / "metrics.json"
     with open(metrics_path, "w") as f:
-        json.dump({**overall, **per_horizon, **per_node}, f, indent=2)
+        metrics = {**overall, **per_horizon, **per_node}
+        metrics["timing"] = {
+            "inference_time_seconds": inference_time,
+            "total_evaluation_time_seconds": total_evaluation_time,
+            "mean_batch_inference_time_seconds": inference_time / len(test_loader) if len(test_loader) > 0 else 0.0,
+            "mean_window_inference_time_seconds": inference_time / len(test_ds) if len(test_ds) > 0 else 0.0,
+        }
+        metrics["per_frequency"] = primary["per_frequency"]
+        if args.compare_checkpoint:
+            comparison = evaluate_checkpoint(args.compare_checkpoint, config, test_loader, device, bins_per_node, node_names)
+            metrics["comparison"] = {
+                "baseline_checkpoint": args.compare_checkpoint,
+                "baseline_overall": comparison["overall"],
+                "delta_rmse": overall["rmse"] - comparison["overall"]["rmse"],
+                "delta_r2": overall["r2"] - comparison["overall"]["r2"],
+            }
+        json.dump(metrics, f, indent=2)
     print(f"\nMetrics saved to {metrics_path}")
 
     # Reshape to (batch, horizon, node, freq_bin) for per-node plotting.
@@ -290,6 +364,9 @@ def main():
     error_plot_path = output_dir / "error_analysis.png"
     plot_error_analysis(errors[0], node_names, error_plot_path)
     print(f"Error analysis saved to {error_plot_path}")
+
+    print(f"Inference time: {inference_time:.2f}s")
+    print(f"Total evaluation time: {total_evaluation_time:.2f}s")
 
     print(f"\nEvaluation results saved to {output_dir}")
 

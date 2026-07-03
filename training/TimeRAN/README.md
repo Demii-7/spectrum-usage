@@ -53,6 +53,7 @@ python3 training/TimeRAN/train_head.py
 ```
 
 Output checkpoints go to `training/TimeRAN/checkpoints/`. Override with `--checkpoint-dir`.
+Training also writes a copied `config.yaml` plus `training_log.json` with per-epoch runtime, throughput, device, and parameter counts.
 
 ### Evaluate
 
@@ -95,10 +96,11 @@ Output: `checkpoints/best_model.pt`, `checkpoints/last_model.pt`, `checkpoints/n
 |----------|---------|-------------|
 | `--checkpoint` | — | Path to `.pt` checkpoint (required) |
 | `--config` | from checkpoint | Path to config (overrides embedded config) |
-| `--horizons` | `[1, 3, 6]` | Horizons to report |
+| `--horizons` | from config | Horizons to report |
 | `--output` | `evaluation/` | Output directory |
+| `--compare-checkpoint` | — | Optional baseline checkpoint for raw MOMENT vs TimeRAN comparison |
 
-Output: `evaluation/metrics.json`, `evaluation/predictions.csv`, `evaluation/ground_truth.csv`, `evaluation/spectrogram_{NODE}.png`, `evaluation/error_analysis.png`.
+Output: `evaluation/metrics.json`, `evaluation/predictions.csv`, `evaluation/ground_truth.csv`, `evaluation/metadata.json`, `evaluation/spectrogram_{NODE}.png`, `evaluation/error_analysis.png`.
 
 ### `inference.py` — Predict on new CSV data
 
@@ -107,6 +109,8 @@ Output: `evaluation/metrics.json`, `evaluation/predictions.csv`, `evaluation/gro
 | `--checkpoint` | — | Path to `.pt` checkpoint (required) |
 | `--input` | — | Input CSV (750 cols) (required) |
 | `--output` | `predictions.csv` | Output CSV path |
+
+Inference also writes `<output>.metadata.json` with window/horizon layout and runtime.
 
 ### `dataset.py` — Data loading and preprocessing (library)
 
@@ -199,6 +203,7 @@ dataset.py ──► train_head.py ──► checkpoints/best_model.pt
 | Split | `test_ratio` | 0.1 | Test set fraction |
 | Split | `chronological_split` | true | Chronological split |
 | Model | `checkpoint_size` | `base` | `small`, `base`, or `large` (checkpoint path derived automatically) |
+| Model | `use_timeran_checkpoint` | `true` | If false, use raw MOMENT weights instead of loading TimeRAN checkpoint |
 | Model | `task` | `forecasting` | Downstream task |
 | Model | `freeze_backbone` | true | Freeze encoder + embedder |
 | Model | `train_head_only` | true | Train only the head |
@@ -207,6 +212,9 @@ dataset.py ──► train_head.py ──► checkpoints/best_model.pt
 | Training | `learning_rate` | 1e-5 | Initial learning rate |
 | Training | `max_learning_rate` | 1e-4 | OneCycleLR peak |
 | Training | `optimizer` | `adam` | Optimizer |
+| Training | `scheduler` | `onecycle` | `onecycle`, `plateau`, or `none` |
+| Training | `scheduler_factor` | 0.5 | ReduceLROnPlateau factor |
+| Training | `scheduler_patience` | 5 | ReduceLROnPlateau patience |
 | Training | `max_norm` | 5.0 | Gradient clipping |
 | Training | `seed` | 42 | Random seed |
 | Evaluation | `metrics` | `["rmse", "mae"]` | Metrics to report |
@@ -568,6 +576,7 @@ Computed:
 - `stride` is configurable because it controls the tradeoff between **more training windows** (smaller stride, more overlap) and **less overlap / more independence** (larger stride, fewer windows). With only 6839 time steps, this tradeoff matters.
 - LoRA is an **optional experimental mode** after the head-only baseline is working. It provides lightweight backbone adaptation without the cost or risk of full fine-tuning.
 - TimeRAN's encoder processes channels independently by stacking channels in the effective batch dimension (`[B*C, N, d_model]`). Therefore, cross-channel relationships are not modeled explicitly through transformer attention. Each frequency bin is predicted primarily from its own history, which is appropriate for spectrum data where bins are not spatially correlated in the same way as images.
+- To compare raw MOMENT vs TimeRAN, run training/evaluation twice with identical settings and flip `model.use_timeran_checkpoint` between `false` and `true`, or pass the raw MOMENT checkpoint to `evaluate.py --compare-checkpoint` to record ΔRMSE and ΔR².
 
 ---
 

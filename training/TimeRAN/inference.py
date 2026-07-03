@@ -6,6 +6,8 @@ if the checkpoint contains training-set statistics.
 """
 
 import argparse
+import json
+import time
 from pathlib import Path
 
 import numpy as np
@@ -113,7 +115,9 @@ def main():
     model = model.to(device)
     model.eval()
 
+    infer_start = time.perf_counter()
     pred = predict(model, data, t_in, t_out, stride, device)
+    total_inference_time = time.perf_counter() - infer_start
 
     # Denormalise predictions back to the original scale for saved output.
     if normalization == "train_zscore" and norm_stats:
@@ -125,6 +129,18 @@ def main():
 
     np.savetxt(args.output, flat_pred, delimiter=",", fmt="%.6f")
     print(f"Predictions saved to {args.output}")
+
+    metadata_path = str(Path(args.output).with_suffix("")) + ".metadata.json"
+    with open(metadata_path, "w") as f:
+        json.dump({
+            "num_windows": int(B),
+            "prediction_horizon": int(H),
+            "n_features": int(C),
+            "row_order": "rows are window-major then horizon-major with columns in node-frequency order",
+            "total_inference_time_seconds": total_inference_time,
+        }, f, indent=2)
+    print(f"Metadata saved to {metadata_path}")
+    print(f"Total inference time: {total_inference_time:.2f}s")
 
 
 if __name__ == "__main__":

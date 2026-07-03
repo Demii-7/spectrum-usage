@@ -25,6 +25,7 @@ split:
 
 model:
   checkpoint_size: "base"
+  use_timeran_checkpoint: true
   task: "forecasting"
   freeze_backbone: true
   train_head_only: true
@@ -35,8 +36,14 @@ training:
   learning_rate: 1.0e-5
   max_learning_rate: 1.0e-4
   optimizer: "adam"
+  scheduler: "onecycle"
+  scheduler_factor: 0.5
+  scheduler_patience: 5
   max_norm: 5.0
   seed: 42
+
+comparison:
+  compare_raw_moment: true
 
 evaluation:
   metrics: ["rmse", "mae"]

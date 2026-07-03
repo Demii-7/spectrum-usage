@@ -142,25 +142,20 @@ def create_datasets(
 
     norm_stats = None
     if normalization == "train_zscore":
-        # Compute per-channel mean/std on training data only to avoid leakage.
+        # Compute per-channel mean/std on training data only to avoid leakage,
+        # then normalize the full series so split indices remain valid.
         train_data = data[train_idx]
         mean = np.mean(train_data, axis=0, keepdims=True)
         std = np.std(train_data, axis=0, keepdims=True)
-        # Clamp zero-variance channels to unit std to avoid division by zero.
         std = np.where(std < 1e-8, 1.0, std)
         norm_stats = {"mean": mean, "std": std}
-
-        train_data_norm = (train_data - mean) / std
-        val_data_norm = (data[val_idx] - mean) / std
-        test_data_norm = (data[test_idx] - mean) / std
-
-        train_ds = AERPAWDataset(train_data_norm, train_idx, t_in, t_out, train_stride)
-        val_ds = AERPAWDataset(val_data_norm, val_idx, t_in, t_out, val_stride) if n_val > 0 else None
-        test_ds = AERPAWDataset(test_data_norm, test_idx, t_in, t_out, test_stride) if n_test > 0 else None
+        data_for_ds = (data - mean) / std
     else:
-        # No normalization — feed raw data directly (RevIN handles it at runtime).
-        train_ds = AERPAWDataset(data, train_idx, t_in, t_out, train_stride)
-        val_ds = AERPAWDataset(data, val_idx, t_in, t_out, val_stride) if n_val > 0 else None
-        test_ds = AERPAWDataset(data, test_idx, t_in, t_out, test_stride) if n_test > 0 else None
+        # No external normalization — RevIN handles it at runtime.
+        data_for_ds = data
+
+    train_ds = AERPAWDataset(data_for_ds, train_idx, t_in, t_out, train_stride)
+    val_ds = AERPAWDataset(data_for_ds, val_idx, t_in, t_out, val_stride) if n_val > 0 else None
+    test_ds = AERPAWDataset(data_for_ds, test_idx, t_in, t_out, test_stride) if n_test > 0 else None
 
     return train_ds, val_ds, test_ds, norm_stats
