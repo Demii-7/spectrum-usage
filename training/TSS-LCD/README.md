@@ -82,6 +82,9 @@ All hyperparameters are in `config.yaml`. Key settings:
 | Preprocessing | `masking_strategy` | random | Masking strategy (`random` or `continuous`) |
 | Preprocessing | `zero_pad_missing` | true | Replace masked entries with 0.0 |
 | Preprocessing | `complete_observation_baseline` | false | Disable masking for baseline debugging |
+| Preprocessing | `continuous_mask_length` | null | Explicit gap length (time steps) for continuous masking; null = derived from missing_rate |
+| Preprocessing | `continuous_shared_gap` | false | All features share same gap position (continuous masking) |
+| Preprocessing | `continuous_multiple_gaps` | false | Allow multiple separate gaps per feature (continuous masking) |
 | Model | `latent_dim` | 32 | Dimensionality of TSS-CC conditional latent |
 | Model | `hidden_dim` | 256 | Hidden dimension in TSS attention branches |
 | Model | `attention_heads` | 4 | Self-attention heads per branch (must divide hidden_dim) |
@@ -94,6 +97,10 @@ All hyperparameters are in `config.yaml`. Key settings:
 | Model | `autoencoder_num_blocks` | 3 | Conv2D down/up blocks in LSE/LSD |
 | Model | `autoencoder_hidden_channels` | 64 | Channel progression in autoencoder |
 | Model | `autoencoder_initial_channels` | 32 | Initial output channels in first autoencoder block |
+| Model | `autoencoder_kernel_size` | 3 | Conv2d kernel size for LSE/LSD blocks |
+| Model | `autoencoder_pool_kernel` | 2 | MaxPool2d kernel size for LSE downsampling |
+| Model | `autoencoder_pool_stride` | 2 | MaxPool2d stride for LSE downsampling |
+| Model | `autoencoder_activation` | relu | Activation for LSE/LSD: relu, gelu, leaky_relu, elu, silu |
 | Model | `diffusion_steps` | 1000 | Forward/reverse diffusion steps (N) |
 | Model | `noise_schedule` | cosine | Noise schedule (`cosine` or `linear`) |
 | Model | `nen_num_blocks` | 2 | NEN U-Net encoder/decoder block count |
@@ -102,6 +109,10 @@ All hyperparameters are in `config.yaml`. Key settings:
 | Model | `nen_decoder_channels` | `[128, 64]` | NEN decoder channel counts per block |
 | Model | `nen_kernel_size` | 3 | NEN Conv1d kernel size |
 | Model | `time_embed_dim` | 32 | Sinusoidal time embedding dimension |
+| Model | `nen_activation` | relu | Activation for NEN blocks: relu, gelu, leaky_relu, elu, silu |
+| Model | `nen_normalization` | batchnorm | Normalization for NEN: batchnorm, layernorm, none |
+| Model | `condition_proj_dim` | null | cond_proj output dim (null = latent_dim) |
+| Model | `condition_strategy` | concat | Conditioning: concat (only implemented) |
 | Training | `autoencoder_epochs` | 300 | Stage 1 (autoencoder) max epochs |
 | Training | `autoencoder_learning_rate` | 0.0001 | Stage 1 learning rate |
 | Training | `tss_epochs` | 200 | Stage 2 (TSS-CC) max epochs |
@@ -114,6 +125,8 @@ All hyperparameters are in `config.yaml`. Key settings:
 | Training | `weight_decay` | 0.0 | L2 weight decay |
 | Training | `gradient_clip` | 5.0 | Max gradient norm for clipping (0 = disabled) |
 | Training | `lr_scheduler` | none | LR scheduler (`none`, `cosine`, or `plateau`) |
+| Training | `lr_scheduler_patience` | 5 | ReduceLROnPlateau patience |
+| Training | `lr_scheduler_factor` | 0.5 | ReduceLROnPlateau factor |
 | Training | `checkpoint_dir` | checkpoints | Per-stage checkpoint save/load directory |
 | Evaluation | `metrics` | `["rmse","mae","r2"]` | Metrics to report |
 | Evaluation | `eval_horizons` | `[1, 5, 10]` | Specific future time steps for per-horizon reporting |

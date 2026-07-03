@@ -141,6 +141,8 @@ class Normalizer:
             self.mean_ = flat.mean(axis=0, keepdims=True)
             self.std_ = flat.std(axis=0, keepdims=True)
             self.std_[self.std_ == 0] = 1.0
+        elif self.method == "none":
+            pass
 
     def transform(self, data: np.ndarray) -> np.ndarray:
         """Apply the fitted normalization."""
@@ -148,6 +150,8 @@ class Normalizer:
             return (data - self.min_) / (self.max_ - self.min_)
         elif self.method == "zscore":
             return (data - self.mean_) / self.std_
+        elif self.method == "none":
+            return data.copy()
 
     def inverse_transform(self, data: np.ndarray) -> np.ndarray:
         """Undo the normalization, restoring original scale."""
@@ -155,21 +159,31 @@ class Normalizer:
             return data * (self.max_ - self.min_) + self.min_
         elif self.method == "zscore":
             return data * self.std_ + self.mean_
+        elif self.method == "none":
+            return data.copy()
 
 
 def create_masks(X: np.ndarray, missing_rate: float,
-                 strategy: str = "random") -> np.ndarray:
+                 strategy: str = "random",
+                 continuous_mask_length: int | None = None,
+                 continuous_shared_gap: bool = False,
+                 continuous_multiple_gaps: bool = False) -> np.ndarray:
     """Generate a boolean mask indicating observed (True) vs missing (False) entries.
 
     Two strategies are supported:
       - 'random': independently mask each element with probability `missing_rate`.
-      - 'continuous': mask a contiguous block of length `missing_rate * T_in` per
-        feature per sample, simulating sensor dropouts.
+      - 'continuous': mask a contiguous block per feature per sample, simulating
+        sensor dropouts. Supports explicit or derived gap length, shared-gap mode,
+        and multi-gap mode.
 
     Args:
         X: (B, T_in, D) input windows.
         missing_rate: Fraction of entries to mask.
         strategy: 'random' or 'continuous'.
+        continuous_mask_length: Explicit gap length in time steps. If None, derived
+            from missing_rate * T_in.
+        continuous_shared_gap: If True, all features share the same gap start position.
+        continuous_multiple_gaps: If True, allow multiple separate gaps per feature.
 
     Returns:
         Boolean array of same shape as X.
@@ -181,11 +195,26 @@ def create_masks(X: np.ndarray, missing_rate: float,
     elif strategy == "continuous":
         mask = np.ones_like(X, dtype=bool)
         T_in, D = X.shape[1], X.shape[2]
+        if continuous_mask_length is not None:
+            cont_len = continuous_mask_length
+        else:
+            cont_len = max(1, int(T_in * missing_rate))
+        cont_len = min(cont_len, T_in)
         for b in range(X.shape[0]):
-            for d in range(D):
-                cont_len = max(1, int(T_in * missing_rate))
+            if continuous_shared_gap:
                 start = np.random.randint(0, T_in - cont_len + 1)
-                mask[b, start:start + cont_len, d] = False
+                mask[b, start:start + cont_len, :] = False
+            else:
+                for d in range(D):
+                    if continuous_multiple_gaps:
+                        num_gaps = max(1, int(missing_rate * 3))
+                        gap_len = max(1, cont_len // num_gaps)
+                        positions = np.random.choice(T_in - gap_len + 1, size=num_gaps, replace=False)
+                        for s in positions:
+                            mask[b, s:s + gap_len, d] = False
+                    else:
+                        start = np.random.randint(0, T_in - cont_len + 1)
+                        mask[b, start:start + cont_len, d] = False
     else:
         raise ValueError(f"Unknown masking strategy: {strategy}")
     return mask
@@ -206,6 +235,9 @@ class TSSLCDataset(Dataset):
         masking_strategy: str = "random",
         zero_pad_missing: bool = True,
         complete_observation_baseline: bool = False,
+        continuous_mask_length: int | None = None,
+        continuous_shared_gap: bool = False,
+        continuous_multiple_gaps: bool = False,
         transform: Callable | None = None,
     ):
         self.X = torch.from_numpy(X).float()
@@ -215,6 +247,9 @@ class TSSLCDataset(Dataset):
         self.masking_strategy = masking_strategy
         self.zero_pad_missing = zero_pad_missing
         self.complete_observation_baseline = complete_observation_baseline
+        self.continuous_mask_length = continuous_mask_length
+        self.continuous_shared_gap = continuous_shared_gap
+        self.continuous_multiple_gaps = continuous_multiple_gaps
         self.transform = transform
 
     def __len__(self) -> int:
@@ -228,6 +263,9 @@ class TSSLCDataset(Dataset):
                 x.unsqueeze(0).numpy(),
                 self.missing_rate,
                 self.masking_strategy,
+                self.continuous_mask_length,
+                self.continuous_shared_gap,
+                self.continuous_multiple_gaps,
             )[0]
             mask_t = torch.from_numpy(mask)
             # Zero out masked entries instead of removing them
@@ -317,18 +355,24 @@ def get_dataloaders(
     masking_strategy = preproc_cfg.get("masking_strategy", "random")
     zero_pad_missing = preproc_cfg.get("zero_pad_missing", True)
     complete_obs = preproc_cfg.get("complete_observation_baseline", False)
+    cont_mask_len = preproc_cfg.get("continuous_mask_length", None)
+    cont_shared = preproc_cfg.get("continuous_shared_gap", False)
+    cont_multi = preproc_cfg.get("continuous_multiple_gaps", False)
 
     train_dataset = TSSLCDataset(
         X_train, Y_train, missing_rate, masking_strategy,
         zero_pad_missing, complete_obs,
+        cont_mask_len, cont_shared, cont_multi,
     )
     val_dataset = TSSLCDataset(
         X_val, Y_val, missing_rate, masking_strategy,
         zero_pad_missing, complete_obs,
+        cont_mask_len, cont_shared, cont_multi,
     )
     test_dataset = TSSLCDataset(
         X_test, Y_test, missing_rate, masking_strategy,
         zero_pad_missing, complete_obs,
+        cont_mask_len, cont_shared, cont_multi,
     )
 
     batch_size = train_cfg.get("batch_size", 32)

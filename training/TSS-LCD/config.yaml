@@ -43,7 +43,8 @@ split:
   chronological_split: true
 
 preprocessing:
-  # Normalization method: "minmax" (scale to [0,1]) or "zscore" (zero mean, unit variance)
+  # Normalization method: "minmax" (scale to [0,1]), "zscore" (zero mean, unit variance),
+  # or "none" (passthrough)
   normalization: minmax
   # Fit the normalizer only on the training split (prevents data leakage)
   fit_on_train_only: true
@@ -51,12 +52,18 @@ preprocessing:
   missing_rate: 0.25
   # Masking strategy: "random" (per-entry Bernoulli) or "continuous" (contiguous block)
   masking_strategy: random
-  # If true, replace masked entries with 0.0; if false, leave them as NaN (may require
-  # different loss handling)
+  # If true, replace masked entries with 0.0; if false, leave them unchanged
   zero_pad_missing: true
   # Run in complete-observation baseline mode (missing_rate forced to 0, masking
   # disabled). Use this for pipeline debugging before enabling masking.
   complete_observation_baseline: false
+  # Continuous-only: explicit gap length (in time steps). If null, derived from
+  # missing_rate * input_sequence_length
+  continuous_mask_length: null
+  # Continuous-only: if true, all features share the same gap (same start position)
+  continuous_shared_gap: false
+  # Continuous-only: if true, allow multiple separate gaps per feature
+  continuous_multiple_gaps: false
 
 model:
   # --------------------------------------------------------------------------
@@ -92,6 +99,14 @@ model:
   # Initial number of output channels from the first autoencoder block; doubled
   # after each downsampling block
   autoencoder_initial_channels: 32
+  # Conv2d kernel size for LSE/LSD blocks
+  autoencoder_kernel_size: 3
+  # MaxPool2d kernel size for LSE downsampling
+  autoencoder_pool_kernel: 2
+  # MaxPool2d stride for LSE downsampling
+  autoencoder_pool_stride: 2
+  # Activation function for LSE/LSD blocks: relu, gelu, leaky_relu, elu, silu
+  autoencoder_activation: relu
 
   # --------------------------------------------------------------------------
   # Diffusion process
@@ -116,6 +131,18 @@ model:
   nen_kernel_size: 3
   # Dimension of the sinusoidal time embedding fed into the NEN
   time_embed_dim: 32
+  # Activation for NEN blocks: relu, gelu, leaky_relu, elu, silu
+  nen_activation: relu
+  # Normalization for NEN blocks: batchnorm, layernorm, none
+  nen_normalization: batchnorm
+
+  # --------------------------------------------------------------------------
+  # Conditioning mechanism (TSS-CC → Diffusion)
+  # --------------------------------------------------------------------------
+  # Projection dimension for cond_proj (null = same as latent_dim)
+  condition_proj_dim: null
+  # Conditioning strategy: concat (current), film, adaln
+  condition_strategy: concat
 
 training:
   # --------------------------------------------------------------------------
@@ -155,6 +182,10 @@ training:
   gradient_clip: 5.0
   # Optional learning rate scheduler: "none", "cosine", "plateau"
   lr_scheduler: none
+  # ReduceLROnPlateau patience (used when lr_scheduler=plateau)
+  lr_scheduler_patience: 5
+  # ReduceLROnPlateau factor (used when lr_scheduler=plateau)
+  lr_scheduler_factor: 0.5
   # Directory where per-stage checkpoints are saved / loaded
   checkpoint_dir: checkpoints
 

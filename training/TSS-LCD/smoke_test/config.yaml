@@ -26,6 +26,9 @@ preprocessing:
   masking_strategy: random
   zero_pad_missing: true
   complete_observation_baseline: false
+  continuous_mask_length: null
+  continuous_shared_gap: false
+  continuous_multiple_gaps: false
 
 model:
   latent_dim: 16
@@ -42,6 +45,7 @@ model:
   autoencoder_initial_channels: 16
   diffusion_steps: 50
   noise_schedule: cosine
+  nen_num_blocks: 2
   nen_encoder_channels: [32, 64]
   nen_bottleneck_channels: 128
   nen_decoder_channels: [64, 32]
@@ -61,6 +65,8 @@ training:
   weight_decay: 0.0
   gradient_clip: 5.0
   lr_scheduler: none
+  lr_scheduler_patience: 5
+  lr_scheduler_factor: 0.5
   checkpoint_dir: checkpoints
 
 evaluation:

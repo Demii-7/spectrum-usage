@@ -71,7 +71,7 @@ def load_checkpoint(path: str | Path, map_location: str | None = None) -> dict[s
     Returns:
         The checkpoint dictionary.
     """
-    return torch.load(path, map_location=map_location)
+    return torch.load(path, map_location=map_location, weights_only=False)
 
 
 def compute_metrics(pred: np.ndarray, target: np.ndarray) -> dict[str, float]:

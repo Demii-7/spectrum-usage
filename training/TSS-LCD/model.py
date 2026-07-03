@@ -22,6 +22,36 @@ import torch.nn.functional as F
 
 
 # =====================================================================
+#  Activation & Normalization Factories
+# =====================================================================
+
+def _get_activation(name: str) -> nn.Module:
+    name = name.lower()
+    if name == "relu":
+        return nn.ReLU(inplace=True)
+    elif name == "gelu":
+        return nn.GELU()
+    elif name == "leaky_relu":
+        return nn.LeakyReLU(0.1, inplace=True)
+    elif name == "elu":
+        return nn.ELU(inplace=True)
+    elif name == "silu":
+        return nn.SiLU(inplace=True)
+    raise ValueError(f"Unknown activation: {name}")
+
+
+def _get_norm1d(name: str, channels: int) -> nn.Module:
+    name = name.lower()
+    if name == "batchnorm":
+        return nn.BatchNorm1d(channels)
+    elif name == "layernorm":
+        return nn.LayerNorm(channels)
+    elif name == "none":
+        return nn.Identity()
+    raise ValueError(f"Unknown normalization: {name}")
+
+
+# =====================================================================
 #  Common Building Blocks (from repo Context2CondNew.py)
 # =====================================================================
 
@@ -367,17 +397,21 @@ class LatentSpaceEncoder(nn.Module):
     """
 
     def __init__(self, T_out: int, L: int, F: int, latent_dim: int,
-                 num_blocks: int = 3, init_channels: int = 32):
+                 num_blocks: int = 3, init_channels: int = 32,
+                 kernel_size: int = 3, pool_kernel: int = 2,
+                 pool_stride: int = 2, activation: str = "relu"):
         super().__init__()
         # Exponentially grow channel count per block: 1 -> 32 -> 64 -> 128
         channels = [1] + [init_channels * (2 ** i) for i in range(num_blocks)]
+        act_fn = _get_activation(activation)
         blocks = []
+        padding = kernel_size // 2
         for i in range(num_blocks):
             blocks.extend([
-                nn.Conv2d(channels[i], channels[i + 1], kernel_size=3, padding=1),
+                nn.Conv2d(channels[i], channels[i + 1], kernel_size=kernel_size, padding=padding),
                 nn.BatchNorm2d(channels[i + 1]),
-                nn.ReLU(inplace=True),
-                nn.MaxPool2d(kernel_size=2, stride=2),
+                act_fn,
+                nn.MaxPool2d(kernel_size=pool_kernel, stride=pool_stride),
             ])
         self.encoder = nn.Sequential(*blocks)
         self.adaptive_pool = nn.AdaptiveAvgPool2d((1, 1))
@@ -402,7 +436,8 @@ class LatentSpaceDecoder(nn.Module):
     """
 
     def __init__(self, T_out: int, L: int, F: int, latent_dim: int,
-                 num_blocks: int = 3, init_channels: int = 32):
+                 num_blocks: int = 3, init_channels: int = 32,
+                 kernel_size: int = 3, activation: str = "relu"):
         super().__init__()
         self.T_out = T_out
         self.L = L
@@ -415,6 +450,7 @@ class LatentSpaceDecoder(nn.Module):
 
         self.fc = nn.Linear(latent_dim, self.init_C * 4 * 4)
 
+        act_fn = _get_activation(activation)
         blocks = []
         for i in range(num_blocks):
             in_c = channels[i]
@@ -422,7 +458,7 @@ class LatentSpaceDecoder(nn.Module):
             blocks.extend([
                 nn.ConvTranspose2d(in_c, out_c, kernel_size=4, stride=2, padding=1),
                 nn.BatchNorm2d(out_c) if out_c > 1 else nn.Identity(),
-                nn.ReLU(inplace=True) if out_c > 1 else nn.Identity(),
+                act_fn if out_c > 1 else nn.Identity(),
             ])
         self.decoder = nn.Sequential(*blocks)
 
@@ -468,21 +504,43 @@ class SinusoidalTimeEmbedding(nn.Module):
 class _EncBlock(nn.Module):
     """One encoder block for the noise estimation network.
 
-    Conv1D → BN → ReLU → MaxPool1d. Returns both the pooled output
+    Conv1D → Norm → Activation → MaxPool1d. Returns both the pooled output
     and the pre-pooled feature map (used as a skip connection).
     """
 
-    def __init__(self, in_c: int, out_c: int, kernel_size: int, padding: int):
+    def __init__(self, in_c: int, out_c: int, kernel_size: int, padding: int,
+                 activation: str = "relu", normalization: str = "batchnorm"):
         super().__init__()
-        self.conv_bn_relu = nn.Sequential(
+        norm_fn = _get_norm1d(normalization, out_c)
+        act_fn_a = _get_activation(activation)
+        # Workaround: layernorm expects (N, C, L) but BatchNorm1d also expects (N, C, L);
+        # For layernorm we need to permute or use a wrapper
+        if normalization == "layernorm":
+            norm_fn = nn.Sequential(
+                nn.LayerNorm(out_c),
+            )
+        # Conv1d outputs (B, C, L); BatchNorm1d/LayerNorm both work on C dim,
+        # but LayerNorm in PyTorch normalizes the last dim by default.
+        # We'll handle layernorm via a small wrapper that permutes.
+        class _LN1d(nn.Module):
+            def __init__(self, channels):
+                super().__init__()
+                self.ln = nn.LayerNorm(channels)
+            def forward(self, x):
+                return self.ln(x.transpose(1, 2)).transpose(1, 2)
+        if normalization == "layernorm":
+            norm_fn = _LN1d(out_c)
+        else:
+            norm_fn = _get_norm1d(normalization, out_c)
+        self.conv_norm_act = nn.Sequential(
             nn.Conv1d(in_c, out_c, kernel_size=kernel_size, padding=padding),
-            nn.BatchNorm1d(out_c),
-            nn.ReLU(inplace=True),
+            norm_fn,
+            act_fn_a,
         )
         self.pool = nn.MaxPool1d(kernel_size=2)
 
     def forward(self, x):
-        pre_pool = self.conv_bn_relu(x)
+        pre_pool = self.conv_norm_act(x)
         pooled = self.pool(pre_pool)
         return pooled, pre_pool
 
@@ -492,22 +550,34 @@ class _DecBlock(nn.Module):
 
     Transposed Conv1D upsamples by 2×, then the result is concatenated
     with the corresponding skip connection from the encoder path
-    (U-Net style), followed by Conv1D → BN → ReLU.
+    (U-Net style), followed by Conv1D → Norm → Activation.
     """
 
-    def __init__(self, in_c: int, out_c: int, skip_c: int, kernel_size: int, padding: int):
+    def __init__(self, in_c: int, out_c: int, skip_c: int, kernel_size: int, padding: int,
+                 activation: str = "relu", normalization: str = "batchnorm"):
         super().__init__()
         self.up = nn.ConvTranspose1d(in_c, out_c, kernel_size=2, stride=2)
-        self.conv_bn_relu = nn.Sequential(
+        class _LN1d(nn.Module):
+            def __init__(self, channels):
+                super().__init__()
+                self.ln = nn.LayerNorm(channels)
+            def forward(self, x):
+                return self.ln(x.transpose(1, 2)).transpose(1, 2)
+        if normalization == "layernorm":
+            norm_fn = _LN1d(out_c)
+        else:
+            norm_fn = _get_norm1d(normalization, out_c)
+        act_fn = _get_activation(activation)
+        self.conv_norm_act = nn.Sequential(
             nn.Conv1d(out_c + skip_c, out_c, kernel_size=kernel_size, padding=padding),
-            nn.BatchNorm1d(out_c),
-            nn.ReLU(inplace=True),
+            norm_fn,
+            act_fn,
         )
 
     def forward(self, x, skip):
         x = self.up(x)
         x = torch.cat([x, skip], dim=1)
-        return self.conv_bn_relu(x)
+        return self.conv_norm_act(x)
 
 
 class EnhancedNoiseNet(nn.Module):
@@ -522,7 +592,9 @@ class EnhancedNoiseNet(nn.Module):
                  encoder_channels: list[int] | None = None,
                  bottleneck_channels: int = 256,
                  decoder_channels: list[int] | None = None,
-                 kernel_size: int = 3):
+                 kernel_size: int = 3,
+                 activation: str = "relu",
+                 normalization: str = "batchnorm"):
         super().__init__()
         if encoder_channels is None:
             encoder_channels = [64, 128]
@@ -531,23 +603,24 @@ class EnhancedNoiseNet(nn.Module):
         self.input_dim = latent_dim * 2 + time_embed_dim
         self.num_blocks = len(encoder_channels)
         padding = kernel_size // 2
+        act_fn = _get_activation(activation)
 
         self.enc_blocks = nn.ModuleList()
         prev_c = 1
         for c in encoder_channels:
-            self.enc_blocks.append(_EncBlock(prev_c, c, kernel_size, padding))
+            self.enc_blocks.append(_EncBlock(prev_c, c, kernel_size, padding, activation, normalization))
             prev_c = c
 
         self.bottleneck = nn.Sequential(
             nn.Conv1d(encoder_channels[-1], bottleneck_channels, kernel_size=kernel_size, padding=padding),
-            nn.ReLU(inplace=True),
+            act_fn,
         )
 
         self.dec_blocks = nn.ModuleList()
         prev_c = bottleneck_channels
         for i, c in enumerate(decoder_channels):
             skip_c = encoder_channels[self.num_blocks - 1 - i]
-            self.dec_blocks.append(_DecBlock(prev_c, c, skip_c, kernel_size, padding))
+            self.dec_blocks.append(_DecBlock(prev_c, c, skip_c, kernel_size, padding, activation, normalization))
             prev_c = c
 
         self.adaptive_pool = nn.AdaptiveAvgPool1d(1)
@@ -612,15 +685,21 @@ class DiffusionModel(nn.Module):
                  nen_bottleneck_channels: int = 256,
                  nen_decoder_channels: list[int] | None = None,
                  nen_kernel_size: int = 3,
-                 time_embed_dim: int = 32):
+                 time_embed_dim: int = 32,
+                 condition_proj_dim: int | None = None,
+                 condition_strategy: str = "concat",
+                 nen_activation: str = "relu",
+                 nen_normalization: str = "batchnorm"):
         super().__init__()
         self.latent_dim = latent_dim
         self.n_timestep = n_timestep
         self.device = device
+        self.condition_strategy = condition_strategy
 
         self.time_embedding = SinusoidalTimeEmbedding(dim=time_embed_dim)
         # Project condition to same space before concatenation
-        self.cond_proj = nn.Linear(latent_dim, latent_dim)
+        proj_dim = condition_proj_dim if condition_proj_dim is not None else latent_dim
+        self.cond_proj = nn.Linear(latent_dim, proj_dim)
         self.noise_net = EnhancedNoiseNet(
             latent_dim=latent_dim,
             time_embed_dim=time_embed_dim,
@@ -628,6 +707,8 @@ class DiffusionModel(nn.Module):
             bottleneck_channels=nen_bottleneck_channels,
             decoder_channels=nen_decoder_channels or [128, 64],
             kernel_size=nen_kernel_size,
+            activation=nen_activation,
+            normalization=nen_normalization,
         )
 
         # Precompute β, α, ᾱ for all timesteps
@@ -653,7 +734,14 @@ class DiffusionModel(nn.Module):
     def forward(self, zt: torch.Tensor, cond_z: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """Predict noise ε from (z_t, cond_z, t)."""
         t_emb = self.time_embedding(t)
-        inp = torch.cat([zt, self.cond_proj(cond_z), t_emb], dim=1)
+        if self.condition_strategy == "concat":
+            inp = torch.cat([zt, self.cond_proj(cond_z), t_emb], dim=1)
+        elif self.condition_strategy == "film":
+            raise NotImplementedError("FiLM conditioning not yet implemented")
+        elif self.condition_strategy == "adaln":
+            raise NotImplementedError("AdaLN conditioning not yet implemented")
+        else:
+            raise ValueError(f"Unknown condition_strategy: {self.condition_strategy}")
         return self.noise_net(inp)
 
     def p_sample(self, zt: torch.Tensor, cond_z: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
