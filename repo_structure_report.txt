@@ -1,0 +1,940 @@
+================================================================================
+                  SPECTRUM USAGE REPOSITORY STRUCTURE REPORT
+================================================================================
+
+This report documents the complete file structure and purpose of every file
+in the spectrum-usage repository on both the main and integrate branches.
+
+================================================================================
+PART 1: MAIN BRANCH
+================================================================================
+
+1. TOP-LEVEL FILES AND DIRECTORIES
+--------------------------------------------------------------------------------
+
+  .gitignore
+      Ignores: __pycache__/, *.pyc, *.pyo, .venv/, *.pt, *.zip, *.pdf,
+      training/DeepSPred/FM-S*, *.xls
+
+  predictions.csv
+      Example predictions file at repo root (6 rows, 250 columns of dBm
+      values, comma-separated). One row per predicted time step, one column
+      per frequency bin.
+
+  ResultsCC1Feb2022_SigMF.zip  (~19 GB, gitignored via *.zip)
+  ResultsCC2Feb2022_SigMF.zip  (~21 GB, gitignored via *.zip)
+  ResultsLW1Feb2022_SigMF.zip  (~12 GB, gitignored via *.zip)
+      Raw AERPAW SigMF archives from Feb 2022 field measurements.
+      Extracted and processed by training/build_training_csv.py.
+
+  checkpoints/
+      Contains best_autoencoder.pt -- shared autoencoder checkpoint used
+      by TSS-LCD stage 1 as pretrained latent autoencoder weights.
+
+  data/
+      Contains 16 CSV and NPZ files from POWDER testbed field measurements
+      (two sites: guesthouse, humanities; two bands: 600-800 MHz,
+      2400-2600 MHz). Includes temporal test split files for evaluation.
+
+  evaluation/
+      Data collection and processing scripts. Full description in Section 5.
+
+  extern/
+      Forked copy of thuml/Autoformer repository (NeurIPS 2021). Contains
+      the original Autoformer model code, layers (AutoCorrelation,
+      Encoder/Decoder, Embed), experiment runners, data providers, and
+      utility scripts. Also includes the Autoformer-CSA paper PDF.
+      Used as reference backbone by training/Autoformer-CSA/.
+
+  models/
+      Contains only README.md (placeholder: "models that we train on the
+      spectrum usage prediction task"). Model source code lives under
+      training/ instead.
+
+  plots/
+      Contains 6 files: figure9 ground-truth spectrograms (5 PNGs) and a
+      README.md placeholder. Generated visualizations for paper
+      reproduction.
+
+  results/
+      Contains only README.md (placeholder: "evaluation results for all
+      of the models") plus an .ipynb_checkpoints artifact.
+
+  training/
+      All model implementations, training data, and pipeline scripts.
+      Detailed in Section 2 below.
+
+--------------------------------------------------------------------------------
+
+2. training/ DIRECTORY (ROOT)
+--------------------------------------------------------------------------------
+
+  training/README.md  (555 lines)
+      Comprehensive documentation of the training data pipeline:
+      downloading AERPAW SigMF archives from Dryad, extracting 250-bin
+      per-node slices from raw bin offsets (CC1=21000, CC2=33250,
+      LW1=27500), per-minute averaging, merging into a single 750-column
+      CSV. Documents the reverse-engineering methodology used to discover
+      the bin offsets.
+
+  training/build_training_csv.py
+      Main preprocessing script. Reads SigMF zip archives, extracts 250
+      float32 bins per node at the documented offsets, converts to linear
+      power, averages per minute, and merges all 3 nodes horizontally into
+      a single 750-column CSV (no header, 6 decimal places).
+
+--------------------------------------------------------------------------------
+
+3. training/data/
+--------------------------------------------------------------------------------
+
+  download_dryad.py
+      Downloads the 3 AERPAW SigMF zip archives from Dryad. Handles the
+      Anubis proof-of-work WAF challenge using multiprocessing SHA256
+      nonce brute-force. Supports --dir for custom output path.
+
+  merged_power_data_sub6GHz_avg_per_minute.csv
+      PRIMARY DATASET. 6839 rows x 750 columns, per-minute averaged PSD
+      in dBm. No header. Columns 0-249 = CC1, 250-499 = CC2, 500-749 =
+      LW1. Input to all model training scripts.
+
+  merged_power_data_sub6GHz_avg_per_minute.csv.json
+      JSON manifest recording processing metadata: creation time, row
+      count (6839), per-node bin offsets, node labels.
+
+  merged_power_data_sub6GHz_avg_per_minute_87_336.csv
+      Alternative merged CSV using originally-claimed 87-336 MHz band
+      offsets (for comparison/reproduction).
+
+  cc2_smoke_test.csv
+      CC2-only subset (first 2000 rows, 250 columns). Used for smoke
+      tests across all models.
+
+  recon_smoothed_norm.csv
+  recon_smoothed_db.csv
+  reconstructed_repo_csv.csv
+      Reconstructed/smoothed/normalized versions of the dataset. Used
+      for comparison with the original TSS-LCD repository CSV format.
+
+--------------------------------------------------------------------------------
+
+4. MODEL IMPLEMENTATIONS (8 models in training/)
+--------------------------------------------------------------------------------
+
+  4.1 training/Autoformer-CSA/
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Model description: Autoformer with Channel-Spatial Attention Module
+  (CSAM). Adaptation of Pan et al., IEEE WCL 2023. Uses the upstream
+  Autoformer backbone (from extern/) enhanced with CSAM blocks for
+  channel-wise and spatial attention.
+
+  Supporting files:
+    __init__.py          Package marker.
+    config.yaml          Hyperparameters: data paths, model dims (d_model=512,
+                         d_ff=2048, n_heads=8, e_layers=2, d_layers=1),
+                         architecture flags (use_csam=true,
+                         preserve_original_autoformer=false), training
+                         settings (lr=0.0001, batch_size=32).
+    dataset.py           AERPAWDataset. Loads CSV or NPZ interpolated maps,
+                         applies chronological splits, z-score normalization
+                         (fit on train only), sliding windows.
+    model.py             ChannelAttention, SpatialAttention, CSAM,
+                         EncoderLayerCSA, DecoderLayerCSA, AutoformerCSA.
+                         Imports upstream Autoformer backbone from extern/.
+    train.py             Training loop with MSE loss, Adam, early stopping.
+    evaluate.py          Standalone evaluation on test split. Loads checkpoint,
+                         computes RMSE/MAE/R2, exports predictions, generates
+                         spectrogram plots.
+    inference.py         Forward pass on new CSV or NPZ data.
+    utils.py             Metrics computation, denormalization, plotting,
+                         early stopping class.
+    README.md  (759 l.)  Documents CSAM architecture, Autoformer backbone,
+                         training pipeline, full config reference.
+
+  Generated artifacts:
+    checkpoints/         best_model.pt, last_model.pt, config.yaml (copy),
+                         training_log.json.
+    evaluation/          metrics.json, predictions.csv, ground_truth.csv,
+                         spectrogram_CC2.png, error_analysis.png.
+    smoke_test/          config.yaml, report.txt, checkpoints/, evaluation/.
+    smoke_test_map/      config.yaml, checkpoints/ (map-mode smoke test).
+
+  ----------------------------------------------------------------------------
+
+  4.2 training/ConvLSTM/
+  ~~~~~~~~~~~~~~~~~~~~~~
+
+  Model description: Convolutional LSTM for spectrum prediction.
+  Reconstruction of Shawel et al., EUSIPCO 2019. Encoder-decoder with 2D
+  ConvLSTM cells, LSTM state transfer, FC output layer. Supports both
+  CSV and interpolated-map input modes.
+
+  Supporting files:
+    config.yaml          Full config: data format, normalization (zscore),
+                         model hidden channels [64,128,128,64], kernel_size=3,
+                         training (lr=0.001, batch_size=16, epochs=100).
+    dataset.py           SpectrumDataset (CSV) and InterpolatedMapDataset
+                         (NPZ). Chronological split, z-score normalization,
+                         sliding windows, NaN handling.
+    model.py             ConvLSTMCell (peephole-gated), ConvLSTM (multi-layer
+                         with hidden state + cell state), ConvLSTMPredictor
+                         (seq2seq encoder-decoder).
+    train.py             Training with teacher forcing, gradient clipping,
+                         LR scheduling, early stopping.
+    evaluate.py          Test evaluation. Per-horizon/per-node metrics,
+                         spectrogram/map visualization.
+    inference.py         Forward pass on new CSV data.
+    utils.py             Metrics, normalization, checkpointing, seeding.
+    requirements.txt     Python dependencies.
+    README.md  (817 l.)  Architecture docs, data pipeline, hyperparameter
+                         reference, dual input modes.
+
+  Generated artifacts:
+    checkpoints/         best_model.pt, last_model.pt,
+                         normalization_stats.pt, training_log.json.
+    evaluation/          metrics.json, predictions.csv, ground_truth.csv,
+                         metadata.json, spectrograms, error_analysis.png.
+    smoke_test/          config.yaml, report.txt, evaluation/.
+
+  ----------------------------------------------------------------------------
+
+  4.3 training/DeepSPred/
+  ~~~~~~~~~~~~~~~~~~~~~~~
+
+  Model description: 3D Pyramid Swin Transformer (3D-SwinSTB).
+  Implementation of arXiv:2408.06870. Unique data pipeline: converts dBm
+  to RGB via matplotlib colormap (jet), groups time steps into 2D frames
+  (H=256, zero-padded W=250->256), operates on RGB images, inverts back
+  to dBm at evaluation via nearest-neighbor LUT.
+
+  Supporting files:
+    config.yaml          embed_dim=96, depths=[2,4,2], num_heads=[4,8,16],
+                         patch_size=[2,4,4], window_size=[2,7,7],
+                         mlp_ratio=4.0, epochs=20, lr=0.001, batch_size=1.
+    dataset.py           CSV -> colormap -> frame grouping -> sliding window
+                         pipeline. Per-node min/max normalization.
+    model.py             3D-SwinSTB: PatchEmbed3D, SwinTransformerBlock3D,
+                         BasicLayer, PatchMerging3D, PatchExpanding3D,
+                         Encoder, Decoder, ProjectionHead.
+    train.py             Training with MSE loss on RGB space.
+    evaluate.py          Evaluation in both RGB space (MSE/RMSE/MAE/R2/PSNR/
+                         SSIM/LPIPS) and dBm space (colormap inversion).
+    inference.py         Standalone inference on new CSV.
+    utils.py             Seed, device, metrics, checkpoint I/O.
+    requirements.txt     Python dependencies.
+    README.md   (94 l.)  Quick start, architecture overview, metrics.
+    DESIGN.md  (190 l.)  Detailed design: data pipeline, architecture,
+                         checkpoints, evaluation details.
+
+  Generated artifacts:
+    smoke_test/          config.yaml, checkpoints/training_log.json,
+                         evaluation/metrics.json, evaluation/sample_prediction.png
+
+  ----------------------------------------------------------------------------
+
+  4.4 training/DSwinLSTM-I/
+  ~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Model description: Deep SwinLSTM with Imputation. Reconstruction of the
+  DSwinLSTM-I paper for joint imputation and prediction. Encoder uses
+  SwinLSTM-I (imputation) units, decoder uses vanilla SwinLSTM units.
+  Hierarchical patch merging/expanding with padding/cropping for
+  arbitrary map sizes.
+
+  Supporting files:
+    config.yaml          T_in=10, T_out=10, map_height=3, map_width=250,
+                         embed_dim=128, missing_rate=0.3, lr=0.001.
+    dataset.py           AERPAWDataset: CSV loading, node selection,
+                         pseudo-map reshape (3 x 250), mask generators
+                         (random/block/frequency/node), MinMax normalization.
+    model.py             SwinLSTMCell, SwinLSTMCellI (with imputation),
+                         PatchEmbed, MaskPool, Encoder, Decoder,
+                         Reconstruction, DSwinLSTM_I.
+    train.py             Training with teacher forcing, gradient clipping,
+                         early stopping.
+    evaluate.py          Test evaluation: RMSE/MAE/R2/NRMSE(dB),
+                         per-horizon/per-node metrics.
+    inference.py         Predict on new CSV or NPZ data.
+    utils.py             Config loading, MinMax normalization, metrics,
+                         checkpoint I/O, plotting.
+    README.md  (732 l.)  Architecture docs, mask strategies, normalization,
+                         pseudo-spectrum-map representation.
+
+  Generated artifacts:
+    checkpoints/         best_model.pt, last_model.pt,
+                         normalization_stats.pt, training_log.json,
+                         training.log.
+    evaluation/          metrics.json, predictions.csv, ground_truth.csv,
+                         predictions_dbm.csv, ground_truth_dbm.csv,
+                         spectrograms, error_analysis.png.
+    smoke_test/          config.yaml, checkpoints/.
+    smoke_test_map/      config.yaml, checkpoints/.
+
+  ----------------------------------------------------------------------------
+
+  4.5 training/STS-PredNet/
+  ~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Model description: Spatial-Temporal-Spectral PredNet. Reconstruction of
+  Li et al., IEEE Comms Letters 2020. Three-branch architecture (closeness,
+  period, trend) using PredRNN cells with STS-ConvLSTM zigzag memory flow.
+  Learnable weighted fusion by element-wise multiplication + 1x1 conv.
+
+  Supporting files:
+    config.yaml          lc=36, lp=3, lq=4, use_closeness=true,
+                         use_period=true, use_trend=false, num_layers=4,
+                         hidden_dim=128, lr=0.001.
+    dataset.py           Branch generation (closeness/period/trend), CSV
+                         and NPZ loading, NaN handling, normalization.
+    sts_convlstm_cell.py STS-ConvLSTM cell (ST-LSTM from PredRNN) with
+                         3 states: H (hidden), C (cell), M (memory).
+    predrnn.py           Single PredRNN branch: zigzag memory flow across
+                         layers and time steps.
+    stsprednet.py        STS-PredNet: 3 PredRNN branches + learnable fusion.
+    train.py             Training with configurable branches, MSE loss,
+                         Adam optimizer.
+    evaluate.py          Test evaluation: per-horizon/per-node/per-frequency
+                         metrics, spectrograms.
+    inference.py         Forward pass on new CSV or NPZ data.
+    utils.py             Config, denormalization, metrics (RMSE/MAE/R2),
+                         plotting.
+    README.md  (735 l.)  Architecture, three-branch flow, PredRNN cell,
+                         AERPAW branch feasibility analysis.
+
+  Generated artifacts:
+    checkpoints/         best_model.pt, last_model.pt,
+                         normalization_stats.pt, training_log.json.
+    evaluation/          metrics.json, predictions.csv, ground_truth.csv,
+                         predictions_dbm.csv, ground_truth_dbm.csv,
+                         spectrograms, error_analysis.png.
+    smoke_test/          config.yaml, report.txt, checkpoints/, evaluation/.
+    smoke_test_map/      config.yaml.
+
+  ----------------------------------------------------------------------------
+
+  4.6 training/TimeRAN/
+  ~~~~~~~~~~~~~~~~~~~~~
+
+  Model description: TimeRAN. Adaptation of the pretrained RAN
+  time-series foundation model (Panitsas & Tassiulas, arXiv 2026).
+  Uses MOMENT transformer backbone with a forecasting head. Supports
+  linear probing, LoRA, and full fine-tuning. 750-channel multivariate
+  forecasting with RevIN normalization.
+
+  Supporting files:
+    config.yaml          checkpoint_size=base, T_in=128, T_out=16,
+                         freeze_backbone=true, batch_size=1, lr=0.001,
+                         scheduler=onecycle, optimizer=adam.
+    dataset.py           AERPAWDataset: CSV loading, chronological split,
+                         sliding windows, (C,T) transposition, RevIN or
+                         z-score normalization.
+    train_head.py        Training for forecasting head: linear probing,
+                         LoRA, or full fine-tuning. Configurable MOMENT
+                         vs TimeRAN mode.
+    evaluate.py          Test evaluation. Per-horizon/per-node metrics.
+                         Optional MOMENT vs TimeRAN comparison.
+    inference.py         Predict on new CSV data.
+    utils.py             Metrics, checkpoint I/O, device setup, seeding.
+    README.md  (588 l.)  MOMENT backbone, fine-tuning strategies, RevIN,
+                         checkpoint download from Google Drive.
+
+  Generated artifacts:
+    checkpoints/         base/TimeRAN_base.pth, small/TimeRAN_small.pth,
+                         large/TimeRAN_large.pth (pretrained backbones),
+                         best_model.pt, training_log.json.
+    smoke_test/          config.yaml, report.txt, checkpoints/, evaluation/.
+
+  ----------------------------------------------------------------------------
+
+  4.7 training/TSS-LCD/
+  ~~~~~~~~~~~~~~~~~~~~~
+
+  Model description: Temporal-Spectral-Spatial Latent Conditional
+  Diffusion. Adaptation of Cheng et al., IEEE TCCN 2026. Three-stage
+  training: (1) Conv2D autoencoder (LSE/LSD), (2) TSS-CC condition
+  branches (TemFE, SpeFE, SpaFE with cross-attention fusion), (3) NEN
+  noise estimation (1D Conv U-Net with LCD-SP). Supports continuous
+  masking with configurable length/shared-gap/multiple-gap modes.
+
+  Supporting files:
+    __init__.py          Package marker.
+    config.yaml          T_in=50, T_out=10, latent_dim=32, hidden_dim=256,
+                         diffusion_steps=1000, autoencoder_activation=relu,
+                         nen_activation=relu, nen_normalization=batchnorm,
+                         condition_strategy=concat.
+    dataset.py           TSSLCDDataset: CSV loading, reshape to (T,L,F),
+                         chronological split, sliding windows, missing
+                         entry simulation (random/continuous masking).
+    model.py             PositionalEncoding, MultiHeadSelfAttention,
+                         TemFE/SpeFE/SpaFE, CrossAttentionFFM, LSE (Conv2d),
+                         LSD (ConvTranspose2d), NEN (Conv1D U-Net),
+                         DiffusionModel (cosine schedule).
+    train_autoencoder.py Stage 1: LSE+LSD autoencoder pretraining (MSE).
+    train_tss_condition.py Stage 2: TSS-CC conditioning (frozen AE,
+                         projection_to_latent objective).
+    train_diffusion.py   Stage 3: NEN noise estimation (frozen
+                         LSE/LSD/TSS-CC).
+    evaluate.py          Full evaluation: X -> TSS-CC -> reverse diffusion
+                         -> predictions. Per-horizon/per-node/per-frequency
+                         metrics. Metrics in nested format.
+    inference.py         Standalone online inference from incomplete obs.
+    utils.py             Normalization, metrics, checkpointing, config.
+    report.txt           Training/evaluation summary.
+    README.md  (483 l.)  Three-stage pipeline, TSS-CC branches, LCD-SP,
+                         paper-faithful vs repo differences.
+
+  Generated artifacts:
+    checkpoints/         best_autoencoder.pt, best_tss_condition.pt,
+                         best_diffusion.pt, config.yaml (copy),
+                         training_log.json.
+    evaluation/          metrics.json, overall_metrics.json,
+                         per_horizon_metrics.json, predictions.csv,
+                         ground_truth.csv, config.yaml (copy),
+                         spectrogram_CC2.png, error_analysis.png.
+    smoke_test/          config.yaml, checkpoints/ (all 3 stages).
+
+  ----------------------------------------------------------------------------
+
+  4.8 training/VanillaLSTM/
+  ~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Model description: Simple single-site LSTM baseline. Focuses on CC2
+  only. Per-frequency z-score normalization. Configurable output strategy
+  (final_hidden or all_hidden).
+
+  Supporting files:
+    config.yaml          T_in=12, T_out=6, hidden_size=128, num_layers=1,
+                         dropout=0.1, lr=0.001.
+    dataset.py           Single-site CSV loading, z-score normalization,
+                         sliding windows.
+    model.py             LSTM predictor with configurable output strategy.
+    train.py             Training with MSE loss, early stopping.
+    evaluate.py          Test evaluation with per-horizon metrics.
+    inference.py         Predict on new CSV data.
+    utils.py             Metrics, normalization, checkpointing.
+    README.md  (251 l.)  Architecture, single-site focus, per-frequency
+                         normalization.
+
+  Generated artifacts:
+    checkpoints/         best_model.pt, last_model.pt,
+                         normalization_stats.pt, training_log.json.
+    evaluation/          metrics.json, predictions.csv, ground_truth.csv,
+                         spectrogram_CC2.png, error_analysis.png.
+
+--------------------------------------------------------------------------------
+
+5. evaluation/ DIRECTORY (DETAILED)
+--------------------------------------------------------------------------------
+
+  evaluation/root files:
+
+    README.md  (467 l.)  Comprehensive documentation of spectrum data
+                         collection on PAWR testbeds (POWDER, ARA, COSMOS,
+                         AERPAW). Documents USRP-based collect_spectrum.py,
+                         CLI args, output structure, testbed instructions.
+
+    .env.example         Template for S3 credentials (AWS_ACCESS_KEY_ID,
+                         AWS_SECRET_ACCESS_KEY, S3_ENDPOINT_URL).
+
+    collect_spectrum.py  Main USRP spectrum acquisition script. Sweeps
+                         configurable 200 MHz bands using UHD, computes
+                         PSD via Welch's method, saves per-minute CSV and
+                         optional raw NPZ.
+
+    plot_band_ground_truth.py
+                         Renders heatmap visualizations from collected
+                         spectrum data (tarball, run directory, band
+                         directory, or CSV).
+
+    plot_spatial_3d.py   Generates 3D spatial spectrum visualizations
+                         (used with interpolated map data).
+
+    plot_remote_spectrum_bucket_colab.ipynb
+                         Colab notebook for plotting spectrum data from
+                         remote S3 object storage.
+
+    startSpectrumUsageCollection.sh
+                         Shell script to automate spectrum collection
+                         startup.
+
+    sync_object_storage.py
+                         Periodically syncs collected data to Chameleon
+                         S3-compatible object storage (with local disk
+                         pruning).
+
+    verify_object_storage.py
+                         Tests connection to the Chameleon object store.
+
+  evaluation/aerpaw/:
+
+    ResultsCC1Feb2022_SigMF_power_1mhz_avg_per_minute.csv
+    ResultsCC2Feb2022_SigMF_power_1mhz_avg_per_minute.csv
+    ResultsLW1Feb2022_SigMF_power_1mhz_avg_per_minute.csv
+                         Pre-processed per-minute averaged power CSVs
+                         for each AERPAW node (1 MHz resolution, hundreds
+                         of columns covering full sweep range). These are
+                         intermediate files produced during the
+                         training/build_training_csv.py pipeline.
+
+  evaluation/interpolated_maps/:
+
+    idw_ames_curtiss_600_800.npz
+                         Pre-computed inverse-distance-weighted
+                         interpolated spectrum map for 600-800 MHz band
+                         (Ames, Curtiss site).
+
+    idw_ames_curtiss_600_800_map_3d.png
+                         3D visualization of the interpolated map.
+
+    spectrum_3d.html     Interactive 3D HTML visualization.
+
+    Test.ipynb           Jupyter notebook for exploring interpolated maps.
+
+--------------------------------------------------------------------------------
+
+6. README COVERAGE SUMMARY (main branch)
+--------------------------------------------------------------------------------
+
+  training/README.md            Dataset pipeline (AERPAW download, SigMF
+                                extraction, bin offsets, merge process)
+
+  training/Autoformer-CSA/      Architecture, CSAM, Autoformer backbone,
+                                full config reference
+
+  training/ConvLSTM/            Architecture, dual input modes, hyperparams
+
+  training/DeepSPred/           Quick start, architecture, metrics  (brief)
+  training/DeepSPred/DESIGN.md  Extensive design doc (architecture, pipeline,
+                                checkpoint format, metrics)              [NEW]
+
+  training/DSwinLSTM-I/         Architecture, mask strategies, normalization
+
+  training/STS-PredNet/         Architecture, three-branch flow, feasibility
+
+  training/TimeRAN/             MOMENT backbone, fine-tuning, RevIN,
+                                checkpoint download
+
+  training/TSS-LCD/             Three-stage pipeline, TSS-CC, diffusion,
+                                paper differences
+
+  training/VanillaLSTM/         Architecture, single-site, normalization
+
+  models/README.md              Placeholder
+  results/README.md             Placeholder
+  plots/README.md               Placeholder
+  evaluation/README.md          Spectrum collection on PAWR testbeds
+  extern/Autoformer/README.md   Original Autoformer paper (NeurIPS 2021)
+
+--------------------------------------------------------------------------------
+END OF PART 1 (MAIN BRANCH)
+================================================================================
+
+
+
+
+
+
+
+================================================================================
+PART 2: INTEGRATE BRANCH
+================================================================================
+
+  NOTE: The integrate branch represents a major refactoring of main.
+  Instead of standalone self-contained model directories, it introduces
+  a shared pipeline under training/common/ and replaces individual
+  train.py scripts with unified train_integrated.py runners that all
+  consume the same shared configuration and utilities.
+
+  Several model source files from main were DELETED on integrate (their
+  generated checkpoints and evaluation artifacts remain). The focus is
+  on 4 models with integrated runners (ConvLSTM, STS-PredNet, TSS-LCD,
+  TimeRAN) plus a new LinearAutoRegressive baseline. Autoformer-CSA,
+  DSwinLSTM-I, DeepSPred, and VanillaLSTM had their source files removed.
+
+================================================================================
+
+1. TOP-LEVEL FILES AND DIRECTORIES (integrate branch)
+--------------------------------------------------------------------------------
+
+  CONVLSTM.ipynb
+      Jupyter notebook walking through the full ConvLSTM integrated
+      pipeline with cells for setup, training, and visualization.
+
+  checkpoints/
+      Contains best_autoencoder.pt (shared TSS-LCD autoencoder, same as
+      main branch).
+
+  data/
+      Same POWDER testbed CSV/NPZ data as main branch.
+
+  evaluation/
+      Same base evaluation files as main, plus 3 new scripts (see
+      Section 6 of this Part 2).
+
+  extern/Autoformer/
+      Same Autoformer fork as main branch.
+
+  logs/
+      New on integrate. Contains convlstm_full.log and convlstm_full2.log
+      (ConvLSTM training logs from integrated runs).
+
+  models/
+      Same placeholder README as main.
+
+  plots/
+      Same placeholder README as main (paper figure PNGs from main are
+      absent on integrate).
+
+  predictions.csv
+      Generated predictions CSV from training runs.
+
+  results/
+      Same placeholder README as main.
+
+  training/
+      Refactored with new training/common/ package and train_integrated.py
+      runners. Detailed below.
+
+--------------------------------------------------------------------------------
+
+2. training/common/ -- SHARED PIPELINE PACKAGE
+--------------------------------------------------------------------------------
+
+  This package is the core of the integrate branch architecture. It
+  provides shared utilities consumed by all train_integrated.py runners.
+
+  __init__.py
+      Package marker. Docstring: "Shared training utilities for spectrum
+      prediction models."
+
+  config.yaml
+      Single shared configuration file for all models. Sections:
+      - data: chunk specs (600-800, 2400-2600, 3500-3700 MHz) including
+        site, col_start, col_end, chunk_name
+      - windowing: lookback=60, horizons=[1,5,15,60]
+      - normalization: method=zscore
+      - ConvLSTM: hidden_dim, kernel_size, lr, batch_size, epochs, etc.
+      - STS-PredNet: num_layers, hidden_dim, lc, lp, lr, etc.
+      - TimeRAN: checkpoint_size, T_in, T_out, freeze_backbone, etc.
+      - TSS-LCD: T_in, T_out, latent_dim, hidden_dim, diffusion_steps, etc.
+
+  config.py
+      YAML config loader with validation. Resolves relative paths against
+      repo root. Checks for required sections (data, windowing,
+      preprocessing, outputs). Returns structured Config object.
+
+  data.py
+      Shared data loader and preprocessor. Key functions:
+      - load_chunk(): loads a frequency chunk from AERPAW CSV by node
+        columns, returns numpy array
+      - model_matrix_to_convlstm_frames(): reshapes flat features into
+        (T, C, H, W) for ConvLSTM
+      - clean_interpolated_map(): NaN imputation for 4D map arrays
+
+  metrics.py
+      Denormalization and error computation. Functions:
+      - denormalize(): reverses z-score scaling
+      - metric_values_dbm(): computes per-sample errors in dBm
+      - absolute_and_squared_errors_dbm(): raw error arrays for aggregation
+
+  results.py
+      Output and results management. Functions:
+      - load_band_definitions(): reads band definitions from config
+      - create_output_directories(): ensures results tree exists
+      - append_aggregate_metrics_row(), append_per_frequency_metrics_row(),
+        append_per_band_metrics_row(): write to CSV
+
+  windowing.py
+      Target and history window computation. Functions:
+      - target_rows_for(): computes target row indices for a given horizon
+      - lagged_matrix(): builds lagged feature matrix for autoregression
+      - aligned_history_matrix(): builds aligned history matrix for
+        lookback-based models
+      - horizon_index_selection(): selects specific horizon indices
+
+  aerpaw_loader.py
+      AERPAW CSV loader. Interpolates missing values (forward-fill then
+      linear interpolation), splits chronologically (last 2 days as test),
+      optionally normalizes to zero-mean unit-variance.
+
+  assemble_results.py
+      Combines aggregate, per-frequency, and per-band metrics from all
+      model output directories into unified CSVs. Writes a markdown
+      summary report with best-model tables.
+
+--------------------------------------------------------------------------------
+
+3. INTEGRATED MODEL RUNNERS (train_integrated.py)
+--------------------------------------------------------------------------------
+
+  3.1 training/ConvLSTM/train_integrated.py
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Integrated ConvLSTM runner. Workflow:
+    1. Parse --config (defaults to training/common/config.yaml)
+    2. Load chunk specs from config.data.chunks
+    3. For each chunk: load data via load_chunk(), reshape via
+       model_matrix_to_convlstm_frames(), train ConvLSTM model
+    4. Evaluate all configured horizons (1, 5, 15, 60)
+    5. Write aggregate/per-frequency/per-band metrics to
+       training/results/ConvLSTM/ via results.py helpers
+    6. Supports both CSV and interpolated-map modes
+
+  Model file: training/ConvLSTM/model.py
+      Same ConvLSTM model as main branch (ConvLSTMCell, ConvLSTM,
+      ConvLSTMPredictor).
+
+  Generated artifacts:
+    checkpoints/         best_model.pt, last_model.pt,
+                         normalization_stats.pt, training_log.json.
+    smoke_test/          config.yaml, checkpoints/training_log.json,
+                         evaluation/ (metrics.json, predictions.csv,
+                         ground_truth.csv, spectrogram_CC2.png,
+                         error_analysis.png), report.txt.
+
+  ----------------------------------------------------------------------------
+
+  3.2 training/STS-PredNet/train_integrated.py
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Integrated STS-PredNet runner. Workflow:
+    1. Parse --config (defaults to training/common/config.yaml)
+    2. Load chunk specs from config
+    3. For each chunk: load data, construct closeness+period branch
+       sequences, train STS-PredNet model
+    4. Evaluate all configured horizons
+    5. Write metrics to training/results/STS-PredNet/
+
+  Model files: training/STS-PredNet/
+      sts_convlstm_cell.py, predrnn.py, stsprednet.py (same as main).
+
+  Generated artifacts:
+    checkpoints/         best_model.pt, last_model.pt,
+                         normalization_stats.pt, training_log.json.
+    smoke_test/          checkpoints/ (best_model.pt, last_model.pt,
+                         normalization_stats.pt).
+
+  ----------------------------------------------------------------------------
+
+  3.3 training/TSS-LCD/train_integrated.py
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Integrated TSS-LCD runner. Workflow:
+    1. Parse --config (defaults to training/common/config.yaml)
+    2. Stage 1: train LSE+LSD autoencoder (MSE reconstruction)
+    3. Stage 2: train TSS-CC condition branches (frozen autoencoder)
+    4. Stage 3: train NEN diffusion model (frozen LSE/LSD/TSS-CC)
+    5. Evaluate all configured horizons
+    6. Write metrics to training/results/
+
+  Model files: training/TSS-LCD/
+      dataset.py, model.py (same as main).
+
+  Generated artifacts:
+    checkpoints/         best_autoencoder.pt, best_tss_condition.pt,
+                         best_diffusion.pt, config.yaml (copy),
+                         training_log.json.
+    evaluation/          metrics.json, predictions.csv, ground_truth.csv,
+                         overall_metrics.json, per_horizon_metrics.json,
+                         config.yaml (copy), error_analysis.png,
+                         spectrogram_CC2.png.
+
+  ----------------------------------------------------------------------------
+
+  3.4 training/TimeRAN/train_integrated.py
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Integrated TimeRAN runner. Workflow:
+    1. Parse --config (defaults to training/common/config.yaml)
+    2. Load MOMENT foundation model weights (small/base/large)
+    3. Train forecasting head via linear probing
+    4. Evaluate all configured horizons
+    5. Write metrics to training/results/TimeRAN/
+
+  Generated artifacts:
+    checkpoints/         best_model.pt, training_log.json.
+                         (pretrained backbone checkpoints same as main:
+                         base/TimeRAN_base.pth, etc.)
+    smoke_test/          checkpoints/ (best_model.pt, last_model.pt).
+
+  ----------------------------------------------------------------------------
+
+  3.5 training/LinearAutoRegressive/train.py
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  NEW BASELINE (not present on main). Trains one Ridge autoregressive
+  model per frequency bin per chunk per horizon. Uses shared config
+  and common utilities. Evaluates and writes aggregate/per-frequency/
+  per-band metrics to training/results/LinearAutoRegressive/.
+
+  Generated artifacts:
+    training/results/LinearAutoRegressive/
+        aggregate_metrics.csv, per_band_metrics.csv,
+        per_frequency_metrics.csv,
+        models/linear_autoregressive_models.pkl (serialized models).
+
+--------------------------------------------------------------------------------
+
+4. MODELS WITH SOURCE FILES DELETED (artifacts remain)
+--------------------------------------------------------------------------------
+
+  The following models have SOURCE FILES (train.py, model.py, dataset.py,
+  evaluate.py, inference.py, utils.py, config.yaml, README.md) DELETED on
+  the integrate branch. Only generated checkpoints and evaluation
+  artifacts remain.
+
+  4.1 training/Autoformer-CSA/
+      Deleted: train.py, model.py, dataset.py, evaluate.py, inference.py,
+      utils.py, config.yaml, README.md, smoke_test configs/reports.
+      Remaining: checkpoints/ (best_model.pt, last_model.pt, config.yaml,
+      training_log.json), evaluation/ (metrics.json, predictions.csv,
+      ground_truth.csv, spectrogram_CC2.png, error_analysis.png),
+      smoke_test/ and smoke_test_map/ (artifacts only).
+      Note: __init__.py was moved to evaluation/spectrum_eval/__init__.py.
+
+  4.2 training/DSwinLSTM-I/
+      Deleted: train.py, model.py, dataset.py, evaluate.py, inference.py,
+      utils.py, config.yaml, README.md, smoke_test configs.
+      Remaining: checkpoints/ (best_model.pt, last_model.pt,
+      normalization_stats.pt, training.log, training_log.json),
+      evaluation/ (all metrics, predictions, ground truth, plots),
+      smoke_test_map/ (checkpoints only).
+
+  4.3 training/VanillaLSTM/
+      Deleted: README.md, config.yaml, dataset.py, evaluate.py,
+      inference.py, model.py, train.py, utils.py.
+      Remaining: checkpoints/ (best_model.pt, last_model.pt,
+      normalization_stats.pt, training_log.json), evaluation/ (all
+      metrics, predictions, ground truth, plots).
+
+  4.4 training/DeepSPred/
+      DELETED ENTIRELY (including all source files, DESIGN.md, README.md,
+      requirements.txt, config.yaml, smoke_test/). Only __pycache__/
+      remains (empty).
+
+  Also deleted from training/data/:
+      cc2_smoke_test.csv, merged_power_data_sub6GHz_avg_per_minute_87_336.csv,
+      recon_smoothed_db.csv, recon_smoothed_norm.csv, reconstructed_repo_csv.csv
+
+  Also deleted from training/ root:
+      build_training_csv.py (data preprocessing script)
+
+--------------------------------------------------------------------------------
+
+5. training/results/ -- TRAINING OUTPUTS (NEW on integrate)
+--------------------------------------------------------------------------------
+
+  Organizes per-model training metrics into a structured directory:
+
+  ConvLSTM/
+      aggregate_metrics.csv    Aggregated MAE/RMSE per chunk/split/horizon
+      chunk_2400_2600_training_log.csv
+      chunk_3500_3700_training_log.csv
+      chunk_600_800_training_log.csv
+                               Per-epoch training logs for each frequency chunk
+      per_band_metrics.csv     Per-band metrics
+      per_frequency_metrics.csv  Per-frequency-bin metrics (2401 rows)
+      report.txt               Text summary
+
+  LinearAutoRegressive/
+      aggregate_metrics.csv    Aggregated metrics
+      per_band_metrics.csv     Per-band metrics
+      per_frequency_metrics.csv  Per-frequency-bin metrics
+      models/linear_autoregressive_models.pkl  Serialized models
+
+  STS-PredNet/
+      aggregate_metrics.csv
+      chunk_2400_2600_training_log.csv
+      chunk_3500_3700_training_log.csv
+      chunk_600_800_training_log.csv
+      per_band_metrics.csv
+      per_frequency_metrics.csv
+
+  TimeRAN/
+      aggregate_metrics.csv
+      chunk_2400_2600_training_log.csv
+      chunk_3500_3700_training_log.csv
+      chunk_600_800_training_log.csv
+      per_band_metrics.csv
+      per_frequency_metrics.csv
+
+--------------------------------------------------------------------------------
+
+6. NEW EVALUATION SCRIPTS (integrate branch only)
+--------------------------------------------------------------------------------
+
+  evaluation/reconstruct_merged_from_raw_s3.py
+      Reconstructs per-band per-minute 1 MHz power CSVs from raw S3
+      objects (for POWDER/ARA data). Inverse of the upload pipeline.
+
+  evaluation/sigmf_zip_to_csv.py
+      Converts zipped SigMF archives (CC1/CC2/LW1) to per-minute 1 MHz
+      CSV. Supports full-band or 250-bin slice export. Alternative to
+      training/build_training_csv.py.
+
+  evaluation/scripts/plot_autoreg_long_interval_by_horizon.py
+      Creates horizon-by-horizon forecast plots for autoregressive,
+      LAR, and lookback-mean baselines on selected CC2 test intervals.
+
+  evaluation/scripts/run_spectrum_steps_5_6.py
+      Evaluation baseline script. Computes persistence, historical mean,
+      lookback mean, same-time-last-3-days mean, AutoReg(60), and LAR
+      metrics. Uses training/common/ shared utilities.
+
+  evaluation/spectrum_eval/__init__.py
+      Package marker. Moved from training/Autoformer-CSA/__init__.py on
+      main. Part of the evaluation spectrum package.
+
+  evaluation/spectrum_eval/aerpaw_loader.py
+      AERPAW evaluation loader. Loads CSV, interpolates missing values,
+      splits chronologically (last 2 days = test), optionally normalizes.
+      Similar to training/common/aerpaw_loader.py but tuned for
+      evaluation workflows.
+
+  Also deleted from evaluation/ (vs main):
+      plot_spatial_3d.py and evaluation/interpolated_maps/
+      idw_ames_curtiss_600_800_map_3d.png (3D spatial plotting removed).
+
+--------------------------------------------------------------------------------
+
+7. INTEGRATE BRANCH SUMMARY
+--------------------------------------------------------------------------------
+
+  Branch purpose:
+      Refactor the standalone model implementations from main into a
+      shared pipeline architecture. Instead of each model having its own
+      train.py, dataset.py, config.yaml, etc., all models share:
+        - training/common/config.yaml (single config)
+        - training/common/data.py (shared data loading)
+        - training/common/metrics.py (shared metrics)
+        - training/common/results.py (shared output format)
+        - training/common/windowing.py (shared window logic)
+
+  Current integrated models (4):
+      ConvLSTM, STS-PredNet, TSS-LCD, TimeRAN
+      + LinearAutoRegressive baseline
+
+  Models removed from pipeline (4):
+      Autoformer-CSA, DSwinLSTM-I, DeepSPred, VanillaLSTM
+      (source files deleted; checkpoints/artifacts remain)
+
+  Pipeline workflow:
+      1. training/common/config.yaml defines data chunks (frequency bands
+         and node columns), windowing (lookback/horizons), and model-
+         specific hyperparameters.
+      2. Each train_integrated.py iterates over chunks, calls
+         load_chunk() for data, trains per-chunk, evaluates all
+         horizons, writes results.
+      3. assemble_results.py aggregates all per-model outputs into
+         unified comparison tables.
+
+  Key difference from main:
+      Main: 8 standalone models, each self-contained with its own config
+      and scripts.
+      Integrate: Shared pipeline, 4 active models + 1 baseline, models
+      excluded from pipeline remain as artifacts only.
+
+================================================================================
+END OF REPORT
+================================================================================
