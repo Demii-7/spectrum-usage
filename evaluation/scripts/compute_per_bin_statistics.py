@@ -197,7 +197,7 @@ def weekday_weekend_stats(index: pd.DatetimeIndex, values: np.ndarray, states: n
 def infer_step_minutes(index: pd.DatetimeIndex) -> float:
     if len(index) < 2:
         return math.nan
-    diffs = np.diff(index.view("int64")) / 1e9 / 60.0
+    diffs = index.to_series().diff().dropna().dt.total_seconds().to_numpy(dtype=np.float64) / 60.0
     return float(np.median(diffs))
 
 
@@ -278,7 +278,7 @@ def compute_file(path: Path, input_root: Path, max_fill_gap: int) -> tuple[pd.Da
         **{key: meta[key] for key in ("dataset", "node", "run_id", "band", "relative_path")},
         "start_time_utc": filled.index[0].isoformat(),
         "end_time_utc": filled.index[-1].isoformat(),
-        "duration_minutes": int(len(filled.index) - 1),
+        "duration_minutes": float((filled.index[-1] - filled.index[0]).total_seconds() / 60.0),
         "time_resolution_minutes": step_minutes,
         "timestamp_count": int(len(filled.index)),
         "frequency_bin_count": int(len(freq_cols)),
