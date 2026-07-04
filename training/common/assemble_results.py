@@ -16,6 +16,10 @@ DEFAULT_INPUTS = (
     Path("training/results/STS-PredNet"),
     Path("training/results/TimeRAN"),
     Path("training/results/TSS-LCD"),
+    Path("training/results/VanillaLSTM"),
+    Path("training/results/Autoformer-CSA"),
+    Path("training/results/DSwinLSTM-I"),
+    Path("training/results/DeepSPred"),
 )
 
 

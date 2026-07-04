@@ -16,7 +16,7 @@ This branch keeps a shared chunk-based training and evaluation pipeline under `t
   - `data`: AERPAW source path, chunk list, optional `max_rows`, optional `test_rows`
   - `windowing`: shared evaluation horizons
   - `preprocessing`: shared normalization toggle for the common numeric pipeline
-  - model-specific sections for `linear_autoregressive`, `convlstm`, `stsprednet`, `timeran`, `tss_lcd`
+  - model-specific sections such as `convlstm`, `autoformer_csa`, `deepspred`
 
 ## Chunk Loading
 
@@ -33,7 +33,8 @@ The loader keeps a chronological train/test split. For smoke tests, `data.max_ro
 ## Horizons
 
 - Shared evaluation horizons come from `windowing.horizons`.
-- All integrated models on this branch score directly on denormalized dBm predictions.
+- Numeric models score directly on denormalized dBm predictions.
+- DeepSPred maps minute horizons into rows inside predicted spectrogram frames.
 
 ## Train One Model
 
@@ -44,6 +45,10 @@ Use the integrated runner in the model directory:
 ./.venv/bin/python training/STS-PredNet/train_integrated.py --config training/common/config.yaml
 ./.venv/bin/python training/TimeRAN/train_integrated.py --config training/common/config.yaml
 ./.venv/bin/python training/TSS-LCD/train_integrated.py --config training/common/config.yaml
+./.venv/bin/python training/VanillaLSTM/train_integrated.py --config training/common/config.yaml
+./.venv/bin/python training/Autoformer-CSA/train_integrated.py --config training/common/config.yaml
+./.venv/bin/python training/DSwinLSTM-I/train_integrated.py --config training/common/config.yaml
+./.venv/bin/python training/DeepSPred/train_integrated.py --config training/common/config.yaml
 ./.venv/bin/python training/LinearAutoRegressive/train.py --config training/common/config.yaml
 ```
 
@@ -56,6 +61,10 @@ Run the commands above in sequence, or script them in the validation order used 
 3. `STS-PredNet`
 4. `TimeRAN`
 5. `TSS-LCD`
+6. `VanillaLSTM`
+7. `Autoformer-CSA`
+8. `DSwinLSTM-I`
+9. `DeepSPred`
 
 ## Results Layout
 
@@ -76,7 +85,7 @@ Expected outputs:
 ./.venv/bin/python training/common/assemble_results.py --config training/common/config.yaml
 ```
 
-Default aggregation includes the integrated branch models plus baselines.
+Default aggregation now includes all integrated models plus baselines.
 
 ## Smoke Tests
 
@@ -88,10 +97,17 @@ Use the shared smoke config:
 ./.venv/bin/python training/STS-PredNet/train_integrated.py --config training/common/config.smoke.yaml
 ./.venv/bin/python training/TimeRAN/train_integrated.py --config training/common/config.smoke.yaml
 ./.venv/bin/python training/TSS-LCD/train_integrated.py --config training/common/config.smoke.yaml
+./.venv/bin/python training/VanillaLSTM/train_integrated.py --config training/common/config.smoke.yaml
+./.venv/bin/python training/Autoformer-CSA/train_integrated.py --config training/common/config.smoke.yaml
+./.venv/bin/python training/DSwinLSTM-I/train_integrated.py --config training/common/config.smoke.yaml
+./.venv/bin/python training/DeepSPred/train_integrated.py --config training/common/config.smoke.yaml
 ```
 
 ## Model Notes
 
 - `LinearAutoRegressive`: preserved from `integrate`.
-- `ConvLSTM`, `STS-PredNet`, `TimeRAN`, `TSS-LCD`: existing integrated runners on this branch, updated to share output directory, checkpoint, and reporting helpers.
-- `data.max_rows` and `data.test_rows` are available for smoke runs without editing runner code.
+- `ConvLSTM`, `STS-PredNet`, `TimeRAN`, `TSS-LCD`: integrated runners preserved from `integrate`, model sources updated from `main`.
+- `VanillaLSTM`, `Autoformer-CSA`, `DSwinLSTM-I`, `DeepSPred`: restored from `main` and wrapped with integrated runners.
+- `DSwinLSTM-I`: first integration pass uses CSV chunk data reshaped to a pseudo-map.
+- `DeepSPred`: first integration pass uses CSV chunk data converted into colormap spectrogram frames.
+- Interpolated-map support remains model-specific and optional.

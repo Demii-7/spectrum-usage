@@ -31,6 +31,12 @@ def output_dir(config: dict[str, Any], model_name: str) -> Path:
     return path
 
 
+def checkpoints_dir(config: dict[str, Any], model_name: str) -> Path:
+    path = output_dir(config, model_name) / "checkpoints"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def append_metric_rows(
     aggregate_rows: list[dict[str, Any]],
     frequency_rows: list[dict[str, Any]],

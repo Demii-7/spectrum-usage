@@ -1,0 +1,91 @@
+TSS-LCD Adaptation — Summary Report
+=====================================
+
+Files Created
+-------------
+  training/TSS-LCD/README.md   (372 lines, 18,842 B) — Full architecture adaptation document
+  training/TSS-LCD/config.yaml  (51 lines, 978 B)    — Validated YAML configuration
+
+Final Folder Structure
+----------------------
+  training/TSS-LCD/
+  ├── README.md
+  ├── config.yaml
+  └── report.txt
+
+README Content Summary
+----------------------
+The README covers all 9 requested sections plus quick-start, script reference,
+file structure, and configuration reference:
+
+  1. What the Model Is Intended to Do
+     Two-stage generative model (TSS-CC + LCD-SP) for spectrum prediction
+     under incomplete historical observations; preserves fine-grained RSS
+     variations (2-5 dBm) via latent diffusion.
+
+  2. Input Format
+     CSV (6839, 750) with layout [CC1_0-249 | CC2_250-499 | LW1_500-749];
+     reshaped to (T, 3, 250). Windowing produces (T_in, 3, 250) inputs and
+     (T_out, 3, 250) targets. Missing entries simulated via configurable
+     random or continuous masking with zero-padding.
+
+  3. Model Architecture
+     TSS-CC: Three parallel multi-head self-attention branches (TemFE, SpeFE,
+     SpaFE) feeding into a cross-attention Feature Fusion Module (FFM).
+     LCD-SP: Latent Space Encoder (Conv2D downsampling) -> forward diffusion
+     (cosine schedule) -> Noise Estimation Network (Conv1D U-Net) -> reverse
+     denoising -> Latent Space Decoder (ConvTranspose2D upsampling).
+
+  4. Output Format
+     (T_out, 3, 250) in normalized space; inverse-transformed to dBm for
+     metric computation.
+
+  5. Training Pipeline
+     Three sequential stages with separate scripts and checkpoints:
+     - Stage 1: Latent autoencoder pretraining (LSE + LSD, MSE reconstruction)
+     - Stage 2: TSS-CC condition training (frozen LSE/LSD)
+     - Stage 3: LCD diffusion noise-estimation training (frozen everything else)
+
+  6. Assumptions and Design Decisions
+     Chronological split, masking applied only to input X, normalization fit
+     on train only, complete-observation baseline first.
+
+  7. Deviations from Original TSS-LCD
+     - Per-node frequency offsets vs unified 85-335 MHz band
+     - 6839 rows vs 10080 (one week) claimed in paper
+     - Added validation split (7:1.5:1.5 vs paper's 7:3)
+     - Paper-faithful TSS-CC (no context autoencoder)
+
+  8. Known Limitations
+     - Diffusion training is complex and slow vs regression models
+     - Multi-stage checkpoint management
+     - GPU strongly recommended (CPU training impractical)
+     - Data mismatch (row count, frequency bands) vs paper claims
+
+  9. Implementation Notes
+     8 future Python scripts planned (dataset.py, model.py, train_*.py,
+     evaluate.py, inference.py, utils.py). Smoke-test config provided.
+
+Config Choices Summary
+----------------------
+  - Defaults match the paper: T_in=50, T_out=10, missing_rate=0.25,
+    lr=1e-4, batch_size=32, diffusion_steps=1000, latent_dim=32
+  - Chronological 7:1.5:1.5 split
+  - Cosine noise schedule (matches repo's NoiseNet.py)
+  - Three-stage training with separate epoch counts
+
+Assumptions Made
+----------------
+  1. CSV column order is [CC1_250 | CC2_250 | LW1_250] (confirmed via
+     build_training_csv.py and reverse-engineering docs)
+  2. Paper-faithful TSS-CC produces H_fusion directly (bypassing context AE)
+  3. Normalization fitted on training data only, shared with val/test
+  4. LSE/LSD operate only on future Y, never on X
+
+Unresolved Questions
+--------------------
+  1. Paper (direct TSS-CC) vs repo (context AE) architecture mismatch
+  2. Batch size discrepancy: paper says 32, repo config.py defaults to 256
+  3. Dataset row count (6839) vs paper claim (10080)
+  4. Frequency band claim (85-335 MHz) vs per-node offsets reality
+  5. NEN skip-connection implementation details vs paper diagram
