@@ -21,6 +21,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from model import ConvLSTMPredictor  # noqa: E402
 from training.common.config import load_config  # noqa: E402
+from training.common.integrated import epoch_log_row, finalize_results, prepare_output_dirs, timestamp_utc  # noqa: E402
 from training.common.data import (
     chunk_specs,
     clean_interpolated_map,
@@ -28,7 +29,7 @@ from training.common.data import (
     model_matrix_to_convlstm_frames,
 )  # noqa: E402
 from training.common.metrics import absolute_and_squared_errors_dbm  # noqa: E402
-from training.common.results import append_metric_rows, load_band_definitions, output_dir  # noqa: E402
+from training.common.results import append_metric_rows, load_band_definitions  # noqa: E402
 from training.common.windowing import aligned_history_matrix, selected_horizon_index, target_rows_for  # noqa: E402
 
 
@@ -133,7 +134,7 @@ def build_map_model_config(config: dict[str, Any], n_freq: int, grid_h: int, gri
     }
 
 
-def train_one_model(config: dict[str, Any], train_matrix: np.ndarray, out: Path, chunk_id: str) -> ConvLSTMPredictor:
+def train_one_model(config: dict[str, Any], train_matrix: np.ndarray, checkpoints: Path, out: Path, chunk_id: str) -> ConvLSTMPredictor:
     ccfg = config["convlstm"]
     lookback = int(ccfg.get("input_sequence_length", config["windowing"]["lookback"]))
     prediction_horizon = int(ccfg.get("prediction_horizon", max(config["windowing"]["horizons"])))
@@ -177,8 +178,10 @@ def train_one_model(config: dict[str, Any], train_matrix: np.ndarray, out: Path,
     best_state = None
     log_rows = []
     epoch_times: list[float] = []
+    training_start_time = timestamp_utc()
     t_start = time.perf_counter()
     for epoch in range(1, epochs + 1):
+        epoch_start_time = timestamp_utc()
         t_epoch = time.perf_counter()
         model.train()
         train_loss = 0.0
@@ -205,10 +208,21 @@ def train_one_model(config: dict[str, Any], train_matrix: np.ndarray, out: Path,
                 val_loss += criterion(pred, y).item() * x.size(0)
         val_loss /= max(len(val_loader.dataset), 1)
         t_epoch = time.perf_counter() - t_epoch
+        epoch_end_time = timestamp_utc()
         epoch_times.append(t_epoch)
         avg_time = sum(epoch_times) / len(epoch_times)
         eta = avg_time * (epochs - epoch)
-        log_rows.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss, "time_sec": t_epoch})
+        log_rows.append(
+            epoch_log_row(
+                epoch=epoch,
+                train_loss=train_loss,
+                val_loss=val_loss,
+                epoch_start_time=epoch_start_time,
+                epoch_end_time=epoch_end_time,
+                epoch_duration_sec=t_epoch,
+                learning_rate=float(optimizer.param_groups[0]["lr"]),
+            )
+        )
         print(f"{chunk_id} epoch {epoch:03d}/{epochs} train_loss={train_loss:.6f} val_loss={val_loss:.6f} time={t_epoch:.1f}s avg={avg_time:.1f}s eta={eta:.0f}s")
         if val_loss < best_loss:
             best_loss = val_loss
@@ -220,8 +234,15 @@ def train_one_model(config: dict[str, Any], train_matrix: np.ndarray, out: Path,
         model.load_state_dict(best_state)
     pd.DataFrame(log_rows).to_csv(out / f"{chunk_id}_training_log.csv", index=False)
     torch.save(
-        {"model_state_dict": model.state_dict(), "model_config": model_config, "common_config": config},
-        out / "models" / f"{chunk_id}_convlstm.pt",
+        {
+            "model_state_dict": model.state_dict(),
+            "model_config": model_config,
+            "common_config": config,
+            "training_start_time": training_start_time,
+            "training_end_time": timestamp_utc(),
+            "training_duration_sec": total_time,
+        },
+        checkpoints / f"{chunk_id}_convlstm.pt",
     )
     return model
 
@@ -258,7 +279,8 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands: pd.DataFrame, out: Path
     test_splits = config["data"].get("test_splits", [data.test_split])
     train = data.splits[data.train_split].model_input
     train_raw = data.splits[data.train_split].raw_dbm
-    model = train_one_model(config, train, out, chunk.chunk_id)
+    checkpoints = out / "checkpoints"
+    model = train_one_model(config, train, checkpoints, out, chunk.chunk_id)
 
     aggregate_rows: list[dict[str, Any]] = []
     frequency_rows: list[dict[str, Any]] = []
@@ -303,9 +325,12 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     config = load_config(args.config)
-    out = args.output_dir or output_dir(config, "ConvLSTM")
-    out.mkdir(parents=True, exist_ok=True)
-    (out / "models").mkdir(parents=True, exist_ok=True)
+    out, checkpoints = prepare_output_dirs(config, "ConvLSTM")
+    if args.output_dir is not None:
+        out = args.output_dir
+        out.mkdir(parents=True, exist_ok=True)
+        checkpoints = out / "checkpoints"
+        checkpoints.mkdir(parents=True, exist_ok=True)
 
     # Check for interpolated-map mode.
     map_cfg = config["convlstm"].get("interpolated_map", {})
@@ -363,13 +388,19 @@ def main() -> None:
             val_loss /= max(len(val_loader.dataset), 1)
             print(f"map epoch {epoch:03d} train_loss={train_loss:.6f} val_loss={val_loss:.6f}")
         torch.save(
-            {"model_state_dict": model.state_dict(), "model_config": model_config, "common_config": config},
-            out / "models" / "interpolated_map_convlstm.pt",
+            {
+                "model_state_dict": model.state_dict(),
+                "model_config": model_config,
+                "common_config": config,
+                "training_end_time": timestamp_utc(),
+            },
+            checkpoints / "interpolated_map_convlstm.pt",
         )
-        print(f"Interpolated-map model saved to {out / 'models' / 'interpolated_map_convlstm.pt'}")
+        print(f"Interpolated-map model saved to {checkpoints / 'interpolated_map_convlstm.pt'}")
         return
 
     bands = load_band_definitions(config)
+    total_start_time = timestamp_utc()
     total_start = time.perf_counter()
     aggregate_rows: list[dict[str, Any]] = []
     frequency_rows: list[dict[str, Any]] = []
@@ -383,10 +414,15 @@ def main() -> None:
         frequency_rows.extend(frequency)
         band_rows.extend(band)
 
-    pd.DataFrame(aggregate_rows).to_csv(out / "aggregate_metrics.csv", index=False)
-    pd.DataFrame(frequency_rows).to_csv(out / "per_frequency_metrics.csv", index=False)
-    pd.DataFrame(band_rows).to_csv(out / "per_band_metrics.csv", index=False)
     total_run = time.perf_counter() - total_start
+    finalize_results(
+        out,
+        "ConvLSTM",
+        aggregate_rows,
+        frequency_rows,
+        band_rows,
+        [f"Training start time: {total_start_time}", f"Total run time seconds: {total_run:.2f}"],
+    )
     print(f"Wrote {len(aggregate_rows)} aggregate metric rows to {out / 'aggregate_metrics.csv'}")
     print(f"Total run time: {total_run:.1f}s ({total_run/60:.1f} min)")
 

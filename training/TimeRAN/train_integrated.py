@@ -18,9 +18,10 @@ if str(ROOT) not in sys.path:
 
 from momentfm import MOMENTPipeline  # noqa: E402
 from training.common.config import load_config  # noqa: E402
+from training.common.integrated import epoch_log_row, finalize_results, prepare_output_dirs, timestamp_utc  # noqa: E402
 from training.common.data import chunk_specs, load_chunk  # noqa: E402
 from training.common.metrics import absolute_and_squared_errors_dbm  # noqa: E402
-from training.common.results import append_metric_rows, load_band_definitions, output_dir  # noqa: E402
+from training.common.results import append_metric_rows, load_band_definitions  # noqa: E402
 from training.common.windowing import target_rows_for  # noqa: E402
 
 MODEL_NAME = "timeran"
@@ -78,7 +79,7 @@ def build_model(config: dict[str, Any], device: torch.device, t_in: int, t_out: 
 
 
 def train_one_model(config: dict[str, Any], train_input: np.ndarray,
-                    out: Path, chunk_id: str):
+                    checkpoints: Path, out: Path, chunk_id: str):
     tcfg = config["timeran"]
     lookback = int(config["windowing"]["lookback"])
     max_horizon = max(int(h) for h in config["windowing"]["horizons"])
@@ -127,9 +128,11 @@ def train_one_model(config: dict[str, Any], train_input: np.ndarray,
     best_state = None
     log_rows = []
     epoch_times: list[float] = []
+    training_start_time = timestamp_utc()
     t_start = time.perf_counter()
 
     for epoch in range(1, epochs + 1):
+        epoch_start_time = timestamp_utc()
         t_epoch = time.perf_counter()
         model.train()
         train_loss = 0.0
@@ -141,11 +144,11 @@ def train_one_model(config: dict[str, Any], train_input: np.ndarray,
             optimizer.zero_grad()
             if device.type == "cuda":
                 with torch.amp.autocast("cuda"):
-                    out = model(x_enc=x, input_mask=input_mask)
-                    loss = criterion(out.forecast, y)
+                    model_output = model(x_enc=x, input_mask=input_mask)
+                    loss = criterion(model_output.forecast, y)
             else:
-                out = model(x_enc=x, input_mask=input_mask)
-                loss = criterion(out.forecast, y)
+                model_output = model(x_enc=x, input_mask=input_mask)
+                loss = criterion(model_output.forecast, y)
             loss.backward()
             if clip_norm > 0:
                 nn.utils.clip_grad_norm_(model.parameters(), clip_norm)
@@ -162,17 +165,28 @@ def train_one_model(config: dict[str, Any], train_input: np.ndarray,
                 input_mask = torch.ones(x.shape[0], x.shape[-1], device=device)
                 if device.type == "cuda":
                     with torch.amp.autocast("cuda"):
-                        out = model(x_enc=x, input_mask=input_mask)
+                        model_output = model(x_enc=x, input_mask=input_mask)
                 else:
-                    out = model(x_enc=x, input_mask=input_mask)
-                val_loss += criterion(out.forecast, y).item() * x.size(0)
+                    model_output = model(x_enc=x, input_mask=input_mask)
+                val_loss += criterion(model_output.forecast, y).item() * x.size(0)
         val_loss /= max(len(val_loader.dataset), 1)
 
         t_epoch = time.perf_counter() - t_epoch
+        epoch_end_time = timestamp_utc()
         epoch_times.append(t_epoch)
         avg_time = sum(epoch_times) / len(epoch_times)
         eta = avg_time * (epochs - epoch)
-        log_rows.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss, "time_sec": t_epoch})
+        log_rows.append(
+            epoch_log_row(
+                epoch=epoch,
+                train_loss=train_loss,
+                val_loss=val_loss,
+                epoch_start_time=epoch_start_time,
+                epoch_end_time=epoch_end_time,
+                epoch_duration_sec=t_epoch,
+                learning_rate=float(optimizer.param_groups[0]["lr"]),
+            )
+        )
         print(f"  {chunk_id} epoch {epoch:03d}/{epochs} train_loss={train_loss:.6f} val_loss={val_loss:.6f} time={t_epoch:.1f}s avg={avg_time:.1f}s eta={eta:.0f}s")
 
         if val_loss < best_loss:
@@ -185,8 +199,14 @@ def train_one_model(config: dict[str, Any], train_input: np.ndarray,
         model.load_state_dict(best_state)
     pd.DataFrame(log_rows).to_csv(out / f"{chunk_id}_training_log.csv", index=False)
     torch.save(
-        {"model_state_dict": best_state, "config": config},
-        out / "models" / f"{chunk_id}_timeran.pt",
+        {
+            "model_state_dict": best_state,
+            "config": config,
+            "training_start_time": training_start_time,
+            "training_end_time": timestamp_utc(),
+            "training_duration_sec": total_time,
+        },
+        checkpoints / f"{chunk_id}_timeran.pt",
     )
     return model
 
@@ -210,10 +230,10 @@ def predict_timeran(model: nn.Module, device: torch.device,
             input_mask = torch.ones(x.shape[0], x.shape[-1], device=device)
             if device.type == "cuda":
                 with torch.amp.autocast("cuda"):
-                    out = model(x_enc=x, input_mask=input_mask)
+                    model_output = model(x_enc=x, input_mask=input_mask)
             else:
-                out = model(x_enc=x, input_mask=input_mask)
-            preds.append(out.forecast[:, :, horizon - 1].cpu().numpy())
+                model_output = model(x_enc=x, input_mask=input_mask)
+            preds.append(model_output.forecast[:, :, horizon - 1].cpu().numpy())
     return np.concatenate(preds, axis=0).astype(np.float32)
 
 
@@ -228,7 +248,8 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands: pd.DataFrame, out: Path
     train = data.splits[data.train_split].model_input
     train_raw = data.splits[data.train_split].raw_dbm
 
-    model = train_one_model(config, train, out, chunk.chunk_id)
+    checkpoints = out / "checkpoints"
+    model = train_one_model(config, train, checkpoints, out, chunk.chunk_id)
     device = next(model.parameters()).device
     t_in = lookback
     max_horizon = max(horizons)
@@ -289,11 +310,15 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     config = load_config(args.config)
-    out = args.output_dir or output_dir(config, "TimeRAN")
-    out.mkdir(parents=True, exist_ok=True)
-    (out / "models").mkdir(parents=True, exist_ok=True)
+    out, checkpoints = prepare_output_dirs(config, "TimeRAN")
+    if args.output_dir is not None:
+        out = args.output_dir
+        out.mkdir(parents=True, exist_ok=True)
+        checkpoints = out / "checkpoints"
+        checkpoints.mkdir(parents=True, exist_ok=True)
     bands = load_band_definitions(config)
 
+    total_start_time = timestamp_utc()
     total_start = time.perf_counter()
     aggregate_rows: list[dict[str, Any]] = []
     frequency_rows: list[dict[str, Any]] = []
@@ -308,10 +333,15 @@ def main() -> None:
         frequency_rows.extend(f)
         band_rows.extend(b)
 
-    pd.DataFrame(aggregate_rows).to_csv(out / "aggregate_metrics.csv", index=False)
-    pd.DataFrame(frequency_rows).to_csv(out / "per_frequency_metrics.csv", index=False)
-    pd.DataFrame(band_rows).to_csv(out / "per_band_metrics.csv", index=False)
     total_run = time.perf_counter() - total_start
+    finalize_results(
+        out,
+        "TimeRAN",
+        aggregate_rows,
+        frequency_rows,
+        band_rows,
+        [f"Training start time: {total_start_time}", f"Total run time seconds: {total_run:.2f}"],
+    )
     print(f"Wrote {len(aggregate_rows)} aggregate metric rows to {out / 'aggregate_metrics.csv'}")
     print(f"Total run time: {total_run:.1f}s ({total_run/60:.1f} min)")
 

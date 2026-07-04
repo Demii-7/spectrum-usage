@@ -71,6 +71,8 @@ def load_aerpaw_data(
     chunk_end_mhz: float,
     normalize: bool = False,
     reference_site: str = DEFAULT_REFERENCE_SITE,
+    max_rows: int | None = None,
+    test_rows: int = 2880,
 ) -> LoadedSpectrumData:
     if reference_site not in SITES:
         raise ValueError(f"reference_site must be one of {SITES}, got {reference_site!r}.")
@@ -89,11 +91,13 @@ def load_aerpaw_data(
         )
 
     raw = raw.loc[:, selected_cols].copy()
+    if max_rows is not None:
+        raw = raw.iloc[: int(max_rows)].copy()
     filled = interpolate_missing(raw)
-    if len(filled) <= 2880:
-        raise ValueError(f"{reference_site} must have more than 2880 rows for the chronological split.")
+    if len(filled) <= test_rows:
+        raise ValueError(f"{reference_site} must have more than {test_rows} rows for the chronological split.")
 
-    train_end = len(filled) - 2880
+    train_end = len(filled) - test_rows
     array = filled.to_numpy(dtype=np.float32)
     model_array = array
     normalization = None

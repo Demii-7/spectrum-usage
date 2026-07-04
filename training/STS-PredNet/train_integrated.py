@@ -21,9 +21,10 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from stsprednet import STSPredNet  # noqa: E402
 from training.common.config import load_config  # noqa: E402
+from training.common.integrated import epoch_log_row, finalize_results, prepare_output_dirs, timestamp_utc  # noqa: E402
 from training.common.data import chunk_specs, load_chunk  # noqa: E402
 from training.common.metrics import absolute_and_squared_errors_dbm  # noqa: E402
-from training.common.results import append_metric_rows, load_band_definitions, output_dir  # noqa: E402
+from training.common.results import append_metric_rows, load_band_definitions  # noqa: E402
 from training.common.windowing import target_rows_for  # noqa: E402
 
 MODEL_NAME = "stsprednet"
@@ -89,7 +90,7 @@ def build_model_config(config: dict[str, Any], n_bins: int) -> dict[str, Any]:
 
 
 def train_one_model(config: dict[str, Any], full_x: np.ndarray,
-                    out: Path, chunk_id: str) -> STSPredNet:
+                    checkpoints: Path, out: Path, chunk_id: str) -> STSPredNet:
     scfg = config["stsprednet"]
     lc = int(scfg["lc"])
     lp = int(scfg["lp"])
@@ -141,9 +142,11 @@ def train_one_model(config: dict[str, Any], full_x: np.ndarray,
     no_improve = 0
     log_rows = []
     epoch_times: list[float] = []
+    training_start_time = timestamp_utc()
     t_start = time.perf_counter()
 
     for epoch in range(1, epochs + 1):
+        epoch_start_time = timestamp_utc()
         t_epoch = time.perf_counter()
         model.train()
         train_loss = 0.0
@@ -173,10 +176,21 @@ def train_one_model(config: dict[str, Any], full_x: np.ndarray,
         val_loss /= max(len(val_loader.dataset), 1)
 
         t_epoch = time.perf_counter() - t_epoch
+        epoch_end_time = timestamp_utc()
         epoch_times.append(t_epoch)
         avg_time = sum(epoch_times) / len(epoch_times)
         eta = avg_time * (epochs - epoch)
-        log_rows.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss, "time_sec": t_epoch})
+        log_rows.append(
+            epoch_log_row(
+                epoch=epoch,
+                train_loss=train_loss,
+                val_loss=val_loss,
+                epoch_start_time=epoch_start_time,
+                epoch_end_time=epoch_end_time,
+                epoch_duration_sec=t_epoch,
+                learning_rate=float(optimizer.param_groups[0]["lr"]),
+            )
+        )
         print(f"{chunk_id} epoch {epoch:03d}/{epochs} train_loss={train_loss:.6f} val_loss={val_loss:.6f} time={t_epoch:.1f}s avg={avg_time:.1f}s eta={eta:.0f}s")
 
         if val_loss < best_loss:
@@ -199,8 +213,11 @@ def train_one_model(config: dict[str, Any], full_x: np.ndarray,
             "model_state_dict": model.state_dict(),
             "model_config": model_config,
             "common_config": config,
+            "training_start_time": training_start_time,
+            "training_end_time": timestamp_utc(),
+            "training_duration_sec": total_time,
         },
-        out / "models" / f"{chunk_id}_stsprednet.pt",
+        checkpoints / f"{chunk_id}_stsprednet.pt",
     )
     return model
 
@@ -254,7 +271,8 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands: pd.DataFrame, out: Path
     train_raw = data.splits[data.train_split].raw_dbm
 
     full_x_all = np.vstack([train, data.splits[data.test_split].model_input])
-    model = train_one_model(config, full_x_all, out, chunk.chunk_id)
+    checkpoints = out / "checkpoints"
+    model = train_one_model(config, full_x_all, checkpoints, out, chunk.chunk_id)
     device = next(model.parameters()).device
 
     aggregate_rows: list[dict[str, Any]] = []
@@ -315,11 +333,15 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     config = load_config(args.config)
-    out = args.output_dir or output_dir(config, "STS-PredNet")
-    out.mkdir(parents=True, exist_ok=True)
-    (out / "models").mkdir(parents=True, exist_ok=True)
+    out, checkpoints = prepare_output_dirs(config, "STS-PredNet")
+    if args.output_dir is not None:
+        out = args.output_dir
+        out.mkdir(parents=True, exist_ok=True)
+        checkpoints = out / "checkpoints"
+        checkpoints.mkdir(parents=True, exist_ok=True)
     bands = load_band_definitions(config)
 
+    total_start_time = timestamp_utc()
     total_start = time.perf_counter()
     aggregate_rows: list[dict[str, Any]] = []
     frequency_rows: list[dict[str, Any]] = []
@@ -334,10 +356,15 @@ def main() -> None:
         frequency_rows.extend(f)
         band_rows.extend(b)
 
-    pd.DataFrame(aggregate_rows).to_csv(out / "aggregate_metrics.csv", index=False)
-    pd.DataFrame(frequency_rows).to_csv(out / "per_frequency_metrics.csv", index=False)
-    pd.DataFrame(band_rows).to_csv(out / "per_band_metrics.csv", index=False)
     total_run = time.perf_counter() - total_start
+    finalize_results(
+        out,
+        "STS-PredNet",
+        aggregate_rows,
+        frequency_rows,
+        band_rows,
+        [f"Training start time: {total_start_time}", f"Total run time seconds: {total_run:.2f}"],
+    )
     print(f"Wrote {len(aggregate_rows)} aggregate metric rows to {out / 'aggregate_metrics.csv'}")
     print(f"Total run time: {total_run:.1f}s ({total_run/60:.1f} min)")
 

@@ -26,9 +26,10 @@ from model import (  # noqa: E402
     DiffusionModel,
 )
 from training.common.config import load_config  # noqa: E402
+from training.common.integrated import epoch_log_row, finalize_results, prepare_output_dirs, timestamp_utc  # noqa: E402
 from training.common.data import chunk_specs, load_chunk  # noqa: E402
 from training.common.metrics import absolute_and_squared_errors_dbm  # noqa: E402
-from training.common.results import append_metric_rows, load_band_definitions, output_dir  # noqa: E402
+from training.common.results import append_metric_rows, load_band_definitions  # noqa: E402
 from training.common.windowing import target_rows_for  # noqa: E402
 
 MODEL_NAME = "tss_lcd"
@@ -134,7 +135,7 @@ def make_test_loader(full_x: np.ndarray, test_start: int,
 
 def train_autoencoder(enc, dec, train_loader, val_loader,
                       tcfg: dict, device: torch.device,
-                      out: Path, chunk_id: str):
+                      checkpoints: Path, out: Path, chunk_id: str):
     epochs = int(tcfg["autoencoder_epochs"])
     lr = float(tcfg["autoencoder_learning_rate"])
     clip_norm = float(tcfg.get("gradient_clip_norm", 5.0))
@@ -151,9 +152,11 @@ def train_autoencoder(enc, dec, train_loader, val_loader,
     no_improve = 0
     epoch_times: list[float] = []
     log_rows: list[dict[str, Any]] = []
+    training_start_time = timestamp_utc()
     t_start = time.perf_counter()
 
     for epoch in range(1, epochs + 1):
+        epoch_start_time = timestamp_utc()
         t_epoch = time.perf_counter()
         enc.train()
         dec.train()
@@ -183,7 +186,17 @@ def train_autoencoder(enc, dec, train_loader, val_loader,
         val_loss /= max(len(val_loader.dataset), 1)
 
         t_epoch = time.perf_counter() - t_epoch
-        log_rows.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss, "time_sec": t_epoch})
+        log_rows.append(
+            epoch_log_row(
+                epoch=epoch,
+                train_loss=train_loss,
+                val_loss=val_loss,
+                epoch_start_time=epoch_start_time,
+                epoch_end_time=timestamp_utc(),
+                epoch_duration_sec=t_epoch,
+                learning_rate=float(optimizer.param_groups[0]["lr"]),
+            )
+        )
         epoch_times.append(t_epoch)
         avg_time = sum(epoch_times) / len(epoch_times)
         eta = avg_time * (epochs - epoch)
@@ -210,13 +223,21 @@ def train_autoencoder(enc, dec, train_loader, val_loader,
     if best_state is not None:
         enc.load_state_dict(best_state["enc"])
         dec.load_state_dict(best_state["dec"])
-    torch.save(best_state, out / "models" / f"{chunk_id}_tss_lcd_autoencoder.pt")
+    torch.save(
+        {
+            "state": best_state,
+            "training_start_time": training_start_time,
+            "training_end_time": timestamp_utc(),
+            "training_duration_sec": total_time,
+        },
+        checkpoints / f"{chunk_id}_tss_lcd_autoencoder.pt",
+    )
     return enc, dec
 
 
 def train_tss_condition(enc, tss_cc, train_loader, val_loader,
                         tcfg: dict, device: torch.device,
-                        out: Path, chunk_id: str):
+                        checkpoints: Path, out: Path, chunk_id: str):
     epochs = int(tcfg["tss_epochs"])
     lr = float(tcfg["tss_learning_rate"])
     clip_norm = float(tcfg.get("gradient_clip_norm", 5.0))
@@ -234,9 +255,11 @@ def train_tss_condition(enc, tss_cc, train_loader, val_loader,
     no_improve = 0
     epoch_times: list[float] = []
     log_rows: list[dict[str, Any]] = []
+    training_start_time = timestamp_utc()
     t_start = time.perf_counter()
 
     for epoch in range(1, epochs + 1):
+        epoch_start_time = timestamp_utc()
         t_epoch = time.perf_counter()
         tss_cc.train()
         train_loss = 0.0
@@ -265,7 +288,17 @@ def train_tss_condition(enc, tss_cc, train_loader, val_loader,
         val_loss /= max(len(val_loader.dataset), 1)
 
         t_epoch = time.perf_counter() - t_epoch
-        log_rows.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss, "time_sec": t_epoch})
+        log_rows.append(
+            epoch_log_row(
+                epoch=epoch,
+                train_loss=train_loss,
+                val_loss=val_loss,
+                epoch_start_time=epoch_start_time,
+                epoch_end_time=timestamp_utc(),
+                epoch_duration_sec=t_epoch,
+                learning_rate=float(optimizer.param_groups[0]["lr"]),
+            )
+        )
         epoch_times.append(t_epoch)
         avg_time = sum(epoch_times) / len(epoch_times)
         eta = avg_time * (epochs - epoch)
@@ -289,14 +322,21 @@ def train_tss_condition(enc, tss_cc, train_loader, val_loader,
     pd.DataFrame(log_rows).to_csv(out / f"{chunk_id}_tss_training_log.csv", index=False)
     if best_state is not None:
         tss_cc.load_state_dict(best_state)
-    torch.save({"tss_cc_state_dict": best_state},
-               out / "models" / f"{chunk_id}_tss_lcd_tss.pt")
+    torch.save(
+        {
+            "tss_cc_state_dict": best_state,
+            "training_start_time": training_start_time,
+            "training_end_time": timestamp_utc(),
+            "training_duration_sec": total_time,
+        },
+        checkpoints / f"{chunk_id}_tss_lcd_tss.pt",
+    )
     return tss_cc
 
 
 def train_diffusion(enc, tss_cc, diffusion, train_loader, val_loader,
                     tcfg: dict, device: torch.device,
-                    out: Path, chunk_id: str):
+                    checkpoints: Path, out: Path, chunk_id: str):
     epochs = int(tcfg["diffusion_epochs"])
     lr = float(tcfg["diffusion_learning_rate"])
     clip_norm = float(tcfg.get("gradient_clip_norm", 5.0))
@@ -316,9 +356,11 @@ def train_diffusion(enc, tss_cc, diffusion, train_loader, val_loader,
     no_improve = 0
     epoch_times: list[float] = []
     log_rows: list[dict[str, Any]] = []
+    training_start_time = timestamp_utc()
     t_start = time.perf_counter()
 
     for epoch in range(1, epochs + 1):
+        epoch_start_time = timestamp_utc()
         t_epoch = time.perf_counter()
         diffusion.train()
         train_loss = 0.0
@@ -357,7 +399,17 @@ def train_diffusion(enc, tss_cc, diffusion, train_loader, val_loader,
         val_loss /= max(len(val_loader.dataset), 1)
 
         t_epoch = time.perf_counter() - t_epoch
-        log_rows.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss, "time_sec": t_epoch})
+        log_rows.append(
+            epoch_log_row(
+                epoch=epoch,
+                train_loss=train_loss,
+                val_loss=val_loss,
+                epoch_start_time=epoch_start_time,
+                epoch_end_time=timestamp_utc(),
+                epoch_duration_sec=t_epoch,
+                learning_rate=float(optimizer.param_groups[0]["lr"]),
+            )
+        )
         epoch_times.append(t_epoch)
         avg_time = sum(epoch_times) / len(epoch_times)
         eta = avg_time * (epochs - epoch)
@@ -384,7 +436,10 @@ def train_diffusion(enc, tss_cc, diffusion, train_loader, val_loader,
     torch.save({
         "diffusion_state_dict": best_state,
         "tss_cc_state_dict": tss_cc.state_dict(),
-    }, out / "models" / f"{chunk_id}_tss_lcd_diffusion.pt")
+        "training_start_time": training_start_time,
+        "training_end_time": timestamp_utc(),
+        "training_duration_sec": total_time,
+    }, checkpoints / f"{chunk_id}_tss_lcd_diffusion.pt")
     return diffusion
 
 
@@ -430,16 +485,17 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands: pd.DataFrame, out: Path
     train_loader, val_loader = build_dataloaders(train, t_in, t_out, batch_size)
 
     print(f"{chunk.chunk_id} training autoencoder...")
+    checkpoints = out / "checkpoints"
     enc, dec = train_autoencoder(enc, dec, train_loader, val_loader,
-                                 tcfg, device, out, chunk.chunk_id)
+                                 tcfg, device, checkpoints, out, chunk.chunk_id)
 
     print(f"{chunk.chunk_id} training TSS-CC...")
     tss_cc = train_tss_condition(enc, tss_cc, train_loader, val_loader,
-                                 tcfg, device, out, chunk.chunk_id)
+                                 tcfg, device, checkpoints, out, chunk.chunk_id)
 
     print(f"{chunk.chunk_id} training diffusion...")
     diffusion = train_diffusion(enc, tss_cc, diffusion, train_loader, val_loader,
-                                tcfg, device, out, chunk.chunk_id)
+                                tcfg, device, checkpoints, out, chunk.chunk_id)
 
     enc.eval()
     dec.eval()
@@ -511,11 +567,15 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     config = load_config(args.config)
-    out = args.output_dir or output_dir(config, "TSS-LCD")
-    out.mkdir(parents=True, exist_ok=True)
-    (out / "models").mkdir(parents=True, exist_ok=True)
+    out, checkpoints = prepare_output_dirs(config, "TSS-LCD")
+    if args.output_dir is not None:
+        out = args.output_dir
+        out.mkdir(parents=True, exist_ok=True)
+        checkpoints = out / "checkpoints"
+        checkpoints.mkdir(parents=True, exist_ok=True)
     bands = load_band_definitions(config)
 
+    total_start_time = timestamp_utc()
     total_start = time.perf_counter()
     aggregate_rows: list[dict[str, Any]] = []
     frequency_rows: list[dict[str, Any]] = []
@@ -531,10 +591,15 @@ def main() -> None:
         frequency_rows.extend(f)
         band_rows.extend(b)
 
-    pd.DataFrame(aggregate_rows).to_csv(out / "aggregate_metrics.csv", index=False)
-    pd.DataFrame(frequency_rows).to_csv(out / "per_frequency_metrics.csv", index=False)
-    pd.DataFrame(band_rows).to_csv(out / "per_band_metrics.csv", index=False)
     total_run = time.perf_counter() - total_start
+    finalize_results(
+        out,
+        "TSS-LCD",
+        aggregate_rows,
+        frequency_rows,
+        band_rows,
+        [f"Training start time: {total_start_time}", f"Total run time seconds: {total_run:.2f}"],
+    )
     print(f"Wrote {len(aggregate_rows)} aggregate metric rows to "
           f"{out / 'aggregate_metrics.csv'}")
     print(f"Total run time: {total_run:.1f}s ({total_run/60:.1f} min)")

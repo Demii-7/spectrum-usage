@@ -28,12 +28,16 @@ def load_chunk(config: dict[str, Any], chunk: ChunkSpec) -> LoadedSpectrumData:
     data_dir = resolve_path(config["data"]["data_dir"])
     normalize = bool(config["preprocessing"].get("normalize", True))
     reference_site = str(config["data"].get("reference_site", "CC2"))
+    max_rows = config["data"].get("max_rows")
+    test_rows = int(config["data"].get("test_rows", 2880))
     return load_aerpaw_data(
         data_dir,
         chunk.start_mhz,
         chunk.end_mhz,
         normalize=normalize,
         reference_site=reference_site,
+        max_rows=max_rows,
+        test_rows=test_rows,
     )
 
 

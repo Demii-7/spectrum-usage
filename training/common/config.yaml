@@ -2,6 +2,8 @@ data:
   data_dir: evaluation/aerpaw
   band_definitions_path: evaluation/results/step2/band_definitions.csv
   reference_site: CC2
+  max_rows:
+  test_rows: 2880
   chunks:
     - id: chunk_600_800
       start_mhz: 600.0
@@ -30,6 +32,8 @@ outputs:
 
 linear_autoregressive:
   ridge_alpha: 1.0
+  seed: 42
+  device: auto
 
 convlstm:
   input_sequence_length: 60
@@ -41,6 +45,8 @@ convlstm:
   val_fraction: 0.1
   teacher_forcing_ratio: 1.0
   gradient_clip_norm: 5.0
+  seed: 42
+  device: auto
   model:
     input_channels: 1
     hidden_channels: [32, 64]
@@ -70,6 +76,8 @@ stsprednet:
   weight_decay: 0.0
   gradient_clip_norm: 5.0
   patience: 30
+  seed: 42
+  device: auto
   model:
     input_channels: 1
     map_height: 1
@@ -108,6 +116,8 @@ timeran:
   gradient_clip_norm: 5.0
   checkpoint_size: base
   training_mode: linear_probing
+  seed: 42
+  device: auto
 
 tss_lcd:
   hidden_dim: 256
@@ -138,3 +148,5 @@ tss_lcd:
   weight_decay: 0.0
   gradient_clip_norm: 5.0
   patience: 30
+  seed: 42
+  device: auto
