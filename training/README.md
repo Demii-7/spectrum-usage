@@ -87,7 +87,9 @@ Outputs go to `training/results/LinearAutoRegressive/` by default:
 aggregate_metrics.csv
 per_frequency_metrics.csv
 per_band_metrics.csv
-models/<chunk_id>_linear_autoregressive.pkl
+chunk_<chunk_id>_training_log.csv
+report.txt
+checkpoints/
 ```
 
 ### Run ConvLSTM
@@ -104,8 +106,9 @@ Outputs go to `training/results/ConvLSTM/` by default:
 aggregate_metrics.csv
 per_frequency_metrics.csv
 per_band_metrics.csv
-models/<chunk_id>_convlstm.pt
+report.txt
 <chunk_id>_training_log.csv
+checkpoints/
 ```
 
 For a shorter smoke run, copy `training/common/config.yaml`, reduce `convlstm.epochs`, and pass it with `--config`:
@@ -128,8 +131,9 @@ Outputs go to `training/results/STS-PredNet/` by default:
 aggregate_metrics.csv
 per_frequency_metrics.csv
 per_band_metrics.csv
-models/<chunk_id>_stsprednet.pt
+report.txt
 <chunk_id>_training_log.csv
+checkpoints/
 ```
 
 ### Run TimeRAN
@@ -172,8 +176,9 @@ Outputs go to `training/results/TimeRAN/` by default:
 aggregate_metrics.csv
 per_frequency_metrics.csv
 per_band_metrics.csv
-models/<chunk_id>_timeran.pt
+report.txt
 <chunk_id>_training_log.csv
+checkpoints/
 ```
 
 ### Run TSS-LCD
@@ -194,15 +199,90 @@ Outputs go to `training/results/TSS-LCD/` by default:
 aggregate_metrics.csv
 per_frequency_metrics.csv
 per_band_metrics.csv
-models/<chunk_id>_tss_lcd_autoencoder.pt
-models/<chunk_id>_tss_lcd_tss.pt
-models/<chunk_id>_tss_lcd_diffusion.pt
+report.txt
 <chunk_id>_training_log.csv
+checkpoints/
+```
+
+### Run VanillaLSTM
+
+The integrated VanillaLSTM runner trains a direct sequence forecaster per chunk using the shared lookback and horizon settings.
+
+```bash
+python3 training/VanillaLSTM/train_integrated.py
+```
+
+Outputs go to `training/results/VanillaLSTM/` by default:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+report.txt
+<chunk_id>_training_log.csv
+checkpoints/
+```
+
+### Run Autoformer-CSA
+
+The integrated Autoformer-CSA runner trains the restored Autoformer implementation per chunk against the shared chunk pipeline.
+
+```bash
+python3 training/Autoformer-CSA/train_integrated.py
+```
+
+Outputs go to `training/results/Autoformer-CSA/` by default:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+report.txt
+<chunk_id>_training_log.csv
+checkpoints/
+```
+
+### Run DSwinLSTM-I
+
+The integrated DSwinLSTM-I runner uses the current CSV-based first-pass integration, reshaping each chunk into a pseudo-map before training.
+
+```bash
+python3 training/DSwinLSTM-I/train_integrated.py
+```
+
+Outputs go to `training/results/DSwinLSTM-I/` by default:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+report.txt
+<chunk_id>_training_log.csv
+checkpoints/
+```
+
+### Run DeepSPred
+
+The integrated DeepSPred runner converts chunk CSV data into colormap spectrogram frames and evaluates the configured minute horizons from frame predictions.
+
+```bash
+python3 training/DeepSPred/train_integrated.py
+```
+
+Outputs go to `training/results/DeepSPred/` by default:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+report.txt
+<chunk_id>_training_log.csv
+checkpoints/
 ```
 
 ### Assemble Overall Results
 
-After the baseline, LinearAutoRegressive, ConvLSTM, STS-PredNet, TimeRAN, and TSS-LCD jobs finish, combine their metric files:
+After the baseline and integrated model jobs finish, combine their metric files:
 
 ```bash
 python3 -m training.common.assemble_results
@@ -217,6 +297,10 @@ training/results/ConvLSTM/
 training/results/STS-PredNet/
 training/results/TimeRAN/
 training/results/TSS-LCD/
+training/results/VanillaLSTM/
+training/results/Autoformer-CSA/
+training/results/DSwinLSTM-I/
+training/results/DeepSPred/
 ```
 
 It writes combined outputs to `training/results/overall/`:
@@ -257,6 +341,14 @@ Edit `training/common/config.yaml` to change chunks, horizons, lookback, normali
 Key fields:
 
 ```yaml
+data:
+  data_dir: evaluation/aerpaw
+  reference_site: CC2
+  chunks:
+    - id: chunk_600_800
+      start_mhz: 600.0
+      end_mhz: 800.0
+
 windowing:
   lookback: 60
   horizons: [1, 5, 15, 60]
@@ -280,6 +372,29 @@ timeran:
   epochs: 10
   learning_rate: 1.0e-5
   training_mode: linear_probing
+
+tss_lcd:
+  autoencoder_epochs: 300
+  tss_epochs: 200
+  diffusion_epochs: 1000
+
+vanillalstm:
+  input_sequence_length: 60
+  prediction_horizon: 60
+
+autoformer_csa:
+  seq_len: 60
+  label_len: 30
+  pred_len: 60
+
+dswinlstm_i:
+  input_sequence_length: 60
+  prediction_horizon: 60
+
+deepspred:
+  minutes_per_frame: 60
+  input_frames: 1
+  output_frames: 1
 ```
 
 Set each model's prediction/input length to at least the largest configured horizon.
