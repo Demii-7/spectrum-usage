@@ -186,6 +186,16 @@ def evaluate_map_mode(config: dict[str, Any], out: Path, checkpoint_path: Path) 
     horizons = [int(h) for h in config["windowing"]["horizons"]]
     start_idx = prediction_start_row(config, len(test_x))
 
+    chunk_cfg = data_cfg.get("chunks", [{}])[0]
+    start_mhz = float(chunk_cfg.get("start_mhz", 0))
+    end_mhz = float(chunk_cfg.get("end_mhz", 0))
+    freqs = list(range(n_freq))
+    bands = load_band_definitions(config)
+
+    total_start = time.perf_counter()
+    aggregate_rows: list[dict[str, Any]] = []
+    frequency_rows: list[dict[str, Any]] = []
+    band_rows: list[dict[str, Any]] = []
     predictions_by_horizon: dict[int, np.ndarray] = {}
     targets_by_horizon: dict[int, np.ndarray] = {}
     target_rows_by_horizon: dict[int, np.ndarray] = {}
@@ -202,6 +212,25 @@ def evaluate_map_mode(config: dict[str, Any], out: Path, checkpoint_path: Path) 
         predictions_by_horizon[horizon] = pred
         targets_by_horizon[horizon] = target
         target_rows_by_horizon[horizon] = target_rows
+
+        _, abs_err, sq_err = absolute_and_squared_errors_dbm(pred, target, normalization=None)
+        abs_err = np.mean(abs_err, axis=(2, 3))
+        sq_err = np.mean(sq_err, axis=(2, 3))
+        append_metric_rows(
+            aggregate_rows, frequency_rows, band_rows,
+            chunk_id=chunk_id,
+            start_mhz=start_mhz,
+            end_mhz=end_mhz,
+            split_name="test",
+            horizon=horizon,
+            model=MODEL_NAME,
+            target_rows=target_rows,
+            history_offset=0,
+            freqs=freqs,
+            abs_err=abs_err,
+            sq_err=sq_err,
+            bands=bands,
+        )
 
     export_map_forecasts(
         out,
@@ -223,6 +252,17 @@ def evaluate_map_mode(config: dict[str, Any], out: Path, checkpoint_path: Path) 
             "test_map_metadata": test_meta.get("metadata"),
         },
     )
+
+    total_run = time.perf_counter() - total_start
+    finalize_results(
+        out,
+        "STS-PredNet",
+        aggregate_rows,
+        frequency_rows,
+        band_rows,
+        [f"Evaluation start time: {timestamp_utc()}", f"Total run time seconds: {total_run:.2f}"],
+    )
+    print(f"Wrote {len(aggregate_rows)} aggregate metric rows to {out / 'aggregate_metrics.csv'}")
 
 
 def evaluate_csv_chunk(config: dict[str, Any], chunk, bands, out: Path, checkpoint_path: Path):
