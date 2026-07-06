@@ -1,5 +1,465 @@
 # Training Data Pipeline
 
+## Integrated 200 MHz Chunk Models
+
+The integrated training path uses the AERPAW CSV files under `evaluation/aerpaw/` and trains one model per 200 MHz chunk. Each model sees one CC2 chunk as a tensor with shape `(T, 1, 1, 200)`, where `T` is minutes and `200` is the number of 1 MHz bins in the chunk. The shared settings live in `training/common/config.yaml`.
+
+The default chunks are `600-800 MHz`, `2400-2600 MHz`, and `3500-3700 MHz`. The default lookback is 60 minutes. The reported horizons are 1, 5, 15, and 60 minutes. Training can use normalized inputs, but all metrics are written in denormalized dBm.
+
+### Inputs
+
+Put the AERPAW per-minute CSV files in `evaluation/aerpaw/`:
+
+```text
+evaluation/aerpaw/ResultsCC1Feb2022_SigMF_power_1mhz_avg_per_minute.csv
+evaluation/aerpaw/ResultsCC2Feb2022_SigMF_power_1mhz_avg_per_minute.csv
+evaluation/aerpaw/ResultsLW1Feb2022_SigMF_power_1mhz_avg_per_minute.csv
+```
+
+Generate these files from the downloaded SigMF ZIP archives with `evaluation/sigmf_zip_to_csv.py`:
+
+```bash
+python3 evaluation/sigmf_zip_to_csv.py ResultsCC1Feb2022_SigMF.zip --full-band \
+  --output evaluation/aerpaw/ResultsCC1Feb2022_SigMF_power_1mhz_avg_per_minute.csv
+python3 evaluation/sigmf_zip_to_csv.py ResultsCC2Feb2022_SigMF.zip --full-band \
+  --output evaluation/aerpaw/ResultsCC2Feb2022_SigMF_power_1mhz_avg_per_minute.csv
+python3 evaluation/sigmf_zip_to_csv.py ResultsLW1Feb2022_SigMF.zip --full-band \
+  --output evaluation/aerpaw/ResultsLW1Feb2022_SigMF_power_1mhz_avg_per_minute.csv
+```
+
+Omit `--full-band` to export the default 250 MHz slice.
+
+The training loader reads the configured reference site, interpolates missing values per frequency, selects that site's columns in each configured chunk, and creates chronological train/test splits. The default reference site is `CC2`; the final two days form `CC2_test`.
+
+Per-band metrics use `evaluation/results/step2/band_definitions.csv` when that file exists. The model runners still produce aggregate and per-frequency metrics when band definitions are absent.
+
+### Environment (Docker)
+
+Training was performed inside a Jupyter PyTorch Docker container with CUDA 12 support:
+
+```bash
+docker run -d -p 8888:8888 --name jupyter \
+  -v /home/cc/spectrum-usage:/home/jovyan/work/spectrum-usage \
+  --rm --gpus all \
+  quay.io/jupyter/pytorch-notebook:cuda12-python-3.11.8
+```
+
+The container image includes PyTorch (CUDA-enabled), numpy, pandas, scikit-learn, matplotlib, and Jupyter. After starting the container, attach a shell and navigate to the repo:
+
+```bash
+docker exec -it jupyter bash
+cd ~/work/spectrum-usage
+```
+
+Install additional dependencies:
+
+```bash
+pip install pyyaml momentfm==0.1.4 gdown
+```
+
+Install `screen` for long-running training jobs (required inside the container):
+
+```bash
+apt-get update && apt-get install -y screen
+```
+
+### Run Baselines
+
+The evaluation baseline script writes persistence, historical mean, lookback mean, same-time last-3-days mean, AutoReg(60), and LAR metrics. Use `--normalize` to train the learned baselines on normalized inputs and report dBm metrics.
+
+```bash
+python3 evaluation/scripts/run_spectrum_steps_5_6.py \
+  --normalize \
+  --output-dir training/results/baselines
+```
+
+### Run LinearAutoRegressive
+
+This runner uses the shared config and trains one direct Ridge autoregressive model per frequency bin, per chunk, and per horizon.
+
+```bash
+python3 training/LinearAutoRegressive/train.py
+```
+
+Outputs go to `training/results/LinearAutoRegressive/` by default:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+chunk_<chunk_id>_training_log.csv
+report.txt
+checkpoints/
+```
+
+### Run ConvLSTM
+
+The integrated ConvLSTM runner trains one model per chunk using `(T, 1, 1, 200)` inputs. It predicts 60 consecutive future minutes and evaluates the configured horizons from that sequence.
+
+```bash
+python3 training/ConvLSTM/train_integrated.py
+```
+
+Outputs go to `training/results/ConvLSTM/` by default:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+report.txt
+<chunk_id>_training_log.csv
+checkpoints/
+```
+
+For a shorter smoke run, copy `training/common/config.yaml`, reduce `convlstm.epochs`, and pass it with `--config`:
+
+```bash
+python3 training/ConvLSTM/train_integrated.py --config /path/to/smoke_config.yaml
+```
+
+### Run STS-PredNet
+
+The integrated STS-PredNet runner trains one model per chunk using recursive single-step prediction with closeness and period branches. It evaluates each horizon from the configured list.
+
+```bash
+python3 training/STS-PredNet/train_integrated.py
+```
+
+Outputs go to `training/results/STS-PredNet/` by default:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+report.txt
+<chunk_id>_training_log.csv
+checkpoints/
+```
+
+### Run TimeRAN
+
+The integrated TimeRAN runner trains a MOMENT forecasting head per chunk using the shared lookback and horizon values.
+
+#### Prerequisites — Download Pretrained Checkpoint
+
+TimeRAN's pretrained backbone weights exceed GitHub's file size limits and must be downloaded from Google Drive before training. The checkpoint path is derived automatically from `config.timeran.checkpoint_size` (default: `base`).
+
+```bash
+# Install gdown for Google Drive downloads
+pip install momentfm==0.1.4 gdown
+
+# Create checkpoint directories
+mkdir -p training/TimeRAN/checkpoints/{small,base,large}
+
+# Download checkpoints from the upstream TimeRAN repository.
+#
+# NOTE: The upstream TimeRAN README mislabels these file IDs.
+# ID 1fJNCk... is the small variant (d_model=512, ~145 MB), NOT base.
+# ID 1gz23m... is the base variant (d_model=768, ~433 MB), NOT small.
+# We save them with correct names here.
+gdown 1fJNCkufmfWC6zHecz10PUyreD0PhBOMJ -O training/TimeRAN/checkpoints/small/TimeRAN_small.pth
+gdown 1gz23mmP4ZiNznCloObEaSlVaJH21fyxJ -O training/TimeRAN/checkpoints/base/TimeRAN_base.pth
+gdown 1We9zE5BV6Iwkc_EKSAhP28B3wcM7RZRd -O training/TimeRAN/checkpoints/large/TimeRAN_large.pth
+```
+
+Without these checkpoints, the pipeline falls back to raw MOMENT weights (no TimeRAN pretraining).
+
+#### Run
+
+```bash
+python3 training/TimeRAN/train_integrated.py
+```
+
+Outputs go to `training/results/TimeRAN/` by default:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+report.txt
+<chunk_id>_training_log.csv
+checkpoints/
+```
+
+### Run TSS-LCD
+
+The integrated TSS-LCD runner trains a 3-stage latent-conditioned diffusion model per chunk.
+
+Stage 1 trains a Conv2D autoencoder (LSE/LSD) to compress future windows into a latent space.
+Stage 2 trains the TSS-CC condition constructor (Temporal/Spectral/Spatial transformer branches) to predict the latent from the lookback window.
+Stage 3 trains the diffusion noise-estimation network (Conv1D U-Net) using the latent and TSS-CC condition.
+
+```bash
+python3 training/TSS-LCD/train_integrated.py
+```
+
+Outputs go to `training/results/TSS-LCD/` by default:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+report.txt
+<chunk_id>_training_log.csv
+checkpoints/
+```
+
+### Run VanillaLSTM
+
+The integrated VanillaLSTM runner trains a direct sequence forecaster per chunk using the shared lookback and horizon settings.
+
+```bash
+python3 training/VanillaLSTM/train_integrated.py
+```
+
+Outputs go to `training/results/VanillaLSTM/` by default:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+report.txt
+<chunk_id>_training_log.csv
+checkpoints/
+```
+
+Integrated `VanillaLSTM` runs now also export forecast artifacts under a
+`forecasts/` subdirectory using the same shared format as the other integrated
+forecast exporters.
+
+### Run Autoformer-CSA
+
+The integrated Autoformer-CSA runner trains the restored Autoformer implementation per chunk against the shared chunk pipeline.
+
+```bash
+python3 training/Autoformer-CSA/train_integrated.py
+```
+
+Outputs go to `training/results/Autoformer-CSA/` by default:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+report.txt
+<chunk_id>_training_log.csv
+checkpoints/
+```
+
+### Run DSwinLSTM-I
+
+The integrated DSwinLSTM-I runner uses the current CSV-based first-pass integration, reshaping each chunk into a pseudo-map before training.
+
+```bash
+python3 training/DSwinLSTM-I/train_integrated.py
+```
+
+Outputs go to `training/results/DSwinLSTM-I/` by default:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+report.txt
+<chunk_id>_training_log.csv
+checkpoints/
+```
+
+### Run DeepSPred
+
+The integrated DeepSPred runner converts chunk CSV data into colormap spectrogram frames and evaluates the configured minute horizons from frame predictions.
+
+```bash
+python3 training/DeepSPred/train_integrated.py
+```
+
+Outputs go to `training/results/DeepSPred/` by default:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+report.txt
+<chunk_id>_training_log.csv
+checkpoints/
+```
+
+### Assemble Overall Results
+
+After the baseline and integrated model jobs finish, combine their metric files:
+
+```bash
+python3 -m training.common.assemble_results
+```
+
+The assembler reads these directories by default:
+
+```text
+training/results/baselines/
+training/results/LinearAutoRegressive/
+training/results/ConvLSTM/
+training/results/STS-PredNet/
+training/results/TimeRAN/
+training/results/TSS-LCD/
+training/results/VanillaLSTM/
+training/results/Autoformer-CSA/
+training/results/DSwinLSTM-I/
+training/results/DeepSPred/
+```
+
+It writes combined outputs to `training/results/overall/`:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+metrics_summary.md
+```
+
+Use `--input-dir` to combine a different set of model output directories:
+
+```bash
+python3 -m training.common.assemble_results \
+  --input-dir training/results/baselines \
+  --input-dir training/results/LinearAutoRegressive \
+  --input-dir training/results/ConvLSTM \
+  --output-dir training/results/overall
+```
+
+### Long-Interval Forecast Plots
+
+The long-interval plot script creates horizon-by-horizon forecast plots for AutoReg, LAR, and lookback mean on a selected CC2 test interval. It writes PNG and CSV files under `evaluation/results/figures/long_interval_forecasts/`.
+
+```bash
+python3 evaluation/scripts/plot_autoreg_long_interval_by_horizon.py --transition variable
+python3 evaluation/scripts/plot_autoreg_long_interval_by_horizon.py --transition falling
+python3 evaluation/scripts/plot_autoreg_long_interval_by_horizon.py --transition rising
+```
+
+The `variable` run also writes the compatibility filenames `cc2_autoreg_by_horizon_long_interval.png` and `cc2_autoreg_by_horizon_long_interval.csv`.
+
+### Shared Config
+
+Edit `training/common/config.yaml` to change chunks, horizons, lookback, normalization, or model hyperparameters. The model runners also accept `--config /path/to/config.yaml`.
+
+Use that single shared file for integrated runs. The intended workflow is:
+
+1. edit `training/common/config.yaml`
+2. set the current band, map paths, and model hyperparameters
+3. run one integrated trainer
+4. update the same config file for the next experiment
+
+Key fields:
+
+```yaml
+data:
+  data_dir: evaluation/aerpaw
+  reference_site: CC2
+  train_map_path:
+  test_map_path:
+  map_key: map_db
+  chunk_id:
+  chunks:
+    - id: chunk_600_800
+      start_mhz: 600.0
+      end_mhz: 800.0
+
+windowing:
+  lookback: 60
+  horizons: [1, 5, 15, 60]
+
+preprocessing:
+  normalize: true
+
+evaluation:
+  prediction_start_row:
+
+convlstm:
+  input_sequence_length: 60
+  prediction_horizon: 60
+
+stsprednet:
+  lc: 36
+  lp: 3
+  period_interval: 1440
+  epochs: 25
+  learning_rate: 0.0002
+
+timeran:
+  checkpoint_size: base
+  epochs: 10
+  learning_rate: 1.0e-5
+  training_mode: linear_probing
+
+tss_lcd:
+  autoencoder_epochs: 300
+  tss_epochs: 200
+  diffusion_epochs: 1000
+
+vanillalstm:
+  input_sequence_length: 60
+  prediction_horizon: 60
+
+autoformer_csa:
+  seq_len: 60
+  label_len: 30
+  pred_len: 60
+
+dswinlstm_i:
+  input_sequence_length: 60
+  prediction_horizon: 60
+
+deepspred:
+  minutes_per_frame: 60
+  input_frames: 1
+  output_frames: 1
+```
+
+Map-specific fields:
+
+- `data.train_map_path`: interpolated-map `.npz` used for model training
+- `data.test_map_path`: interpolated-map `.npz` used for forecasting and evaluation
+- `data.map_key`: key inside the `.npz`, usually `map_db`
+- `data.chunk_id`: optional label used when naming exported forecast artifacts
+- `evaluation.prediction_start_row`: optional 1-based data-row boundary for forecast export and scoring inside `test_map_path`
+
+`prediction_start_row` is useful when the test map contains earlier rows only
+for historical context. Rows before that boundary stay available as model
+history, but exported forecasts and evaluation begin at the configured row.
+
+Example POWDER map configuration for `600_800`:
+
+```yaml
+data:
+  train_map_path: data/powder_20260618T0036Z_humanities_guesthouse_600_800.npz
+  test_map_path: data/powder_temporal_test_split_humanities_guesthouse_600_800.npz
+  map_key: map_db
+  chunk_id: powder_600_800
+  chunks:
+    - id: chunk_600_800
+      start_mhz: 600.0
+      end_mhz: 800.0
+
+evaluation:
+  prediction_start_row: 8883
+```
+
+For `2400_2600`, edit the same file and swap `train_map_path`, `test_map_path`, `chunk_id`, and the single entry under `data.chunks`.
+
+Integrated map-mode runs now also export forecasts under the model output directory:
+
+- `forecasts/<chunk_id>_<model>_predictions.npz`
+- `forecasts/<chunk_id>_<model>_targets.npz`
+- `forecasts/<chunk_id>_<model>_metadata.json`
+
+For `STS-PredNet`, integrated map mode trains only on `data.train_map_path` and uses `data.test_map_path` for context plus evaluation. This avoids fitting on test-era targets while still allowing long-history branches to look back into earlier rows of the test map.
+
+For `ConvLSTM`, the same split-map mechanism applies: training reads `data.train_map_path`, forecasting/evaluation reads `data.test_map_path`, and forecast export starts at `evaluation.prediction_start_row` when that field is set.
+
+Set each model's prediction/input length to at least the largest configured horizon.
+
+## Legacy TSS-LCD Reconstruction
+
 This directory contains the pipeline for acquiring the AERPAW sub-6 GHz spectrum
 monitoring dataset and preprocessing it into the format used by the TSS-LCD (https://github.com/Xlab2024/TSS-LCD)
 repository. The raw dataset consists of spectrum sweeps collected by three fixed
@@ -263,124 +723,6 @@ documented in the project's reverse-engineering report
 |------|--------|---------|
 | Download from Dryad | `training/data/download_dryad.py` | Solves Anubis PoW, downloads 3 ZIPs |
 | Build merged CSV | `training/build_training_csv.py` | Reads ZIPs, extracts 250-bin slices, averages per minute, merges to 750-column CSV |
-
-## Integrated Config
-
-The integrated training runners use a single shared config file:
-
-- `training/common/config.yaml`
-
-Run a model by pointing its integrated runner at that file:
-
-```bash
-./.venv/bin/python training/ConvLSTM/train_integrated.py --config training/common/config.yaml
-./.venv/bin/python training/STS-PredNet/train_integrated.py --config training/common/config.yaml
-```
-
-Edit that one config file manually between experiments rather than creating
-per-band or per-run YAML variants.
-
-For example, a typical run sequence is:
-
-1. edit `training/common/config.yaml`
-2. set the train/test map paths and chunk for the current band
-3. run one integrated trainer
-4. update the same config file for the next band or model
-
-### Map train/test fields
-
-For integrated interpolated-map experiments, the shared config now supports:
-
-```yaml
-data:
-  train_map_path:
-  test_map_path:
-  map_key: map_db
-  chunk_id:
-
-evaluation:
-  prediction_start_row:
-```
-
-Field meanings:
-
-- `data.train_map_path`: path to the interpolated-map `.npz` used for model training
-- `data.test_map_path`: path to the interpolated-map `.npz` used for forecasting and evaluation
-- `data.map_key`: key inside the `.npz` file, usually `map_db`
-- `data.chunk_id`: optional label used when naming exported forecast artifacts
-- `evaluation.prediction_start_row`: optional 1-based data-row boundary for test scoring/export inside `test_map_path`
-
-`prediction_start_row` is useful when the test map includes earlier historical
-rows for context, but only later rows should count as the actual test region.
-Rows before that boundary remain available as model history; forecast export and
-evaluation start at the configured row.
-
-### Example POWDER map config
-
-This is the intended single-config workflow for a `600_800` POWDER map run:
-
-```yaml
-data:
-  train_map_path: data/powder_20260618T0036Z_humanities_guesthouse_600_800.npz
-  test_map_path: data/powder_temporal_test_split_humanities_guesthouse_600_800.npz
-  map_key: map_db
-  chunk_id: powder_600_800
-  chunks:
-    - id: chunk_600_800
-      start_mhz: 600.0
-      end_mhz: 800.0
-
-evaluation:
-  prediction_start_row: 8883
-```
-
-For `2400_2600`, edit the same file and swap:
-
-1. `data.train_map_path`
-2. `data.test_map_path`
-3. `data.chunk_id`
-4. the single entry under `data.chunks`
-
-`prediction_start_row` is a 1-based data-row number. In the example above, rows
-before `8883` remain available as historical context, but exported forecasts and
-evaluation begin at row `8883`.
-
-### Forecast export
-
-Integrated map-mode runs now export saved forecasts under the model output
-directory in a `forecasts/` subdirectory:
-
-- `<chunk_id>_<model>_predictions.npz`
-- `<chunk_id>_<model>_targets.npz`
-- `<chunk_id>_<model>_metadata.json`
-
-The `.npz` payload stores one array per requested horizon, keyed as:
-
-- `t_plus_1`
-- `t_plus_5`
-- `t_plus_15`
-- `t_plus_60`
-
-and also stores the corresponding zero-based target rows for each horizon.
-
-### STS-PredNet note
-
-The integrated `STS-PredNet` runner now treats training and test map inputs as
-separate sources:
-
-- training fits only on `data.train_map_path`
-- forecasting/evaluation runs on `data.test_map_path`
-
-This avoids fitting on test-era targets while still allowing the test map to
-contain earlier context rows needed for long-history branches.
-
-### ConvLSTM note
-
-The integrated `ConvLSTM` runner uses the same split-map mechanism:
-
-- training reads `data.train_map_path`
-- forecasting/evaluation reads `data.test_map_path`
-- forecast export starts at `evaluation.prediction_start_row` when that field is set
 
 ## Reverse-Engineered Findings
 
