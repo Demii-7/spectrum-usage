@@ -94,19 +94,15 @@ checkpoints/
 
 ### Run ConvLSTM
 
-The integrated ConvLSTM runner trains one model per chunk using `(T, 1, 1, 200)` inputs. It predicts 60 consecutive future minutes and evaluates the configured horizons from that sequence.
+The integrated ConvLSTM runner trains one model per chunk using `(T, 1, 1, 200)` inputs. It predicts 60 consecutive future minutes.
 
 ```bash
 python3 training/ConvLSTM/train_integrated.py
 ```
 
-Outputs go to `training/results/ConvLSTM/` by default:
+Training outputs go to `training/results/ConvLSTM/` by default:
 
 ```text
-aggregate_metrics.csv
-per_frequency_metrics.csv
-per_band_metrics.csv
-report.txt
 <chunk_id>_training_log.csv
 checkpoints/
 ```
@@ -117,23 +113,53 @@ For a shorter smoke run, copy `training/common/config.yaml`, reduce `convlstm.ep
 python3 training/ConvLSTM/train_integrated.py --config /path/to/smoke_config.yaml
 ```
 
-### Run STS-PredNet
+#### Evaluate
 
-The integrated STS-PredNet runner trains one model per chunk using recursive single-step prediction with closeness and period branches. It evaluates each horizon from the configured list.
+Loads the checkpoint saved by training, runs inference on the test set, and writes metrics.
 
 ```bash
-python3 training/STS-PredNet/train_integrated.py
+python3 training/ConvLSTM/evaluate_integrated.py
 ```
 
-Outputs go to `training/results/STS-PredNet/` by default:
+Evaluation outputs go to `training/results/ConvLSTM/` by default:
 
 ```text
 aggregate_metrics.csv
 per_frequency_metrics.csv
 per_band_metrics.csv
 report.txt
+```
+
+### Run STS-PredNet
+
+The integrated STS-PredNet runner trains one model per chunk using recursive single-step prediction with closeness and period branches.
+
+```bash
+python3 training/STS-PredNet/train_integrated.py
+```
+
+Training outputs go to `training/results/STS-PredNet/` by default:
+
+```text
 <chunk_id>_training_log.csv
 checkpoints/
+```
+
+#### Evaluate
+
+Loads the checkpoint saved by training, runs inference on the test set, and writes metrics.
+
+```bash
+python3 training/STS-PredNet/evaluate_integrated.py
+```
+
+Evaluation outputs go to `training/results/STS-PredNet/` by default:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+report.txt
 ```
 
 ### Run TimeRAN
@@ -170,15 +196,28 @@ Without these checkpoints, the pipeline falls back to raw MOMENT weights (no Tim
 python3 training/TimeRAN/train_integrated.py
 ```
 
-Outputs go to `training/results/TimeRAN/` by default:
+Training outputs go to `training/results/TimeRAN/` by default:
+
+```text
+<chunk_id>_training_log.csv
+checkpoints/
+```
+
+#### Evaluate
+
+Loads the checkpoint saved by training, runs inference on the test set, and writes metrics.
+
+```bash
+python3 training/TimeRAN/evaluate_integrated.py
+```
+
+Evaluation outputs go to `training/results/TimeRAN/` by default:
 
 ```text
 aggregate_metrics.csv
 per_frequency_metrics.csv
 per_band_metrics.csv
 report.txt
-<chunk_id>_training_log.csv
-checkpoints/
 ```
 
 ### Run TSS-LCD
@@ -193,15 +232,33 @@ Stage 3 trains the diffusion noise-estimation network (Conv1D U-Net) using the l
 python3 training/TSS-LCD/train_integrated.py
 ```
 
-Outputs go to `training/results/TSS-LCD/` by default:
+Training outputs go to `training/results/TSS-LCD/` by default:
+
+```text
+<chunk_id>_training_log.csv
+checkpoints/
+```
+
+#### Evaluate
+
+Loads the three checkpoints saved by training, runs inference on the test set, and writes metrics.
+
+Because TSS-LCD produces separate weights for each stage, three checkpoint flags are required:
+
+```bash
+python3 training/TSS-LCD/evaluate_integrated.py \
+    --ae-checkpoint  training/results/TSS-LCD/checkpoints/<chunk_id>_autoencoder.pt \
+    --tss-checkpoint training/results/TSS-LCD/checkpoints/<chunk_id>_tss.pt \
+    --diff-checkpoint training/results/TSS-LCD/checkpoints/<chunk_id>_diffusion.pt
+```
+
+Evaluation outputs go to `training/results/TSS-LCD/` by default:
 
 ```text
 aggregate_metrics.csv
 per_frequency_metrics.csv
 per_band_metrics.csv
 report.txt
-<chunk_id>_training_log.csv
-checkpoints/
 ```
 
 ### Run VanillaLSTM
@@ -212,20 +269,29 @@ The integrated VanillaLSTM runner trains a direct sequence forecaster per chunk 
 python3 training/VanillaLSTM/train_integrated.py
 ```
 
-Outputs go to `training/results/VanillaLSTM/` by default:
+Training outputs go to `training/results/VanillaLSTM/` by default:
+
+```text
+<chunk_id>_training_log.csv
+checkpoints/
+```
+
+#### Evaluate
+
+Loads the checkpoint saved by training, runs inference on the test set, and writes metrics. In map mode, exported forecast artifacts are written under a `forecasts/` subdirectory.
+
+```bash
+python3 training/VanillaLSTM/evaluate_integrated.py
+```
+
+Evaluation outputs go to `training/results/VanillaLSTM/` by default:
 
 ```text
 aggregate_metrics.csv
 per_frequency_metrics.csv
 per_band_metrics.csv
 report.txt
-<chunk_id>_training_log.csv
-checkpoints/
 ```
-
-Integrated `VanillaLSTM` runs now also export forecast artifacts under a
-`forecasts/` subdirectory using the same shared format as the other integrated
-forecast exporters.
 
 ### Run Autoformer-CSA
 
@@ -235,53 +301,92 @@ The integrated Autoformer-CSA runner trains the restored Autoformer implementati
 python3 training/Autoformer-CSA/train_integrated.py
 ```
 
-Outputs go to `training/results/Autoformer-CSA/` by default:
+Training outputs go to `training/results/Autoformer-CSA/` by default:
+
+```text
+<chunk_id>_training_log.csv
+checkpoints/
+```
+
+#### Evaluate
+
+Loads the checkpoint saved by training, runs inference on the test set, and writes metrics.
+
+```bash
+python3 training/Autoformer-CSA/evaluate_integrated.py
+```
+
+Evaluation outputs go to `training/results/Autoformer-CSA/` by default:
 
 ```text
 aggregate_metrics.csv
 per_frequency_metrics.csv
 per_band_metrics.csv
 report.txt
-<chunk_id>_training_log.csv
-checkpoints/
 ```
 
 ### Run DSwinLSTM-I
 
-The integrated DSwinLSTM-I runner uses the current CSV-based first-pass integration, reshaping each chunk into a pseudo-map before training.
+The integrated DSwinLSTM-I runner uses CSV-based first-pass integration, reshaping each chunk into a pseudo-map before training.
 
 ```bash
 python3 training/DSwinLSTM-I/train_integrated.py
 ```
 
-Outputs go to `training/results/DSwinLSTM-I/` by default:
+Training outputs go to `training/results/DSwinLSTM-I/` by default:
+
+```text
+<chunk_id>_training_log.csv
+checkpoints/
+```
+
+#### Evaluate
+
+Loads the checkpoint saved by training, runs inference on the test set, and writes metrics.
+
+```bash
+python3 training/DSwinLSTM-I/evaluate_integrated.py
+```
+
+Evaluation outputs go to `training/results/DSwinLSTM-I/` by default:
 
 ```text
 aggregate_metrics.csv
 per_frequency_metrics.csv
 per_band_metrics.csv
 report.txt
-<chunk_id>_training_log.csv
-checkpoints/
 ```
 
 ### Run DeepSPred
 
-The integrated DeepSPred runner converts chunk CSV data into colormap spectrogram frames and evaluates the configured minute horizons from frame predictions.
+The integrated DeepSPred runner converts chunk CSV data into colormap spectrogram frames.
 
 ```bash
 python3 training/DeepSPred/train_integrated.py
 ```
 
-Outputs go to `training/results/DeepSPred/` by default:
+Training outputs go to `training/results/DeepSPred/` by default:
+
+```text
+<chunk_id>_training_log.csv
+checkpoints/
+```
+
+#### Evaluate
+
+Loads the checkpoint saved by training, runs inference on the test set, and writes metrics.
+
+```bash
+python3 training/DeepSPred/evaluate_integrated.py
+```
+
+Evaluation outputs go to `training/results/DeepSPred/` by default:
 
 ```text
 aggregate_metrics.csv
 per_frequency_metrics.csv
 per_band_metrics.csv
 report.txt
-<chunk_id>_training_log.csv
-checkpoints/
 ```
 
 ### Assemble Overall Results
