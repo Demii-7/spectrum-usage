@@ -21,6 +21,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from model import VanillaLSTMForecaster  # noqa: E402
 from training.common.config import load_config  # noqa: E402
+from training.common.forecast_export import export_map_forecasts  # noqa: E402
 from training.common.integrated import epoch_log_row, finalize_results, prepare_output_dirs, timestamp_utc  # noqa: E402
 from training.common.data import chunk_specs, load_chunk  # noqa: E402
 from training.common.metrics import absolute_and_squared_errors_dbm  # noqa: E402
@@ -209,6 +210,7 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands: pd.DataFrame, out: Path
     aggregate_rows: list[dict[str, Any]] = []
     frequency_rows: list[dict[str, Any]] = []
     band_rows: list[dict[str, Any]] = []
+    export_payloads: dict[str, dict[str, Any]] = {}
     for horizon in horizons:
         for split_name in test_splits:
             split = data.splits[split_name]
@@ -218,6 +220,7 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands: pd.DataFrame, out: Path
             target_rows = target_rows_for(len(split.raw_dbm), history_offset, horizon, lookback, min_history)
             pred = predict_for_targets(model, full_x, target_rows, horizon, lookback, batch_size)
             target = full_raw[target_rows]
+            local_target_rows = (target_rows - history_offset).astype(np.int64)
             _, abs_err, sq_err = absolute_and_squared_errors_dbm(pred, target, data.normalization)
             append_metric_rows(
                 aggregate_rows,
@@ -236,6 +239,42 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands: pd.DataFrame, out: Path
                 sq_err=sq_err,
                 bands=bands,
             )
+
+            payload = export_payloads.setdefault(
+                split_name,
+                {
+                    "predictions_by_horizon": {},
+                    "targets_by_horizon": {},
+                    "target_rows_by_horizon": {},
+                },
+            )
+            payload["predictions_by_horizon"][horizon] = pred.astype(np.float32)
+            payload["targets_by_horizon"][horizon] = target.astype(np.float32)
+            payload["target_rows_by_horizon"][horizon] = local_target_rows
+
+    for split_name, payload in export_payloads.items():
+        export_map_forecasts(
+            out,
+            chunk_id=f"{chunk.chunk_id}_{split_name}",
+            model_name=MODEL_NAME,
+            predictions_by_horizon=payload["predictions_by_horizon"],
+            targets_by_horizon=payload["targets_by_horizon"],
+            target_rows_by_horizon=payload["target_rows_by_horizon"],
+            metadata={
+                "model": "VanillaLSTM",
+                "split_name": split_name,
+                "train_split": data.train_split,
+                "test_split": split_name,
+                "chunk_id": chunk.chunk_id,
+                "start_mhz": chunk.start_mhz,
+                "end_mhz": chunk.end_mhz,
+                "lookback": lookback,
+                "batch_size": batch_size,
+                "history_offset": len(train),
+                "frequencies_mhz": np.asarray(data.frequencies, dtype=np.float32),
+                "normalization": None if data.normalization is None else data.normalization.get("source_split"),
+            },
+        )
     return aggregate_rows, frequency_rows, band_rows
 
 
