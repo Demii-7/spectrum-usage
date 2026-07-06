@@ -21,7 +21,14 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from model import ConvLSTMPredictor  # noqa: E402
 from training.common.config import load_config  # noqa: E402
+from training.common.forecast_export import export_map_forecasts  # noqa: E402
 from training.common.integrated import epoch_log_row, finalize_results, prepare_output_dirs, timestamp_utc  # noqa: E402
+from training.common.interpolated_map import (  # noqa: E402
+    denormalize_map,
+    load_interpolated_map_npz,
+    normalize_map_by_frequency,
+    prediction_start_row,
+)
 from training.common.data import (
     chunk_specs,
     clean_interpolated_map,
@@ -76,23 +83,11 @@ def device_for() -> torch.device:
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def load_map_for_training(config: dict[str, Any]) -> np.ndarray:
-    """Load and clean an interpolated .npz map for training.
-
-    Expects ``config.convlstm.interpolated_map`` section with keys
-    ``map_path``, ``map_key``, ``n_freq_bins``, ``grid_height``, ``grid_width``.
-
-    Returns:
-        Cleaned array of shape (T, F, H, W) with no NaN values.
-    """
-    map_cfg = config["convlstm"]["interpolated_map"]
-    map_path = map_cfg["map_path"]
-    map_key = map_cfg.get("map_key", "map_db")
-    data = np.load(map_path)[map_key].astype(np.float32)
-    data = data.transpose(0, 3, 1, 2)
-    print(f"[load_map_for_training] Loaded map: shape {data.shape}")
+def load_map_for_path(path: str | Path, map_key: str) -> tuple[np.ndarray, dict[str, Any]]:
+    data, metadata = load_interpolated_map_npz(path, map_key)
+    print(f"[load_map_for_path] Loaded map: shape {data.shape}")
     data = clean_interpolated_map(data, train_ratio=0.8, fit_on_train_only=True)
-    return data
+    return data, metadata
 
 
 def build_model_config(config: dict[str, Any], n_bins: int) -> dict[str, Any]:
@@ -132,6 +127,152 @@ def build_map_model_config(config: dict[str, Any], n_freq: int, grid_h: int, gri
         },
         "model": model_cfg,
     }
+
+
+def predict_map_for_targets(
+    model: ConvLSTMPredictor,
+    full_x: np.ndarray,
+    target_rows: np.ndarray,
+    horizon: int,
+    lookback: int,
+    batch_size: int,
+) -> np.ndarray:
+    origins = target_rows - horizon + 1
+    histories = np.stack([full_x[origin - lookback : origin] for origin in origins], axis=0).astype(np.float32)
+    loader = DataLoader(torch.from_numpy(histories).float(), batch_size=batch_size, shuffle=False)
+    device = next(model.parameters()).device
+    preds = []
+    model.eval()
+    with torch.no_grad():
+        for x in loader:
+            pred = model(x.to(device))
+            preds.append(pred[:, selected_horizon_index(horizon)].cpu().numpy())
+    return np.concatenate(preds, axis=0).astype(np.float32)
+
+
+def run_map_mode(config: dict[str, Any], out: Path, checkpoints: Path) -> None:
+    data_cfg = config["data"]
+    ccfg = config["convlstm"]
+    map_cfg = ccfg.get("interpolated_map", {})
+    train_map_path = data_cfg.get("train_map_path") or map_cfg.get("map_path")
+    test_map_path = data_cfg.get("test_map_path") or train_map_path
+    map_key = str(data_cfg.get("map_key") or map_cfg.get("map_key", "map_db"))
+    if not train_map_path:
+        raise ValueError("Map mode requires data.train_map_path or convlstm.interpolated_map.map_path")
+
+    train_raw, train_meta = load_map_for_path(train_map_path, map_key)
+    test_raw, test_meta = load_map_for_path(test_map_path, map_key)
+    train_x, test_x, norm_stats = normalize_map_by_frequency(
+        train_raw,
+        test_raw,
+        enabled=bool(config.get("preprocessing", {}).get("normalize", True)),
+    )
+
+    T, F, H, W = train_x.shape
+    lookback = int(ccfg.get("input_sequence_length", config["windowing"]["lookback"]))
+    prediction_horizon = int(ccfg.get("prediction_horizon", max(config["windowing"]["horizons"])))
+    batch_size = int(ccfg.get("batch_size", 32))
+
+    origins = np.arange(lookback, T - prediction_horizon + 1, dtype=np.int64)
+    if len(origins) < 2:
+        raise ValueError(f"Not enough map timesteps ({T}) for lookback={lookback}, horizon={prediction_horizon}")
+    val_count = max(1, int(len(origins) * 0.1))
+    train_loader = DataLoader(
+        _MapWindowDataset(train_x, lookback, prediction_horizon, origins[:-val_count]),
+        batch_size=batch_size,
+        shuffle=True,
+        drop_last=True,
+    )
+    val_loader = DataLoader(
+        _MapWindowDataset(train_x, lookback, prediction_horizon, origins[-val_count:]),
+        batch_size=batch_size,
+        shuffle=False,
+    )
+
+    model_config = build_map_model_config(config, F, H, W)
+    device = device_for()
+    model = ConvLSTMPredictor(model_config).to(device)
+    criterion = nn.MSELoss()
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=float(ccfg.get("learning_rate", 0.0002)),
+        weight_decay=float(ccfg.get("weight_decay", 0.004)),
+    )
+    for epoch in range(1, int(ccfg.get("epochs", 25)) + 1):
+        model.train()
+        train_loss = 0.0
+        for x, y in train_loader:
+            x, y = x.to(device), y.to(device)
+            optimizer.zero_grad()
+            pred = model(x, y_teacher=y, teacher_forcing_ratio=float(ccfg.get("teacher_forcing_ratio", 1.0)))
+            loss = criterion(pred, y)
+            loss.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), float(ccfg.get("gradient_clip_norm", 5.0)))
+            optimizer.step()
+            train_loss += loss.item() * x.size(0)
+        train_loss /= max(len(train_loader.dataset), 1)
+
+        model.eval()
+        val_loss = 0.0
+        with torch.no_grad():
+            for x, y in val_loader:
+                x, y = x.to(device), y.to(device)
+                pred = model(x)
+                val_loss += criterion(pred, y).item() * x.size(0)
+        val_loss /= max(len(val_loader.dataset), 1)
+        print(f"map epoch {epoch:03d} train_loss={train_loss:.6f} val_loss={val_loss:.6f}")
+
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "model_config": model_config,
+            "common_config": config,
+            "normalization_stats": norm_stats,
+            "train_map_metadata": train_meta,
+            "test_map_metadata": test_meta,
+            "training_end_time": timestamp_utc(),
+        },
+        checkpoints / "interpolated_map_convlstm.pt",
+    )
+    print(f"Interpolated-map model saved to {checkpoints / 'interpolated_map_convlstm.pt'}")
+
+    start_idx = prediction_start_row(config, len(test_x))
+    horizons = [int(h) for h in config["windowing"]["horizons"]]
+    predictions_by_horizon: dict[int, np.ndarray] = {}
+    targets_by_horizon: dict[int, np.ndarray] = {}
+    target_rows_by_horizon: dict[int, np.ndarray] = {}
+    for horizon in horizons:
+        first_target = max(start_idx, lookback + horizon - 1)
+        target_rows = np.arange(first_target, len(test_x), dtype=np.int64)
+        if len(target_rows) == 0:
+            continue
+        pred_norm = predict_map_for_targets(model, test_x, target_rows, horizon, lookback, batch_size)
+        pred = denormalize_map(pred_norm, norm_stats)
+        target = test_raw[target_rows].astype(np.float32)
+        predictions_by_horizon[horizon] = pred
+        targets_by_horizon[horizon] = target
+        target_rows_by_horizon[horizon] = target_rows
+
+    export_map_forecasts(
+        out,
+        chunk_id=str(data_cfg.get("chunk_id", "powder_map")),
+        model_name=MODEL_NAME,
+        predictions_by_horizon=predictions_by_horizon,
+        targets_by_horizon=targets_by_horizon,
+        target_rows_by_horizon=target_rows_by_horizon,
+        metadata={
+            "model": "ConvLSTM",
+            "train_map_path": str(train_meta["path"]),
+            "test_map_path": str(test_meta["path"]),
+            "map_key": map_key,
+            "prediction_start_row": config.get("evaluation", {}).get("prediction_start_row"),
+            "train_shape_tf_hw": list(train_raw.shape),
+            "test_shape_tf_hw": list(test_raw.shape),
+            "normalization": None if norm_stats is None else norm_stats["method"],
+            "train_map_metadata": train_meta.get("metadata"),
+            "test_map_metadata": test_meta.get("metadata"),
+        },
+    )
 
 
 def train_one_model(config: dict[str, Any], train_matrix: np.ndarray, checkpoints: Path, out: Path, chunk_id: str) -> ConvLSTMPredictor:
@@ -332,71 +473,9 @@ def main() -> None:
         checkpoints = out / "checkpoints"
         checkpoints.mkdir(parents=True, exist_ok=True)
 
-    # Check for interpolated-map mode.
-    map_cfg = config["convlstm"].get("interpolated_map", {})
-    if map_cfg.get("enabled", False):
+    if config["data"].get("train_map_path") or config["convlstm"].get("interpolated_map", {}).get("enabled", False):
         print("Interpolated-map mode enabled — training on map data.")
-        data_4d = load_map_for_training(config)
-        T, F, H, W = data_4d.shape
-        ccfg = config["convlstm"]
-        lookback = int(ccfg.get("input_sequence_length", config["windowing"]["lookback"]))
-        prediction_horizon = int(ccfg.get("prediction_horizon", max(config["windowing"]["horizons"])))
-        # Build 4D windows for training.
-        origins = np.arange(lookback, T - prediction_horizon, dtype=np.int64)
-        if len(origins) < 2:
-            raise ValueError(f"Not enough map timesteps ({T}) for lookback={lookback}, horizon={prediction_horizon}")
-        val_count = max(1, int(len(origins) * 0.1))
-        train_loader = DataLoader(
-            _MapWindowDataset(data_4d, lookback, prediction_horizon, origins[:-val_count]),
-            batch_size=int(ccfg.get("batch_size", 32)),
-            shuffle=True, drop_last=True,
-        )
-        val_loader = DataLoader(
-            _MapWindowDataset(data_4d, lookback, prediction_horizon, origins[-val_count:]),
-            batch_size=int(ccfg.get("batch_size", 32)),
-            shuffle=False,
-        )
-        model_config = build_map_model_config(config, F, H, W)
-        device = device_for()
-        model = ConvLSTMPredictor(model_config).to(device)
-        criterion = nn.MSELoss()
-        optimizer = torch.optim.Adam(
-            model.parameters(),
-            lr=float(ccfg.get("learning_rate", 0.0002)),
-            weight_decay=float(ccfg.get("weight_decay", 0.004)),
-        )
-        for epoch in range(1, int(ccfg.get("epochs", 25)) + 1):
-            model.train()
-            train_loss = 0.0
-            for x, y in train_loader:
-                x, y = x.to(device), y.to(device)
-                optimizer.zero_grad()
-                pred = model(x, y_teacher=y, teacher_forcing_ratio=float(ccfg.get("teacher_forcing_ratio", 1.0)))
-                loss = criterion(pred, y)
-                loss.backward()
-                nn.utils.clip_grad_norm_(model.parameters(), float(ccfg.get("gradient_clip_norm", 5.0)))
-                optimizer.step()
-                train_loss += loss.item() * x.size(0)
-            train_loss /= max(len(train_loader.dataset), 1)
-            model.eval()
-            val_loss = 0.0
-            with torch.no_grad():
-                for x, y in val_loader:
-                    x, y = x.to(device), y.to(device)
-                    pred = model(x)
-                    val_loss += criterion(pred, y).item() * x.size(0)
-            val_loss /= max(len(val_loader.dataset), 1)
-            print(f"map epoch {epoch:03d} train_loss={train_loss:.6f} val_loss={val_loss:.6f}")
-        torch.save(
-            {
-                "model_state_dict": model.state_dict(),
-                "model_config": model_config,
-                "common_config": config,
-                "training_end_time": timestamp_utc(),
-            },
-            checkpoints / "interpolated_map_convlstm.pt",
-        )
-        print(f"Interpolated-map model saved to {checkpoints / 'interpolated_map_convlstm.pt'}")
+        run_map_mode(config, out, checkpoints)
         return
 
     bands = load_band_definitions(config)
