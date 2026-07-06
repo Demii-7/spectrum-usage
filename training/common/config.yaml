@@ -1,7 +1,10 @@
 data:
+  loader: aerpaw
   data_dir: evaluation/aerpaw
   band_definitions_path: evaluation/results/step2/band_definitions.csv
   reference_site: CC2
+  train_files: []
+  test_files: []
   train_map_path:
   test_map_path:
   map_key: map_db
