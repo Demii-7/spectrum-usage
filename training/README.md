@@ -338,12 +338,23 @@ The `variable` run also writes the compatibility filenames `cc2_autoreg_by_horiz
 
 Edit `training/common/config.yaml` to change chunks, horizons, lookback, normalization, or model hyperparameters. The model runners also accept `--config /path/to/config.yaml`.
 
+Use that single shared file for integrated runs. The intended workflow is:
+
+1. edit `training/common/config.yaml`
+2. set the current band, map paths, and model hyperparameters
+3. run one integrated trainer
+4. update the same config file for the next experiment
+
 Key fields:
 
 ```yaml
 data:
   data_dir: evaluation/aerpaw
   reference_site: CC2
+  train_map_path:
+  test_map_path:
+  map_key: map_db
+  chunk_id:
   chunks:
     - id: chunk_600_800
       start_mhz: 600.0
@@ -355,6 +366,9 @@ windowing:
 
 preprocessing:
   normalize: true
+
+evaluation:
+  prediction_start_row:
 
 convlstm:
   input_sequence_length: 60
@@ -396,6 +410,47 @@ deepspred:
   input_frames: 1
   output_frames: 1
 ```
+
+Map-specific fields:
+
+- `data.train_map_path`: interpolated-map `.npz` used for model training
+- `data.test_map_path`: interpolated-map `.npz` used for forecasting and evaluation
+- `data.map_key`: key inside the `.npz`, usually `map_db`
+- `data.chunk_id`: optional label used when naming exported forecast artifacts
+- `evaluation.prediction_start_row`: optional 1-based data-row boundary for forecast export and scoring inside `test_map_path`
+
+`prediction_start_row` is useful when the test map contains earlier rows only
+for historical context. Rows before that boundary stay available as model
+history, but exported forecasts and evaluation begin at the configured row.
+
+Example POWDER map configuration for `600_800`:
+
+```yaml
+data:
+  train_map_path: data/powder_20260618T0036Z_humanities_guesthouse_600_800.npz
+  test_map_path: data/powder_temporal_test_split_humanities_guesthouse_600_800.npz
+  map_key: map_db
+  chunk_id: powder_600_800
+  chunks:
+    - id: chunk_600_800
+      start_mhz: 600.0
+      end_mhz: 800.0
+
+evaluation:
+  prediction_start_row: 8883
+```
+
+For `2400_2600`, edit the same file and swap `train_map_path`, `test_map_path`, `chunk_id`, and the single entry under `data.chunks`.
+
+Integrated map-mode runs now also export forecasts under the model output directory:
+
+- `forecasts/<chunk_id>_<model>_predictions.npz`
+- `forecasts/<chunk_id>_<model>_targets.npz`
+- `forecasts/<chunk_id>_<model>_metadata.json`
+
+For `STS-PredNet`, integrated map mode trains only on `data.train_map_path` and uses `data.test_map_path` for context plus evaluation. This avoids fitting on test-era targets while still allowing long-history branches to look back into earlier rows of the test map.
+
+For `ConvLSTM`, the same split-map mechanism applies: training reads `data.train_map_path`, forecasting/evaluation reads `data.test_map_path`, and forecast export starts at `evaluation.prediction_start_row` when that field is set.
 
 Set each model's prediction/input length to at least the largest configured horizon.
 
