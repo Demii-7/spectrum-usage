@@ -21,18 +21,12 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from stsprednet import STSPredNet  # noqa: E402
 from training.common.config import load_config  # noqa: E402
-from training.common.forecast_export import export_map_forecasts  # noqa: E402
-from training.common.integrated import epoch_log_row, finalize_results, prepare_output_dirs, timestamp_utc  # noqa: E402
+from training.common.integrated import epoch_log_row, prepare_output_dirs, timestamp_utc  # noqa: E402
 from training.common.interpolated_map import (  # noqa: E402
-    denormalize_map,
     load_interpolated_map_npz,
     normalize_map_by_frequency,
-    prediction_start_row,
 )
 from training.common.data import chunk_specs, load_chunk  # noqa: E402
-from training.common.metrics import absolute_and_squared_errors_dbm  # noqa: E402
-from training.common.results import append_metric_rows, load_band_definitions  # noqa: E402
-from training.common.windowing import target_rows_for  # noqa: E402
 
 MODEL_NAME = "stsprednet"
 
@@ -373,42 +367,6 @@ def train_map_model(
     return model
 
 
-def predict_recursive(model: STSPredNet, device: torch.device,
-                      full_x: np.ndarray, target_rows: np.ndarray,
-                      horizon: int, lc: int, lp: int,
-                      period_interval: int) -> np.ndarray:
-    n_bins = full_x.shape[1]
-    preds = []
-
-    for target_row in target_rows:
-        origin = target_row - horizon
-        running = [full_x[i].copy() for i in range(origin - lc + 1, origin + 1)]
-
-        for step in range(1, horizon + 1):
-            current_target = origin + step
-
-            close = np.stack(running[-lc:], axis=0)
-            close = close[:, None, None, :].astype(np.float32)
-            close_t = torch.from_numpy(close).float().unsqueeze(0)
-
-            period_list = [full_x[current_target - p * period_interval]
-                           for p in range(lp, 0, -1)]
-            period = np.stack(period_list, axis=0)
-            period = period[:, None, None, :].astype(np.float32)
-            period_t = torch.from_numpy(period).float().unsqueeze(0)
-
-            with torch.no_grad():
-                pred = model(close_t.to(device), period_t.to(device), None)
-            pred_np = pred.cpu().numpy()[0, 0, 0, :]
-
-            if step == horizon:
-                preds.append(pred_np)
-            else:
-                running.append(pred_np)
-
-    return np.stack(preds, axis=0).astype(np.float32)
-
-
 def predict_recursive_map(
     model: STSPredNet,
     device: torch.device,
@@ -460,116 +418,6 @@ def run_map_mode(config: dict[str, Any], out: Path, checkpoints: Path) -> None:
 
     chunk_id = str(data_cfg.get("chunk_id", "powder_map"))
     model = train_map_model(config, train_x, checkpoints, out, chunk_id)
-    device = next(model.parameters()).device
-
-    scfg = config["stsprednet"]
-    lc = int(scfg["lc"])
-    lp = int(scfg["lp"])
-    period_interval = int(scfg["period_interval"])
-    horizons = [int(h) for h in config["windowing"]["horizons"]]
-    start_idx = prediction_start_row(config, len(test_x))
-
-    predictions_by_horizon: dict[int, np.ndarray] = {}
-    targets_by_horizon: dict[int, np.ndarray] = {}
-    target_rows_by_horizon: dict[int, np.ndarray] = {}
-    period_min = lp * period_interval
-    for horizon in horizons:
-        min_needed = max(period_min + horizon - 1, horizon + lc - 1)
-        first_target = max(start_idx, min_needed)
-        target_rows = np.arange(first_target, len(test_x), dtype=np.int64)
-        if len(target_rows) == 0:
-            continue
-        pred_norm = predict_recursive_map(model, device, test_x, target_rows, horizon, lc, lp, period_interval)
-        pred = denormalize_map(pred_norm, norm_stats)
-        target = test_raw[target_rows].astype(np.float32)
-        predictions_by_horizon[horizon] = pred
-        targets_by_horizon[horizon] = target
-        target_rows_by_horizon[horizon] = target_rows
-
-    export_map_forecasts(
-        out,
-        chunk_id=chunk_id,
-        model_name=MODEL_NAME,
-        predictions_by_horizon=predictions_by_horizon,
-        targets_by_horizon=targets_by_horizon,
-        target_rows_by_horizon=target_rows_by_horizon,
-        metadata={
-            "model": "STS-PredNet",
-            "train_map_path": str(train_meta["path"]),
-            "test_map_path": str(test_meta["path"]),
-            "map_key": map_key,
-            "prediction_start_row": config.get("evaluation", {}).get("prediction_start_row"),
-            "train_shape_tf_hw": list(train_raw.shape),
-            "test_shape_tf_hw": list(test_raw.shape),
-            "normalization": None if norm_stats is None else norm_stats["method"],
-            "train_map_metadata": train_meta.get("metadata"),
-            "test_map_metadata": test_meta.get("metadata"),
-        },
-    )
-
-
-def evaluate_chunk(config: dict[str, Any], chunk, bands: pd.DataFrame, out: Path):
-    scfg = config["stsprednet"]
-    lc = int(scfg["lc"])
-    lp = int(scfg["lp"])
-    period_interval = int(scfg["period_interval"])
-    min_history_base = int(config["windowing"].get("min_history", 4320))
-    horizons = [int(h) for h in config["windowing"]["horizons"]]
-    data = load_chunk(config, chunk)
-    test_splits = config["data"].get("test_splits", [data.test_split])
-    train = data.splits[data.train_split].model_input
-    train_raw = data.splits[data.train_split].raw_dbm
-
-    checkpoints = out / "checkpoints"
-    model = train_one_model(config, train, checkpoints, out, chunk.chunk_id)
-    device = next(model.parameters()).device
-
-    aggregate_rows: list[dict[str, Any]] = []
-    frequency_rows: list[dict[str, Any]] = []
-    band_rows: list[dict[str, Any]] = []
-
-    period_min_base = lp * period_interval
-    for horizon in horizons:
-        min_needed = max(period_min_base + horizon - 1, min_history_base, horizon + lc - 1)
-        for split_name in test_splits:
-            split = data.splits[split_name]
-            full_x = np.vstack([train, split.model_input]).astype(np.float32)
-            full_raw = np.vstack([train_raw, split.raw_dbm]).astype(np.float32)
-            history_offset = len(train)
-
-            target_rows = target_rows_for(
-                len(split.raw_dbm), history_offset, horizon,
-                lc, min_needed,
-            )
-            if len(target_rows) == 0:
-                print(f"  No valid target rows for {chunk.chunk_id} {split_name} h={horizon}")
-                continue
-
-            pred = predict_recursive(
-                model, device, full_x, target_rows, horizon,
-                lc, lp, period_interval,
-            )
-            target = full_raw[target_rows]
-            _, abs_err, sq_err = absolute_and_squared_errors_dbm(
-                pred, target, data.normalization,
-            )
-            append_metric_rows(
-                aggregate_rows, frequency_rows, band_rows,
-                chunk_id=chunk.chunk_id,
-                start_mhz=chunk.start_mhz,
-                end_mhz=chunk.end_mhz,
-                split_name=split_name,
-                horizon=horizon,
-                model=MODEL_NAME,
-                target_rows=target_rows,
-                history_offset=history_offset,
-                freqs=data.frequencies,
-                abs_err=abs_err,
-                sq_err=sq_err,
-                bands=bands,
-            )
-
-    return aggregate_rows, frequency_rows, band_rows
 
 
 def parse_args() -> argparse.Namespace:
@@ -594,34 +442,11 @@ def main() -> None:
         run_map_mode(config, out, checkpoints)
         return
 
-    bands = load_band_definitions(config)
-
-    total_start_time = timestamp_utc()
-    total_start = time.perf_counter()
-    aggregate_rows: list[dict[str, Any]] = []
-    frequency_rows: list[dict[str, Any]] = []
-    band_rows: list[dict[str, Any]] = []
-
     for chunk in chunk_specs(config):
         print(f"Training STS-PredNet for {chunk.chunk_id} ({chunk.start_mhz:g}-{chunk.end_mhz:g} MHz)")
-        chunk_start = time.perf_counter()
-        a, f, b = evaluate_chunk(config, chunk, bands, out)
-        print(f"  {chunk.chunk_id} total done in {time.perf_counter() - chunk_start:.1f}s")
-        aggregate_rows.extend(a)
-        frequency_rows.extend(f)
-        band_rows.extend(b)
-
-    total_run = time.perf_counter() - total_start
-    finalize_results(
-        out,
-        "STS-PredNet",
-        aggregate_rows,
-        frequency_rows,
-        band_rows,
-        [f"Training start time: {total_start_time}", f"Total run time seconds: {total_run:.2f}"],
-    )
-    print(f"Wrote {len(aggregate_rows)} aggregate metric rows to {out / 'aggregate_metrics.csv'}")
-    print(f"Total run time: {total_run:.1f}s ({total_run/60:.1f} min)")
+        data = load_chunk(config, chunk)
+        train = data.splits[data.train_split].model_input
+        train_one_model(config, train, checkpoints, out, chunk.chunk_id)
 
 
 if __name__ == "__main__":

@@ -1,10 +1,10 @@
 data:
-  loader: aerpaw
-  data_dir: evaluation/aerpaw
-  band_definitions_path: evaluation/results/step2/band_definitions.csv
-  reference_site: CC2
-  train_files: []
-  test_files: []
+  loader: powder
+  data_dir: 
+  band_definitions_path:
+  reference_site:
+  train_files: [data/powder_20260618T0036Z_humanities_600_800.csv, data/powder_20260618T0036Z_guesthouse_600_800.csv]
+  test_files: [data/powder_20260628T0436Z_humanities_600_800.csv, data/powder_20260628T0436Z_guesthouse_600_800.csv]
   train_map_path:
   test_map_path:
   map_key: map_db
@@ -12,20 +12,13 @@ data:
   max_rows:
   test_rows: 2880
   chunks:
-    - id: chunk_600_800
+    - id: powder_600_800
       start_mhz: 600.0
       end_mhz: 800.0
-    - id: chunk_2400_2600
-      start_mhz: 2400.0
-      end_mhz: 2600.0
-    - id: chunk_3500_3700
-      start_mhz: 3500.0
-      end_mhz: 3700.0
-
 windowing:
   lookback: 60
   horizons: [1, 5, 15, 60]
-  min_history: 4320
+  min_history: 60
 
 preprocessing:
   normalize: true
@@ -35,7 +28,7 @@ preprocessing:
     window_steps: 2
 
 outputs:
-  root_dir: training/results
+  root_dir: training/results/powder/vanillalstm/600_800
 
 evaluation:
   prediction_start_row:

@@ -21,13 +21,10 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from model import ConvLSTMPredictor  # noqa: E402
 from training.common.config import load_config  # noqa: E402
-from training.common.forecast_export import export_map_forecasts  # noqa: E402
-from training.common.integrated import epoch_log_row, finalize_results, prepare_output_dirs, timestamp_utc  # noqa: E402
+from training.common.integrated import epoch_log_row, prepare_output_dirs, timestamp_utc  # noqa: E402
 from training.common.interpolated_map import (  # noqa: E402
-    denormalize_map,
     load_interpolated_map_npz,
     normalize_map_by_frequency,
-    prediction_start_row,
 )
 from training.common.data import (
     chunk_specs,
@@ -35,9 +32,6 @@ from training.common.data import (
     load_chunk,
     model_matrix_to_convlstm_frames,
 )  # noqa: E402
-from training.common.metrics import absolute_and_squared_errors_dbm  # noqa: E402
-from training.common.results import append_metric_rows, load_band_definitions  # noqa: E402
-from training.common.windowing import aligned_history_matrix, selected_horizon_index, target_rows_for  # noqa: E402
 
 
 MODEL_NAME = "convlstm"
@@ -129,27 +123,6 @@ def build_map_model_config(config: dict[str, Any], n_freq: int, grid_h: int, gri
     }
 
 
-def predict_map_for_targets(
-    model: ConvLSTMPredictor,
-    full_x: np.ndarray,
-    target_rows: np.ndarray,
-    horizon: int,
-    lookback: int,
-    batch_size: int,
-) -> np.ndarray:
-    origins = target_rows - horizon + 1
-    histories = np.stack([full_x[origin - lookback : origin] for origin in origins], axis=0).astype(np.float32)
-    loader = DataLoader(torch.from_numpy(histories).float(), batch_size=batch_size, shuffle=False)
-    device = next(model.parameters()).device
-    preds = []
-    model.eval()
-    with torch.no_grad():
-        for x in loader:
-            pred = model(x.to(device))
-            preds.append(pred[:, selected_horizon_index(horizon)].cpu().numpy())
-    return np.concatenate(preds, axis=0).astype(np.float32)
-
-
 def run_map_mode(config: dict[str, Any], out: Path, checkpoints: Path) -> None:
     data_cfg = config["data"]
     ccfg = config["convlstm"]
@@ -235,44 +208,6 @@ def run_map_mode(config: dict[str, Any], out: Path, checkpoints: Path) -> None:
         checkpoints / "interpolated_map_convlstm.pt",
     )
     print(f"Interpolated-map model saved to {checkpoints / 'interpolated_map_convlstm.pt'}")
-
-    start_idx = prediction_start_row(config, len(test_x))
-    horizons = [int(h) for h in config["windowing"]["horizons"]]
-    predictions_by_horizon: dict[int, np.ndarray] = {}
-    targets_by_horizon: dict[int, np.ndarray] = {}
-    target_rows_by_horizon: dict[int, np.ndarray] = {}
-    for horizon in horizons:
-        first_target = max(start_idx, lookback + horizon - 1)
-        target_rows = np.arange(first_target, len(test_x), dtype=np.int64)
-        if len(target_rows) == 0:
-            continue
-        pred_norm = predict_map_for_targets(model, test_x, target_rows, horizon, lookback, batch_size)
-        pred = denormalize_map(pred_norm, norm_stats)
-        target = test_raw[target_rows].astype(np.float32)
-        predictions_by_horizon[horizon] = pred
-        targets_by_horizon[horizon] = target
-        target_rows_by_horizon[horizon] = target_rows
-
-    export_map_forecasts(
-        out,
-        chunk_id=str(data_cfg.get("chunk_id", "powder_map")),
-        model_name=MODEL_NAME,
-        predictions_by_horizon=predictions_by_horizon,
-        targets_by_horizon=targets_by_horizon,
-        target_rows_by_horizon=target_rows_by_horizon,
-        metadata={
-            "model": "ConvLSTM",
-            "train_map_path": str(train_meta["path"]),
-            "test_map_path": str(test_meta["path"]),
-            "map_key": map_key,
-            "prediction_start_row": config.get("evaluation", {}).get("prediction_start_row"),
-            "train_shape_tf_hw": list(train_raw.shape),
-            "test_shape_tf_hw": list(test_raw.shape),
-            "normalization": None if norm_stats is None else norm_stats["method"],
-            "train_map_metadata": train_meta.get("metadata"),
-            "test_map_metadata": test_meta.get("metadata"),
-        },
-    )
 
 
 def train_one_model(config: dict[str, Any], train_matrix: np.ndarray, checkpoints: Path, out: Path, chunk_id: str) -> ConvLSTMPredictor:
@@ -388,74 +323,6 @@ def train_one_model(config: dict[str, Any], train_matrix: np.ndarray, checkpoint
     return model
 
 
-def predict_for_targets(
-    model: ConvLSTMPredictor,
-    full_x: np.ndarray,
-    target_rows: np.ndarray,
-    horizon: int,
-    lookback: int,
-    batch_size: int,
-) -> np.ndarray:
-    origins = target_rows - horizon
-    histories = aligned_history_matrix(full_x, origins, horizon=0, lookback=lookback)
-    histories = histories[:, :, None, None, :].astype(np.float32)
-    loader = DataLoader(torch.from_numpy(histories).float(), batch_size=batch_size, shuffle=False)
-    device = next(model.parameters()).device
-    preds = []
-    model.eval()
-    with torch.no_grad():
-        for x in loader:
-            pred = model(x.to(device))
-            preds.append(pred[:, selected_horizon_index(horizon), 0, 0, :].cpu().numpy())
-    return np.concatenate(preds, axis=0).astype(np.float32)
-
-
-def evaluate_chunk(config: dict[str, Any], chunk, bands: pd.DataFrame, out: Path):
-    ccfg = config["convlstm"]
-    lookback = int(ccfg.get("input_sequence_length", config["windowing"]["lookback"]))
-    min_history = int(config["windowing"].get("min_history", 4320))
-    horizons = [int(h) for h in config["windowing"]["horizons"]]
-    batch_size = int(ccfg.get("batch_size", 32))
-    data = load_chunk(config, chunk)
-    test_splits = config["data"].get("test_splits", [data.test_split])
-    train = data.splits[data.train_split].model_input
-    train_raw = data.splits[data.train_split].raw_dbm
-    checkpoints = out / "checkpoints"
-    model = train_one_model(config, train, checkpoints, out, chunk.chunk_id)
-
-    aggregate_rows: list[dict[str, Any]] = []
-    frequency_rows: list[dict[str, Any]] = []
-    band_rows: list[dict[str, Any]] = []
-    for horizon in horizons:
-        for split_name in test_splits:
-            split = data.splits[split_name]
-            full_x = np.vstack([train, split.model_input]).astype(np.float32)
-            full_raw = np.vstack([train_raw, split.raw_dbm]).astype(np.float32)
-            history_offset = len(train)
-            target_rows = target_rows_for(len(split.raw_dbm), history_offset, horizon, lookback, min_history)
-            pred = predict_for_targets(model, full_x, target_rows, horizon, lookback, batch_size)
-            target = full_raw[target_rows]
-            _, abs_err, sq_err = absolute_and_squared_errors_dbm(pred, target, data.normalization)
-            append_metric_rows(
-                aggregate_rows,
-                frequency_rows,
-                band_rows,
-                chunk_id=chunk.chunk_id,
-                start_mhz=chunk.start_mhz,
-                end_mhz=chunk.end_mhz,
-                split_name=split_name,
-                horizon=horizon,
-                model=MODEL_NAME,
-                target_rows=target_rows,
-                history_offset=history_offset,
-                freqs=data.frequencies,
-                abs_err=abs_err,
-                sq_err=sq_err,
-                bands=bands,
-            )
-    return aggregate_rows, frequency_rows, band_rows
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=None)
@@ -478,32 +345,11 @@ def main() -> None:
         run_map_mode(config, out, checkpoints)
         return
 
-    bands = load_band_definitions(config)
-    total_start_time = timestamp_utc()
-    total_start = time.perf_counter()
-    aggregate_rows: list[dict[str, Any]] = []
-    frequency_rows: list[dict[str, Any]] = []
-    band_rows: list[dict[str, Any]] = []
     for chunk in chunk_specs(config):
         print(f"Training ConvLSTM for {chunk.chunk_id} ({chunk.start_mhz:g}-{chunk.end_mhz:g} MHz)")
-        chunk_start = time.perf_counter()
-        aggregate, frequency, band = evaluate_chunk(config, chunk, bands, out)
-        print(f"  {chunk.chunk_id} total done in {time.perf_counter() - chunk_start:.1f}s")
-        aggregate_rows.extend(aggregate)
-        frequency_rows.extend(frequency)
-        band_rows.extend(band)
-
-    total_run = time.perf_counter() - total_start
-    finalize_results(
-        out,
-        "ConvLSTM",
-        aggregate_rows,
-        frequency_rows,
-        band_rows,
-        [f"Training start time: {total_start_time}", f"Total run time seconds: {total_run:.2f}"],
-    )
-    print(f"Wrote {len(aggregate_rows)} aggregate metric rows to {out / 'aggregate_metrics.csv'}")
-    print(f"Total run time: {total_run:.1f}s ({total_run/60:.1f} min)")
+        data = load_chunk(config, chunk)
+        train = data.splits[data.train_split].model_input
+        train_one_model(config, train, checkpoints, out, chunk.chunk_id)
 
 
 if __name__ == "__main__":

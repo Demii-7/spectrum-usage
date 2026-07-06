@@ -22,10 +22,8 @@ if str(SCRIPT_DIR) not in sys.path:
 from dataset import SpectrumMapDataset, normalize_splits  # noqa: E402
 from model import DSwinLSTM_I  # noqa: E402
 from training.common.config import load_config  # noqa: E402
-from training.common.integrated import epoch_log_row, finalize_results, prepare_output_dirs, timestamp_utc  # noqa: E402
+from training.common.integrated import epoch_log_row, prepare_output_dirs, timestamp_utc  # noqa: E402
 from training.common.data import chunk_specs, load_chunk  # noqa: E402
-from training.common.results import append_metric_rows, load_band_definitions  # noqa: E402
-from training.common.windowing import target_rows_for  # noqa: E402
 
 
 MODEL_NAME = "dswinlstm_i"
@@ -182,74 +180,6 @@ def train_one_model(config: dict[str, Any], train_raw: np.ndarray, checkpoints: 
     return model, runner_config, stats
 
 
-def predict_for_targets(model: DSwinLSTM_I, full_norm_map: np.ndarray, target_rows: np.ndarray, horizon: int, lookback: int, batch_size: int) -> np.ndarray:
-    starts = target_rows - horizon - lookback + 1
-    windows = np.stack([full_norm_map[start : start + lookback] for start in starts], axis=0).astype(np.float32)
-    mask = np.ones_like(windows, dtype=np.float32)
-    x = torch.from_numpy(windows).permute(0, 1, 4, 2, 3).contiguous()
-    m = torch.from_numpy(mask)
-    loader = DataLoader(list(zip(x, m)), batch_size=batch_size, shuffle=False)
-    preds = []
-    model.eval()
-    with torch.no_grad():
-        for batch_x, batch_mask in loader:
-            batch_x = batch_x.to(next(model.parameters()).device)
-            batch_mask = batch_mask.to(next(model.parameters()).device)
-            pred = model(batch_x, batch_mask)
-            preds.append(pred[:, horizon - 1, 0, 0, :].cpu().numpy())
-    return np.concatenate(preds, axis=0).astype(np.float32)
-
-
-def evaluate_chunk(config: dict[str, Any], chunk, bands: pd.DataFrame, out: Path):
-    dcfg = config["dswinlstm_i"]
-    lookback = int(dcfg.get("input_sequence_length", config["windowing"]["lookback"]))
-    horizons = [int(h) for h in config["windowing"]["horizons"]]
-    min_history = int(config["windowing"].get("min_history", 4320))
-    batch_size = int(dcfg.get("batch_size", 2))
-    data = load_chunk(config, chunk)
-    test_splits = config["data"].get("test_splits", [data.test_split])
-    train_raw = data.splits[data.train_split].raw_dbm
-    model, _, stats = train_one_model(config, train_raw, out / "checkpoints", out, chunk.chunk_id)
-
-    aggregate_rows: list[dict[str, Any]] = []
-    frequency_rows: list[dict[str, Any]] = []
-    band_rows: list[dict[str, Any]] = []
-    train_map = to_pseudo_map(train_raw)
-    for horizon in horizons:
-        for split_name in test_splits:
-            split = data.splits[split_name]
-            split_raw = split.raw_dbm
-            split_map = to_pseudo_map(split_raw)
-            full_train, _, full_test, stats = normalize_splits(train_map, split_map, split_map, build_runner_config(config, train_raw.shape[1]), full_data=np.concatenate([train_map, split_map], axis=0))
-            full_norm = np.concatenate([full_train, full_test], axis=0)
-            full_raw = np.vstack([train_raw, split_raw]).astype(np.float32)
-            history_offset = len(train_raw)
-            target_rows = target_rows_for(len(split_raw), history_offset, horizon, lookback, min_history)
-            pred_norm = predict_for_targets(model, full_norm, target_rows, horizon, lookback, batch_size)
-            pred_raw = denormalize_map(pred_norm, stats)
-            target = full_raw[target_rows]
-            abs_err = np.abs(pred_raw - target)
-            sq_err = (pred_raw - target) ** 2
-            append_metric_rows(
-                aggregate_rows,
-                frequency_rows,
-                band_rows,
-                chunk_id=chunk.chunk_id,
-                start_mhz=chunk.start_mhz,
-                end_mhz=chunk.end_mhz,
-                split_name=split_name,
-                horizon=horizon,
-                model=MODEL_NAME,
-                target_rows=target_rows,
-                history_offset=history_offset,
-                freqs=data.frequencies,
-                abs_err=abs_err,
-                sq_err=sq_err,
-                bands=bands,
-            )
-    return aggregate_rows, frequency_rows, band_rows
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=None)
@@ -265,30 +195,12 @@ def main() -> None:
         out = args.output_dir
         out.mkdir(parents=True, exist_ok=True)
         (out / "checkpoints").mkdir(parents=True, exist_ok=True)
-    bands = load_band_definitions(config)
 
-    total_start_time = timestamp_utc()
-    total_start = time.perf_counter()
-    aggregate_rows: list[dict[str, Any]] = []
-    frequency_rows: list[dict[str, Any]] = []
-    band_rows: list[dict[str, Any]] = []
     for chunk in chunk_specs(config):
         print(f"Training DSwinLSTM-I for {chunk.chunk_id} ({chunk.start_mhz:g}-{chunk.end_mhz:g} MHz)")
-        a, f, b = evaluate_chunk(config, chunk, bands, out)
-        aggregate_rows.extend(a)
-        frequency_rows.extend(f)
-        band_rows.extend(b)
-
-    total_run = time.perf_counter() - total_start
-    finalize_results(
-        out,
-        "DSwinLSTM-I",
-        aggregate_rows,
-        frequency_rows,
-        band_rows,
-        [f"Training start time: {total_start_time}", f"Total run time seconds: {total_run:.2f}"],
-    )
-    print(f"Wrote {len(aggregate_rows)} aggregate metric rows to {out / 'aggregate_metrics.csv'}")
+        data = load_chunk(config, chunk)
+        train_raw = data.splits[data.train_split].raw_dbm
+        train_one_model(config, train_raw, out / "checkpoints", out, chunk.chunk_id)
 
 
 if __name__ == "__main__":

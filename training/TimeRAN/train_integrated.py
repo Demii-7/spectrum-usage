@@ -18,11 +18,8 @@ if str(ROOT) not in sys.path:
 
 from momentfm import MOMENTPipeline  # noqa: E402
 from training.common.config import load_config  # noqa: E402
-from training.common.integrated import epoch_log_row, finalize_results, prepare_output_dirs, timestamp_utc  # noqa: E402
+from training.common.integrated import epoch_log_row, prepare_output_dirs, timestamp_utc  # noqa: E402
 from training.common.data import chunk_specs, load_chunk  # noqa: E402
-from training.common.metrics import absolute_and_squared_errors_dbm  # noqa: E402
-from training.common.results import append_metric_rows, load_band_definitions  # noqa: E402
-from training.common.windowing import target_rows_for  # noqa: E402
 
 MODEL_NAME = "timeran"
 
@@ -211,95 +208,6 @@ def train_one_model(config: dict[str, Any], train_input: np.ndarray,
     return model
 
 
-def predict_timeran(model: nn.Module, device: torch.device,
-                    full_x: np.ndarray, target_rows: np.ndarray,
-                    horizon: int, t_in: int, batch_size: int) -> np.ndarray:
-    origins = target_rows - horizon
-    inputs = np.stack(
-        [full_x[o - t_in + 1 : o + 1] for o in origins],
-        axis=0,
-    ).astype(np.float32)
-    inputs = inputs.transpose(0, 2, 1)
-
-    loader = DataLoader(torch.from_numpy(inputs).float(), batch_size=batch_size, shuffle=False)
-    preds = []
-    model.eval()
-    with torch.no_grad():
-        for x in loader:
-            x = x.to(device)
-            input_mask = torch.ones(x.shape[0], x.shape[-1], device=device)
-            if device.type == "cuda":
-                with torch.amp.autocast("cuda"):
-                    model_output = model(x_enc=x, input_mask=input_mask)
-            else:
-                model_output = model(x_enc=x, input_mask=input_mask)
-            preds.append(model_output.forecast[:, :, horizon - 1].cpu().numpy())
-    return np.concatenate(preds, axis=0).astype(np.float32)
-
-
-def evaluate_chunk(config: dict[str, Any], chunk, bands: pd.DataFrame, out: Path):
-    tcfg = config["timeran"]
-    batch_size = int(tcfg["batch_size"])
-    lookback = int(config["windowing"]["lookback"])
-    min_history = int(config["windowing"].get("min_history", 4320))
-    horizons = [int(h) for h in config["windowing"]["horizons"]]
-    data = load_chunk(config, chunk)
-    test_splits = config["data"].get("test_splits", [data.test_split])
-    train = data.splits[data.train_split].model_input
-    train_raw = data.splits[data.train_split].raw_dbm
-
-    checkpoints = out / "checkpoints"
-    model = train_one_model(config, train, checkpoints, out, chunk.chunk_id)
-    device = next(model.parameters()).device
-    t_in = lookback
-    max_horizon = max(horizons)
-
-    aggregate_rows: list[dict[str, Any]] = []
-    frequency_rows: list[dict[str, Any]] = []
-    band_rows: list[dict[str, Any]] = []
-
-    for horizon in horizons:
-        min_needed = max(horizon + t_in - 1, min_history)
-        for split_name in test_splits:
-            split = data.splits[split_name]
-            full_x = np.vstack([train, split.model_input]).astype(np.float32)
-            full_raw = np.vstack([train_raw, split.raw_dbm]).astype(np.float32)
-            history_offset = len(train)
-
-            target_rows = target_rows_for(
-                len(split.raw_dbm), history_offset, horizon,
-                t_in, min_needed,
-            )
-            if len(target_rows) == 0:
-                continue
-
-            pred = predict_timeran(
-                model, device, full_x, target_rows,
-                horizon, t_in, batch_size,
-            )
-            target = full_raw[target_rows]
-            _, abs_err, sq_err = absolute_and_squared_errors_dbm(
-                pred, target, data.normalization,
-            )
-            append_metric_rows(
-                aggregate_rows, frequency_rows, band_rows,
-                chunk_id=chunk.chunk_id,
-                start_mhz=chunk.start_mhz,
-                end_mhz=chunk.end_mhz,
-                split_name=split_name,
-                horizon=horizon,
-                model=MODEL_NAME,
-                target_rows=target_rows,
-                history_offset=history_offset,
-                freqs=data.frequencies,
-                abs_err=abs_err,
-                sq_err=sq_err,
-                bands=bands,
-            )
-
-    return aggregate_rows, frequency_rows, band_rows
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=None)
@@ -316,34 +224,12 @@ def main() -> None:
         out.mkdir(parents=True, exist_ok=True)
         checkpoints = out / "checkpoints"
         checkpoints.mkdir(parents=True, exist_ok=True)
-    bands = load_band_definitions(config)
-
-    total_start_time = timestamp_utc()
-    total_start = time.perf_counter()
-    aggregate_rows: list[dict[str, Any]] = []
-    frequency_rows: list[dict[str, Any]] = []
-    band_rows: list[dict[str, Any]] = []
 
     for chunk in chunk_specs(config):
         print(f"Training TimeRAN for {chunk.chunk_id} ({chunk.start_mhz:g}-{chunk.end_mhz:g} MHz)")
-        chunk_start = time.perf_counter()
-        a, f, b = evaluate_chunk(config, chunk, bands, out)
-        print(f"  {chunk.chunk_id} total done in {time.perf_counter() - chunk_start:.1f}s")
-        aggregate_rows.extend(a)
-        frequency_rows.extend(f)
-        band_rows.extend(b)
-
-    total_run = time.perf_counter() - total_start
-    finalize_results(
-        out,
-        "TimeRAN",
-        aggregate_rows,
-        frequency_rows,
-        band_rows,
-        [f"Training start time: {total_start_time}", f"Total run time seconds: {total_run:.2f}"],
-    )
-    print(f"Wrote {len(aggregate_rows)} aggregate metric rows to {out / 'aggregate_metrics.csv'}")
-    print(f"Total run time: {total_run:.1f}s ({total_run/60:.1f} min)")
+        data = load_chunk(config, chunk)
+        train = data.splits[data.train_split].model_input
+        train_one_model(config, train, checkpoints, out, chunk.chunk_id)
 
 
 if __name__ == "__main__":

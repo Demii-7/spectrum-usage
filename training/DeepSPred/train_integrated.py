@@ -23,9 +23,8 @@ from dataset import SpectrumFrameDataset, _colormap, _make_frames, _normalize, _
 from model import SwinSTB3D  # noqa: E402
 from utils import invert_colormap  # noqa: E402
 from training.common.config import load_config  # noqa: E402
-from training.common.integrated import epoch_log_row, finalize_results, prepare_output_dirs, timestamp_utc  # noqa: E402
+from training.common.integrated import epoch_log_row, prepare_output_dirs, timestamp_utc  # noqa: E402
 from training.common.data import chunk_specs, load_chunk  # noqa: E402
-from training.common.results import append_metric_rows, load_band_definitions  # noqa: E402
 
 
 MODEL_NAME = "deepspred"
@@ -180,90 +179,6 @@ def train_one_model(config: dict[str, Any], train_raw: np.ndarray, checkpoints: 
     return model, runner, {"vmin": vmin, "vmax": vmax}
 
 
-def predict_frame_windows(model: SwinSTB3D, frame_pad: np.ndarray, starts: list[int], batch_size: int) -> np.ndarray:
-    x = np.stack([frame_pad[start : start + model.input_frames] for start in starts], axis=0).astype(np.float32)
-    x = x.transpose(0, 1, 4, 2, 3)
-    loader = DataLoader(torch.from_numpy(x).float(), batch_size=batch_size, shuffle=False)
-    preds = []
-    model.eval()
-    with torch.no_grad():
-        for batch_x in loader:
-            batch_x = batch_x.to(next(model.parameters()).device)
-            preds.append(model(batch_x).cpu().numpy())
-    return np.concatenate(preds, axis=0).astype(np.float32)
-
-
-def evaluate_chunk(config: dict[str, Any], chunk, bands: pd.DataFrame, out: Path):
-    dcfg = config["deepspred"]
-    horizons = [int(h) for h in config["windowing"]["horizons"]]
-    data = load_chunk(config, chunk)
-    test_splits = config["data"].get("test_splits", [data.test_split])
-    train_raw = data.splits[data.train_split].raw_dbm
-    runner = build_runner_config(config, train_raw.shape[1])
-    frame_height = runner["frames"]["minutes_per_frame"]
-    input_frames = runner["windowing"]["input_frames"]
-    output_frames = runner["windowing"]["output_frames"]
-    max_horizon = max(horizons)
-    if max_horizon > frame_height * output_frames:
-        raise ValueError("DeepSPred configuration does not cover requested horizons.")
-
-    model, _, stats = train_one_model(config, train_raw, out / "checkpoints", out, chunk.chunk_id)
-    aggregate_rows: list[dict[str, Any]] = []
-    frequency_rows: list[dict[str, Any]] = []
-    band_rows: list[dict[str, Any]] = []
-
-    for split_name in test_splits:
-        split = data.splits[split_name]
-        split_raw = split.raw_dbm
-        full_raw = np.vstack([train_raw, split_raw]).astype(np.float32)
-        frame_pad, _ = frames_from_raw(full_raw, config, stats["vmin"], stats["vmax"])
-        train_frame_count = len(train_raw) // frame_height
-        total_frames = len(full_raw) // frame_height
-        max_start = total_frames - input_frames - output_frames
-        starts = list(range(max(train_frame_count - input_frames, 0), max_start + 1))
-        if not starts:
-            continue
-        pred_rgb = predict_frame_windows(model, frame_pad, starts, int(dcfg.get("batch_size", 2)))
-        pred_scalar = invert_colormap(pred_rgb.transpose(0, 1, 3, 4, 2), cmap_name=str(dcfg.get("colormap", "jet")))
-        pred_dbm_frames = pred_scalar * (stats["vmax"] - stats["vmin"]) + stats["vmin"]
-
-        for horizon in horizons:
-            frame_offset = (horizon - 1) // frame_height
-            minute_offset = (horizon - 1) % frame_height
-            target_rows = np.array(
-                [
-                    (start + input_frames + frame_offset) * frame_height + minute_offset
-                    for start in starts
-                ],
-                dtype=np.int64,
-            )
-            pred = pred_dbm_frames[:, frame_offset, minute_offset, :]
-            valid = target_rows < len(full_raw)
-            pred = pred[valid]
-            target_rows = target_rows[valid]
-            target = full_raw[target_rows]
-            abs_err = np.abs(pred - target)
-            sq_err = (pred - target) ** 2
-            append_metric_rows(
-                aggregate_rows,
-                frequency_rows,
-                band_rows,
-                chunk_id=chunk.chunk_id,
-                start_mhz=chunk.start_mhz,
-                end_mhz=chunk.end_mhz,
-                split_name=split_name,
-                horizon=horizon,
-                model=MODEL_NAME,
-                target_rows=target_rows,
-                history_offset=len(train_raw),
-                freqs=data.frequencies,
-                abs_err=abs_err,
-                sq_err=sq_err,
-                bands=bands,
-            )
-    return aggregate_rows, frequency_rows, band_rows
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=None)
@@ -279,30 +194,12 @@ def main() -> None:
         out = args.output_dir
         out.mkdir(parents=True, exist_ok=True)
         (out / "checkpoints").mkdir(parents=True, exist_ok=True)
-    bands = load_band_definitions(config)
 
-    total_start_time = timestamp_utc()
-    total_start = time.perf_counter()
-    aggregate_rows: list[dict[str, Any]] = []
-    frequency_rows: list[dict[str, Any]] = []
-    band_rows: list[dict[str, Any]] = []
     for chunk in chunk_specs(config):
         print(f"Training DeepSPred for {chunk.chunk_id} ({chunk.start_mhz:g}-{chunk.end_mhz:g} MHz)")
-        a, f, b = evaluate_chunk(config, chunk, bands, out)
-        aggregate_rows.extend(a)
-        frequency_rows.extend(f)
-        band_rows.extend(b)
-
-    total_run = time.perf_counter() - total_start
-    finalize_results(
-        out,
-        "DeepSPred",
-        aggregate_rows,
-        frequency_rows,
-        band_rows,
-        [f"Training start time: {total_start_time}", f"Total run time seconds: {total_run:.2f}"],
-    )
-    print(f"Wrote {len(aggregate_rows)} aggregate metric rows to {out / 'aggregate_metrics.csv'}")
+        data = load_chunk(config, chunk)
+        train_raw = data.splits[data.train_split].raw_dbm
+        train_one_model(config, train_raw, out / "checkpoints", out, chunk.chunk_id)
 
 
 if __name__ == "__main__":

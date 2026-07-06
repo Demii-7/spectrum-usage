@@ -724,6 +724,168 @@ documented in the project's reverse-engineering report
 | Download from Dryad | `training/data/download_dryad.py` | Solves Anubis PoW, downloads 3 ZIPs |
 | Build merged CSV | `training/build_training_csv.py` | Reads ZIPs, extracts 250-bin slices, averages per minute, merges to 750-column CSV |
 
+## Integrated Config
+
+The integrated training and evaluation runners use a single shared config file:
+
+- `training/common/config.yaml`
+
+Training and evaluation are separate scripts. First train, then evaluate:
+
+```bash
+# Train
+./.venv/bin/python training/ConvLSTM/train_integrated.py --config training/common/config.yaml
+
+# Evaluate (uses checkpoint from training)
+./.venv/bin/python training/ConvLSTM/evaluate_integrated.py --config training/common/config.yaml
+```
+
+Edit that one config file manually between experiments rather than creating
+per-band or per-run YAML variants.  A typical run sequence is:
+
+1. edit `training/common/config.yaml`
+2. run `train_integrated.py` for the target model
+3. run `evaluate_integrated.py` for the same model
+4. update the same config file for the next band or model
+
+### Per-model training and evaluation
+
+| Model | Train | Evaluate |
+|-------|-------|----------|
+| VanillaLSTM | `training/VanillaLSTM/train_integrated.py` | `training/VanillaLSTM/evaluate_integrated.py` |
+| ConvLSTM | `training/ConvLSTM/train_integrated.py` | `training/ConvLSTM/evaluate_integrated.py` |
+| STS-PredNet | `training/STS-PredNet/train_integrated.py` | `training/STS-PredNet/evaluate_integrated.py` |
+| DeepSPred | `training/DeepSPred/train_integrated.py` | `training/DeepSPred/evaluate_integrated.py` |
+| Autoformer-CSA | `training/Autoformer-CSA/train_integrated.py` | `training/Autoformer-CSA/evaluate_integrated.py` |
+| DSwinLSTM-I | `training/DSwinLSTM-I/train_integrated.py` | `training/DSwinLSTM-I/evaluate_integrated.py` |
+| TimeRAN | `training/TimeRAN/train_integrated.py` | `training/TimeRAN/evaluate_integrated.py` |
+| TSS-LCD | `training/TSS-LCD/train_integrated.py` | `training/TSS-LCD/evaluate_integrated.py` |
+
+All scripts accept `--config` (path to `training/common/config.yaml`) and
+`--output-dir` (optional override).  The evaluation scripts auto-discover
+checkpoints from the training output directory; use `--checkpoint` to override.
+
+For TSS-LCD, evaluation requires three checkpoint flags because training
+produces separate autoencoder, TSS-CC, and diffusion checkpoints:
+
+```bash
+./.venv/bin/python training/TSS-LCD/evaluate_integrated.py \
+    --config training/common/config.yaml \
+    --ae-checkpoint  /path/to/autoencoder.pt \
+    --tss-checkpoint /path/to/tss.pt \
+    --diff-checkpoint /path/to/diffusion.pt
+```
+
+### Training outputs
+
+Each `train_integrated.py` run produces under the output directory:
+
+- `checkpoints/<chunk_id>_<model>.pt` — saved model weights, config, and metadata
+- `<chunk_id>_training_log.csv` — epoch-level loss history
+
+### Evaluation outputs
+
+Each `evaluate_integrated.py` run produces under the output directory:
+
+- `aggregate_metrics.csv` — per-chunk/per-horizon/per-split aggregate metrics
+- `per_frequency_metrics.csv` — per-frequency-bin metrics
+- `per_band_metrics.csv` — per-band metrics (if band definitions configured)
+- `report.txt` — human-readable summary
+- `forecasts/` — forecast artifacts (map-mode only; see below)
+
+### Map train/test fields
+
+For integrated interpolated-map experiments, the shared config supports:
+
+```yaml
+data:
+  train_map_path:
+  test_map_path:
+  map_key: map_db
+  chunk_id:
+
+evaluation:
+  prediction_start_row:
+```
+
+Field meanings:
+
+- `data.train_map_path`: path to the interpolated-map `.npz` used for model training
+- `data.test_map_path`: path to the interpolated-map `.npz` used for forecasting and evaluation
+- `data.map_key`: key inside the `.npz` file, usually `map_db`
+- `data.chunk_id`: optional label used when naming exported forecast artifacts
+- `evaluation.prediction_start_row`: optional 1-based data-row boundary for test scoring/export inside `test_map_path`
+
+`prediction_start_row` is useful when the test map includes earlier historical
+rows for context, but only later rows should count as the actual test region.
+Rows before that boundary remain available as model history; forecast export and
+evaluation start at the configured row.
+
+### Example POWDER map config
+
+This is the intended single-config workflow for a `600_800` POWDER map run:
+
+```yaml
+data:
+  train_map_path: data/powder_20260618T0036Z_humanities_guesthouse_600_800.npz
+  test_map_path: data/powder_temporal_test_split_humanities_guesthouse_600_800.npz
+  map_key: map_db
+  chunk_id: powder_600_800
+  chunks:
+    - id: chunk_600_800
+      start_mhz: 600.0
+      end_mhz: 800.0
+
+evaluation:
+  prediction_start_row: 8883
+```
+
+For `2400_2600`, edit the same file and swap:
+
+1. `data.train_map_path`
+2. `data.test_map_path`
+3. `data.chunk_id`
+4. the single entry under `data.chunks`
+
+`prediction_start_row` is a 1-based data-row number. In the example above, rows
+before `8883` remain available as historical context, but exported forecasts and
+evaluation begin at row `8883`.
+
+### Forecast export
+
+Evaluation in map mode exports saved forecasts under the model output
+directory in a `forecasts/` subdirectory:
+
+- `<chunk_id>_<model>_predictions.npz`
+- `<chunk_id>_<model>_targets.npz`
+- `<chunk_id>_<model>_metadata.json`
+
+The `.npz` payload stores one array per requested horizon, keyed as:
+
+- `t_plus_1`
+- `t_plus_5`
+- `t_plus_15`
+- `t_plus_60`
+
+and also stores the corresponding zero-based target rows for each horizon.
+
+### Training-Evaluation Separation
+
+All integrated models now separate training from evaluation:
+
+- **Training** (`train_integrated.py`): loads the training set, fits the model,
+  saves a checkpoint (and optionally a training log CSV).  No test-set inference
+  or metric computation happens during training.
+
+- **Evaluation** (`evaluate_integrated.py`): loads a saved checkpoint, runs
+  inference on the test set, computes aggregate/per-frequency/per-band metrics,
+  writes metric CSVs and `report.txt`, and exports forecast artifacts in map
+  mode.
+
+This split ensures that training and test-set evaluation are independent
+steps that can be run at different times, on different hardware, or with
+different config overrides.
+
 ## Reverse-Engineered Findings
 
 The following parameters were **not** documented in the AERPAW paper or Dryad

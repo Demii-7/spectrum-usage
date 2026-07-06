@@ -26,11 +26,8 @@ from model import (  # noqa: E402
     DiffusionModel,
 )
 from training.common.config import load_config  # noqa: E402
-from training.common.integrated import epoch_log_row, finalize_results, prepare_output_dirs, timestamp_utc  # noqa: E402
+from training.common.integrated import epoch_log_row, prepare_output_dirs, timestamp_utc  # noqa: E402
 from training.common.data import chunk_specs, load_chunk  # noqa: E402
-from training.common.metrics import absolute_and_squared_errors_dbm  # noqa: E402
-from training.common.results import append_metric_rows, load_band_definitions  # noqa: E402
-from training.common.windowing import target_rows_for  # noqa: E402
 
 MODEL_NAME = "tss_lcd"
 
@@ -443,120 +440,6 @@ def train_diffusion(enc, tss_cc, diffusion, train_loader, val_loader,
     return diffusion
 
 
-def generate_full_predictions(tss_cc, diffusion, dec, device,
-                              full_x: np.ndarray, target_origins: np.ndarray,
-                              t_in: int, t_out: int,
-                              batch_size: int) -> np.ndarray:
-    """Run full TSS-LCD pipeline on test windows. Returns (N, T_out, D)."""
-    starts = target_origins - t_out + 1 - t_in
-    n = len(starts)
-    if n == 0:
-        return np.empty((0, t_out, full_x.shape[1]))
-    all_preds = []
-    for i in range(0, n, batch_size):
-        batch_starts = starts[i:i + batch_size]
-        x_batch = np.stack([full_x[s:s + t_in] for s in batch_starts], axis=0)
-        x_t = torch.from_numpy(x_batch).float().to(device)
-        with torch.no_grad():
-            cond_z = tss_cc(x_t)
-            z_sample = diffusion.p_sample_loop(cond_z)
-            y_hat = dec(z_sample)
-        all_preds.append(y_hat.cpu().numpy())
-    return np.concatenate(all_preds, axis=0).astype(np.float32)
-
-
-def evaluate_chunk(config: dict[str, Any], chunk, bands: pd.DataFrame, out: Path):
-    tcfg = config["tss_lcd"]
-    t_in = int(config["windowing"]["lookback"])
-    max_horizon = max(int(h) for h in config["windowing"]["horizons"])
-    t_out = max_horizon
-    batch_size = int(tcfg["batch_size"])
-    horizons = [int(h) for h in config["windowing"]["horizons"]]
-
-    data = load_chunk(config, chunk)
-    test_splits = config["data"].get("test_splits", [data.test_split])
-    train = data.splits[data.train_split].model_input
-    train_raw = data.splits[data.train_split].raw_dbm
-    n_bins = train.shape[1]
-    device = device_for()
-
-    enc, dec, tss_cc, diffusion = build_models(config, t_in, t_out, n_bins, device)
-
-    train_loader, val_loader = build_dataloaders(train, t_in, t_out, batch_size)
-
-    print(f"{chunk.chunk_id} training autoencoder...")
-    checkpoints = out / "checkpoints"
-    enc, dec = train_autoencoder(enc, dec, train_loader, val_loader,
-                                 tcfg, device, checkpoints, out, chunk.chunk_id)
-
-    print(f"{chunk.chunk_id} training TSS-CC...")
-    tss_cc = train_tss_condition(enc, tss_cc, train_loader, val_loader,
-                                 tcfg, device, checkpoints, out, chunk.chunk_id)
-
-    print(f"{chunk.chunk_id} training diffusion...")
-    diffusion = train_diffusion(enc, tss_cc, diffusion, train_loader, val_loader,
-                                tcfg, device, checkpoints, out, chunk.chunk_id)
-
-    enc.eval()
-    dec.eval()
-    tss_cc.eval()
-    diffusion.eval()
-
-    aggregate_rows: list[dict[str, Any]] = []
-    frequency_rows: list[dict[str, Any]] = []
-    band_rows: list[dict[str, Any]] = []
-
-    for split_name in test_splits:
-        split = data.splits[split_name]
-        full_x = np.vstack([train, split.model_input]).astype(np.float32)
-        full_raw = np.vstack([train_raw, split.raw_dbm]).astype(np.float32)
-        history_offset = len(train)
-
-        origins = target_rows_for(
-            len(split.raw_dbm), history_offset, max_horizon,
-            t_in + max_horizon, 1,
-        )
-        max_valid = len(full_raw) - max_horizon
-        origins = origins[origins <= max_valid]
-        if len(origins) == 0:
-            print(f"  No valid target rows for {chunk.chunk_id} {split_name}")
-            continue
-
-        target_origins = origins + max_horizon - 1
-        y_hat = generate_full_predictions(
-            tss_cc, diffusion, dec, device,
-            full_x, target_origins, t_in, t_out, batch_size,
-        )
-        target = np.stack(
-            [full_raw[o - max_horizon + 1:o + 1] for o in target_origins],
-            axis=0,
-        ).astype(np.float32)
-
-        for horizon in horizons:
-            pred_h = y_hat[:, horizon - 1, :]
-            target_h = target[:, horizon - 1, :]
-            _, abs_err, sq_err = absolute_and_squared_errors_dbm(
-                pred_h, target_h, data.normalization,
-            )
-            append_metric_rows(
-                aggregate_rows, frequency_rows, band_rows,
-                chunk_id=chunk.chunk_id,
-                start_mhz=chunk.start_mhz,
-                end_mhz=chunk.end_mhz,
-                split_name=split_name,
-                horizon=horizon,
-                model=MODEL_NAME,
-                target_rows=target_origins,
-                history_offset=history_offset,
-                freqs=data.frequencies,
-                abs_err=abs_err,
-                sq_err=sq_err,
-                bands=bands,
-            )
-
-    return aggregate_rows, frequency_rows, band_rows
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=None)
@@ -573,36 +456,38 @@ def main() -> None:
         out.mkdir(parents=True, exist_ok=True)
         checkpoints = out / "checkpoints"
         checkpoints.mkdir(parents=True, exist_ok=True)
-    bands = load_band_definitions(config)
-
-    total_start_time = timestamp_utc()
-    total_start = time.perf_counter()
-    aggregate_rows: list[dict[str, Any]] = []
-    frequency_rows: list[dict[str, Any]] = []
-    band_rows: list[dict[str, Any]] = []
 
     for chunk in chunk_specs(config):
         print(f"Training TSS-LCD for {chunk.chunk_id} "
               f"({chunk.start_mhz:g}-{chunk.end_mhz:g} MHz)")
         chunk_start = time.perf_counter()
-        a, f, b = evaluate_chunk(config, chunk, bands, out)
-        print(f"  {chunk.chunk_id} total done in {time.perf_counter() - chunk_start:.1f}s")
-        aggregate_rows.extend(a)
-        frequency_rows.extend(f)
-        band_rows.extend(b)
+        data = load_chunk(config, chunk)
+        train = data.splits[data.train_split].model_input
+        train_raw = data.splits[data.train_split].raw_dbm
+        n_bins = train.shape[1]
+        t_in = int(config["windowing"]["lookback"])
+        max_horizon = max(int(h) for h in config["windowing"]["horizons"])
+        t_out = max_horizon
+        batch_size = int(config["tss_lcd"]["batch_size"])
+        tcfg = config["tss_lcd"]
+        device = device_for()
 
-    total_run = time.perf_counter() - total_start
-    finalize_results(
-        out,
-        "TSS-LCD",
-        aggregate_rows,
-        frequency_rows,
-        band_rows,
-        [f"Training start time: {total_start_time}", f"Total run time seconds: {total_run:.2f}"],
-    )
-    print(f"Wrote {len(aggregate_rows)} aggregate metric rows to "
-          f"{out / 'aggregate_metrics.csv'}")
-    print(f"Total run time: {total_run:.1f}s ({total_run/60:.1f} min)")
+        enc, dec, tss_cc, diffusion = build_models(config, t_in, t_out, n_bins, device)
+        train_loader, val_loader = build_dataloaders(train, t_in, t_out, batch_size)
+
+        print(f"  {chunk.chunk_id} training autoencoder...")
+        enc, dec = train_autoencoder(enc, dec, train_loader, val_loader,
+                                     tcfg, device, checkpoints, out, chunk.chunk_id)
+
+        print(f"  {chunk.chunk_id} training TSS-CC...")
+        tss_cc = train_tss_condition(enc, tss_cc, train_loader, val_loader,
+                                     tcfg, device, checkpoints, out, chunk.chunk_id)
+
+        print(f"  {chunk.chunk_id} training diffusion...")
+        diffusion = train_diffusion(enc, tss_cc, diffusion, train_loader, val_loader,
+                                    tcfg, device, checkpoints, out, chunk.chunk_id)
+
+        print(f"  {chunk.chunk_id} total done in {time.perf_counter() - chunk_start:.1f}s")
 
 
 if __name__ == "__main__":
