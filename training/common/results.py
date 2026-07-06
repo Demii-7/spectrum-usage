@@ -19,7 +19,10 @@ def band_indices(band: pd.Series, freqs: list[float]) -> list[int]:
 
 
 def load_band_definitions(config: dict[str, Any]) -> pd.DataFrame:
-    path = resolve_path(config["data"]["band_definitions_path"])
+    raw = config["data"].get("band_definitions_path")
+    if not raw:
+        return pd.DataFrame()
+    path = resolve_path(raw)
     if not path.exists():
         return pd.DataFrame()
     return pd.read_csv(path).fillna("")
