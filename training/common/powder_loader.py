@@ -86,9 +86,9 @@ def load_powder_data(
     test_model = test_array
     normalization = None
     if normalize:
-        mean = float(np.mean(train_array))
-        std = float(np.std(train_array))
-        if std == 0.0:
+        mean = np.mean(train_array, axis=0).astype(np.float32)
+        std = np.std(train_array, axis=0).astype(np.float32)
+        if np.any(std == 0.0):
             raise ValueError("Cannot normalize a zero-variance POWDER training split.")
         train_model = (train_array - mean) / std
         test_model = (test_array - mean) / std

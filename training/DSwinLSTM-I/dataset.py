@@ -281,17 +281,17 @@ def normalize_splits(train_data, val_data, test_data, config, full_data=None):
         fit_data = full_data
 
     if method == "minmax":
-        dmin = float(np.min(fit_data))
-        dmax = float(np.max(fit_data))
+        dmin = np.min(fit_data, axis=(0, 1, 3), keepdims=True).astype(np.float32)
+        dmax = np.max(fit_data, axis=(0, 1, 3), keepdims=True).astype(np.float32)
         lo, hi = norm_cfg.get("minmax_range", [-1, 1])
         eps = 1e-8
         def _norm(data):
             return (((data - dmin) / (dmax - dmin + eps)) * (hi - lo) + lo).astype(np.float32)
         stats = {"method": "minmax", "dmin": dmin, "dmax": dmax, "range": [lo, hi]}
     elif method == "zscore":
-        mean = float(np.mean(fit_data))
-        std = float(np.std(fit_data))
-        std = 1.0 if std < 1e-8 else std
+        mean = np.mean(fit_data, axis=(0, 1, 3), keepdims=True).astype(np.float32)
+        std = np.std(fit_data, axis=(0, 1, 3), keepdims=True).astype(np.float32)
+        std = np.where(std < 1e-8, 1.0, std).astype(np.float32)
         def _norm(data):
             return ((data - mean) / std).astype(np.float32)
         stats = {"method": "zscore", "mean": mean, "std": std}

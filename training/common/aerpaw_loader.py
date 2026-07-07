@@ -103,10 +103,10 @@ def load_aerpaw_data(
     normalization = None
     if normalize:
         train_chunk = array[:train_end]
-        mean = float(np.mean(train_chunk))
-        std = float(np.std(train_chunk))
-        if std == 0.0:
-            raise ValueError("Cannot normalize a zero-variance chunk.")
+        mean = np.mean(train_chunk, axis=0).astype(np.float32)
+        std = np.std(train_chunk, axis=0).astype(np.float32)
+        if np.any(std == 0.0):
+            raise ValueError("Cannot normalize a zero-variance POWDER training split.")
         model_array = (array - mean) / std
         normalization = {
             "mean_dbm": mean,

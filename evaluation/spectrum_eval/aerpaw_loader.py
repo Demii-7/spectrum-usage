@@ -163,9 +163,9 @@ def load_aerpaw_data(
     model_arrays = arrays
     if normalize:
         train_chunk = arrays[normalization_site][: train_ends[normalization_site]]
-        mean = float(np.mean(train_chunk))
-        std = float(np.std(train_chunk))
-        if std == 0.0:
+        mean = np.mean(train_chunk, axis=0).astype(np.float32)
+        std = np.std(train_chunk, axis=0).astype(np.float32)
+        if np.any(std == 0.0):
             raise ValueError("Cannot normalize a zero-variance chunk.")
         model_arrays = {site: (arr - mean) / std for site, arr in arrays.items()}
         normalization = {
