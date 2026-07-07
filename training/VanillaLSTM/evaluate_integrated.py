@@ -6,6 +6,7 @@ import sys
 import time
 from typing import Any
 
+import pandas as pd
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -55,16 +56,67 @@ def build_model_config(config: dict[str, Any], n_bins: int) -> dict[str, Any]:
     }
 
 
-def predict_for_targets(model: VanillaLSTMForecaster, full_x: np.ndarray, target_rows: np.ndarray, horizon: int, lookback: int, batch_size: int) -> np.ndarray:
-    histories = aligned_history_matrix(full_x, target_rows, horizon, lookback)
-    loader = DataLoader(torch.from_numpy(histories).float(), batch_size=batch_size, shuffle=False)
-    preds = []
+def autoregressive_predict_for_origins(
+    model: VanillaLSTMForecaster,
+    full_x: np.ndarray,
+    origin_rows: np.ndarray,
+    max_horizon: int,
+    lookback: int,
+    batch_size: int,
+) -> dict[int, np.ndarray]:
+    """
+    For each origin row s:
+      - initialize with full_x[s : s + lookback]
+      - predict step 1
+      - append prediction
+      - shift lookback by 1
+      - repeat until max_horizon
+
+    Returns:
+      predictions_by_horizon[h] with shape (num_origins, n_bins)
+    """
+
+    device = next(model.parameters()).device
+    n_bins = full_x.shape[1]
+
+    current_windows = np.stack(
+        [full_x[s : s + lookback] for s in origin_rows],
+        axis=0,
+    ).astype(np.float32)
+
+    predictions_by_horizon: dict[int, list[np.ndarray]] = {
+        h: [] for h in range(1, max_horizon + 1)
+    }
+
     model.eval()
+
     with torch.no_grad():
-        for x in loader:
-            pred = model(x.to(next(model.parameters()).device))
-            preds.append(pred[:, selected_horizon_index(horizon), :].cpu().numpy())
-    return np.concatenate(preds, axis=0).astype(np.float32)
+        for start in range(0, len(current_windows), batch_size):
+            window = torch.from_numpy(current_windows[start : start + batch_size]).float().to(device)
+
+            rollout_preds = []
+
+            for h in range(1, max_horizon + 1):
+                output = model(window)
+
+                # Use the model's horizon-1 output as the next autoregressive step
+                next_pred = output[:, selected_horizon_index(1), :]
+
+                rollout_preds.append(next_pred.cpu().numpy())
+
+                # Shift lookback left and append prediction
+                window = torch.cat(
+                    [window[:, 1:, :], next_pred.unsqueeze(1)],
+                    dim=1,
+                )
+
+            for h, pred_h in enumerate(rollout_preds, start=1):
+                predictions_by_horizon[h].append(pred_h)
+
+    return {
+        h: np.concatenate(parts, axis=0).astype(np.float32)
+        for h, parts in predictions_by_horizon.items()
+    }
 
 
 def evaluate_chunk(config: dict[str, Any], chunk, bands: pd.DataFrame, out: Path, checkpoint_path: Path):
@@ -88,17 +140,46 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands: pd.DataFrame, out: Path
     frequency_rows: list[dict[str, Any]] = []
     band_rows: list[dict[str, Any]] = []
     export_payloads: dict[str, dict[str, Any]] = {}
-    for horizon in horizons:
-        for split_name in test_splits:
-            split = data.splits[split_name]
-            full_x = np.vstack([train, split.model_input]).astype(np.float32)
-            full_raw = np.vstack([train_raw, split.raw_dbm]).astype(np.float32)
-            history_offset = len(train)
-            target_rows = target_rows_for(len(split.raw_dbm), history_offset, horizon, lookback, min_history)
-            pred = predict_for_targets(model, full_x, target_rows, horizon, lookback, batch_size)
+    max_horizon = max(horizons)
+
+    for split_name in test_splits:
+        split = data.splits[split_name]
+    
+        full_x = split.model_input.astype(np.float32)
+        full_raw = split.raw_dbm.astype(np.float32)
+    
+        history_offset = 0
+    
+        max_origin = len(full_x) - lookback - max_horizon + 1
+        if max_origin <= 0:
+            print(f"  Not enough rows for split {split_name}; skipping")
+            continue
+    
+        origin_rows = np.arange(max_origin, dtype=np.int64)
+    
+        all_preds = autoregressive_predict_for_origins(
+            model=model,
+            full_x=full_x,
+            origin_rows=origin_rows,
+            max_horizon=max_horizon,
+            lookback=lookback,
+            batch_size=batch_size,
+        )
+    
+        for horizon in horizons:
+            pred = all_preds[horizon]
+    
+            target_rows = origin_rows + lookback + horizon - 1
             target = full_raw[target_rows]
-            local_target_rows = (target_rows - history_offset).astype(np.int64)
-            _, abs_err, sq_err = absolute_and_squared_errors_dbm(pred, target, data.normalization)
+    
+            local_target_rows = target_rows.astype(np.int64)
+    
+            _, abs_err, sq_err = absolute_and_squared_errors_dbm(
+                pred,
+                target,
+                data.normalization,
+            )
+    
             append_metric_rows(
                 aggregate_rows,
                 frequency_rows,
@@ -116,7 +197,7 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands: pd.DataFrame, out: Path
                 sq_err=sq_err,
                 bands=bands,
             )
-
+    
             payload = export_payloads.setdefault(
                 split_name,
                 {
@@ -125,35 +206,40 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands: pd.DataFrame, out: Path
                     "target_rows_by_horizon": {},
                 },
             )
+    
             payload["predictions_by_horizon"][horizon] = pred.astype(np.float32)
             payload["targets_by_horizon"][horizon] = target.astype(np.float32)
             payload["target_rows_by_horizon"][horizon] = local_target_rows
+        for split_name, payload in export_payloads.items():
+            export_map_forecasts(
+                out,
+                chunk_id=f"{chunk.chunk_id}_{split_name}",
+                model_name=MODEL_NAME,
+                predictions_by_horizon=payload["predictions_by_horizon"],
+                targets_by_horizon=payload["targets_by_horizon"],
+                target_rows_by_horizon=payload["target_rows_by_horizon"],
+                metadata={
+                    "model": "VanillaLSTM",
+                    "split_name": split_name,
+                    "train_split": data.train_split,
+                    "test_split": split_name,
+                    "chunk_id": chunk.chunk_id,
+                    "start_mhz": chunk.start_mhz,
+                    "end_mhz": chunk.end_mhz,
+                    "lookback": lookback,
+                    "batch_size": batch_size,
+                    "history_offset": 0,
+                    "frequencies_mhz": np.asarray(data.frequencies, dtype=np.float32),
+                    "normalization": None if data.normalization is None else data.normalization.get("source_split"),
+                    "mean_dbm": None if data.normalization is None else data.normalization.get("mean_dbm"),
+                    "std_dbm": None if data.normalization is None else data.normalization.get("std_dbm"),
+                    "evaluation_mode": "autoregressive_rollout",
+                    "max_horizon": max_horizon,
+                    "stored_horizons": horizons,
+                },
+            )
 
-    for split_name, payload in export_payloads.items():
-        export_map_forecasts(
-            out,
-            chunk_id=f"{chunk.chunk_id}_{split_name}",
-            model_name=MODEL_NAME,
-            predictions_by_horizon=payload["predictions_by_horizon"],
-            targets_by_horizon=payload["targets_by_horizon"],
-            target_rows_by_horizon=payload["target_rows_by_horizon"],
-            metadata={
-                "model": "VanillaLSTM",
-                "split_name": split_name,
-                "train_split": data.train_split,
-                "test_split": split_name,
-                "chunk_id": chunk.chunk_id,
-                "start_mhz": chunk.start_mhz,
-                "end_mhz": chunk.end_mhz,
-                "lookback": lookback,
-                "batch_size": batch_size,
-                "history_offset": len(train),
-                "frequencies_mhz": np.asarray(data.frequencies, dtype=np.float32),
-                "normalization": None if data.normalization is None else data.normalization.get("source_split"),
-            },
-        )
     return aggregate_rows, frequency_rows, band_rows
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate a trained VanillaLSTM checkpoint")
@@ -201,6 +287,14 @@ def main() -> None:
         [f"Evaluation start time: {total_start_time}", f"Total run time seconds: {total_run:.2f}"],
     )
     print(f"Wrote {len(aggregate_rows)} aggregate metric rows to {out / 'aggregate_metrics.csv'}")
+
+    from training.common.plot_forecasts import generate_all_plots
+    generate_all_plots(
+        results_dir=out,
+        model_name=MODEL_NAME,
+        bins=(30, 50),
+        max_steps=500,
+    )
 
 
 if __name__ == "__main__":
