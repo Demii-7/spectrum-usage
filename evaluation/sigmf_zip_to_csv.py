@@ -8,8 +8,12 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from zipfile import ZipFile
+from zoneinfo import ZoneInfo
 
 import numpy as np
+
+
+EASTERN = ZoneInfo("America/New_York")
 
 
 def list_sigmf_meta_names(zip_file):
@@ -25,7 +29,7 @@ def list_sigmf_meta_names(zip_file):
 def floor_to_minute_utc(dt_str):
     dt = datetime.fromisoformat(dt_str)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=EASTERN)
     return dt.astimezone(timezone.utc).replace(second=0, microsecond=0)
 
 
@@ -110,16 +114,22 @@ def default_output_path(input_path):
     return input_path.parent / "aerpaw" / f"{input_path.stem}_power_1mhz_avg_per_minute.csv"
 
 
-def write_csv(data, output_path, band_start_mhz, include_header):
+def format_timestamp_utc(dt):
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def write_csv(data, minutes, output_path, band_start_mhz, include_header):
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     with open(output_path, "w") as csv_file:
         if include_header:
             bin_centers = band_start_mhz + np.arange(data.shape[1], dtype=float) + 0.5
-            csv_file.write(",".join(f"{center:.1f}" for center in bin_centers) + "\n")
+            header = ["timestamp_utc", *(f"{center:.1f}" for center in bin_centers)]
+            csv_file.write(",".join(header) + "\n")
 
-        for row in data:
-            csv_file.write(",".join(f"{value:.4f}" for value in row) + "\n")
+        for minute, row in zip(minutes, data):
+            values = [format_timestamp_utc(minute), *(f"{value:.4f}" for value in row)]
+            csv_file.write(",".join(values) + "\n")
 
 
 def main():
@@ -155,7 +165,7 @@ def main():
     )
 
     output = args.output or default_output_path(args.input)
-    write_csv(data, output, band_start_mhz, not args.no_header)
+    write_csv(data, minutes, output, band_start_mhz, not args.no_header)
 
     print(f"Wrote {output}")
     print(f"Rows: {data.shape[0]} minutes from {len(minutes)} minute buckets")
