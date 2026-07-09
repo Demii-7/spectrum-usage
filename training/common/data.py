@@ -8,6 +8,7 @@ from scipy import ndimage
 
 from training.common.aerpaw_loader import LoadedSpectrumData, load_aerpaw_data
 from training.common.config import ROOT, resolve_path
+from training.common.powder_loader import load_powder_data
 
 
 @dataclass(frozen=True)
@@ -25,15 +26,35 @@ def chunk_specs(config: dict[str, Any]) -> list[ChunkSpec]:
 
 
 def load_chunk(config: dict[str, Any], chunk: ChunkSpec) -> LoadedSpectrumData:
-    data_dir = resolve_path(config["data"]["data_dir"])
     normalize = bool(config["preprocessing"].get("normalize", True))
-    reference_site = str(config["data"].get("reference_site", "CC2"))
+    data_cfg = config["data"]
+    loader = str(data_cfg.get("loader", "aerpaw")).lower()
+    max_rows = config["data"].get("max_rows")
+    if loader == "powder":
+        train_files = [resolve_path(path) for path in data_cfg.get("train_files", [])]
+        test_files = [resolve_path(path) for path in data_cfg.get("test_files", [])]
+        reference_site = str(data_cfg.get("reference_site", "POWDER"))
+        return load_powder_data(
+            train_files,
+            test_files,
+            chunk.start_mhz,
+            chunk.end_mhz,
+            normalize=normalize,
+            reference_site=reference_site,
+            max_rows=max_rows,
+        )
+
+    data_dir = resolve_path(data_cfg["data_dir"])
+    reference_site = str(data_cfg.get("reference_site", "CC2"))
+    test_rows = int(data_cfg.get("test_rows", 2880))
     return load_aerpaw_data(
         data_dir,
         chunk.start_mhz,
         chunk.end_mhz,
         normalize=normalize,
         reference_site=reference_site,
+        max_rows=max_rows,
+        test_rows=test_rows,
     )
 
 

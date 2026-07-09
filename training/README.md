@@ -87,25 +87,24 @@ Outputs go to `training/results/LinearAutoRegressive/` by default:
 aggregate_metrics.csv
 per_frequency_metrics.csv
 per_band_metrics.csv
-models/<chunk_id>_linear_autoregressive.pkl
+chunk_<chunk_id>_training_log.csv
+report.txt
+checkpoints/
 ```
 
 ### Run ConvLSTM
 
-The integrated ConvLSTM runner trains one model per chunk using `(T, 1, 1, 200)` inputs. It predicts 60 consecutive future minutes and evaluates the configured horizons from that sequence.
+The integrated ConvLSTM runner trains one model per chunk using `(T, 1, 1, 200)` inputs. It predicts 60 consecutive future minutes.
 
 ```bash
 python3 training/ConvLSTM/train_integrated.py
 ```
 
-Outputs go to `training/results/ConvLSTM/` by default:
+Training outputs go to `training/results/ConvLSTM/` by default:
 
 ```text
-aggregate_metrics.csv
-per_frequency_metrics.csv
-per_band_metrics.csv
-models/<chunk_id>_convlstm.pt
 <chunk_id>_training_log.csv
+checkpoints/
 ```
 
 For a shorter smoke run, copy `training/common/config.yaml`, reduce `convlstm.epochs`, and pass it with `--config`:
@@ -114,22 +113,53 @@ For a shorter smoke run, copy `training/common/config.yaml`, reduce `convlstm.ep
 python3 training/ConvLSTM/train_integrated.py --config /path/to/smoke_config.yaml
 ```
 
-### Run STS-PredNet
+#### Evaluate
 
-The integrated STS-PredNet runner trains one model per chunk using recursive single-step prediction with closeness and period branches. It evaluates each horizon from the configured list.
+Loads the checkpoint saved by training, runs inference on the test set, and writes metrics.
 
 ```bash
-python3 training/STS-PredNet/train_integrated.py
+python3 training/ConvLSTM/evaluate_integrated.py
 ```
 
-Outputs go to `training/results/STS-PredNet/` by default:
+Evaluation outputs go to `training/results/ConvLSTM/` by default:
 
 ```text
 aggregate_metrics.csv
 per_frequency_metrics.csv
 per_band_metrics.csv
-models/<chunk_id>_stsprednet.pt
+report.txt
+```
+
+### Run STS-PredNet
+
+The integrated STS-PredNet runner trains one model per chunk using recursive single-step prediction with closeness and period branches.
+
+```bash
+python3 training/STS-PredNet/train_integrated.py
+```
+
+Training outputs go to `training/results/STS-PredNet/` by default:
+
+```text
 <chunk_id>_training_log.csv
+checkpoints/
+```
+
+#### Evaluate
+
+Loads the checkpoint saved by training, runs inference on the test set, and writes metrics.
+
+```bash
+python3 training/STS-PredNet/evaluate_integrated.py
+```
+
+Evaluation outputs go to `training/results/STS-PredNet/` by default:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+report.txt
 ```
 
 ### Run TimeRAN
@@ -166,14 +196,28 @@ Without these checkpoints, the pipeline falls back to raw MOMENT weights (no Tim
 python3 training/TimeRAN/train_integrated.py
 ```
 
-Outputs go to `training/results/TimeRAN/` by default:
+Training outputs go to `training/results/TimeRAN/` by default:
+
+```text
+<chunk_id>_training_log.csv
+checkpoints/
+```
+
+#### Evaluate
+
+Loads the checkpoint saved by training, runs inference on the test set, and writes metrics.
+
+```bash
+python3 training/TimeRAN/evaluate_integrated.py
+```
+
+Evaluation outputs go to `training/results/TimeRAN/` by default:
 
 ```text
 aggregate_metrics.csv
 per_frequency_metrics.csv
 per_band_metrics.csv
-models/<chunk_id>_timeran.pt
-<chunk_id>_training_log.csv
+report.txt
 ```
 
 ### Run TSS-LCD
@@ -188,21 +232,166 @@ Stage 3 trains the diffusion noise-estimation network (Conv1D U-Net) using the l
 python3 training/TSS-LCD/train_integrated.py
 ```
 
-Outputs go to `training/results/TSS-LCD/` by default:
+Training outputs go to `training/results/TSS-LCD/` by default:
+
+```text
+<chunk_id>_training_log.csv
+checkpoints/
+```
+
+#### Evaluate
+
+Loads the three checkpoints saved by training, runs inference on the test set, and writes metrics.
+
+Because TSS-LCD produces separate weights for each stage, three checkpoint flags are required:
+
+```bash
+python3 training/TSS-LCD/evaluate_integrated.py \
+    --ae-checkpoint  training/results/TSS-LCD/checkpoints/<chunk_id>_autoencoder.pt \
+    --tss-checkpoint training/results/TSS-LCD/checkpoints/<chunk_id>_tss.pt \
+    --diff-checkpoint training/results/TSS-LCD/checkpoints/<chunk_id>_diffusion.pt
+```
+
+Evaluation outputs go to `training/results/TSS-LCD/` by default:
 
 ```text
 aggregate_metrics.csv
 per_frequency_metrics.csv
 per_band_metrics.csv
-models/<chunk_id>_tss_lcd_autoencoder.pt
-models/<chunk_id>_tss_lcd_tss.pt
-models/<chunk_id>_tss_lcd_diffusion.pt
+report.txt
+```
+
+### Run VanillaLSTM
+
+The integrated VanillaLSTM runner trains a direct sequence forecaster per chunk using the shared lookback and horizon settings.
+
+```bash
+python3 training/VanillaLSTM/train_integrated.py
+```
+
+Training outputs go to `training/results/VanillaLSTM/` by default:
+
+```text
 <chunk_id>_training_log.csv
+checkpoints/
+```
+
+#### Evaluate
+
+Loads the checkpoint saved by training, runs inference on the test set, and writes metrics. In map mode, exported forecast artifacts are written under a `forecasts/` subdirectory.
+
+```bash
+python3 training/VanillaLSTM/evaluate_integrated.py
+```
+
+Evaluation outputs go to `training/results/VanillaLSTM/` by default:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+report.txt
+```
+
+### Run Autoformer-CSA
+
+The integrated Autoformer-CSA runner trains the restored Autoformer implementation per chunk against the shared chunk pipeline.
+
+```bash
+python3 training/Autoformer-CSA/train_integrated.py
+```
+
+Training outputs go to `training/results/Autoformer-CSA/` by default:
+
+```text
+<chunk_id>_training_log.csv
+checkpoints/
+```
+
+#### Evaluate
+
+Loads the checkpoint saved by training, runs inference on the test set, and writes metrics.
+
+```bash
+python3 training/Autoformer-CSA/evaluate_integrated.py
+```
+
+Evaluation outputs go to `training/results/Autoformer-CSA/` by default:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+report.txt
+```
+
+### Run DSwinLSTM-I
+
+The integrated DSwinLSTM-I runner uses CSV-based first-pass integration, reshaping each chunk into a pseudo-map before training.
+
+```bash
+python3 training/DSwinLSTM-I/train_integrated.py
+```
+
+Training outputs go to `training/results/DSwinLSTM-I/` by default:
+
+```text
+<chunk_id>_training_log.csv
+checkpoints/
+```
+
+#### Evaluate
+
+Loads the checkpoint saved by training, runs inference on the test set, and writes metrics.
+
+```bash
+python3 training/DSwinLSTM-I/evaluate_integrated.py
+```
+
+Evaluation outputs go to `training/results/DSwinLSTM-I/` by default:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+report.txt
+```
+
+### Run DeepSPred
+
+The integrated DeepSPred runner converts chunk CSV data into colormap spectrogram frames.
+
+```bash
+python3 training/DeepSPred/train_integrated.py
+```
+
+Training outputs go to `training/results/DeepSPred/` by default:
+
+```text
+<chunk_id>_training_log.csv
+checkpoints/
+```
+
+#### Evaluate
+
+Loads the checkpoint saved by training, runs inference on the test set, and writes metrics.
+
+```bash
+python3 training/DeepSPred/evaluate_integrated.py
+```
+
+Evaluation outputs go to `training/results/DeepSPred/` by default:
+
+```text
+aggregate_metrics.csv
+per_frequency_metrics.csv
+per_band_metrics.csv
+report.txt
 ```
 
 ### Assemble Overall Results
 
-After the baseline, LinearAutoRegressive, ConvLSTM, STS-PredNet, TimeRAN, and TSS-LCD jobs finish, combine their metric files:
+After the baseline and integrated model jobs finish, combine their metric files:
 
 ```bash
 python3 -m training.common.assemble_results
@@ -217,6 +406,10 @@ training/results/ConvLSTM/
 training/results/STS-PredNet/
 training/results/TimeRAN/
 training/results/TSS-LCD/
+training/results/VanillaLSTM/
+training/results/Autoformer-CSA/
+training/results/DSwinLSTM-I/
+training/results/DeepSPred/
 ```
 
 It writes combined outputs to `training/results/overall/`:
@@ -254,15 +447,37 @@ The `variable` run also writes the compatibility filenames `cc2_autoreg_by_horiz
 
 Edit `training/common/config.yaml` to change chunks, horizons, lookback, normalization, or model hyperparameters. The model runners also accept `--config /path/to/config.yaml`.
 
+Use that single shared file for integrated runs. The intended workflow is:
+
+1. edit `training/common/config.yaml`
+2. set the current band, map paths, and model hyperparameters
+3. run one integrated trainer
+4. update the same config file for the next experiment
+
 Key fields:
 
 ```yaml
+data:
+  data_dir: evaluation/aerpaw
+  reference_site: CC2
+  train_map_path:
+  test_map_path:
+  map_key: map_db
+  chunk_id:
+  chunks:
+    - id: chunk_600_800
+      start_mhz: 600.0
+      end_mhz: 800.0
+
 windowing:
   lookback: 60
   horizons: [1, 5, 15, 60]
 
 preprocessing:
   normalize: true
+
+evaluation:
+  prediction_start_row:
 
 convlstm:
   input_sequence_length: 60
@@ -280,7 +495,71 @@ timeran:
   epochs: 10
   learning_rate: 1.0e-5
   training_mode: linear_probing
+
+tss_lcd:
+  autoencoder_epochs: 300
+  tss_epochs: 200
+  diffusion_epochs: 1000
+
+vanillalstm:
+  input_sequence_length: 60
+  prediction_horizon: 60
+
+autoformer_csa:
+  seq_len: 60
+  label_len: 30
+  pred_len: 60
+
+dswinlstm_i:
+  input_sequence_length: 60
+  prediction_horizon: 60
+
+deepspred:
+  minutes_per_frame: 60
+  input_frames: 1
+  output_frames: 1
 ```
+
+Map-specific fields:
+
+- `data.train_map_path`: interpolated-map `.npz` used for model training
+- `data.test_map_path`: interpolated-map `.npz` used for forecasting and evaluation
+- `data.map_key`: key inside the `.npz`, usually `map_db`
+- `data.chunk_id`: optional label used when naming exported forecast artifacts
+- `evaluation.prediction_start_row`: optional 1-based data-row boundary for forecast export and scoring inside `test_map_path`
+
+`prediction_start_row` is useful when the test map contains earlier rows only
+for historical context. Rows before that boundary stay available as model
+history, but exported forecasts and evaluation begin at the configured row.
+
+Example POWDER map configuration for `600_800`:
+
+```yaml
+data:
+  train_map_path: data/powder_20260618T0036Z_humanities_guesthouse_600_800.npz
+  test_map_path: data/powder_temporal_test_split_humanities_guesthouse_600_800.npz
+  map_key: map_db
+  chunk_id: powder_600_800
+  chunks:
+    - id: chunk_600_800
+      start_mhz: 600.0
+      end_mhz: 800.0
+
+evaluation:
+  prediction_start_row: 8883
+```
+
+For `2400_2600`, edit the same file and swap `train_map_path`, `test_map_path`, `chunk_id`, and the single entry under `data.chunks`.
+
+Integrated map-mode runs now also export forecasts under the model output directory:
+
+- `forecasts/<chunk_id>_<model>_predictions.npz`
+- `forecasts/<chunk_id>_<model>_targets.npz`
+- `forecasts/<chunk_id>_<model>_metadata.json`
+
+For `STS-PredNet`, integrated map mode trains only on `data.train_map_path` and uses `data.test_map_path` for context plus evaluation. This avoids fitting on test-era targets while still allowing long-history branches to look back into earlier rows of the test map.
+
+For `ConvLSTM`, the same split-map mechanism applies: training reads `data.train_map_path`, forecasting/evaluation reads `data.test_map_path`, and forecast export starts at `evaluation.prediction_start_row` when that field is set.
 
 Set each model's prediction/input length to at least the largest configured horizon.
 
@@ -549,6 +828,168 @@ documented in the project's reverse-engineering report
 |------|--------|---------|
 | Download from Dryad | `training/data/download_dryad.py` | Solves Anubis PoW, downloads 3 ZIPs |
 | Build merged CSV | `training/build_training_csv.py` | Reads ZIPs, extracts 250-bin slices, averages per minute, merges to 750-column CSV |
+
+## Integrated Config
+
+The integrated training and evaluation runners use a single shared config file:
+
+- `training/common/config.yaml`
+
+Training and evaluation are separate scripts. First train, then evaluate:
+
+```bash
+# Train
+./.venv/bin/python training/ConvLSTM/train_integrated.py --config training/common/config.yaml
+
+# Evaluate (uses checkpoint from training)
+./.venv/bin/python training/ConvLSTM/evaluate_integrated.py --config training/common/config.yaml
+```
+
+Edit that one config file manually between experiments rather than creating
+per-band or per-run YAML variants.  A typical run sequence is:
+
+1. edit `training/common/config.yaml`
+2. run `train_integrated.py` for the target model
+3. run `evaluate_integrated.py` for the same model
+4. update the same config file for the next band or model
+
+### Per-model training and evaluation
+
+| Model | Train | Evaluate |
+|-------|-------|----------|
+| VanillaLSTM | `training/VanillaLSTM/train_integrated.py` | `training/VanillaLSTM/evaluate_integrated.py` |
+| ConvLSTM | `training/ConvLSTM/train_integrated.py` | `training/ConvLSTM/evaluate_integrated.py` |
+| STS-PredNet | `training/STS-PredNet/train_integrated.py` | `training/STS-PredNet/evaluate_integrated.py` |
+| DeepSPred | `training/DeepSPred/train_integrated.py` | `training/DeepSPred/evaluate_integrated.py` |
+| Autoformer-CSA | `training/Autoformer-CSA/train_integrated.py` | `training/Autoformer-CSA/evaluate_integrated.py` |
+| DSwinLSTM-I | `training/DSwinLSTM-I/train_integrated.py` | `training/DSwinLSTM-I/evaluate_integrated.py` |
+| TimeRAN | `training/TimeRAN/train_integrated.py` | `training/TimeRAN/evaluate_integrated.py` |
+| TSS-LCD | `training/TSS-LCD/train_integrated.py` | `training/TSS-LCD/evaluate_integrated.py` |
+
+All scripts accept `--config` (path to `training/common/config.yaml`) and
+`--output-dir` (optional override).  The evaluation scripts auto-discover
+checkpoints from the training output directory; use `--checkpoint` to override.
+
+For TSS-LCD, evaluation requires three checkpoint flags because training
+produces separate autoencoder, TSS-CC, and diffusion checkpoints:
+
+```bash
+./.venv/bin/python training/TSS-LCD/evaluate_integrated.py \
+    --config training/common/config.yaml \
+    --ae-checkpoint  /path/to/autoencoder.pt \
+    --tss-checkpoint /path/to/tss.pt \
+    --diff-checkpoint /path/to/diffusion.pt
+```
+
+### Training outputs
+
+Each `train_integrated.py` run produces under the output directory:
+
+- `checkpoints/<chunk_id>_<model>.pt` — saved model weights, config, and metadata
+- `<chunk_id>_training_log.csv` — epoch-level loss history
+
+### Evaluation outputs
+
+Each `evaluate_integrated.py` run produces under the output directory:
+
+- `aggregate_metrics.csv` — per-chunk/per-horizon/per-split aggregate metrics
+- `per_frequency_metrics.csv` — per-frequency-bin metrics
+- `per_band_metrics.csv` — per-band metrics (if band definitions configured)
+- `report.txt` — human-readable summary
+- `forecasts/` — forecast artifacts (map-mode only; see below)
+
+### Map train/test fields
+
+For integrated interpolated-map experiments, the shared config supports:
+
+```yaml
+data:
+  train_map_path:
+  test_map_path:
+  map_key: map_db
+  chunk_id:
+
+evaluation:
+  prediction_start_row:
+```
+
+Field meanings:
+
+- `data.train_map_path`: path to the interpolated-map `.npz` used for model training
+- `data.test_map_path`: path to the interpolated-map `.npz` used for forecasting and evaluation
+- `data.map_key`: key inside the `.npz` file, usually `map_db`
+- `data.chunk_id`: optional label used when naming exported forecast artifacts
+- `evaluation.prediction_start_row`: optional 1-based data-row boundary for test scoring/export inside `test_map_path`
+
+`prediction_start_row` is useful when the test map includes earlier historical
+rows for context, but only later rows should count as the actual test region.
+Rows before that boundary remain available as model history; forecast export and
+evaluation start at the configured row.
+
+### Example POWDER map config
+
+This is the intended single-config workflow for a `600_800` POWDER map run:
+
+```yaml
+data:
+  train_map_path: data/powder_20260618T0036Z_humanities_guesthouse_600_800.npz
+  test_map_path: data/powder_temporal_test_split_humanities_guesthouse_600_800.npz
+  map_key: map_db
+  chunk_id: powder_600_800
+  chunks:
+    - id: chunk_600_800
+      start_mhz: 600.0
+      end_mhz: 800.0
+
+evaluation:
+  prediction_start_row: 8883
+```
+
+For `2400_2600`, edit the same file and swap:
+
+1. `data.train_map_path`
+2. `data.test_map_path`
+3. `data.chunk_id`
+4. the single entry under `data.chunks`
+
+`prediction_start_row` is a 1-based data-row number. In the example above, rows
+before `8883` remain available as historical context, but exported forecasts and
+evaluation begin at row `8883`.
+
+### Forecast export
+
+Evaluation in map mode exports saved forecasts under the model output
+directory in a `forecasts/` subdirectory:
+
+- `<chunk_id>_<model>_predictions.npz`
+- `<chunk_id>_<model>_targets.npz`
+- `<chunk_id>_<model>_metadata.json`
+
+The `.npz` payload stores one array per requested horizon, keyed as:
+
+- `t_plus_1`
+- `t_plus_5`
+- `t_plus_15`
+- `t_plus_60`
+
+and also stores the corresponding zero-based target rows for each horizon.
+
+### Training-Evaluation Separation
+
+All integrated models now separate training from evaluation:
+
+- **Training** (`train_integrated.py`): loads the training set, fits the model,
+  saves a checkpoint (and optionally a training log CSV).  No test-set inference
+  or metric computation happens during training.
+
+- **Evaluation** (`evaluate_integrated.py`): loads a saved checkpoint, runs
+  inference on the test set, computes aggregate/per-frequency/per-band metrics,
+  writes metric CSVs and `report.txt`, and exports forecast artifacts in map
+  mode.
+
+This split ensures that training and test-set evaluation are independent
+steps that can be run at different times, on different hardware, or with
+different config overrides.
 
 ## Reverse-Engineered Findings
 

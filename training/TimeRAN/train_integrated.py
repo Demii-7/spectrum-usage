@@ -18,10 +18,8 @@ if str(ROOT) not in sys.path:
 
 from momentfm import MOMENTPipeline  # noqa: E402
 from training.common.config import load_config  # noqa: E402
+from training.common.integrated import epoch_log_row, prepare_output_dirs, timestamp_utc  # noqa: E402
 from training.common.data import chunk_specs, load_chunk  # noqa: E402
-from training.common.metrics import absolute_and_squared_errors_dbm  # noqa: E402
-from training.common.results import append_metric_rows, load_band_definitions, output_dir  # noqa: E402
-from training.common.windowing import target_rows_for  # noqa: E402
 
 MODEL_NAME = "timeran"
 
@@ -78,7 +76,7 @@ def build_model(config: dict[str, Any], device: torch.device, t_in: int, t_out: 
 
 
 def train_one_model(config: dict[str, Any], train_input: np.ndarray,
-                    out: Path, chunk_id: str):
+                    checkpoints: Path, out: Path, chunk_id: str):
     tcfg = config["timeran"]
     lookback = int(config["windowing"]["lookback"])
     max_horizon = max(int(h) for h in config["windowing"]["horizons"])
@@ -127,9 +125,11 @@ def train_one_model(config: dict[str, Any], train_input: np.ndarray,
     best_state = None
     log_rows = []
     epoch_times: list[float] = []
+    training_start_time = timestamp_utc()
     t_start = time.perf_counter()
 
     for epoch in range(1, epochs + 1):
+        epoch_start_time = timestamp_utc()
         t_epoch = time.perf_counter()
         model.train()
         train_loss = 0.0
@@ -141,11 +141,11 @@ def train_one_model(config: dict[str, Any], train_input: np.ndarray,
             optimizer.zero_grad()
             if device.type == "cuda":
                 with torch.amp.autocast("cuda"):
-                    out = model(x_enc=x, input_mask=input_mask)
-                    loss = criterion(out.forecast, y)
+                    model_output = model(x_enc=x, input_mask=input_mask)
+                    loss = criterion(model_output.forecast, y)
             else:
-                out = model(x_enc=x, input_mask=input_mask)
-                loss = criterion(out.forecast, y)
+                model_output = model(x_enc=x, input_mask=input_mask)
+                loss = criterion(model_output.forecast, y)
             loss.backward()
             if clip_norm > 0:
                 nn.utils.clip_grad_norm_(model.parameters(), clip_norm)
@@ -162,17 +162,28 @@ def train_one_model(config: dict[str, Any], train_input: np.ndarray,
                 input_mask = torch.ones(x.shape[0], x.shape[-1], device=device)
                 if device.type == "cuda":
                     with torch.amp.autocast("cuda"):
-                        out = model(x_enc=x, input_mask=input_mask)
+                        model_output = model(x_enc=x, input_mask=input_mask)
                 else:
-                    out = model(x_enc=x, input_mask=input_mask)
-                val_loss += criterion(out.forecast, y).item() * x.size(0)
+                    model_output = model(x_enc=x, input_mask=input_mask)
+                val_loss += criterion(model_output.forecast, y).item() * x.size(0)
         val_loss /= max(len(val_loader.dataset), 1)
 
         t_epoch = time.perf_counter() - t_epoch
+        epoch_end_time = timestamp_utc()
         epoch_times.append(t_epoch)
         avg_time = sum(epoch_times) / len(epoch_times)
         eta = avg_time * (epochs - epoch)
-        log_rows.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss, "time_sec": t_epoch})
+        log_rows.append(
+            epoch_log_row(
+                epoch=epoch,
+                train_loss=train_loss,
+                val_loss=val_loss,
+                epoch_start_time=epoch_start_time,
+                epoch_end_time=epoch_end_time,
+                epoch_duration_sec=t_epoch,
+                learning_rate=float(optimizer.param_groups[0]["lr"]),
+            )
+        )
         print(f"  {chunk_id} epoch {epoch:03d}/{epochs} train_loss={train_loss:.6f} val_loss={val_loss:.6f} time={t_epoch:.1f}s avg={avg_time:.1f}s eta={eta:.0f}s")
 
         if val_loss < best_loss:
@@ -185,98 +196,16 @@ def train_one_model(config: dict[str, Any], train_input: np.ndarray,
         model.load_state_dict(best_state)
     pd.DataFrame(log_rows).to_csv(out / f"{chunk_id}_training_log.csv", index=False)
     torch.save(
-        {"model_state_dict": best_state, "config": config},
-        out / "models" / f"{chunk_id}_timeran.pt",
+        {
+            "model_state_dict": best_state,
+            "config": config,
+            "training_start_time": training_start_time,
+            "training_end_time": timestamp_utc(),
+            "training_duration_sec": total_time,
+        },
+        checkpoints / f"{chunk_id}_timeran.pt",
     )
     return model
-
-
-def predict_timeran(model: nn.Module, device: torch.device,
-                    full_x: np.ndarray, target_rows: np.ndarray,
-                    horizon: int, t_in: int, batch_size: int) -> np.ndarray:
-    origins = target_rows - horizon
-    inputs = np.stack(
-        [full_x[o - t_in + 1 : o + 1] for o in origins],
-        axis=0,
-    ).astype(np.float32)
-    inputs = inputs.transpose(0, 2, 1)
-
-    loader = DataLoader(torch.from_numpy(inputs).float(), batch_size=batch_size, shuffle=False)
-    preds = []
-    model.eval()
-    with torch.no_grad():
-        for x in loader:
-            x = x.to(device)
-            input_mask = torch.ones(x.shape[0], x.shape[-1], device=device)
-            if device.type == "cuda":
-                with torch.amp.autocast("cuda"):
-                    out = model(x_enc=x, input_mask=input_mask)
-            else:
-                out = model(x_enc=x, input_mask=input_mask)
-            preds.append(out.forecast[:, :, horizon - 1].cpu().numpy())
-    return np.concatenate(preds, axis=0).astype(np.float32)
-
-
-def evaluate_chunk(config: dict[str, Any], chunk, bands: pd.DataFrame, out: Path):
-    tcfg = config["timeran"]
-    batch_size = int(tcfg["batch_size"])
-    lookback = int(config["windowing"]["lookback"])
-    min_history = int(config["windowing"].get("min_history", 4320))
-    horizons = [int(h) for h in config["windowing"]["horizons"]]
-    data = load_chunk(config, chunk)
-    test_splits = config["data"].get("test_splits", [data.test_split])
-    train = data.splits[data.train_split].model_input
-    train_raw = data.splits[data.train_split].raw_dbm
-
-    model = train_one_model(config, train, out, chunk.chunk_id)
-    device = next(model.parameters()).device
-    t_in = lookback
-    max_horizon = max(horizons)
-
-    aggregate_rows: list[dict[str, Any]] = []
-    frequency_rows: list[dict[str, Any]] = []
-    band_rows: list[dict[str, Any]] = []
-
-    for horizon in horizons:
-        min_needed = max(horizon + t_in - 1, min_history)
-        for split_name in test_splits:
-            split = data.splits[split_name]
-            full_x = np.vstack([train, split.model_input]).astype(np.float32)
-            full_raw = np.vstack([train_raw, split.raw_dbm]).astype(np.float32)
-            history_offset = len(train)
-
-            target_rows = target_rows_for(
-                len(split.raw_dbm), history_offset, horizon,
-                t_in, min_needed,
-            )
-            if len(target_rows) == 0:
-                continue
-
-            pred = predict_timeran(
-                model, device, full_x, target_rows,
-                horizon, t_in, batch_size,
-            )
-            target = full_raw[target_rows]
-            _, abs_err, sq_err = absolute_and_squared_errors_dbm(
-                pred, target, data.normalization,
-            )
-            append_metric_rows(
-                aggregate_rows, frequency_rows, band_rows,
-                chunk_id=chunk.chunk_id,
-                start_mhz=chunk.start_mhz,
-                end_mhz=chunk.end_mhz,
-                split_name=split_name,
-                horizon=horizon,
-                model=MODEL_NAME,
-                target_rows=target_rows,
-                history_offset=history_offset,
-                freqs=data.frequencies,
-                abs_err=abs_err,
-                sq_err=sq_err,
-                bands=bands,
-            )
-
-    return aggregate_rows, frequency_rows, band_rows
 
 
 def parse_args() -> argparse.Namespace:
@@ -289,31 +218,18 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     config = load_config(args.config)
-    out = args.output_dir or output_dir(config, "TimeRAN")
-    out.mkdir(parents=True, exist_ok=True)
-    (out / "models").mkdir(parents=True, exist_ok=True)
-    bands = load_band_definitions(config)
-
-    total_start = time.perf_counter()
-    aggregate_rows: list[dict[str, Any]] = []
-    frequency_rows: list[dict[str, Any]] = []
-    band_rows: list[dict[str, Any]] = []
+    out, checkpoints = prepare_output_dirs(config, "TimeRAN")
+    if args.output_dir is not None:
+        out = args.output_dir
+        out.mkdir(parents=True, exist_ok=True)
+        checkpoints = out / "checkpoints"
+        checkpoints.mkdir(parents=True, exist_ok=True)
 
     for chunk in chunk_specs(config):
         print(f"Training TimeRAN for {chunk.chunk_id} ({chunk.start_mhz:g}-{chunk.end_mhz:g} MHz)")
-        chunk_start = time.perf_counter()
-        a, f, b = evaluate_chunk(config, chunk, bands, out)
-        print(f"  {chunk.chunk_id} total done in {time.perf_counter() - chunk_start:.1f}s")
-        aggregate_rows.extend(a)
-        frequency_rows.extend(f)
-        band_rows.extend(b)
-
-    pd.DataFrame(aggregate_rows).to_csv(out / "aggregate_metrics.csv", index=False)
-    pd.DataFrame(frequency_rows).to_csv(out / "per_frequency_metrics.csv", index=False)
-    pd.DataFrame(band_rows).to_csv(out / "per_band_metrics.csv", index=False)
-    total_run = time.perf_counter() - total_start
-    print(f"Wrote {len(aggregate_rows)} aggregate metric rows to {out / 'aggregate_metrics.csv'}")
-    print(f"Total run time: {total_run:.1f}s ({total_run/60:.1f} min)")
+        data = load_chunk(config, chunk)
+        train = data.splits[data.train_split].model_input
+        train_one_model(config, train, checkpoints, out, chunk.chunk_id)
 
 
 if __name__ == "__main__":

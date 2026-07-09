@@ -45,3 +45,7 @@ def validate_config(config: dict[str, Any]) -> None:
         for key in ("id", "start_mhz", "end_mhz"):
             if key not in chunk:
                 raise ValueError(f"Chunk is missing {key!r}: {chunk}")
+
+    prediction_start_row = config.get("evaluation", {}).get("prediction_start_row")
+    if prediction_start_row is not None and int(prediction_start_row) <= 0:
+        raise ValueError("evaluation.prediction_start_row must be positive when provided")

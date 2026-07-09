@@ -71,6 +71,8 @@ def load_aerpaw_data(
     chunk_end_mhz: float,
     normalize: bool = False,
     reference_site: str = DEFAULT_REFERENCE_SITE,
+    max_rows: int | None = None,
+    test_rows: int = 2880,
 ) -> LoadedSpectrumData:
     if reference_site not in SITES:
         raise ValueError(f"reference_site must be one of {SITES}, got {reference_site!r}.")
@@ -89,20 +91,22 @@ def load_aerpaw_data(
         )
 
     raw = raw.loc[:, selected_cols].copy()
+    if max_rows is not None:
+        raw = raw.iloc[: int(max_rows)].copy()
     filled = interpolate_missing(raw)
-    if len(filled) <= 2880:
-        raise ValueError(f"{reference_site} must have more than 2880 rows for the chronological split.")
+    if len(filled) <= test_rows:
+        raise ValueError(f"{reference_site} must have more than {test_rows} rows for the chronological split.")
 
-    train_end = len(filled) - 2880
+    train_end = len(filled) - test_rows
     array = filled.to_numpy(dtype=np.float32)
     model_array = array
     normalization = None
     if normalize:
         train_chunk = array[:train_end]
-        mean = float(np.mean(train_chunk))
-        std = float(np.std(train_chunk))
-        if std == 0.0:
-            raise ValueError("Cannot normalize a zero-variance chunk.")
+        mean = np.mean(train_chunk, axis=0).astype(np.float32)
+        std = np.std(train_chunk, axis=0).astype(np.float32)
+        if np.any(std == 0.0):
+            raise ValueError("Cannot normalize a zero-variance POWDER training split.")
         model_array = (array - mean) / std
         normalization = {
             "mean_dbm": mean,

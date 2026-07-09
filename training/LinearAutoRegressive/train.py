@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 import pickle
 import sys
+import time
 from typing import Any
 
 import numpy as np
@@ -15,9 +16,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from training.common.config import load_config  # noqa: E402
+from training.common.integrated import finalize_results, prepare_output_dirs, timestamp_utc  # noqa: E402
 from training.common.data import chunk_specs, load_chunk  # noqa: E402
 from training.common.metrics import absolute_and_squared_errors_dbm  # noqa: E402
-from training.common.results import append_metric_rows, load_band_definitions, output_dir  # noqa: E402
+from training.common.results import append_metric_rows, load_band_definitions  # noqa: E402
 from training.common.windowing import lagged_matrix, target_rows_for  # noqa: E402
 
 
@@ -103,29 +105,48 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     config = load_config(args.config)
-    out = args.output_dir or output_dir(config, "LinearAutoRegressive")
-    out.mkdir(parents=True, exist_ok=True)
-    model_dir = out / "models"
-    model_dir.mkdir(parents=True, exist_ok=True)
+    out, checkpoints = prepare_output_dirs(config, "LinearAutoRegressive")
+    if args.output_dir is not None:
+        out = args.output_dir
+        out.mkdir(parents=True, exist_ok=True)
+        checkpoints = out / "checkpoints"
+        checkpoints.mkdir(parents=True, exist_ok=True)
     bands = load_band_definitions(config)
 
     all_aggregate: list[dict[str, Any]] = []
     all_frequency: list[dict[str, Any]] = []
     all_band: list[dict[str, Any]] = []
+    report_lines: list[str] = []
 
     for chunk in chunk_specs(config):
+        chunk_start_time = timestamp_utc()
+        chunk_start = time.perf_counter()
         print(f"Training LinearAutoRegressive for {chunk.chunk_id} ({chunk.start_mhz:g}-{chunk.end_mhz:g} MHz)")
         aggregate, frequency, band, models = evaluate_chunk(config, chunk, bands)
+        chunk_duration = time.perf_counter() - chunk_start
+        chunk_end_time = timestamp_utc()
         all_aggregate.extend(aggregate)
         all_frequency.extend(frequency)
         all_band.extend(band)
-        with (model_dir / f"{chunk.chunk_id}_linear_autoregressive.pkl").open("wb") as f:
+        with (checkpoints / f"{chunk.chunk_id}_linear_autoregressive.pkl").open("wb") as f:
             pickle.dump(models, f)
+        pd.DataFrame(
+            [
+                {
+                    "epoch": 1,
+                    "train_loss": float("nan"),
+                    "val_loss": float("nan"),
+                    "epoch_start_time": chunk_start_time,
+                    "epoch_end_time": chunk_end_time,
+                    "epoch_duration_sec": chunk_duration,
+                }
+            ]
+        ).to_csv(out / f"{chunk.chunk_id}_training_log.csv", index=False)
+        report_lines.append(
+            f"{chunk.chunk_id}: start={chunk_start_time} end={chunk_end_time} duration_sec={chunk_duration:.2f}"
+        )
 
-    pd.DataFrame(all_aggregate).to_csv(out / "aggregate_metrics.csv", index=False)
-    pd.DataFrame(all_frequency).to_csv(out / "per_frequency_metrics.csv", index=False)
-    pd.DataFrame(all_band).to_csv(out / "per_band_metrics.csv", index=False)
-
+    finalize_results(out, "LinearAutoRegressive", all_aggregate, all_frequency, all_band, report_lines)
     print(f"Wrote {len(all_aggregate)} aggregate metric rows to {out / 'aggregate_metrics.csv'}")
     print(f"Wrote {len(all_frequency)} per-frequency metric rows to {out / 'per_frequency_metrics.csv'}")
     print(f"Wrote {len(all_band)} per-band metric rows to {out / 'per_band_metrics.csv'}")
