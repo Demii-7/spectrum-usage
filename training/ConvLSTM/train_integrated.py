@@ -134,10 +134,8 @@ def run_map_mode(config: dict[str, Any], out: Path, checkpoints: Path) -> None:
         raise ValueError("Map mode requires data.train_map_path or convlstm.interpolated_map.map_path")
 
     train_raw, train_meta = load_map_for_path(train_map_path, map_key)
-    test_raw, test_meta = load_map_for_path(test_map_path, map_key)
-    train_x, test_x, norm_stats = normalize_map_by_frequency(
-        train_raw,
-        test_raw,
+    train_x, _, norm_stats = normalize_map_by_frequency(
+        train_raw, None,
         enabled=bool(config.get("preprocessing", {}).get("normalize", True)),
     )
 
@@ -171,6 +169,8 @@ def run_map_mode(config: dict[str, Any], out: Path, checkpoints: Path) -> None:
         lr=float(ccfg.get("learning_rate", 0.0002)),
         weight_decay=float(ccfg.get("weight_decay", 0.004)),
     )
+    best_loss = float("inf")
+    best_state = None
     for epoch in range(1, int(ccfg.get("epochs", 25)) + 1):
         model.train()
         train_loss = 0.0
@@ -194,7 +194,12 @@ def run_map_mode(config: dict[str, Any], out: Path, checkpoints: Path) -> None:
                 val_loss += criterion(pred, y).item() * x.size(0)
         val_loss /= max(len(val_loader.dataset), 1)
         print(f"map epoch {epoch:03d} train_loss={train_loss:.6f} val_loss={val_loss:.6f}")
+        if val_loss < best_loss:
+            best_loss = val_loss
+            best_state = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
 
+    if best_state is not None:
+        model.load_state_dict(best_state)
     torch.save(
         {
             "model_state_dict": model.state_dict(),
@@ -202,7 +207,6 @@ def run_map_mode(config: dict[str, Any], out: Path, checkpoints: Path) -> None:
             "common_config": config,
             "normalization_stats": norm_stats,
             "train_map_metadata": train_meta,
-            "test_map_metadata": test_meta,
             "training_end_time": timestamp_utc(),
         },
         checkpoints / "interpolated_map_convlstm.pt",

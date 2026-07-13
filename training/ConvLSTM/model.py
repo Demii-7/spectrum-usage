@@ -376,3 +376,39 @@ class ConvLSTMPredictor(nn.Module):
             decoder_input = out  # Feed the prediction as the next step's input (autoregressive).
 
         return torch.stack(outputs, dim=1)
+
+    def predict_step(self, x):
+        """
+        Encode the input window and predict only the next map.
+        Re-encodes the window on every call — the encoder always sees the
+        latest 60 maps (ground truth and/or previous predictions).
+
+        Args:
+            x: (B, t_in, C, H, W) — input window of consecutive maps
+
+        Returns:
+            next_map: (B, C, H, W) — single-step prediction
+        """
+        b, t_in, c_in, h, w = x.shape
+        x_2d = x.reshape(b * t_in, c_in, h, w)
+        x_proj = self.channel_proj(x_2d)
+        _, c_proj, _, _ = x_proj.shape
+        x = x_proj.reshape(b, t_in, c_proj, h, w)
+
+        _, enc_states = self.encoder(x)
+        h_enc, c_enc = enc_states[0]
+
+        h_enc_flat = h_enc.reshape(b, 1, -1)
+        lstm_out, (h_lstm, c_lstm) = self.transfer_lstm(h_enc_flat)
+        h_dec = self.transfer_proj(h_lstm.squeeze(0)).reshape(
+            b, self.decoder_cell.hidden_dim, self.spatial_h, self.spatial_w)
+        c_dec = self.transfer_proj(c_lstm.squeeze(0)).reshape(
+            b, self.decoder_cell.hidden_dim, self.spatial_h, self.spatial_w)
+
+        decoder_input = torch.zeros(b, self.input_channels, self.spatial_h, self.spatial_w, device=x.device)
+        h_dec, c_dec = self.decoder_cell(decoder_input, (h_dec, c_dec))
+        h_dropped = self.dropout(h_dec)
+        h_normed = self.batch_norm(h_dropped)
+        out = self.output_head(h_normed)
+
+        return out

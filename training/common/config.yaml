@@ -2,11 +2,11 @@ data:
   loader: powder
   data_dir: 
   band_definitions_path:
-  reference_site:
-  train_files: [data/powder_20260618T0036Z_humanities_600_800.csv, data/powder_20260618T0036Z_guesthouse_600_800.csv]
-  test_files: [data/powder_20260628T0436Z_humanities_600_800.csv, data/powder_20260628T0436Z_guesthouse_600_800.csv]
-  train_map_path:
-  test_map_path:
+  reference_site: humanities, guesthouse
+  train_files: []
+  test_files:
+  train_map_path: data/powder_20260618T0036Z_humanities_guesthouse_600_800.npz
+  test_map_path: data/powder_20260628T0436Z_humanities_guesthouse_600_800.npz
   map_key: map_db
   chunk_id:
   max_rows:
@@ -18,7 +18,7 @@ data:
 windowing:
   lookback: 60
   horizons: [1, 5, 15, 60]
-  min_history: 60
+  min_history: 4320
 
 preprocessing:
   normalize: true
@@ -28,10 +28,10 @@ preprocessing:
     window_steps: 2
 
 outputs:
-  root_dir: training/results/powder/vanillalstm/600_800
+  root_dir: training/results/powder/600_800
 
 evaluation:
-  prediction_start_row:
+  prediction_start_row: 1
 
 linear_autoregressive:
   ridge_alpha: 1.0
@@ -42,7 +42,7 @@ convlstm:
   input_sequence_length: 60
   prediction_horizon: 60
   batch_size: 32
-  epochs: 25
+  epochs: 30
   learning_rate: 0.0002
   weight_decay: 0.004
   val_fraction: 0.1
