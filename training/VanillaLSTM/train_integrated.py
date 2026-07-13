@@ -69,7 +69,39 @@ def build_model_config(config: dict[str, Any], n_bins: int) -> dict[str, Any]:
         },
     }
 
+def autoregressive_rollout(
+    model: VanillaLSTMForecaster,
+    x: torch.Tensor,
+    prediction_horizon: int,
+) -> torch.Tensor:
+    """
+    Autoregressive validation rollout.
 
+    Starts from ground-truth lookback x.
+    Then repeatedly:
+      1. predicts one step ahead
+      2. appends the prediction
+      3. shifts the lookback window
+    """
+    preds = []
+    window = x
+
+    for _ in range(prediction_horizon):
+        output = model(window)
+
+        # Use only one-step-ahead prediction for autoregressive rollout
+        next_pred = output[:, 0, :]
+
+        preds.append(next_pred)
+
+        # Shift lookback left and append prediction
+        window = torch.cat(
+            [window[:, 1:, :], next_pred.unsqueeze(1)],
+            dim=1,
+        )
+
+    return torch.stack(preds, dim=1)
+    
 def train_one_model(config: dict[str, Any], train_matrix: np.ndarray, checkpoints: Path, out: Path, chunk_id: str) -> VanillaLSTMForecaster:
     vcfg = config["vanillalstm"]
     lookback = int(vcfg.get("input_sequence_length", config["windowing"]["lookback"]))
@@ -134,8 +166,15 @@ def train_one_model(config: dict[str, Any], train_matrix: np.ndarray, checkpoint
             for x, y in val_loader:
                 x = x.to(next(model.parameters()).device)
                 y = y.to(next(model.parameters()).device)
-                pred = model(x)
+        
+                pred = autoregressive_rollout(
+                    model=model,
+                    x=x,
+                    prediction_horizon=prediction_horizon,
+                )
+        
                 val_loss += criterion(pred, y).item() * x.size(0)
+        
         val_loss /= max(len(val_loader.dataset), 1)
 
         epoch_duration = time.perf_counter() - epoch_start

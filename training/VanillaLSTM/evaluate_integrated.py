@@ -292,7 +292,7 @@ def main() -> None:
     generate_all_plots(
         results_dir=out,
         model_name=MODEL_NAME,
-        bins=(30, 50),
+        bins=(30, 150),
         max_steps=500,
     )
 
