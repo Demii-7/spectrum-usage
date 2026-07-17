@@ -1,3 +1,40 @@
+"""
+Metric aggregation, result-table generation, and output-directory utilities.
+
+This module provides the shared result-management functions used by integrated
+training and evaluation. It converts elementwise forecast errors into
+aggregate, per-frequency, and frequency-band records and writes finalized result
+tables and execution summaries.
+
+Primary responsibilities include:
+
+- creating standard output and checkpoint directories;
+- loading configured frequency-band definitions;
+- validating frequency-band metadata;
+- aggregating absolute and squared errors across samples and dimensions;
+- calculating summary measures such as MAE, MSE, and RMSE;
+- producing one record per model, chunk, split, and forecast horizon;
+- producing per-frequency metric records;
+- assigning frequencies to configured bands;
+- producing frequency-band metric records;
+- preserving target-row ranges and split-local indexing metadata;
+- collecting metric rows across chunks;
+- writing aggregate, per-frequency, and band-level CSV files;
+- writing human-readable execution summaries; and
+- maintaining stable result schemas for plotting and later assembly.
+
+Expected error layouts supplied to metric aggregation:
+
+    Vector models:
+        (N, F)
+
+    Map models:
+        Spatial dimensions reduced before aggregation, producing (N, F).
+
+This module does not run models or calculate raw elementwise errors. It receives
+prepared error arrays and converts them into persistent summary results.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -109,3 +146,48 @@ def append_metric_rows(
                 "rmse_db": float(np.sqrt(np.mean(sq_err[:, indices]))),
             }
         )
+
+
+def prepare_output_dirs( config: dict[str, Any], model_name: str,) -> tuple[Path, Path]:
+    out = output_dir(
+        config,
+        model_name,
+    )
+
+    checkpoints = checkpoints_dir(
+        config,
+        model_name,
+    )
+
+    return out, checkpoints
+
+
+def finalize_results(
+    out: Path,
+    model_name: str,
+    aggregate_rows: list[dict[str, Any]],
+    frequency_rows: list[dict[str, Any]],
+    band_rows: list[dict[str, Any]],
+    extra_lines: Iterable[str] = (),
+) -> None:
+    aggregate = pd.DataFrame(aggregate_rows)
+    frequency = pd.DataFrame(frequency_rows)
+    band = pd.DataFrame(band_rows)
+    aggregate.to_csv(out / "aggregate_metrics.csv", index=False)
+    frequency.to_csv(out / "per_frequency_metrics.csv", index=False)
+    band.to_csv(out / "per_band_metrics.csv", index=False)
+
+    lines = [f"Model: {model_name}"]
+    if aggregate.empty:
+        lines.append("No aggregate metrics produced.")
+    else:
+        lines.append(f"Aggregate rows: {len(aggregate)}")
+        lines.append(f"Per-frequency rows: {len(frequency)}")
+        lines.append(f"Per-band rows: {len(band)}")
+        best = aggregate.sort_values("mae_db").iloc[0]
+        lines.append(
+            "Best aggregate MAE: "
+            f"{best['mae_db']:.4f} dB on {best['chunk_id']} {best['split']} h={int(best['horizon'])}"
+        )
+    lines.extend(extra_lines)
+    (out / "report.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")

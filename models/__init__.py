@@ -1,0 +1,1 @@
+"""Spectrum prediction model implementations."""

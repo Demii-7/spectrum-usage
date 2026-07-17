@@ -30,7 +30,7 @@ from training.common.data import (
     clean_interpolated_map,
     load_chunk,
 )
-from training.common.metrics import absolute_and_squared_errors_dbm
+from training.common.metrics import absolute_and_squared_errors_dbm, denormalize
 from training.common.plot_forecasts import generate_all_plots
 from training.common.results import append_metric_rows, load_band_definitions
 from training.common.windowing import selected_horizon_index
@@ -148,19 +148,17 @@ def autoregressive_predict_for_origins_map(
     full_x: np.ndarray,
     origin_rows: np.ndarray,
     max_horizon: int,
-    horizons: list[int],
     lookback: int,
     batch_size: int,
 ) -> dict[int, np.ndarray]:
     """
-    Autoregressive rollout for ConvLSTM map mode using predict_step().
+    Autoregressive rollout for ConvLSTM map mode.
 
-    For each origin, initializes a 60-step window from ground truth, then
-    iteratively calls predict_step() to generate one future map at a time.
-    The window is updated each step (drop oldest, append prediction) so the
-    encoder always re-encodes the latest 60 maps.
+    For each origin row s, initialise with ``full_x[s : s + lookback]`` and
+    iteratively predict one step ahead, appending the prediction and sliding
+    the lookback window forward.
 
-    Only horizons in ``horizons`` are saved.
+    Input shape ``(B, T, C=F, H, W)``, output shape ``(B, t_out, C=F, H, W)``.
 
     Returns:
         predictions_by_horizon[h] with shape ``(num_origins, F, H, W)``.
@@ -173,7 +171,7 @@ def autoregressive_predict_for_origins_map(
     ).astype(np.float32)
 
     predictions_by_horizon: dict[int, list[np.ndarray]] = {
-        h: [] for h in horizons
+        h: [] for h in range(1, max_horizon + 1)
     }
 
     model.eval()
@@ -182,16 +180,22 @@ def autoregressive_predict_for_origins_map(
         for start in range(0, len(current_windows), batch_size):
             window = torch.from_numpy(current_windows[start : start + batch_size]).float().to(device)
 
-            for h in range(1, max_horizon + 1):
-                next_pred = model.predict_step(window)
+            rollout_preds = []
 
-                if h in horizons:
-                    predictions_by_horizon[h].append(next_pred.cpu().numpy())
+            for h in range(1, max_horizon + 1):
+                output = model(window)
+
+                next_pred = output[:, selected_horizon_index(1), :, :, :]
+
+                rollout_preds.append(next_pred.cpu().numpy())
 
                 window = torch.cat(
                     [window[:, 1:, :, :, :], next_pred.unsqueeze(1)],
                     dim=1,
                 )
+
+            for h, pred_h in enumerate(rollout_preds, start=1):
+                predictions_by_horizon[h].append(pred_h)
 
     return {
         h: np.concatenate(parts, axis=0).astype(np.float32)
@@ -220,6 +224,26 @@ def evaluate_map_mode(config: dict[str, Any], out: Path, checkpoint_path: Path) 
     else:
         test_x = test_raw.astype(np.float32)
 
+    if "model_state_dict" not in ckpt:
+        raise ValueError("Checkpoint missing model_state_dict")
+    if test_raw.ndim != 4:
+        raise ValueError(f"test_raw must be 4D (T, F, H, W), got {test_raw.ndim}D")
+
+    F, H, W = test_x.shape[1], test_x.shape[2], test_x.shape[3]
+    if model_config["model"]["input_channels"] != F:
+        raise ValueError(f"Model input_channels {model_config['model']['input_channels']} != F={F}")
+    if model_config["data"]["grid_height"] != H or model_config["data"]["grid_width"] != W:
+        raise ValueError(f"Model spatial ({model_config['data']['grid_height']}, {model_config['data']['grid_width']}) != data ({H}, {W})")
+
+    checkpoint_horizon = int(model_config["windowing"]["prediction_horizon"])
+    horizons = [int(h) for h in config["windowing"]["horizons"]]
+    max_horizon = max(horizons)
+    if max_horizon > checkpoint_horizon:
+        raise ValueError(f"Requested max horizon {max_horizon} exceeds checkpoint horizon {checkpoint_horizon}")
+    for h in horizons:
+        if h <= 0:
+            raise ValueError(f"Horizon must be positive, got {h}")
+
     _npz_full = np.load(test_map_path, allow_pickle=True)
     site_data_db = _npz_full["site_data_db"].astype(np.float32)
     raw_site_data_db = _npz_full["raw_site_data_db"].astype(np.float32)
@@ -227,15 +251,34 @@ def evaluate_map_mode(config: dict[str, Any], out: Path, checkpoint_path: Path) 
     lat_grid = _npz_full["lat_grid"].astype(np.float64)
     site_lons = _npz_full["site_lons"].astype(np.float64)
     site_lats = _npz_full["site_lats"].astype(np.float64)
-    site_names = list(_npz_full["site_names"])
+    site_names = [
+        v.decode("utf-8") if isinstance(v, bytes) else str(v)
+        for v in _npz_full["site_names"]
+    ]
     del _npz_full
+
+    if lon_grid.shape != (H, W) or lat_grid.shape != (H, W):
+        raise ValueError(f"lon/lat grid shape ({lon_grid.shape}) != ({H}, {W})")
 
     site_grid_positions = []
     for slon, slat in zip(site_lons, site_lats):
         dist_sq = (lon_grid - slon) ** 2 + (lat_grid - slat) ** 2
         site_grid_positions.append(tuple(np.unravel_index(np.argmin(dist_sq), dist_sq.shape)))
 
-    F, H, W = test_x.shape[1], test_x.shape[2], test_x.shape[3]
+    freqs = test_meta.get("freqs_mhz")
+    if freqs is None:
+        print("WARNING: No frequency metadata in NPZ; using channel indices.")
+        freqs = list(range(F))
+    else:
+        freqs = np.asarray(freqs, dtype=np.float32).tolist()
+        if len(freqs) != F:
+            raise ValueError(f"Frequency metadata length {len(freqs)} != F={F}")
+
+    if site_data_db.shape[2] != F:
+        raise ValueError(f"site_data_db frequency dim {site_data_db.shape[2]} != F={F}")
+    if raw_site_data_db.shape[2] != F:
+        raise ValueError(f"raw_site_data_db frequency dim {raw_site_data_db.shape[2]} != F={F}")
+
     lookback = int(ccfg.get("input_sequence_length", config["windowing"]["lookback"]))
     prediction_horizon = int(ccfg.get("prediction_horizon", max(config["windowing"]["horizons"])))
     batch_size = int(ccfg.get("batch_size", 32))
@@ -246,8 +289,6 @@ def evaluate_map_mode(config: dict[str, Any], out: Path, checkpoint_path: Path) 
     model.eval()
 
     start_idx = prediction_start_row(config, len(test_x))
-    horizons = [int(h) for h in config["windowing"]["horizons"]]
-    max_horizon = max(horizons)
 
     chunk_cfg = data_cfg.get("chunks", [{}])[0]
     raw_chunk_id = data_cfg.get("chunk_id")
@@ -256,7 +297,6 @@ def evaluate_map_mode(config: dict[str, Any], out: Path, checkpoint_path: Path) 
     chunk_id = str(raw_chunk_id)
     start_mhz = float(chunk_cfg.get("start_mhz", 0))
     end_mhz = float(chunk_cfg.get("end_mhz", 0))
-    freqs = list(range(F))
     bands = load_band_definitions(config)
 
     total_start = time.perf_counter()
@@ -267,16 +307,20 @@ def evaluate_map_mode(config: dict[str, Any], out: Path, checkpoint_path: Path) 
     targets_by_horizon: dict[int, np.ndarray] = {}
     target_rows_by_horizon: dict[int, np.ndarray] = {}
 
-    first_target = max(start_idx, lookback + max_horizon - 1)
-    origin_rows = np.arange(first_target - lookback - max_horizon + 1, len(test_x) - lookback - max_horizon + 1, dtype=np.int64)
+    origin_max = len(test_x) - lookback - max_horizon + 1
+    origin_min = max(0, start_idx - lookback - max_horizon + 1)
+    origin_rows = np.arange(origin_min, origin_max, dtype=np.int64)
     if len(origin_rows) > 0:
         all_preds = autoregressive_predict_for_origins_map(
-            model, test_x, origin_rows, max_horizon, horizons, lookback, batch_size,
+            model, test_x, origin_rows, max_horizon, lookback, batch_size,
         )
         for horizon in horizons:
             pred_norm = all_preds[horizon]
             pred = denormalize_map(pred_norm, norm_stats)
             target_rows = origin_rows + lookback + horizon - 1
+            valid = (target_rows >= start_idx) & (target_rows < len(test_x))
+            pred = pred[valid]
+            target_rows = target_rows[valid]
             target = test_raw[target_rows].astype(np.float32)
             predictions_by_horizon[horizon] = pred
             targets_by_horizon[horizon] = target
@@ -365,9 +409,14 @@ def evaluate_map_mode(config: dict[str, Any], out: Path, checkpoint_path: Path) 
             "normalization": None if norm_stats is None else norm_stats["method"],
             "mean_dbm": None if norm_stats is None else np.squeeze(norm_stats["mean"]),
             "std_dbm": None if norm_stats is None else np.squeeze(norm_stats["std"]),
-            "frequencies_mhz": list(range(F)),
+            "frequencies_mhz": freqs,
             "train_map_metadata": (ckpt.get("train_map_metadata") or {}).get("metadata"),
             "test_map_metadata": test_meta.get("metadata"),
+            "evaluation_mode": "autoregressive_rollout",
+            "max_horizon": max_horizon,
+            "stored_horizons": horizons,
+            "site_names": [str(n) for n in site_names],
+            "site_grid_positions": [[int(p[0]), int(p[1])] for p in site_grid_positions],
         },
     )
 
@@ -402,10 +451,21 @@ def evaluate_csv_chunk(config: dict[str, Any], chunk, bands, out: Path, checkpoi
     train = data.splits[data.train_split].model_input
     train_raw = data.splits[data.train_split].raw_dbm
 
-    model_config = build_model_config(config, train.shape[1])
+    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    model_config = ckpt.get("model_config")
+    if model_config is None:
+        print("WARNING: checkpoint missing model_config, falling back to build_model_config")
+        model_config = build_model_config(config, train.shape[1])
+
+    checkpoint_horizon = int(model_config["windowing"]["prediction_horizon"])
+    if max(horizons) > checkpoint_horizon:
+        raise ValueError(f"Requested max horizon {max(horizons)} exceeds checkpoint horizon {checkpoint_horizon}")
+    for h in horizons:
+        if h <= 0:
+            raise ValueError(f"Horizon must be positive, got {h}")
+
     device = device_for()
     model = ConvLSTMPredictor(model_config).to(device)
-    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
 
@@ -422,8 +482,6 @@ def evaluate_csv_chunk(config: dict[str, Any], chunk, bands, out: Path, checkpoi
         n_test = len(split.raw_dbm)
         history_offset = len(train)
 
-        # All origins whose lookback window fits within full_x.
-        # Targets will be filtered per-horizon below.
         origin_min = max(0, max(history_offset, min_history) - lookback)
         origin_max = len(full_x) - lookback
         origin_rows = np.arange(origin_min, origin_max, dtype=np.int64)
@@ -449,12 +507,14 @@ def evaluate_csv_chunk(config: dict[str, Any], chunk, bands, out: Path, checkpoi
                 print(f"  No valid targets for h={horizon} in split {split_name}; skipping")
                 continue
 
-            pred = all_preds[horizon][in_test]
+            pred_norm = all_preds[horizon][in_test]
             target = full_raw[target_rows[in_test]]
             local_target_rows = target_rows[in_test].astype(np.int64)
 
+            pred_dbm = denormalize(pred_norm, data.normalization)
+
             _, abs_err, sq_err = absolute_and_squared_errors_dbm(
-                pred,
+                pred_norm,
                 target,
                 data.normalization,
             )
@@ -486,7 +546,7 @@ def evaluate_csv_chunk(config: dict[str, Any], chunk, bands, out: Path, checkpoi
                 },
             )
 
-            payload["predictions_by_horizon"][horizon] = pred.astype(np.float32)
+            payload["predictions_by_horizon"][horizon] = pred_dbm.astype(np.float32)
             payload["targets_by_horizon"][horizon] = target.astype(np.float32)
             payload["target_rows_by_horizon"][horizon] = local_target_rows
 

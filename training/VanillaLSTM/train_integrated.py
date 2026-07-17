@@ -44,7 +44,7 @@ class VanillaWindowDataset(Dataset):
         y = self.data[start + self.lookback : start + self.lookback + self.prediction_horizon]
         return x, y
 
-
+#Looks up the device parameter in config file to sue gpu compute if available
 def device_for(config: dict[str, Any]) -> torch.device:
     requested = str(config["vanillalstm"].get("device", "auto"))
     if requested == "auto":

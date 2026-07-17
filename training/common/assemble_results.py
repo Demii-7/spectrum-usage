@@ -1,3 +1,31 @@
+"""
+Result assembly utilities for combining integrated pipeline outputs.
+
+This module collects result files produced across separate models, frequency
+chunks, test splits, horizons, or execution runs and assembles them into
+consistent combined tables for downstream analysis.
+
+It is intended for workflows where training or evaluation is performed in
+multiple independent jobs and the resulting metric files must later be merged
+without rerunning inference.
+
+Primary responsibilities include:
+
+- discovering supported result files in configured input directories;
+- loading aggregate, per-frequency, and frequency-band metric tables;
+- validating required columns and compatible schemas;
+- adding source identifiers when needed to preserve run provenance;
+- concatenating results from multiple chunks or model runs;
+- applying stable sorting and column ordering;
+- detecting or handling duplicated result rows;
+- preserving model, chunk, split, horizon, frequency, and band identifiers;
+- writing consolidated CSV outputs; and
+- reporting which result sources were included or skipped.
+
+This module does not train models, perform evaluation, recalculate metrics, or
+alter forecast arrays. It only combines previously generated result tables.
+"""
+
 from __future__ import annotations
 
 import argparse

@@ -1,3 +1,36 @@
+"""
+Metric and denormalization utilities for spectrum forecasts.
+
+This module converts model outputs into physical dBm values when normalization
+is enabled and calculates the elementwise errors used by the integrated result
+aggregation pipeline.
+
+Primary responsibilities include:
+
+- reading per-frequency normalization metadata;
+- denormalizing model predictions using the training-derived mean and standard
+  deviation;
+- preserving predictions unchanged when normalization is disabled;
+- validating prediction, target, and normalization compatibility;
+- calculating elementwise absolute error in dB;
+- calculating elementwise squared error in dB squared;
+- returning arrays in layouts expected by the result-aggregation functions; and
+- avoiding model-specific assumptions beyond frequency-axis broadcasting.
+
+For vector forecasts, frequency is expected on the final axis:
+
+    (N, F)
+
+For map forecasts, callers convert model layout into frequency-last layout
+before invoking normalization and error calculation:
+
+    model layout:         (N, F, H, W)
+    normalization layout: (N, H, W, F)
+
+Spatial reduction, frequency aggregation, and frequency-band aggregation are
+performed outside this module.
+"""
+
 from __future__ import annotations
 
 from typing import Any

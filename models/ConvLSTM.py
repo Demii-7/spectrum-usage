@@ -32,7 +32,7 @@ def _get_activation(name):
     elif name == "elu":
         return nn.ELU()
     else:
-        raise ValueError(f"Unsupported activation: {name}")
+        raise ValueError(f"Error! Unsupported activation: {name}")
 
 
 class ConvLSTMCell(nn.Module):
@@ -94,6 +94,7 @@ class ConvLSTMCell(nn.Module):
         # can learn both input-to-state and state-to-state transitions jointly.
         combined = torch.cat([input_tensor, h_cur], dim=1)
         combined_conv = self.conv(combined)
+        
         # Split the 4*hidden_dim output into the four gates: input, forget, output, cell modulation.
         cc_i, cc_f, cc_o, cc_g = torch.split(combined_conv, self.hidden_dim, dim=1)
         i = torch.sigmoid(cc_i + self.w_ci * c_cur)
@@ -131,11 +132,14 @@ class ConvLSTM(nn.Module):
                  activation=nn.ReLU()):
         super().__init__()
         self._check_kernel_size_consistency(kernel_size)
+        
         # Allow scalar hyper-parameters to be broadcast to all layers for convenience.
         kernel_size = self._extend_for_multilayer(kernel_size, num_layers)
         hidden_dim = self._extend_for_multilayer(hidden_dim, num_layers)
+        
+        # Ensure that teh number of defined dimensions and kernels is consistent with the number of stacked layers
         if not len(kernel_size) == len(hidden_dim) == num_layers:
-            raise ValueError("Inconsistent list length")
+            raise ValueError("Error! Inconsistent list length")
 
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
@@ -145,6 +149,7 @@ class ConvLSTM(nn.Module):
         self.bias = bias
         self.return_all_layers = return_all_layers
 
+        # Set up each ConvLSTM Layer
         cell_list = []
         for i in range(num_layers):
             cur_input_dim = self.input_dim if i == 0 else self.hidden_dim[i - 1]
@@ -170,20 +175,28 @@ class ConvLSTM(nn.Module):
                                (or just the top layer if return_all_layers=False).
             last_state_list:   (h, c) for the last time step of each layer.
         """
+
+        # Convert tensor shape to batch first format
         if not self.batch_first:
             input_tensor = input_tensor.permute(1, 0, 2, 3, 4)
+
+        # Read input dimensions
         b, _, _, h, w = input_tensor.size()
+        #Initialise states when none are supplied
         if hidden_state is None:
             hidden_state = self._init_hidden(b, (h, w))
 
+        # Prepare results containers
         layer_output_list = []
         last_state_list = []
         seq_len = input_tensor.size(1)
         cur_layer_input = input_tensor
 
+        # Loop through each LSTMlayer
         for layer_idx in range(self.num_layers):
             h, c = hidden_state[layer_idx]
             output_inner = []
+            
             # Unroll over the time dimension for this layer.
             for t in range(seq_len):
                 h, c = self.cell_list[layer_idx](
@@ -192,6 +205,7 @@ class ConvLSTM(nn.Module):
                 )
                 output_inner.append(h)
             layer_output = torch.stack(output_inner, dim=1)
+            
             # The next layer receives the full output sequence of this layer.
             cur_layer_input = layer_output
             layer_output_list.append(layer_output)
@@ -220,44 +234,43 @@ class ConvLSTM(nn.Module):
         return param
 
 
-class ConvLSTMPredictor(nn.Module):
+class ConvLSTMForecaster(nn.Module):
     """
     Encoder–Transfer–Decoder architecture for multi-step spectrum prediction.
 
     Architecture:
     - (Optional) Channel projection: 1×1 Conv2d to reduce F → channel_projection_dim.
-    - Encoder: Multi-layer ConvLSTM that reads ``t_in`` time steps.
+    - Encoder: Multi-layer ConvLSTM that reads ``input_sequence_length`` time steps.
     - Transfer: Flattens the encoder's final hidden state, projects it through
       a standard LSTM into the decoder's hidden dimensionality, then reshapes
       it back to spatial format to initialize the decoder state.
     - Decoder: Auto-regressive ConvLSTM cell (single layer) that predicts
-      ``t_out`` future time steps one by one.
-
-    Teacher forcing: During training, the decoder can optionally receive the
-    ground-truth previous step as input (with probability ``teacher_forcing_ratio``)
-    instead of its own prediction, which stabilizes and accelerates convergence.
+      ``prediction_horizon`` future time steps one by one.
     """
 
     def __init__(self, config):
         super().__init__()
+    
         self.config = config
         c = config["model"]
-        d = config["data"]
-        self.input_channels = c.get("input_channels", 1)
-        self.n_nodes = d.get("n_nodes", 1)
-        self.n_bins = d.get("n_bins_per_node", 1)
-        # For interpolated-map mode, spatial dims come from grid_height/grid_width.
-        self.grid_h = d.get("grid_height", self.n_nodes)
-        self.grid_w = d.get("grid_width", self.n_bins)
-        self.t_in = config["windowing"]["input_sequence_length"]
-        self.t_out = config["windowing"]["prediction_horizon"]
+    
+        self.input_channels = int(c["input_channels"])
+        self.spatial_h = int(c["grid_height"])
+        self.spatial_w = int(c["grid_width"])
+    
+        self.input_sequence_length = int(c["input_sequence_length"])
+        self.prediction_horizon = int(c["prediction_horizon"])
+        
         cell_act = c.get("cell_activation", "relu")
         fc_act = c.get("fc_intermediate_activation", "relu")
+        
         self.activation = _get_activation(cell_act)
         self.fc_activation = _get_activation(fc_act)
 
-        enc_input_dim = self.input_channels
+        enc_input_dim = self.input_channels # 
         use_proj = c.get("use_channel_projection", False)
+        
+        # Sets up an optional channel compressor (or channel expander) using a 1x1 Convolutional layer.
         if use_proj:
             proj_dim = c.get("channel_projection_dim", 16)
             self.channel_proj = nn.Conv2d(self.input_channels, proj_dim, kernel_size=1)
@@ -276,6 +289,7 @@ class ConvLSTMPredictor(nn.Module):
         dropout = c.get("dropout", 0.0)
         use_bn = c.get("use_batch_norm", False)
 
+        # Initialise encoder which accepts input data
         self.encoder = ConvLSTM(
             input_dim=enc_input_dim,
             hidden_dim=hidden,
@@ -289,14 +303,13 @@ class ConvLSTMPredictor(nn.Module):
 
         # The transfer LSTM projects the flattened encoder hidden state into the
         # decoder's hidden dimensionality before reshaping back to spatial format.
-        self.spatial_h = self.grid_h
-        self.spatial_w = self.grid_w
         enc_flat_dim = hidden[-1] * self.spatial_h * self.spatial_w
         self.transfer_lstm = nn.LSTM(
             input_size=enc_flat_dim,
             hidden_size=dec_lstm_hidden,
             batch_first=True,
         )
+        
         self.transfer_proj = nn.Linear(dec_lstm_hidden, dec_hidden * self.spatial_h * self.spatial_w)
 
         self.decoder_cell = ConvLSTMCell(
@@ -320,7 +333,7 @@ class ConvLSTMPredictor(nn.Module):
         else:
             self.output_head = nn.Conv2d(dec_hidden, self.input_channels, kernel_size=1)
 
-    def forward(self, x, y_teacher=None, teacher_forcing_ratio=0.0):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Full forward pass: encode, transfer, then autoregressively decode.
 
@@ -329,66 +342,68 @@ class ConvLSTMPredictor(nn.Module):
         unrolls future predictions one step at a time.
 
         Args:
-            x: Input sequence, shape (B, t_in, C, H, W) where C=input_channels.
-            y_teacher: Ground-truth target sequence for teacher forcing,
-                       shape (B, t_out, C, H, W).
-            teacher_forcing_ratio: Probability (0–1) of using ground truth vs.
-                                   own prediction at each step.
-
+            x: Input feature sequence tensor, shape (B, T_in, C, H, W)
+               where C=input_channels, H=spatial_h, W=spatial_w.
+               
         Returns:
-            Predictions, shape (B, t_out, C, H, W).
+            Projected future forecast tensor, shape (B, T_out, C, H, W)
         """
-        if x.dim() != 5:
-            raise ValueError(f"Expected 5D input (B, T, C, H, W), got {x.dim()}D")
-        b, t_in, c_in, h, w = x.shape
-        if c_in != self.input_channels:
-            raise ValueError(f"Input channels {c_in} != model input_channels {self.input_channels}")
-        if h != self.spatial_h or w != self.spatial_w:
-            raise ValueError(f"Input spatial ({h}, {w}) != model spatial ({self.spatial_h}, {self.spatial_w})")
-        if y_teacher is not None:
-            if y_teacher.dim() != 5:
-                raise ValueError(f"y_teacher must be 5D, got {y_teacher.dim()}D")
-            if y_teacher.shape[0] != b:
-                raise ValueError(f"y_teacher batch {y_teacher.shape[0]} != input batch {b}")
-            if y_teacher.shape[2] != self.input_channels:
-                raise ValueError(f"y_teacher channels {y_teacher.shape[2]} != {self.input_channels}")
-        if not 0.0 <= teacher_forcing_ratio <= 1.0:
-            raise ValueError(f"teacher_forcing_ratio {teacher_forcing_ratio} not in [0, 1]")
-        b, t_in, c_in, h, w = x.shape
-        # Apply optional channel projection at each time step.
-        x_2d = x.reshape(b * t_in, c_in, h, w)
-        x_proj = self.channel_proj(x_2d)
-        _, c_proj, _, _ = x_proj.shape
-        x = x_proj.reshape(b, t_in, c_proj, h, w)
 
-        # Encode the input sequence into a compressed latent state.
+        # Check if input shape is as expected
+        if x.dim() != 5:
+            raise ValueError(f"Error! Expected 5D input (B, T, C, H, W), got {x.dim()}D")
+            
+        # Unpack input shape separately    
+        b, input_sequence_length, c_in, h, w = x.shape
+        
+        # Check if input and spatial shapes are as expected
+        if input_sequence_length != self.input_sequence_length:
+            raise ValueError(
+                f"Error! Input sequence length {input_sequence_length} != "
+                f"configured length {self.input_sequence_length}"
+            )
+            
+        if c_in != self.input_channels:
+            raise ValueError(f"Error! Input channels {c_in} != model input_channels {self.input_channels}")
+            
+        if h != self.spatial_h or w != self.spatial_w:
+            raise ValueError(f"Error!Input spatial ({h}, {w}) != model spatial ({self.spatial_h}, {self.spatial_w})")
+
+        # Time-Step Channel Projection (If active)
+        x_2d = x.reshape(b * input_sequence_length, c_in, h, w)
+        x_proj = self.channel_proj(x_2d)
+        
+        _, c_proj, _, _ = x_proj.shape
+        x = x_proj.reshape(b, input_sequence_length, c_proj, h, w)
+
+        # Spatiotemporally encode the input sequence into a compressed latent state
         _, enc_states = self.encoder(x)
-        h_enc, c_enc = enc_states[0]
+        h_enc, _ = enc_states[-1]     # Extracting final top layer hidden state and ignore cell state
 
         # Flatten spatial dimensions and pass through the transfer LSTM.
         h_enc_flat = h_enc.reshape(b, 1, -1)
-        lstm_out, (h_lstm, c_lstm) = self.transfer_lstm(h_enc_flat)
+        _, (h_lstm, c_lstm) = self.transfer_lstm(h_enc_flat)
+        
         # Project LSTM output back to spatial ConvLSTM decoder state.
-        h_dec_init = self.transfer_proj(h_lstm.squeeze(0)).reshape(
+        # h_dec_init and c_dec_init will initialise decoder from encoder ouput
+        h_dec = self.transfer_proj(h_lstm.squeeze(0)).reshape(
             b, self.decoder_cell.hidden_dim, self.spatial_h, self.spatial_w)
-        c_dec_init = self.transfer_proj(c_lstm.squeeze(0)).reshape(
+        c_dec = self.transfer_proj(c_lstm.squeeze(0)).reshape(
             b, self.decoder_cell.hidden_dim, self.spatial_h, self.spatial_w)
 
-        h_dec, c_dec = h_dec_init, c_dec_init
+        # Autoregressive Future Sequence Unrolling Loop (both multistep or one step depending on prediction_horizon)
         outputs = []
-        # Start with a zero input; the decoder will use its own output as the next input.
         decoder_input = torch.zeros(b, self.input_channels, self.spatial_h, self.spatial_w, device=x.device)
 
-        for t in range(self.t_out):
+        for _ in range(self.prediction_horizon):
             h_dec, c_dec = self.decoder_cell(decoder_input, (h_dec, c_dec))
             h_dropped = self.dropout(h_dec)
             h_normed = self.batch_norm(h_dropped)
             out = self.output_head(h_normed)
             outputs.append(out)
 
-            if y_teacher is not None and t < self.t_out - 1 and torch.rand((), device=x.device).item() < teacher_forcing_ratio:
-                decoder_input = y_teacher[:, t, :, :, :]
-            else:
-                decoder_input = out
+            # Clean and self-contained: Always use current output step as next step input
+            decoder_input = out
 
+        # Restore complete forecasting horizon time dimension and return predictions
         return torch.stack(outputs, dim=1)

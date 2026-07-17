@@ -1,3 +1,14 @@
+# Shared configuration for the integrated spectrum-prediction pipeline.
+#
+# This file defines the data sources, preprocessing behavior, frequency chunks,
+# windowing policy, model architecture, training parameters, evaluation
+# settings, runtime options, and output locations used throughout the project.
+#
+# The same configuration is consumed by both training and evaluation so that
+# model construction, data preparation, forecasting horizons, normalization,
+# and output naming remain consistent across the complete workflow.
+#
+
 data:
   loader: powder
   data_dir: 
@@ -10,62 +21,101 @@ data:
   map_key: map_db
   chunk_id:
   max_rows:
+  prediction_start_row:     # 8883 for STS-PredNet
   test_rows: 2880
   chunks:
     - id: powder_600_800
       start_mhz: 600.0
       end_mhz: 800.0
+
 windowing:
   lookback: 60
   horizons: [1, 5, 15, 60]
   min_history: 4320
 
+outputs:
+  root_dir: training/results/powder/600_800
+  
+training:
+    device: auto
+    # Models: linear_autoregressive, convlstm, stsprednet, timeran, tss_lcd, vanillalstm, autoformer_csa, dswinlstm_i, deepspred
+    model_name: vanillalstm 
+    
+
 preprocessing:
   normalize: true
   # NaN imputation for interpolated-map mode.
   imputation:
-    enabled: true
-    window_steps: 2
+      enabled: true
+      method: nearest_spatial_then_train_frequency_mean
 
-outputs:
-  root_dir: training/results/powder/600_800
 
-evaluation:
-  prediction_start_row: 1
 
+#----- ALL IMPLEMENTED MODELS' CONFIGURATION SETTINGS -----
 linear_autoregressive:
   ridge_alpha: 1.0
   seed: 42
-  device: auto
+
+vanillalstm:
+  #These parameters are for model definition
+  model:
+      input_sequence_length: 60            # Number of past sequence / lookback
+      prediction_horizon: 60               # Horizon, all N done simultaneously by the model
+      hidden_size: 128                     # Hidden state size
+      num_layers: 1                        # Number of LSTM layers to stack
+      dropout: 0.1                         # Set dropout percentage. Active only when num_layers > 1
+      output_strategy: final_hidden        # Hidden state output strategy: final_hidden or all_hidden
+      bidirectional: false                 # false for forward LSTM and true for both forward and backward lstm
+      
+  #These parameters are for training
+  train:
+      train_stride: 1
+      val_stride: 1
+      test_stride: 1
+      
+      batch_size: 32
+      epochs: 20
+      learning_rate: 0.001
+      optimizer: adam
+      gradient_clip_norm: 1.0
+      early_stopping: true
+      early_stopping_patience: 10
+      seed: 42
 
 convlstm:
-  input_sequence_length: 60
-  prediction_horizon: 60
-  batch_size: 32
-  epochs: 30
-  learning_rate: 0.0002
-  weight_decay: 0.004
-  val_fraction: 0.1
-  teacher_forcing_ratio: 1.0
-  gradient_clip_norm: 5.0
-  seed: 42
-  device: auto
-  model:
-    input_channels: 1
-    hidden_channels: [32, 64]
-    kernel_size: [[1, 3], [1, 1]]
-    num_encoder_layers: 2
-    decoder_hidden_channels: 32
-    decoder_kernel_size: [1, 1]
-    dropout: 0.3
-    use_batch_norm: true
-    decoder_lstm_hidden: 128
-    fc_hidden_channels: 0
-    fc_kernel_size: [1, 3]
-    cell_activation: "relu"
-    fc_intermediate_activation: "relu"
-    use_channel_projection: false
-    channel_projection_dim: 16
+    
+    #These parameters are for model definition
+    model:
+        input_sequence_length: 60           # Number of past sequence / lookback
+        prediction_horizon: 60              # Horizon, all N done simultaneously by the model
+        hidden_channels: [32, 64]           # Size of hidden state 1 per lstmlayer
+        kernel_size: [[1, 3], [1, 1]]       # Convolution kernels 1 per lstmlayer
+        num_encoder_layers: 2               # Number of stacked ConvLSTM layers
+        decoder_hidden_channels: 32
+        decoder_kernel_size: [1, 1]
+        dropout: 0.3                        # Set dropout percentage
+        use_batch_norm: true
+        decoder_lstm_hidden: 128
+        
+        fc_hidden_channels: 0               # Add fc layers to make model think deeper before ouput
+        fc_kernel_size: [1, 3]              # Kernel dim for fc layer (only active for fc_hidden_channels > 0)
+        fc_intermediate_activation: "relu"  # Set actavtion fc layer (only active for fc_hidden_channels > 0)
+        
+        cell_activation: "relu"             # Activation for cell candidate and cell-state output
+        
+        use_channel_projection: false       # Channel ptojection true compresses channels into lower dimm super feature
+        channel_projection_dim: 16          # Dimension after channel projection (only active for use_channel_projection true)
+
+    #These parameters are for training
+    train:
+        batch_size: 32
+        epochs: 30
+        learning_rate: 0.0002
+        weight_decay: 0.004
+        val_fraction: 0.1
+        early_stopping_patience: 8
+        gradient_clip_norm: 5.0
+        seed: 42
 
 stsprednet:
   lc: 36
@@ -78,9 +128,8 @@ stsprednet:
   learning_rate: 0.0002
   weight_decay: 0.0
   gradient_clip_norm: 5.0
-  patience: 30
+  early_stopping_patience: 30
   seed: 42
-  device: auto
   model:
     input_channels: 1
     map_height: 1
@@ -120,7 +169,6 @@ timeran:
   checkpoint_size: base
   training_mode: linear_probing
   seed: 42
-  device: auto
 
 tss_lcd:
   hidden_dim: 256
@@ -150,46 +198,24 @@ tss_lcd:
   diffusion_learning_rate: 0.0001
   weight_decay: 0.0
   gradient_clip_norm: 5.0
-  patience: 30
+  early_stopping_patience: 30
   seed: 42
-  device: auto
-
-vanillalstm:
-  input_sequence_length: 60
-  prediction_horizon: 60
-  train_stride: 1
-  val_stride: 60
-  test_stride: 60
-  batch_size: 32
-  epochs: 20
-  learning_rate: 0.001
-  optimizer: adam
-  hidden_size: 128
-  num_layers: 1
-  dropout: 0.1
-  output_strategy: final_hidden
-  bidirectional: false
-  gradient_clip: 1.0
-  early_stopping: true
-  patience: 10
-  seed: 42
-  device: auto
 
 autoformer_csa:
   seq_len: 60
   label_len: 30
   pred_len: 60
   train_stride: 1
-  val_stride: 60
-  test_stride: 60
+  val_stride: 1
+  test_stride: 1
   batch_size: 8
   epochs: 10
   learning_rate: 0.0005
   optimizer: adam
   loss: rmse
-  gradient_clip: 5.0
+  gradient_clip_norm: 5.0
   early_stopping: true
-  patience: 6
+  early_stopping_patience: 6
   architecture:
     model_variant: autoformer_csa
   model:
@@ -208,22 +234,22 @@ autoformer_csa:
     csam_reduction: 16
     output_attention: false
   seed: 42
-  device: auto
+
 
 dswinlstm_i:
   input_sequence_length: 60
   prediction_horizon: 60
   train_stride: 1
-  val_stride: 60
+  val_stride: 1
   test_stride: 60
   batch_size: 2
   epochs: 6
   learning_rate: 0.0001
   optimizer: adam
   loss: mse
-  gradient_clip: 5.0
+  gradient_clip_norm: 5.0
   early_stopping: true
-  patience: 6
+  early_stopping_patience: 6
   teacher_forcing_ratio: 1.0
   normalization: minmax
   minmax_range: [-1, 1]
@@ -246,7 +272,7 @@ dswinlstm_i:
     decoder_feedback: pixel_feedback
     padding_mode: reflect
   seed: 42
-  device: auto
+
 
 deepspred:
   minutes_per_frame: 60
@@ -269,8 +295,7 @@ deepspred:
     drop_rate: 0.0
     attn_drop_rate: 0.0
     drop_path_rate: 0.0
-  patience: 4
+  early_stopping_patience: 4
   early_stopping_threshold: 0.01
   early_stopping_epochs: 4
   seed: 42
-  device: auto

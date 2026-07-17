@@ -1,3 +1,32 @@
+"""
+Configuration loading, validation, and path-resolution utilities.
+
+This module provides the shared configuration interface used by all integrated
+training, evaluation, plotting, export, and result scripts. It loads the
+project's YAML configuration, applies configuration-path rules, and resolves
+relative filesystem paths consistently.
+
+Primary responsibilities include:
+
+- selecting the default configuration file when no override is provided;
+- loading YAML content into a Python dictionary;
+- validating that the configuration root and required sections are mappings;
+- reporting missing, malformed, or unreadable configuration files clearly;
+- preserving the location of the active configuration for relative path
+  resolution;
+- expanding user-home references where supported;
+- resolving relative data, checkpoint, output, and metadata paths;
+- returning normalized absolute Path objects to calling modules; and
+- preventing individual scripts from applying inconsistent path rules.
+
+This module does not interpret model architecture or dataset semantics beyond
+the basic structural validation needed to load the shared configuration.
+Detailed setting validation remains in the module that consumes each setting.
+"""
+
+
+
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -46,6 +75,24 @@ def validate_config(config: dict[str, Any]) -> None:
             if key not in chunk:
                 raise ValueError(f"Chunk is missing {key!r}: {chunk}")
 
-    prediction_start_row = config.get("evaluation", {}).get("prediction_start_row")
-    if prediction_start_row is not None and int(prediction_start_row) <= 0:
-        raise ValueError("evaluation.prediction_start_row must be positive when provided")
+    prediction_start_row = config["data"].get("prediction_start_row")
+    
+    if prediction_start_row is not None:
+        prediction_start_row = int(prediction_start_row)
+    
+        if prediction_start_row <= 0:
+            raise ValueError(
+                "Error! data.prediction_start_row must be a "
+                "positive one-based row number when provided."
+            )
+    
+        if str(
+            config["data"].get(
+                "loader",
+                "aerpaw",
+            )
+        ).lower() != "powder":
+            raise ValueError(
+                "Error! data.prediction_start_row is currently "
+                "supported only by the POWDER loader."
+            )
