@@ -173,8 +173,6 @@ data:
 windowing:
   lookback: 60                  # Input sequence length (minutes)
   horizons: [1, 5, 15, 60]     # Forecast horizons to report
-  min_history: 4320             # Minimum history for certain splits
-
 outputs:
   root_dir: results/powder/600_800   # Base output directory; {model_name}/ is appended
 
@@ -204,8 +202,10 @@ vanillalstm:
     batch_size: 32
     epochs: 20
     learning_rate: 0.001
+    optimizer: adam                     # Optimizer: adam, adamw, or sgd
     val_fraction: 0.1
     train_stride: 1
+    test_stride: 1
     gradient_clip_norm: 1.0
     early_stopping: true
     early_stopping_patience: 10
@@ -216,13 +216,22 @@ vanillalstm:
 ```yaml
 convlstm:
   model:
-    input_sequence_length: 60
-    prediction_horizon: 60
-    hidden_channels: [32, 64]
-    kernel_size: [[1, 3], [1, 1]]
-    num_encoder_layers: 2
-    dropout: 0.3
-    use_batch_norm: true
+    input_sequence_length: 60           # Lookback (must match windowing.lookback)
+    prediction_horizon: 60              # 1 for one-step, or rollout_horizon for direct multi-step
+    hidden_channels: [32, 64]           # Hidden channels per ConvLSTM layer
+    kernel_size: [[1, 3], [1, 1]]       # Convolution kernel per layer [height, width]
+    num_encoder_layers: 2               # Number of stacked ConvLSTM encoder layers
+    decoder_hidden_channels: 32         # Hidden channels for the decoder ConvLSTMCell
+    decoder_kernel_size: [1, 1]         # Convolution kernel for the decoder cell
+    decoder_lstm_hidden: 128            # Hidden size of the transfer LSTM bottleneck
+    dropout: 0.3                        # Dropout after decoder cell
+    use_batch_norm: true                # Whether to apply batch norm after each layer
+    fc_hidden_channels: 0               # Extra FC layer channels (0 disables)
+    fc_kernel_size: [1, 3]              # Kernel for FC layer (used only when fc_hidden_channels > 0)
+    fc_intermediate_activation: relu    # Activation for FC layer
+    cell_activation: relu               # Activation for cell candidate / cell-state output
+    use_channel_projection: false       # Compress channels into lower-dim super feature
+    channel_projection_dim: 16          # Projection dimension (used only when use_channel_projection true)
   train:
     batch_size: 32
     epochs: 30
@@ -230,8 +239,16 @@ convlstm:
     weight_decay: 0.004
     val_fraction: 0.1
     gradient_clip_norm: 5.0
+    optimizer: adam                     # Optimizer: adam, adamw, or sgd
+    early_stopping: true
     early_stopping_patience: 8
+    train_stride: 1                     # Step size between consecutive training windows
+    test_stride: 1                      # Step size between consecutive test windows
 ```
+
+The integrated trainer dispatches the optimizer based on the config `optimizer` field.
+Supported values: `adam`, `adamw`, `sgd` (when using SGD the optional `momentum` field may
+also be set in the model's `train` section).
 
 #### Training Vanilla LSTM on CSV data
 
