@@ -127,11 +127,38 @@ def train_model( model_name: str, model: nn.Module, train_data: np.ndarray, conf
         train_cfg.get("weight_decay", 0.0)
     )
 
-    optimizer = torch.optim.Adam(
-        model.parameters(),
-        lr=learning_rate,
-        weight_decay=weight_decay,
-    )
+    optimizer_name = str(
+        train_cfg.get("optimizer", "adam")
+    ).lower()
+
+    if optimizer_name == "adam":
+        optimizer = torch.optim.Adam(
+            model.parameters(),
+            lr=learning_rate,
+            weight_decay=weight_decay,
+        )
+    elif optimizer_name == "adamw":
+        optimizer = torch.optim.AdamW(
+            model.parameters(),
+            lr=learning_rate,
+            weight_decay=weight_decay,
+        )
+    elif optimizer_name == "sgd":
+        momentum = float(
+            train_cfg.get("momentum", 0.0)
+        )
+        optimizer = torch.optim.SGD(
+            model.parameters(),
+            lr=learning_rate,
+            weight_decay=weight_decay,
+            momentum=momentum,
+        )
+    else:
+        raise ValueError(
+            f"Unsupported optimizer "
+            f"{optimizer_name!r}. "
+            f"Supported: adam, adamw, sgd."
+        )
 
     # Maximum allowed gradient size.
     clip_norm = float(
@@ -536,7 +563,6 @@ def main() -> None:
             {
                 "model_name": model_name,
                 "model_state_dict": model.state_dict(),
-                "common_config": config,
                 "normalization": data.normalization,
                 "frequencies": data.frequencies,
                 "training_results": {

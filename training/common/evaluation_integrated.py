@@ -985,6 +985,7 @@ def main() -> None:
             model_name=model_name,
             bins=(30, 150),
             max_steps=500,
+            horizons=config["windowing"].get("horizons", [1]),
         )
 
 

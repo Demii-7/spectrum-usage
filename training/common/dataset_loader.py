@@ -463,37 +463,35 @@ def load_powder_data(
             prediction_start_index,
         ) = extension_indices
     
-        borrowed_test_rows = test_filled.iloc[
-            continuation_start_index:
-            prediction_start_index
-        ].copy()
+        if (
+            continuation_start_index
+            < prediction_start_index
+        ):
+            borrowed_test_rows = test_filled.iloc[
+                continuation_start_index:
+                prediction_start_index
+            ].copy()
     
-        if borrowed_test_rows.empty:
-            raise ValueError(
-                "No rows were selected from the long test "
-                "recording to extend training."
-            )
-    
-        train_filled = pd.concat(
-            [
-                train_filled,
-                borrowed_test_rows,
-            ],
-            axis=0,
-            ignore_index=True,
-        )
-    
-        train_timestamps = pd.DatetimeIndex(
-            np.concatenate(
+            train_filled = pd.concat(
                 [
-                    train_timestamps.to_numpy(),
-                    test_timestamps[
-                        continuation_start_index:
-                        prediction_start_index
-                    ].to_numpy(),
-                ]
+                    train_filled,
+                    borrowed_test_rows,
+                ],
+                axis=0,
+                ignore_index=True,
             )
-        )
+    
+            train_timestamps = pd.DatetimeIndex(
+                np.concatenate(
+                    [
+                        train_timestamps.to_numpy(),
+                        test_timestamps[
+                            continuation_start_index:
+                            prediction_start_index
+                        ].to_numpy(),
+                    ]
+                )
+            )
     
         # The returned test split now contains only rows that were not
         # included in training.
@@ -795,36 +793,34 @@ def load_powder_map_data(
             prediction_start_index,
         ) = extension_indices
     
-        borrowed_test_rows = test_raw[
-            continuation_start_index:
-            prediction_start_index
-        ]
+        if (
+            continuation_start_index
+            < prediction_start_index
+        ):
+            borrowed_test_rows = test_raw[
+                continuation_start_index:
+                prediction_start_index
+            ]
     
-        if len(borrowed_test_rows) == 0:
-            raise ValueError(
-                "No map rows were selected from the long test "
-                "recording to extend training."
-            )
-    
-        train_raw = np.concatenate(
-            [
-                train_raw,
-                borrowed_test_rows,
-            ],
-            axis=0,
-        )
-    
-        train_timestamps = pd.DatetimeIndex(
-            np.concatenate(
+            train_raw = np.concatenate(
                 [
-                    train_timestamps.to_numpy(),
-                    test_timestamps[
-                        continuation_start_index:
-                        prediction_start_index
-                    ].to_numpy(),
-                ]
+                    train_raw,
+                    borrowed_test_rows,
+                ],
+                axis=0,
             )
-        )
+    
+            train_timestamps = pd.DatetimeIndex(
+                np.concatenate(
+                    [
+                        train_timestamps.to_numpy(),
+                        test_timestamps[
+                            continuation_start_index:
+                            prediction_start_index
+                        ].to_numpy(),
+                    ]
+                )
+            )
     
         # Final testing begins at prediction_start_index.
         test_raw = test_raw[
@@ -1086,7 +1082,7 @@ def _prediction_extension_indices(
 
     if (
         continuation_start_index
-        >= prediction_start_index
+        > prediction_start_index
     ):
         continuation_timestamp = (
             test_timestamps[

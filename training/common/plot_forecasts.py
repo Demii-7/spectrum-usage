@@ -38,6 +38,7 @@ models, calculate forecasts, or modify evaluation results.
 """
 
 
+import itertools
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -61,6 +62,27 @@ HORIZON_COLORS = {1: "tab:blue", 5: "tab:orange", 15: "tab:green", 60: "tab:red"
 HORIZON_STYLES = {1: "-", 5: "--", 15: "-.", 60: ":"}
 HORIZON_LABELS = {1: "1-min", 5: "5-min", 15: "15-min", 60: "60-min"}
 SPECTROGRAM_HORIZONS = [1, 60]
+SPECTROGRAM_PALETTE = ["tab:blue", "tab:orange", "tab:green", "tab:red",
+                       "tab:purple", "tab:brown", "tab:pink", "tab:gray",
+                       "tab:olive", "tab:cyan"]
+SPECTROGRAM_LINESTYLES = ["-", "--", "-.", ":"]
+
+
+def _update_horizons(horizons: list[int]) -> None:
+    global HORIZONS, HORIZON_COLORS, HORIZON_STYLES, HORIZON_LABELS, SPECTROGRAM_HORIZONS
+    HORIZONS = horizons
+    HORIZON_COLORS = {
+        h: SPECTROGRAM_PALETTE[i % len(SPECTROGRAM_PALETTE)]
+        for i, h in enumerate(horizons)
+    }
+    HORIZON_STYLES = {
+        h: SPECTROGRAM_LINESTYLES[i % len(SPECTROGRAM_LINESTYLES)]
+        for i, h in enumerate(horizons)
+    }
+    HORIZON_LABELS = {h: f"{h}-min" for h in horizons}
+    SPECTROGRAM_HORIZONS = (
+        [horizons[0], horizons[-1]] if len(horizons) >= 2 else horizons
+    )
 
 
 def _band_id(chunk_id: str) -> str:
@@ -709,6 +731,7 @@ def generate_all_plots(
     out_dir: str | Path | None = None,
     bins: tuple[int, ...] = (30, 150),
     max_steps: int = 500,
+    horizons: list[int] | None = None,
 ) -> None:
     
     results_dir = Path(results_dir)
@@ -720,13 +743,18 @@ def generate_all_plots(
         print(f"No metadata found in {results_dir / 'forecasts'}, skipping plots")
         return
 
-    horizons = [
-        int(value)
-        for value in meta.get(
-            "stored_horizons",
-            HORIZONS,
-        )
-    ]
+    if horizons is not None:
+        meta["stored_horizons"] = sorted(horizons)
+
+    _update_horizons(
+        sorted([
+            int(value)
+            for value in meta.get(
+                "stored_horizons",
+                HORIZONS,
+            )
+        ])
+    )
 
     band_id = _band_id(meta.get("chunk_id", ""))
     chunk_label = _chunk_label(meta.get("chunk_id", ""))
