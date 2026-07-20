@@ -1,0 +1,22 @@
+Model: vanillalstm
+Chunk: powder_600_800
+Epochs completed: 20
+
+Best epoch: 19
+Best validation loss: 1.336004
+Training loss at best epoch: 0.615735
+Loss gap at best epoch: 0.720269
+
+Best training loss: 0.614908
+Final training loss: 0.614908
+Final validation loss: 1.404504
+Average training loss: 0.628345
+Average validation loss: 1.371163
+
+Average epoch time: 22.03 seconds
+Fastest epoch time: 21.11 seconds
+Slowest epoch time: 23.22 seconds
+Total training time: 440.70 seconds
+
+Training started: 2026-07-20T12:49:30+00:00
+Training ended: 2026-07-20T12:56:50+00:00

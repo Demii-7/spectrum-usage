@@ -1,0 +1,5 @@
+chunk_id,start_mhz,end_mhz,site,split,horizon,model,target_row_start,target_row_end,n_targets,mae_db,rmse_db
+powder_600_800,600.0,800.0,humanities,humanities_test,1,vanillalstm,60,4092,4033,1.4885907173156738,2.6829025745391846
+powder_600_800,600.0,800.0,humanities,humanities_test,5,vanillalstm,64,4096,4033,1.489223599433899,2.667421579360962
+powder_600_800,600.0,800.0,humanities,humanities_test,15,vanillalstm,74,4106,4033,1.5280498266220093,2.731579542160034
+powder_600_800,600.0,800.0,humanities,humanities_test,60,vanillalstm,119,4151,4033,1.6421023607254028,2.882340908050537
