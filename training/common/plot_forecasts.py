@@ -67,6 +67,15 @@ SPECTROGRAM_PALETTE = ["tab:blue", "tab:orange", "tab:green", "tab:red",
                        "tab:olive", "tab:cyan"]
 SPECTROGRAM_LINESTYLES = ["-", "--", "-.", ":"]
 
+BEHAVIOR_COLORS = {
+    "noise_floor": "tab:blue",
+    "diurnal_pattern": "tab:orange",
+    "intermittent_occupancy": "tab:red",
+    "bursty_short_timescale": "tab:purple",
+    "constant_occupancy": "tab:green",
+    "mixed_activity": "tab:gray",
+}
+
 
 def _update_horizons(horizons: list[int]) -> None:
     global HORIZONS, HORIZON_COLORS, HORIZON_STYLES, HORIZON_LABELS, SPECTROGRAM_HORIZONS
@@ -725,6 +734,88 @@ def plot_site_scatter(
     loaded.close()
 
 
+def plot_per_band_mae(results_dir: Path, out_dir: Path, model_name: str = "VanillaLSTM") -> None:
+    band_csv = results_dir / "per_band_metrics.csv"
+    agg_csv = results_dir / "aggregate_metrics.csv"
+
+    if not band_csv.exists() or not agg_csv.exists():
+        return
+
+    try:
+        band_df = pd.read_csv(band_csv)
+        agg_df = pd.read_csv(agg_csv)
+    except pd.errors.EmptyDataError:
+        return
+
+    if band_df.empty or agg_df.empty:
+        return
+
+    band_df = _filter_test_split(band_df, "test")
+    agg_df = _filter_test_split(agg_df, "test")
+
+    if band_df.empty or agg_df.empty:
+        return
+
+    band_df = band_df.sort_values("start_mhz").reset_index(drop=True)
+    regions = band_df["band_id"].unique()
+    horizons = sorted(band_df["horizon"].unique())
+
+    agg_mae = dict(zip(agg_df["horizon"], agg_df["mae_db"]))
+
+    n_regions = len(regions)
+    n_horizons = len(horizons)
+
+    fig, ax = plt.subplots(figsize=(max(10, n_regions * 0.55), 4.5))
+
+    group_width = 0.8
+    bar_width = group_width / n_horizons
+
+    for h_idx, horizon in enumerate(horizons):
+        h_data = band_df[band_df["horizon"] == horizon].set_index("band_id")
+        positions = np.arange(n_regions) + (h_idx - n_horizons / 2 + 0.5) * bar_width
+        mae_values = [h_data.loc[region, "mae_db"] if region in h_data.index else 0 for region in regions]
+        ax.bar(positions, mae_values, bar_width,
+               label=HORIZON_LABELS.get(horizon, f"h={horizon}"),
+               color=HORIZON_COLORS.get(horizon, "gray"),
+               linewidth=0.3, edgecolor="white")
+
+    for horizon in horizons:
+        if horizon in agg_mae:
+            ax.axhline(y=agg_mae[horizon], color=HORIZON_COLORS.get(horizon, "gray"),
+                       linestyle=HORIZON_STYLES.get(horizon, "--"),
+                       linewidth=0.8, alpha=0.6)
+
+    first_h = band_df[band_df["horizon"] == horizons[0]].set_index("band_id")
+    tick_labels = []
+    tick_colors = []
+    for region in regions:
+        if region in first_h.index:
+            row = first_h.loc[region]
+            start = int(round(float(row["start_mhz"])))
+            end = int(round(float(row["end_mhz"])))
+            tick_labels.append(f"{start}-{end}")
+            tick_colors.append(BEHAVIOR_COLORS.get(row["behavior_category"], "black"))
+        else:
+            tick_labels.append(region)
+            tick_colors.append("black")
+
+    ax.set_xticks(np.arange(n_regions))
+    ax.set_xticklabels(tick_labels, fontsize=6.5, rotation=45, ha="right")
+    for tick, color in zip(ax.get_xticklabels(), tick_colors):
+        tick.set_color(color)
+
+    ax.set_xlabel("Frequency region (MHz) — labels colored by behavior category", fontsize=7.5, fontweight="bold")
+    ax.set_ylabel("MAE (dB)", fontsize=7.5, fontweight="bold")
+    ax.set_title(f"Per-Region MAE — {model_name}", fontsize=8, fontweight="bold", pad=3)
+    ax.legend(fontsize=6.5, loc="upper left", title="Horizon", title_fontsize=6.5)
+    ax.tick_params(labelsize=6.5, top=True, right=True, length=3, width=0.9)
+
+    fig.subplots_adjust(left=0.08, right=0.97, bottom=0.2, top=0.9)
+    fig.savefig(out_dir / "mae_per_band.png", dpi=300, bbox_inches="tight", pad_inches=0.02)
+    print(f"Saved {out_dir / 'mae_per_band.png'}")
+    plt.close(fig)
+
+
 def generate_all_plots(
     results_dir: str | Path,
     model_name: str = "VanillaLSTM",
@@ -795,6 +886,8 @@ def generate_all_plots(
         plot_interpolation_error(results_dir, out_dir, band_id, chunk_label, site_name)
 
     write_summary(results_dir, out_dir, model_name=model_name)
+
+    plot_per_band_mae(results_dir, out_dir, model_name=model_name)
 
 
 if __name__ == "__main__":

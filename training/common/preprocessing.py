@@ -49,6 +49,7 @@ import re
 import numpy as np
 import pandas as pd
 from scipy import ndimage
+from scipy.interpolate import interp1d
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,7 @@ class LoadedSpectrumData:
     frequencies: list[float]
     splits: dict[str, SplitArrays]
     normalization: dict[str, object] | None
+    feature_labels: list[str] | None = None
 
     @property
     def train_split(self) -> str:
@@ -120,13 +122,13 @@ def fit_per_frequency_normalization(
     # Safety Check: Guard against corrupt dataset values like NaNs or Infs
     if np.any(~np.isfinite(mean)) or np.any(~np.isfinite(std)):
         raise ValueError(
-            "Non-finite per-frequency normalization statistics."
+            "Error! Non-finite per-frequency normalization statistics."
         )
 
     # Safety Check: If a frequency is completely dead (variance is 0), division will crash
     if np.any(std == 0.0):
         raise ValueError(
-            "Cannot normalize a zero-variance frequency."
+            "Error! Cannot normalize a zero-variance frequency."
         )
 
     # Returns the calculated statistics arrays (each will have a length of 200)
@@ -178,105 +180,103 @@ def interpolate_missing(df: pd.DataFrame) -> pd.DataFrame:
 def _fill_nearest_neighbor_2d(
     array: np.ndarray,
 ) -> np.ndarray:
+    """Vectorized 2D spatial cleaner that replaces NaN values by mapping every missing cell to its physically closest valid neighbor using a Euclidean distance transform"""
+    
+    # Create a boolean mask where True represents valid numbers and False represents NaNs
     mask = ~np.isnan(array)
 
+    # Edge case protection: If the grid is completely full or 100% empty, return it as-is
     if mask.all() or not mask.any():
         return array
 
+    # Calculate the Exact Euclidean Distance Transform (EDT).
+    # We pass (~mask), targeting the NaN spaces. 
+    # return_indices=True forces SciPy to output a coordinate grid mapping every single 
+    # NaN cell to the (X, Y) coordinates of its physically closest non-NaN neighbor pixel.
     indices = ndimage.distance_transform_edt(
         (~mask).astype(np.uint8),
         return_distances=False,
         return_indices=True,
     )
 
+    # Multi-dimensional indexing: Unpack the (2, H, W) coordinate map into a tuple.
+    # This instantly remaps and copies the valid neighbor values into all NaN cells simultaneously.
     return array[tuple(indices)]
 
 
-def clean_interpolated_map(
+def clean_spectrum_data(
     data: np.ndarray,
-    *,
-    fit_rows: int | None = None,
-    fallback_frequency_values: np.ndarray | None = None,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> np.ndarray:
     """
-    Clean map data shaped (T, H, W, F).
-
-    Returns:
-        cleaned data
-        per-frequency fallback values shaped (F,)
+    Clean spectrum data shaped either:
+    
+        (T, F)
+        (T, H, W, F)
+    
+    For 4D map data, partially missing spatial slices are filled
+    using nearest-neighbour imputation first.
+    
+    Remaining missing values are interpolated across time.
     """
-
-    if data.ndim != 4:
-        raise ValueError(
-            "Map data must be shaped (time, height, width, frequency), "
-            f"got {data.shape}"
-        )
-
+    # Type enforcement: Force data into standard 32-bit floats and make a local copy
     data = np.asarray(data, dtype=np.float32).copy()
 
-    fully_missing_timesteps = np.isnan(data).all(
-        axis=(1, 2, 3)
-    )
-    data = data[~fully_missing_timesteps]
-
-    if len(data) == 0:
+    # Shape validation: Ensure incoming data adheres strictly to the expected 2D or 4D tensor structure
+    if data.ndim not in (2, 4):
         raise ValueError(
-            "All map timesteps are entirely NaN."
+            "Error! Spectrum data must be shaped either "
+            f"(T, F) or (T, H, W, F), got {data.shape}"
         )
+        
 
-    time_steps, _, _, frequencies = data.shape
+    time_steps = data.shape[0]
 
-    # Spatial nearest-neighbour filling for each time/frequency slice.
-    for time_index in range(time_steps):
-        for frequency_index in range(frequencies):
-            spatial_slice = data[
-                time_index, :, :, frequency_index
-            ]
+    # Tier 1: Spatial nearest-neighbour filling for partial missing frames
+    if data.ndim == 4:
+        frequencies = data.shape[-1]
+        for time_index in range(time_steps):
+            for frequency_index in range(frequencies):
+                spatial_slice = data[time_index, :, :, frequency_index]
+                if np.isnan(spatial_slice).any() and not np.isnan(spatial_slice).all():
+                    data[time_index, :, :, frequency_index] = _fill_nearest_neighbor_2d(spatial_slice)
 
-            if np.isnan(spatial_slice).any():
-                data[
-                    time_index, :, :, frequency_index
-                ] = _fill_nearest_neighbor_2d(
-                    spatial_slice
-                )
+    # Tier 2: Temporal interpolation for remaining missing values in each flattened feature.
+    # Flatten spatial and frequency dimensions into a 2D matrix [Time, Features]
+    flattened_data = data.reshape(time_steps, -1)
+    
+    # Generate index arrays to locate valid and missing time blocks
+    all_timesteps = np.arange(time_steps)
+    
+    # Loop through each flattened feature column to interpolate along the time axis
+    for col_idx in range(flattened_data.shape[1]):
+        column = flattened_data[:, col_idx]
+        nan_mask = np.isnan(column)
+        
+        if not nan_mask.any():
+            continue
+            
+        # If the entire column is NaN, throw error
+        if nan_mask.all():
+            raise ValueError(
+                "Error! A complete feature column is NaN and cannot "
+                "be temporally interpolated."
+            )
+            
+        # Split into known points and targets to interpolate
+        known_x = all_timesteps[~nan_mask]
+        known_y = column[~nan_mask]
+        
+        # Interpolate internal gaps linearly and use the nearest
+        # valid boundary value for gaps at the beginning or end.
+        f_time = interp1d(known_x, known_y, kind='linear', bounds_error=False,fill_value=(known_y[0],known_y[-1],),)
+        flattened_data[nan_mask, col_idx] = f_time(all_timesteps[nan_mask])
 
-    remaining = np.isnan(data)
+    # Reshape the cleaned matrix back to its original 2D or 4D shape.
+    cleaned = flattened_data.reshape(data.shape)
 
-    if fallback_frequency_values is None:
-        if fit_rows is None:
-            fit_rows = len(data)
-
-        fit_rows = min(max(int(fit_rows), 1), len(data))
-
-        fallback_frequency_values = np.nanmean(
-            data[:fit_rows],
-            axis=(0, 1, 2),
-        ).astype(np.float32)
-    else:
-        fallback_frequency_values = np.asarray(
-            fallback_frequency_values,
-            dtype=np.float32,
-        )
-
-    if np.isnan(fallback_frequency_values).any():
+    if not np.isfinite(cleaned).all():
         raise ValueError(
-            "At least one frequency has no usable training values "
-            "for map imputation."
+            "Error! Non-finite values remain after cleaning."
         )
 
-    if remaining.any():
-        broadcast_values = fallback_frequency_values.reshape(
-            1, 1, 1, -1
-        )
-        data = np.where(
-            remaining,
-            broadcast_values,
-            data,
-        )
-
-    if np.isnan(data).any():
-        raise ValueError(
-            "NaN values remain after map cleaning."
-        )
-
-    return data.astype(np.float32), fallback_frequency_values
+    return cleaned.astype(np.float32, copy=False,)

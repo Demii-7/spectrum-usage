@@ -10,19 +10,18 @@
 #
 
 data:
-  loader: powder
-  data_dir: 
-  band_definitions_path:
-  reference_site: humanities, guesthouse
-  train_files: []
-  test_files:
-  train_map_path: data/powder_20260618T0036Z_humanities_guesthouse_600_800.npz
-  test_map_path: data/powder_20260628T0436Z_humanities_guesthouse_600_800.npz
-  map_key: map_db
-  max_rows:
-  prediction_start_row:     # 8883 for STS-PredNet
-  test_rows: 2880
-  chunks:
+    loader: powder
+    band_definitions_path: evaluation/results/statistical_analysis/frequency_segments_600_800.csv
+    reference_site: humanities # No space use underscore or camel case
+    train_files: data/powder_20260618T0036Z_humanities_600_800.csv #data/powder_20260618T0036Z_humanities_guesthouse_600_800.npz
+    test_files: data/powder_20260628T0436Z_humanities_600_800.csv #data/powder_20260628T0436Z_humanities_guesthouse_600_800.npz
+    
+    map_key: map_db
+    prediction_start_row:
+    data_dir: # Aerpaw loader uses this but will either configure or delete
+    test_rows: # Aerpaw loader uses this but will either configure or delete
+    max_rows: # Allows taking a smaller duration: end time 
+    chunks:
     - id: powder_600_800
       start_mhz: 600.0
       end_mhz: 800.0
@@ -32,7 +31,7 @@ windowing:
   horizons: [1, 5, 15, 60]
 
 outputs:
-  root_dir: training/results/powder/600_800
+  root_dir: results/powder/600_800
   
 training:
     device: auto
@@ -43,10 +42,8 @@ training:
 preprocessing:
   normalize: true
   # NaN imputation for interpolated-map mode.
-  imputation:
-      enabled: true
-      method: nearest_spatial_then_train_frequency_mean
-
+  impute: true
+     
 
 
 #----- ALL IMPLEMENTED MODELS' CONFIGURATION SETTINGS -----
@@ -86,7 +83,7 @@ convlstm:
     #These parameters are for model definition
     model:
         input_sequence_length: 60           # Number of past sequence / lookback
-        prediction_horizon: 60              # Horizon, all N done simultaneously by the model
+        prediction_horizon: 1              # Horizon, all N done simultaneously by the model
         hidden_channels: [32, 64]           # Size of hidden state 1 per lstmlayer
         kernel_size: [[1, 3], [1, 1]]       # Convolution kernels 1 per lstmlayer
         num_encoder_layers: 2               # Number of stacked ConvLSTM layers
@@ -114,9 +111,9 @@ convlstm:
         epochs: 30                          # Number of full passes over the training data
         learning_rate: 0.0002               # Optimizer learning rate
         weight_decay: 0.004                 # L2 weight-decay regularization strength
-        val_fraction: 0.1                   # Fraction of training data held out for validation
+        val_fraction: 0.15                   # Fraction of training data held out for validation
         optimizer: adam                     # Optimizer: adam, adamw, or sgd
-        early_stopping: true                # Stop training when validation loss stops improving
+        early_stopping: false                # Stop training when validation loss stops improving
         early_stopping_patience: 8          # Number of epochs without improvement before stopping
         gradient_clip_norm: 5.0             # Maximum global gradient norm for clipping
         seed: 42                            # Random seed for reproducibility
@@ -303,3 +300,36 @@ deepspred:
   early_stopping_threshold: 0.01
   early_stopping_epochs: 4
   seed: 42
+
+# Run: /home/cc/spectrum-usage/.venv/bin/python3 -m training.common.grid_search
+hyperparameter_search:
+  enabled: true
+  search_name: vanillalstm_powder_600_800
+  smoke_test:
+    enabled: true
+    epochs: 5
+  architecture_search:
+    epochs: 15
+    validation_stride: 5
+    hidden_size: [8, 16, 32]
+    num_layers: [1, 2, 3]
+    dropout: [0.0, 0.1, 0.2]
+    fixed:
+      learning_rate: 0.001
+      batch_size: 32
+      weight_decay: 0.0001
+      optimizer: adam
+      gradient_clip_norm: 1.0
+      early_stopping: true
+      early_stopping_patience: 3
+  optimization_search:
+    epochs: 15
+    validation_stride: 5
+    top_architectures: 2
+    learning_rate: [0.0005, 0.001, 0.003]
+    batch_size: [32, 64]
+    weight_decay: [0.0, 0.0001]
+  selection:
+    metric: mean_horizon_rmse_db
+    mode: min
+  output_dir: results/powder/600_800/hyperparameter_search

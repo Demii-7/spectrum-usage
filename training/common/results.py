@@ -65,16 +65,9 @@ def load_band_definitions(config: dict[str, Any]) -> pd.DataFrame:
     return pd.read_csv(path).fillna("")
 
 
-def output_dir(config: dict[str, Any], model_name: str) -> Path:
-    path = resolve_path(config["outputs"]["root_dir"]) / model_name
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
-def checkpoints_dir(config: dict[str, Any], model_name: str) -> Path:
-    path = output_dir(config, model_name) / "checkpoints"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+def _feature_site(label: str) -> str:
+    """Extract site name from a feature label like 'humanities@600.5'."""
+    return label.split("@")[0] if "@" in label else "unknown"
 
 
 def append_metric_rows(
@@ -94,6 +87,7 @@ def append_metric_rows(
     abs_err: np.ndarray,
     sq_err: np.ndarray,
     bands: pd.DataFrame,
+    feature_labels: list[str] | None = None,
 ) -> None:
     aggregate_rows.append(
         {
@@ -113,11 +107,16 @@ def append_metric_rows(
     )
 
     for idx, freq in enumerate(freqs):
+        site = (
+            _feature_site(feature_labels[idx])
+            if feature_labels is not None and idx < len(feature_labels)
+            else split_site(split_name)
+        )
         frequency_rows.append(
             {
                 "chunk_id": chunk_id,
                 "frequency_mhz": freq,
-                "site": split_site(split_name),
+                "site": site,
                 "split": split_name,
                 "horizon": int(horizon),
                 "model": model,
@@ -149,6 +148,7 @@ def append_metric_rows(
 
 
 def prepare_output_dirs( config: dict[str, Any], model_name: str,) -> tuple[Path, Path]:
+    """ Create ouput directory parent directory and checkpoint child for current model and return their paths"""
     out = output_dir(
         config,
         model_name,
@@ -161,6 +161,20 @@ def prepare_output_dirs( config: dict[str, Any], model_name: str,) -> tuple[Path
 
     return out, checkpoints
 
+def output_dir(config: dict[str, Any], model_name: str) -> Path:
+    """ Create ouput directory for current model"""
+    reference_site = str(config["data"].get("reference_site", "Not provided")).lower()
+    path = resolve_path(config["outputs"]["root_dir"]) / model_name / reference_site
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def checkpoints_dir(config: dict[str, Any], model_name: str) -> Path:
+    """ Create checkpoints directory for current model"""
+    
+    path = output_dir(config, model_name) / "checkpoints"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 def finalize_results(
     out: Path,
