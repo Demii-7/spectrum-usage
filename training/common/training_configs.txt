@@ -1,0 +1,168 @@
+# Integrated Pipeline Runbook — VanillaLSTM & ConvLSTM
+# =====================================================
+# For every run, update these fields:
+#   1. outputs.root_dir
+#   2. data.chunks
+#   3. data.train_files / data.test_files (sequence) OR
+#      data.train_map_path / data.test_map_path (map)
+#   4. training.model_name
+#   5. data.prediction_start_row
+#
+# Model/train hyperparams stay as-is in config.yaml unless overridden.
+# STS-PredNet: ignore until integrated.
+
+# =============================================================================
+# Run 1 — VanillaLSTM  600_800
+# =============================================================================
+data:
+  loader: powder
+  reference_site: humanities, guesthouse
+  train_files: [data/powder_20260618T0036Z_humanities_600_800.csv, data/powder_20260618T0036Z_guesthouse_600_800.csv]
+  test_files:[data/powder_20260628T0436Z_humanities_600_800.csv, data/powder_20260628T0436Z_guesthouse_600_800.csv]
+  train_map_path:
+  test_map_path:
+  map_key: map_db
+  prediction_start_row:
+  chunks:
+    - id: powder_600_800
+      start_mhz: 600.0
+      end_mhz: 800.0
+
+windowing:
+  lookback: 60
+  horizons: [1, 5, 15, 60]
+
+outputs:
+  root_dir: results/powder/600_800
+
+training:
+  device: auto
+  model_name: vanillalstm
+
+# Commands:
+#   ./.venv/bin/python training/common/train_integrated.py --config training/common/config.yaml
+#   ./.venv/bin/python training/common/evaluation_integrated.py --config training/common/config.yaml
+
+# Check for:
+#   results/powder/600_800/vanillalstm/checkpoints/
+#   results/powder/600_800/vanillalstm/aggregate_metrics.csv
+#   results/powder/600_800/vanillalstm/per_frequency_metrics.csv
+#   results/powder/600_800/vanillalstm/report.txt
+
+# =============================================================================
+# Run 2 — VanillaLSTM  2400_2600
+# =============================================================================
+data:
+  loader: powder
+  reference_site: humanities, guesthouse
+  train_files:
+    - data/powder_20260618T0036Z_humanities_2400_2600.csv
+    - data/powder_20260618T0036Z_guesthouse_2400_2600.csv
+  test_files:
+    - data/powder_20260628T0436Z_humanities_2400_2600.csv
+    - data/powder_20260628T0436Z_guesthouse_2400_2600.csv
+  train_map_path:
+  test_map_path:
+  map_key: map_db
+  prediction_start_row:
+  chunks:
+    - id: powder_2400_2600
+      start_mhz: 2400.0
+      end_mhz: 2600.0
+
+windowing:
+  lookback: 60
+  horizons: [1, 5, 15, 60]
+
+outputs:
+  root_dir: results/powder/2400_2600
+
+training:
+  device: auto
+  model_name: vanillalstm
+
+# Commands:
+#   ./.venv/bin/python training/common/train_integrated.py --config training/common/config.yaml
+#   ./.venv/bin/python training/common/evaluation_integrated.py --config training/common/config.yaml
+
+# Check for:
+#   results/powder/2400_2600/vanillalstm/checkpoints/
+#   results/powder/2400_2600/vanillalstm/aggregate_metrics.csv
+#   results/powder/2400_2600/vanillalstm/per_frequency_metrics.csv
+#   results/powder/2400_2600/vanillalstm/report.txt
+
+# =============================================================================
+# Run 3 — ConvLSTM  600_800
+# =============================================================================
+data:
+  loader: powder
+  reference_site: humanities, guesthouse
+  train_files: []
+  test_files: []
+  train_map_path: data/powder_20260618T0036Z_humanities_guesthouse_600_800.npz
+  test_map_path: data/powder_20260628T0436Z_humanities_guesthouse_600_800.npz
+  map_key: map_db
+  prediction_start_row:
+  chunks:
+    - id: powder_600_800
+      start_mhz: 600.0
+      end_mhz: 800.0
+
+windowing:
+  lookback: 60
+  horizons: [1, 5, 15, 60]
+
+outputs:
+  root_dir: results/powder/600_800
+
+training:
+  device: auto
+  model_name: convlstm
+
+# Commands:
+#   ./.venv/bin/python training/common/train_integrated.py --config training/common/config.yaml
+#   ./.venv/bin/python training/common/evaluation_integrated.py --config training/common/config.yaml
+
+# Check for:
+#   results/powder/600_800/convlstm/checkpoints/
+#   results/powder/600_800/convlstm/aggregate_metrics.csv
+#   results/powder/600_800/convlstm/per_frequency_metrics.csv
+#   results/powder/600_800/convlstm/report.txt
+
+# =============================================================================
+# Run 4 — ConvLSTM  2400_2600
+# =============================================================================
+data:
+  loader: powder
+  reference_site: humanities, guesthouse
+  train_files: []
+  test_files: []
+  train_map_path: data/powder_20260618T0036Z_humanities_guesthouse_2400_2600.npz
+  test_map_path: data/powder_20260628T0436Z_humanities_guesthouse_2400_2600.npz
+  map_key: map_db
+  prediction_start_row:
+  chunks:
+    - id: powder_2400_2600
+      start_mhz: 2400.0
+      end_mhz: 2600.0
+
+windowing:
+  lookback: 60
+  horizons: [1, 5, 15, 60]
+
+outputs:
+  root_dir: results/powder/2400_2600
+
+training:
+  device: auto
+  model_name: convlstm
+
+# Commands:
+#   ./.venv/bin/python training/common/train_integrated.py --config training/common/config.yaml
+#   ./.venv/bin/python training/common/evaluation_integrated.py --config training/common/config.yaml
+
+# Check for:
+#   results/powder/2400_2600/convlstm/checkpoints/
+#   results/powder/2400_2600/convlstm/aggregate_metrics.csv
+#   results/powder/2400_2600/convlstm/per_frequency_metrics.csv
+#   results/powder/2400_2600/convlstm/report.txt
