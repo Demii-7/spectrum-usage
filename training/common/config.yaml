@@ -58,30 +58,28 @@ vanillalstm:
   evaluation: {}
   #These parameters are for model definition
   model:
-      input_sequence_length: 60            # Number of past sequence / lookback
-      prediction_horizon: 60               # Horizon, all N done simultaneously by the model
-      hidden_size: 128                     # Hidden state size
-      num_layers: 1                        # Number of LSTM layers to stack
-      dropout: 0.1                         # Set dropout percentage. Active only when num_layers > 1
-      output_strategy: final_hidden        # Hidden state output strategy: final_hidden or all_hidden
-      bidirectional: false                 # false for forward LSTM and true for both forward and backward lstm
-      
-   #These parameters are for training
-   train:
-       val_fraction: 0.1                   # Fraction of training data held out for validation
-       train_stride: 1                     # Step size between consecutive training windows
-       val_stride: 1                       # Step size between consecutive validation windows
-       test_stride: 1                      # Step size between consecutive test windows (used in evaluation)
-       
-       batch_size: 32                      # Number of samples per gradient update
-       epochs: 20                          # Number of full passes over the training data
-       learning_rate: 0.001                # Optimizer learning rate
-       weight_decay: 0.0                   # L2 weight-decay regularization strength
-       optimizer: adam                     # Optimizer: adam, adamw, or sgd
-       gradient_clip_norm: 1.0             # Maximum global gradient norm for clipping
-       early_stopping: true                # Stop training when validation loss stops improving
-       early_stopping_patience: 10         # Number of epochs without improvement before stopping
-       seed: 42                            # Random seed for reproducibility
+    input_sequence_length: 60            # Number of past sequence / lookback
+    prediction_horizon: 60               # Horizon, all N done simultaneously by the model
+    hidden_size: 128                     # Hidden state size
+    num_layers: 1                        # Number of LSTM layers to stack
+    dropout: 0.1                         # Set dropout percentage. Active only when num_layers > 1
+    output_strategy: final_hidden        # Hidden state output strategy: final_hidden or all_hidden
+    bidirectional: false                 # false for forward LSTM and true for both forward and backward lstm
+  #These parameters are for training
+  train:
+    val_fraction: 0.1                   # Fraction of training data held out for validation
+    train_stride: 1                     # Step size between consecutive training windows
+    val_stride: 1                       # Step size between consecutive validation windows
+    test_stride: 1                      # Step size between consecutive test windows (used in evaluation)
+    batch_size: 32                      # Number of samples per gradient update
+    epochs: 20                          # Number of full passes over the training data
+    learning_rate: 0.001                # Optimizer learning rate
+    weight_decay: 0.0                   # L2 weight-decay regularization strength
+    optimizer: adam                     # Optimizer: adam, adamw, or sgd
+    gradient_clip_norm: 1.0             # Maximum global gradient norm for clipping
+    early_stopping: true                # Stop training when validation loss stops improving
+    early_stopping_patience: 10         # Number of epochs without improvement before stopping
+    seed: 42                            # Random seed for reproducibility
 
 convlstm:
     evaluation: {}

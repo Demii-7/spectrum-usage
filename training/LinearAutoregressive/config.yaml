@@ -1,0 +1,20 @@
+model:
+  input_sequence_length: 60
+  prediction_horizon: 1
+
+train:
+  val_fraction: 0.1
+  train_stride: 1
+  val_stride: 1
+  test_stride: 1
+  batch_size: 32
+  epochs: 20
+  learning_rate: 0.01
+  weight_decay: 0.0
+  optimizer: adam
+  gradient_clip_norm: 1.0
+  early_stopping: true
+  early_stopping_patience: 10
+  seed: 42
+
+evaluation: {}

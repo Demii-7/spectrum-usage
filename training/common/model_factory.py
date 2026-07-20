@@ -39,12 +39,20 @@ import torch
 import torch.nn as nn
 
 from models.ConvLSTM import ConvLSTMForecaster
+from models.LookbackMean import LookbackMeanForecaster
+from models.LinearAutoregressive import LinearAutoregressiveForecaster
 from models.VanillaLSTM import VanillaLSTMForecaster
 
 
 SUPPORTED_MODELS = {
     "vanillalstm",
     "convlstm",
+    "lookbackmean1d",
+    "lookbackmean2d",
+    "lookbackmean4d",
+    "linearar1d",
+    "linearar2d",
+    "linearar4d",
 }
 
 
@@ -107,6 +115,38 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
         }
     
         return ConvLSTMForecaster(predictor_config)
+
+    if model_name in ("lookbackmean1d", "lookbackmean2d", "lookbackmean4d"):
+        if model_name == "lookbackmean4d" and train_data.ndim != 4:
+            raise ValueError(
+                "Error! LookbackMean4D expects map data shaped "
+                f"(time, height, width, channels), got {train_data.shape}"
+            )
+        if model_name in ("lookbackmean1d", "lookbackmean2d") and train_data.ndim != 2:
+            raise ValueError(
+                "Error! LookbackMean1D/2D expects CSV data shaped "
+                f"(time, features), got {train_data.shape}"
+            )
+        return LookbackMeanForecaster(config[model_name])
+
+    if model_name in ("linearar1d", "linearar2d", "linearar4d"):
+        if model_name == "linearar4d" and train_data.ndim != 4:
+            raise ValueError(
+                "Error! LinearAR4D expects map data shaped "
+                f"(time, height, width, channels), got {train_data.shape}"
+            )
+        if model_name in ("linearar1d", "linearar2d") and train_data.ndim != 2:
+            raise ValueError(
+                "Error! LinearAR1D/2D expects CSV data shaped "
+                f"(time, features), got {train_data.shape}"
+            )
+        predictor_config = {
+            "model": {
+                **dict(model_cfg),
+                "input_size": int(np.prod(train_data.shape[1:])),
+            }
+        }
+        return LinearAutoregressiveForecaster(predictor_config)
 
     raise ValueError(
         f"Unsupported model: {model_name}"
