@@ -77,7 +77,7 @@ def _map_from_sites(site_data, site_x, site_y, grid):
 
 
 def _load_cached(path: Path, map_key: str, frequency_bins, frequency_ranges) -> LoadedSource:
-    with np.load(path, allow_pickle=False) as archive:
+    with np.load(path, allow_pickle=True) as archive:
         if map_key not in archive or "freqs_mhz" not in archive:
             raise KeyError(f"{path} must contain {map_key!r} and 'freqs_mhz'")
         data = np.asarray(archive[map_key], dtype=np.float32)
