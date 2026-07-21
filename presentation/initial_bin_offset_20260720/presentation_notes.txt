@@ -1,0 +1,210 @@
+TITLE
+-----
+
+Why VanillaLSTM Misses the Initial POWDER Frequency Bins
+
+
+MAIN MESSAGE
+------------
+
+The large error near 600-608 MHz is not a plotting or alignment error; it occurs because the test signal level shifts away from training, while the model compresses predictions toward familiar levels and fails to preserve the highly informative last observation.
+
+
+SLIDE 1 --- OBSERVED PROBLEM
+---------------------------
+
+- The mean-power plots show a visible prediction offset in the first eight frequency bins at the humanities site.
+- The affected range is approximately 600.5-607.5 MHz.
+- The same major offset is not visible at guesthouse.
+- The remaining frequencies generally follow the target mean closely.
+- The original question was whether this came from plotting, frequency alignment, temporal alignment, normalization, or actual model behavior.
+
+Recommended visual: mean_power_site_comparison.png
+
+Speaker notes:
+Explain what the black and colored curves represent. Point out the initial humanities mismatch and the much closer guesthouse match. Keep this slide to approximately 45-60 seconds.
+
+
+SLIDE 2 --- PIPELINE CHECKS
+--------------------------
+
+Checklist of completed verification steps:
+
+[OK] Stored t+1 targets matched the raw test data at the stored target rows.
+[OK] Prediction and target frequency ordering matched (metadata frequency lists identical).
+[OK] Normalization and denormalization round-trip checks passed (denormalizing stored values reproduces original NPZ means).
+[OK] The exact prediction and target means stored in the forecast arrays reproduce the plotted curves (no plotting-introduced offset).
+[OK] Spectral structures align correctly over the rest of the band (600-800 MHz).
+
+Conclusion: "The visible offset is present in the stored forecasts and is not introduced by the plotting script."
+
+Recommended visual: No additional plot required. Use a simple checklist or compact table in the eventual slide.
+
+Speaker notes:
+Spend approximately 45 seconds establishing that the investigation moved beyond plotting and indexing errors.
+
+
+SLIDE 3 --- TRAIN/TEST LEVEL SHIFT
+----------------------------------
+
+First 8 bins at humanities site (t+1 forecasts):
+
+Bin 0, 600.5 MHz:
+  train mean = -116.8 dBm
+  test target mean = -108.5 dBm
+  shift = +8.3 dB
+  prediction mean = -115.9 dBm
+
+Bin 1, 601.5 MHz:
+  train mean = -116.4 dBm
+  test target mean = -109.6 dBm
+  shift = +6.8 dB
+  prediction mean = -115.6 dBm
+
+Bin 2, 602.5 MHz:
+  train mean = -115.2 dBm
+  test target mean = -111.8 dBm
+  shift = +3.4 dB
+  prediction mean = -115.3 dBm
+
+Bin 3, 603.5 MHz:
+  train mean = -113.0 dBm
+  test target mean = -110.7 dBm
+  shift = +2.3 dB
+  prediction mean = -112.3 dBm
+
+Bin 4, 604.5 MHz:
+  train mean = -107.8 dBm
+  test target mean = -107.9 dBm
+  shift = -0.1 dB
+  prediction mean = -107.1 dBm
+
+Bin 5, 605.5 MHz:
+  train mean = -107.1 dBm
+  test target mean = -106.9 dBm
+  shift = +0.1 dB
+  prediction mean = -106.7 dBm
+
+Bin 6, 606.5 MHz:
+  train mean = -105.6 dBm
+  test target mean = -107.0 dBm
+  shift = -1.4 dB
+  prediction mean = -105.4 dBm
+
+Bin 7, 607.5 MHz:
+  train mean = -106.8 dBm
+  test target mean = -108.6 dBm
+  shift = -1.8 dB
+  prediction mean = -106.9 dBm
+
+Bins from approximately 608.5 MHz onward:
+train and test means are much closer in the immediately following noise-floor region, and the prediction matches that stable level closely.
+
+Important interpretation:
+- The humanities test period has a frequency-dependent level shift relative to training in bins 0-7 (range: -1.8 to 8.3 dB).
+- The model reacts to the shift, but its response is inconsistent across frequency.
+- It severely undershoots bins 0-3, is accurate around bins 4-5, and overshoots slightly around bins 6-7.
+- Therefore, describe this as frequency-dependent bias under a train/test level shift, not uniform overcorrection.
+
+Recommended visual: initial_bins_mean_comparison.png
+
+Speaker notes:
+Spend approximately 60-75 seconds. Focus on the pattern rather than reading every number.
+
+
+SLIDE 4 --- PERSISTENCE REVEALS THE FAILURE
+-------------------------------------------
+
+t+1 persistence baseline comparison:
+
+Bin 0:
+  model MAE = 7.43 dB
+  persistence MAE = 0.26 dB
+
+Bin 1:
+  model MAE = 6.04 dB
+  persistence MAE = 0.30 dB
+
+Bin 2:
+  model MAE = 3.60 dB
+  persistence MAE = 0.30 dB
+
+Bin 3:
+  model MAE = 1.73 dB
+  persistence MAE = 0.31 dB
+
+Bin 4:
+  model MAE = 1.37 dB
+  persistence MAE = 0.27 dB
+
+Bin 5:
+  model MAE = 1.22 dB
+  persistence MAE = 0.25 dB
+
+Bin 6:
+  model MAE = 1.66 dB
+  persistence MAE = 0.26 dB
+
+Bin 7:
+  model MAE = 1.70 dB
+  persistence MAE = 0.27 dB
+
+State clearly:
+- For t+1, the last input value is already extremely close to the target.
+- Therefore the target is predictable from the available history.
+- The model underperforms a trivial persistence baseline in these bins.
+- The central failure is that the model does not preserve the current absolute level as effectively as simply copying the last observation.
+
+Recommended visual: persistence_vs_model_mae.png
+
+Speaker notes:
+This is the strongest result. Spend approximately 60-75 seconds here.
+
+
+SLIDE 5 --- GLOBAL VARIANCE COMPRESSION
+---------------------------------------
+
+- Across active bins, the median prediction-standard-deviation to target-standard-deviation ratio is approximately 0.44-0.53.
+- Humanities and guesthouse show similar overall ratios (approximately 0.44 and 0.40 respectively).
+- Increasing hidden size from 8 to 64 only changed the active-bin mean ratio from approximately 0.450 to 0.533.
+- Bin 0 bias remained approximately -7.31 dB across hidden sizes 8, 16, 32, and 64.
+- This shows that increasing hidden dimension alone did not materially solve the initial-bin bias.
+- The predictions are generally less variable than the targets, and the humanities train/test mean shift makes this compression visibly damaging in the first bins.
+
+Hidden-size experiment summary:
+  hidden 8: mean variance ratio = 0.450, bin 0 bias = -7.33 dB
+  hidden 16: mean variance ratio = 0.470, bin 0 bias = -7.27 dB
+  hidden 32: mean variance ratio = 0.517, bin 0 bias = -7.35 dB
+  hidden 64: mean variance ratio = 0.533, bin 0 bias = -7.28 dB
+
+Recommended visual: variance_compression.png
+
+Speaker notes:
+Spend approximately 45-60 seconds. The key message is that this is broader than one bad bin and not fixed by simply enlarging the hidden state.
+
+
+SLIDE 6 --- CONCLUSION
+---------------------
+
+1. The 600.5-607.5 MHz offset is a real model-output pattern, not a plotting, frequency-order, target-row, or denormalization error detected by the completed checks.
+2. The humanities test period has a substantial frequency-specific level shift, while the model compresses outputs and fails to preserve the highly predictive last observation.
+3. Persistence is dramatically better for these t+1 bins, showing that future model comparisons must include simple baselines and frequency-region-level diagnostics rather than only aggregate RMSE.
+
+Next-step statement:
+"Future work will compare models by frequency behavior and evaluate whether residual or persistence-aware forecasting improves performance without assuming a single architectural root cause."
+
+
+TOTAL TIMING
+------------
+
+Slide 1: 45-60 seconds
+Slide 2: 40-50 seconds
+Slide 3: 60-75 seconds
+Slide 4: 60-75 seconds
+Slide 5: 45-60 seconds
+Slide 6: 30-45 seconds
+
+Expected total: approximately 5-6.5 minutes.
+
+30-second summary:
+The VanillaLSTM model shows a large mean-power offset at 600.5-607.5 MHz. Pipeline checks confirm this is a real model output, not an artifact. The test period's signal level differs from training, and the model's predictions compress toward a global mean rather than tracking the per-bin level. A trivial persistence baseline (copying the last observation) achieves 0.26 dB MAE vs the model's 7.43 dB. Increasing LSTM hidden size from 8 to 64 does not fix the bias, confirming the issue is not simply capacity but how the model preserves per-frequency level information.
