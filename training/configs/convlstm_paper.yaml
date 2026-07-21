@@ -1,0 +1,93 @@
+# ConvLSTM paper-faithful config
+# Based on Shawel et al. EUSIPCO 2019
+# Uses 4d representation → auto-builds NPZ map cache from CSVs
+# NOTE: prediction_horizon=60 matches paper's 60 decoder steps (we use 1-min
+#   resolution vs paper's 3-min, so this covers 60 min vs paper's 180 min)
+#
+# Requires code changes for full paper fidelity:
+#   - NADAM optimizer (only adam/adamw/sgd supported)
+#   - Gaussian noise augmentation (noise_std=0.2)
+
+data:
+  representation: 4d
+  reference_site: humanities
+  files:
+    - path: data/powder/guesthouse-nuc1/20260618T0036Z/600_800/power_1mhz_avg_per_minute.csv
+      partition: train
+    - path: data/powder/humanities-nuc1/20260618T0036Z/600_800/power_1mhz_avg_per_minute.csv
+      partition: train
+    - path: data/powder/guesthouse-nuc1/20260628T0436Z/600_800/power_1mhz_avg_per_minute.csv
+      partition: test
+    - path: data/powder/humanities-nuc1/20260628T0436Z/600_800/power_1mhz_avg_per_minute.csv
+      partition: test
+  chunks:
+    - id: powder_600_800
+      start_mhz: 600.0
+      end_mhz: 800.0
+  map:
+    name: powder_600_800
+    locations: data/locations/powder.json
+    collection_key: endpoints
+    output_dir: data/maps
+    grid:
+      height: 10
+      width: 10
+    force_rebuild: false
+    permute: false
+    permute_seed: 42
+
+windowing:
+  lookback: 60
+  horizons: [1, 5, 15, 60]
+
+preprocessing:
+  normalize: true
+  impute: true
+  max_missing_gap: 5
+
+outputs:
+  root_dir: results/powder/600_800
+
+training:
+  device: auto
+  model_name: convlstm
+
+data_loader:
+  num_workers: 4
+  persistent_workers: true
+  prefetch_factor: 2
+  pin_memory: auto
+
+convlstm:
+  evaluation: {}
+  model:
+    input_sequence_length: 60
+    prediction_horizon: 60
+    hidden_channels: [32, 64]
+    kernel_size: [[1, 3], [1, 1]]
+    num_encoder_layers: 2
+    decoder_hidden_channels: 32
+    decoder_kernel_size: [1, 1]
+    decoder_lstm_hidden: 128
+    dropout: 0.3
+    use_batch_norm: true
+    fc_hidden_channels: 0
+    fc_kernel_size: [1, 3]
+    fc_intermediate_activation: relu
+    cell_activation: relu
+    use_channel_projection: false
+    channel_projection_dim: 16
+  train:
+    train_stride: 1
+    val_stride: 10
+    test_stride: 1
+    batch_size: 32
+    epochs: 100
+    learning_rate: 0.0002
+    weight_decay: 0.004
+    val_fraction: 0.15
+    optimizer: adam
+    gradient_clip_norm: 5.0
+    early_stopping: true
+    early_stopping_patience: 20
+    seed: 42
