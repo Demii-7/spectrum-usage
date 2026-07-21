@@ -62,6 +62,7 @@ vanillalstm:
     dropout: 0.1                         # Set dropout percentage. Active only when num_layers > 1
     output_strategy: final_hidden        # Hidden state output strategy: final_hidden or all_hidden
     bidirectional: false                 # false for forward LSTM and true for both forward and backward lstm
+    
   #These parameters are for training
   train:
     val_fraction: 0.1                   # Fraction of training data held out for validation
@@ -118,6 +119,32 @@ convlstm:
         gradient_clip_norm: 5.0             # Maximum global gradient norm for clipping
         seed: 42                            # Random seed for reproducibility
 
+timeran:
+  evaluation: {}
+  #These parameters are for model definition
+  model:
+    input_sequence_length: 60            # Number of past sequence / lookback
+    prediction_horizon: 1               # 1 for one-step autoregressive rollout
+    checkpoint_size: base               # Pretrained MOMENT backbone size: small, base, or large
+    freeze_encoder: true                # Freeze MOMENT encoder weights during head training
+    freeze_embedder: true               # Freeze MOMENT embedder weights during head training
+    freeze_head: false                  # Allow the forecasting head to update
+
+  #These parameters are for training
+  train:
+    val_fraction: 0.1                   # Fraction of training data held out for validation
+    train_stride: 1                     # Step size between consecutive training windows
+    val_stride: 1                       # Step size between consecutive validation windows
+    batch_size: 1                       # Number of samples per gradient update
+    epochs: 10                          # Number of full passes over the training data
+    learning_rate: 0.00001              # Optimizer learning rate
+    weight_decay: 0.0                   # L2 weight-decay regularization strength
+    optimizer: adam                     # Optimizer: adam, adamw, or sgd
+    gradient_clip_norm: 5.0             # Maximum global gradient norm for clipping
+    early_stopping: true                # Stop training when validation loss stops improving
+    early_stopping_patience: 10         # Number of epochs without improvement before stopping
+    seed: 42                            # Random seed for reproducibility
+
 stsprednet:
   lc: 36
   lp: 3
@@ -160,16 +187,6 @@ stsprednet:
       lp: 2
       period_interval: 6
 
-timeran:
-  batch_size: 1
-  epochs: 10
-  learning_rate: 1.0e-5
-  max_learning_rate: 1.0e-4
-  weight_decay: 0.0
-  gradient_clip_norm: 5.0
-  checkpoint_size: base
-  training_mode: linear_probing
-  seed: 42
 
 tss_lcd:
   hidden_dim: 256

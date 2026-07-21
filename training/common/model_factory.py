@@ -41,12 +41,15 @@ import torch.nn as nn
 from models.ConvLSTM import ConvLSTMForecaster
 from models.LookbackMean import LookbackMeanForecaster
 from models.LinearAutoregressive import LinearAutoregressiveForecaster
+from models.TimeRAN import TimeRANForecaster
 from models.VanillaLSTM import VanillaLSTMForecaster
+
 
 
 SUPPORTED_MODELS = {
     "vanillalstm",
     "convlstm",
+    "timeran",
     "lookbackmean1d",
     "lookbackmean2d",
     "lookbackmean4d",
@@ -93,6 +96,45 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
             },
         }
         return VanillaLSTMForecaster(predictor_config)
+
+    if model_name == "timeran":
+        if train_data.ndim != 2:
+            raise ValueError(
+                "Error! TimeRAN expects training data shaped "
+                f"(time, features), got {train_data.shape}"
+            )
+
+        predictor_config = {
+            "model": {
+                **dict(model_cfg),
+
+                "input_sequence_length": int(
+                    model_cfg["input_sequence_length"]
+                ),
+                "prediction_horizon": int(
+                    model_cfg["prediction_horizon"]
+                ),
+
+                # Derive the number of frequency features from
+                # the actual loaded chunk.
+                "input_size": int(train_data.shape[-1]),
+
+                "checkpoint_size": str(
+                    model_cfg.get("checkpoint_size", "base")
+                ).lower(),
+                "freeze_encoder": bool(
+                    model_cfg.get("freeze_encoder", True)
+                ),
+                "freeze_embedder": bool(
+                    model_cfg.get("freeze_embedder", True)
+                ),
+                "freeze_head": bool(
+                    model_cfg.get("freeze_head", False)
+                ),
+            },
+        }
+
+        return TimeRANForecaster(predictor_config)
 
     if model_name == "convlstm":
         if train_data.ndim != 4:

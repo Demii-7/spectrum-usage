@@ -71,13 +71,14 @@ class VanillaLSTMForecaster(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Define forward pass prediction from input data x
-
+        
+        # Ensure the incoming data is exactly 3-dimensional (Batch, Time, Features)
         if x.dim() != 3:
             raise ValueError(
                 "Error! VanillaLSTM expects input shaped "
                 f"(batch, time, features), got {tuple(x.shape)}"
             )
-        
+        # Verify that the sequence length matches what the model was constructed to receive
         if x.shape[1] != self.input_sequence_length:
             raise ValueError(
                 f"Error! Input sequence length {x.shape[1]} != "
