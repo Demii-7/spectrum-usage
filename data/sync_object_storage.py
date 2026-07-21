@@ -37,16 +37,48 @@ def fs_kwargs(endpoint_url):
     return kwargs
 
 
+def list_processed_objects(fs, bucket, prefix):
+    entries = {}
+    pending = [prefix]
+    while pending:
+        current_prefix = pending.pop()
+        continuation_token = None
+        while True:
+            request = {
+                "Bucket": bucket,
+                "Prefix": current_prefix,
+                "Delimiter": "/",
+            }
+            if continuation_token:
+                request["ContinuationToken"] = continuation_token
+            response = fs.call_s3("list_objects_v2", **request)
+            for item in response.get("Contents", []):
+                if item["Key"].endswith("power_1mhz_avg_per_minute.csv"):
+                    entries[item["Key"]] = item
+            for common_prefix in response.get("CommonPrefixes", []):
+                child_prefix = common_prefix["Prefix"]
+                if not child_prefix.rstrip("/").endswith("/raw"):
+                    pending.append(child_prefix)
+            if not response.get("IsTruncated"):
+                break
+            continuation_token = response["NextContinuationToken"]
+    return entries
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bucket", default=os.environ.get("S3_BUCKET", "spectrum"))
-    parser.add_argument("--prefix", default=os.environ.get("S3_PREFIX", "powder"))
     parser.add_argument(
         "--site",
+        default=os.environ.get("S3_SITE", os.environ.get("S3_PREFIX", "powder")),
+        help="Testbed/dataset prefix to sync, such as powder or aerpaw.",
+    )
+    parser.add_argument(
+        "--node",
         action="append",
-        dest="sites",
+        dest="nodes",
         default=[],
-        help="Site to sync. Repeat for multiple sites; defaults to all sites.",
+        help="Node within --site to sync. Repeat for multiple nodes; defaults to all nodes.",
     )
     parser.add_argument("--output-dir", type=Path, default=Path(__file__).resolve().parent)
     parser.add_argument("--env-file", type=Path, default=Path(__file__).resolve().parent / ".env")
@@ -80,54 +112,48 @@ def main():
             print("Install dependencies with: pip install fsspec s3fs", file=sys.stderr)
         return 2
 
-    remote_root = f"{args.bucket.strip('/')}/{args.prefix.strip('/')}".strip("/")
     endpoint_url = os.environ.get("S3_ENDPOINT_URL", "")
+    site_prefix = args.site.strip("/") + "/"
+    listing_prefixes = [
+        f"{site_prefix}{node.strip('/')}/"
+        for node in args.nodes
+    ] if args.nodes else [site_prefix]
     try:
         fs = fsspec.filesystem("s3", **fs_kwargs(endpoint_url))
-        listing_roots = [
-            f"{remote_root}/{site.strip('/')}"
-            for site in args.sites
-        ] if args.sites else [remote_root]
         entries = {}
-        for listing_root in listing_roots:
-            entries.update(fs.find(listing_root, detail=True))
+        for listing_prefix in listing_prefixes:
+            entries.update(list_processed_objects(fs, args.bucket, listing_prefix))
     except Exception as exc:
         print(f"ERROR: object storage listing failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
 
-    csv_entries = entries.items() if isinstance(entries, dict) else ((entry, {}) for entry in entries)
     downloads = []
-    for remote_path, info in sorted(csv_entries):
-        if not remote_path.endswith("power_1mhz_avg_per_minute.csv"):
+    for key, info in sorted(entries.items()):
+        if not key.endswith("power_1mhz_avg_per_minute.csv"):
             continue
-        relative_remote_path = remote_path.removeprefix(remote_root).lstrip("/")
-        site = relative_remote_path.split("/", 1)[0]
-        if args.sites and site not in args.sites:
-            continue
-        relative_path = Path(remote_path).relative_to(Path(args.bucket))
-        local_path = args.output_dir / relative_path
-        remote_size = info.get("size")
-        remote_mtime = info.get("mtime") or info.get("LastModified")
+        local_path = args.output_dir / key
+        remote_size = info.get("Size")
+        remote_mtime = info.get("LastModified")
         if hasattr(remote_mtime, "timestamp"):
             remote_mtime = remote_mtime.timestamp()
         current = local_path.stat() if local_path.exists() else None
         if current and remote_size == current.st_size and (remote_mtime is None or remote_mtime <= current.st_mtime):
             continue
-        downloads.append((remote_path, local_path, remote_mtime))
+        downloads.append((key, local_path, remote_mtime))
 
     if args.dry_run:
-        for remote_path, local_path, _ in downloads:
-            print(f"would download s3://{remote_path} -> {local_path}")
+        for key, local_path, _ in downloads:
+            print(f"would download s3://{args.bucket}/{key} -> {local_path}")
         print(f"{len(downloads)} file(s) would be updated")
         return 0
 
     def download_one(item):
-        remote_path, local_path, remote_mtime = item
+        key, local_path, remote_mtime = item
         local_path.parent.mkdir(parents=True, exist_ok=True)
         temporary_path = local_path.with_name(local_path.name + ".part")
-        print(f"downloading s3://{remote_path} -> {local_path}")
+        print(f"downloading s3://{args.bucket}/{key} -> {local_path}")
         fs.get(
-            remote_path,
+            f"{args.bucket}/{key}",
             str(temporary_path),
             max_concurrency=args.parts,
             chunksize=64 * 1024 * 1024,
