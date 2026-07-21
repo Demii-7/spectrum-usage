@@ -14,11 +14,11 @@ data:
     band_definitions_path: evaluation/results/statistical_analysis/frequency_segments_600_800.csv
     reference_site: humanities # No space use underscore or camel case
     files:
-      - data/powder_20260618T0036Z_humanities_600_800.csv
-      - data/powder_20260628T0436Z_humanities_600_800.csv
+      - path: data/powder_20260618T0036Z_humanities_600_800.csv
+        partition: train
+      - path: data/powder_20260628T0436Z_humanities_600_800.csv
+        partition: test
     concat: rows
-    split:
-      test_rows: 2880
     # Optional for 2d/4d: preserve these ranges and replace all other
     # frequency channels with the configured dBm noise floor.
     # mask:

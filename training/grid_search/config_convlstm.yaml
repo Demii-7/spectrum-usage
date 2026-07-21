@@ -4,13 +4,17 @@
 data:
     representation: 4d
     reference_site: humanities
-    files: []
+    files:
+        - path: data/powder_20260618T0036Z_humanities_guesthouse_600_800.csv
+          partition: train
+        - path: data/powder_20260628T0436Z_humanities_guesthouse_600_800.csv
+          partition: test
     map:
         name: powder_600_800
         output_dir: data/maps
+        locations: data/locations/powder.json
+        collection_key: endpoints
     map_key: map_db
-    split:
-        test_fraction: 0.2
     chunks:
     - id: powder_600_800
       start_mhz: 600.0

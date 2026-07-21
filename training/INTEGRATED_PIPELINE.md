@@ -22,7 +22,8 @@ This branch keeps a shared chunk-based training and evaluation pipeline under `t
 
 - Shared routing entry point: `training.common.data.load_chunk`
 - Single shared loader: `training.common.data`; spatial map construction is handled internally by `training.common.map_builder`.
-- `data.files` is the only source-file setting; train/test splits are chronological outputs, not separate inputs.
+- `data.files` is the only source-file setting; each entry has `path` and `partition: train|test`.
+- Validation is carved from the train partition; the test partition is used in full.
 - 4D loading can use a named cached map or build it from CSV files under `data/maps`.
 - Loaded splits carry sequence segments so windows cannot cross files, sites, or frequency-bin segments.
 - Set `data.map.permute: true` to randomly reassign collection-point coordinates; use `data.map.permute_seed` for reproducible permutations.

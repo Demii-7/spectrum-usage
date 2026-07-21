@@ -89,12 +89,23 @@ def validate_config(config: dict[str, Any]) -> None:
         representation = str(data["representation"]).lower()
         if representation not in {"1d", "2d", "4d"}:
             raise ValueError("data.representation must be one of: 1d, 2d, 4d")
-        if not isinstance(data.get("files", []), list):
-            raise ValueError("data.files must be a list")
-        if representation != "4d" and not data["files"]:
+        files = data.get("files", [])
+        if not isinstance(files, list) or not files:
             raise ValueError("data.files must be a non-empty list")
+        partitions = set()
+        for entry in files:
+            if not isinstance(entry, dict) or not entry.get("path"):
+                raise ValueError("Each data.files entry requires path and partition")
+            partition = entry.get("partition")
+            if partition not in {"train", "test"}:
+                raise ValueError("Each data.files partition must be train or test")
+            partitions.add(partition)
+        if partitions != {"train", "test"}:
+            raise ValueError("data.files must include both train and test partitions")
         if "train_files" in data or "test_files" in data:
             raise ValueError("Use data.files; train_files and test_files are no longer supported")
+        if data.get("split", {}).get("test_rows") is not None:
+            raise ValueError("Test data is selected by file partition; remove data.split.test_rows")
         if representation == "4d":
             map_config = data.get("map") or {}
             if not map_config.get("name"):

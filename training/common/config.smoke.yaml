@@ -1,10 +1,11 @@
 data:
   representation: 2d
   files:
-    - evaluation/aerpaw/ResultsCC2Feb2022_SigMF_power_1mhz_avg_per_minute.csv
+    - path: evaluation/aerpaw/ResultsCC1Feb2022_SigMF_power_1mhz_avg_per_minute.csv
+      partition: train
+    - path: evaluation/aerpaw/ResultsCC2Feb2022_SigMF_power_1mhz_avg_per_minute.csv
+      partition: test
   concat: rows
-  split:
-    test_rows: 60
   band_definitions_path: evaluation/results/step2/band_definitions.csv
   reference_site: CC2
   frequency_ranges:
