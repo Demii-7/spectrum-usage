@@ -141,15 +141,21 @@ def train_model(
         train_cfg.get("optimizer", "adam")
     ).lower()
 
-    if optimizer_name == "adam":
+    trainable_parameters = [
+        parameter for parameter in model.parameters() if parameter.requires_grad
+    ]
+    optimizer = None
+    if not trainable_parameters:
+        learning_rate = 0.0
+    elif optimizer_name == "adam":
         optimizer = torch.optim.Adam(
-            model.parameters(),
+            trainable_parameters,
             lr=learning_rate,
             weight_decay=weight_decay,
         )
     elif optimizer_name == "adamw":
         optimizer = torch.optim.AdamW(
-            model.parameters(),
+            trainable_parameters,
             lr=learning_rate,
             weight_decay=weight_decay,
         )
@@ -158,7 +164,7 @@ def train_model(
             train_cfg.get("momentum", 0.0)
         )
         optimizer = torch.optim.SGD(
-            model.parameters(),
+            trainable_parameters,
             lr=learning_rate,
             weight_decay=weight_decay,
             momentum=momentum,
@@ -217,7 +223,8 @@ def train_model(
             y = y.to(device)
 
             # Clear gradients from the previous batch.
-            optimizer.zero_grad()
+            if optimizer is not None:
+                optimizer.zero_grad()
 
             # Most models use the normal forward call.
             pred = forecast(
@@ -240,17 +247,18 @@ def train_model(
             loss = criterion(pred, y)
 
             # Calculate gradients.
-            loss.backward()
+            if optimizer is not None:
+                loss.backward()
 
-            # Limit very large gradients.
-            if clip_norm > 0:
-                nn.utils.clip_grad_norm_(
-                    model.parameters(),
-                    clip_norm,
-                )
+                # Limit very large gradients.
+                if clip_norm > 0:
+                    nn.utils.clip_grad_norm_(
+                        trainable_parameters,
+                        clip_norm,
+                    )
 
-            # Update model parameters.
-            optimizer.step()
+                # Update model parameters.
+                optimizer.step()
 
             # Track total training loss.
             batch_samples = x.size(0)
@@ -378,8 +386,10 @@ def train_model(
             epoch_start_time=epoch_start_time,
             epoch_end_time=timestamp_utc(),
             epoch_duration_sec=epoch_duration,
-            learning_rate=float(
-                optimizer.param_groups[0]["lr"]
+            learning_rate=(
+                float(optimizer.param_groups[0]["lr"])
+                if optimizer is not None
+                else 0.0
             ),
         )
         if val_teacher_loss is not None:

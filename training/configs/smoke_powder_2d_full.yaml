@@ -1,0 +1,99 @@
+# One-epoch full-data smoke test for 2D forecasting models.
+data:
+  representation: 2d
+  reference_site: humanities
+  files:
+    - path: data/powder/guesthouse-nuc1/20260618T0036Z/600_800/power_1mhz_avg_per_minute.csv
+      partition: train
+    - path: data/powder/humanities-nuc1/20260618T0036Z/600_800/power_1mhz_avg_per_minute.csv
+      partition: train
+    - path: data/powder/guesthouse-nuc1/20260628T0436Z/600_800/power_1mhz_avg_per_minute.csv
+      partition: test
+    - path: data/powder/humanities-nuc1/20260628T0436Z/600_800/power_1mhz_avg_per_minute.csv
+      partition: test
+  concat: rows
+  chunks:
+    - id: powder_600_800
+      start_mhz: 600.0
+      end_mhz: 800.0
+
+windowing:
+  lookback: 60
+  horizons: [1, 5, 15, 60]
+
+training:
+  device: auto
+  models:
+    - lookbackmean2d
+    - linearar2d
+    - vanillalstm
+
+preprocessing:
+  normalize: true
+  impute: true
+  max_missing_gap: 10
+
+lookbackmean2d:
+  evaluation: {}
+  model:
+    input_sequence_length: 60
+    prediction_horizon: 1
+  train:
+    val_fraction: 0.15
+    train_stride: 1
+    val_stride: 1
+    test_stride: 1
+    batch_size: 32
+    epochs: 1
+    learning_rate: 0.0
+    weight_decay: 0.0
+    optimizer: adam
+    gradient_clip_norm: 1.0
+    early_stopping: false
+    early_stopping_patience: 10
+    seed: 42
+
+linearar2d:
+  evaluation: {}
+  model:
+    input_sequence_length: 60
+    prediction_horizon: 1
+  train:
+    val_fraction: 0.15
+    train_stride: 1
+    val_stride: 1
+    test_stride: 1
+    batch_size: 32
+    epochs: 1
+    learning_rate: 0.001
+    weight_decay: 0.0
+    optimizer: adam
+    gradient_clip_norm: 1.0
+    early_stopping: false
+    early_stopping_patience: 10
+    seed: 42
+
+vanillalstm:
+  evaluation: {}
+  model:
+    input_sequence_length: 60
+    prediction_horizon: 60
+    hidden_size: 128
+    num_layers: 1
+    dropout: 0.1
+    output_strategy: final_hidden
+    bidirectional: false
+  train:
+    val_fraction: 0.15
+    train_stride: 1
+    val_stride: 1
+    test_stride: 1
+    batch_size: 32
+    epochs: 1
+    learning_rate: 0.001
+    weight_decay: 0.0
+    optimizer: adam
+    gradient_clip_norm: 1.0
+    early_stopping: false
+    early_stopping_patience: 10
+    seed: 42
