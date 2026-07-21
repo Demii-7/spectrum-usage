@@ -28,6 +28,33 @@ def _local_xy(longitudes, latitudes, origin_lon, origin_lat):
     return x, y
 
 
+def find_site_grid_indices(
+    cache_path: Path,
+    map_key: str = "map_db",
+) -> dict[str, tuple[int, int]]:
+    """Return the nearest grid (h, w) index for each collection site."""
+    with np.load(cache_path, allow_pickle=True) as archive:
+        grid_x = np.asarray(archive["grid_x"], dtype=np.float64)
+        grid_y = np.asarray(archive["grid_y"], dtype=np.float64)
+        site_names = list(archive["site_names"])
+        site_lons = np.asarray(archive["site_lons"], dtype=np.float64)
+        site_lats = np.asarray(archive["site_lats"], dtype=np.float64)
+        perm = np.asarray(archive["position_permutation"], dtype=np.intp)
+
+    site_lons = site_lons[perm]
+    site_lats = site_lats[perm]
+    origin_lon = float(np.mean(site_lons))
+    origin_lat = float(np.mean(site_lats))
+    sx, sy = _local_xy(site_lons, site_lats, origin_lon, origin_lat)
+
+    result: dict[str, tuple[int, int]] = {}
+    for i, name in enumerate(site_names):
+        dist = np.hypot(grid_x - sx[i], grid_y - sy[i])
+        idx = np.unravel_index(int(dist.argmin()), dist.shape)
+        result[str(name)] = (int(idx[0]), int(idx[1]))
+    return result
+
+
 def _map_from_sites(site_data, site_x, site_y, grid):
     height = int(grid.get("height", grid.get("grid_height", 50)))
     width = int(grid.get("width", grid.get("grid_width", 50)))

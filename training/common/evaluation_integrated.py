@@ -82,7 +82,7 @@ if str(ROOT) not in sys.path:
 # ---------------------------------------------------------------------------
 # Project imports
 # ---------------------------------------------------------------------------
-from training.common.config import load_config
+from training.common.config import load_config, resolve_path
 from training.common.data import ChunkSpec, chunk_specs, load_chunk
 from training.common.forecasting import forecast
 from training.common.forecast_export import export_map_forecasts
@@ -332,29 +332,18 @@ def calculate_errors_and_export_arrays(
 
 
 def _per_site_map_errors(
-    prediction_normalized: np.ndarray,
-    target_raw_model_layout: np.ndarray,
-    normalization: dict[str, Any] | None,
+    prediction_dbm: np.ndarray,
+    target_dbm: np.ndarray,
     site_grid_indices: dict[str, tuple[int, int]],
 ) -> list[dict[str, Any]]:
     """Compute MAE/RMSE at the grid point nearest each collection site.
 
-    Both arrays must be in model layout (N, F, H, W).
+    Both arrays must be in model layout (N, F, H, W) in dBm.
     """
-    pred_freq_last = np.transpose(prediction_normalized, (0, 2, 3, 1))
-    tgt_freq_last = np.transpose(target_raw_model_layout, (0, 2, 3, 1))
-
-    pred_dbm_freq_last, _, _ = absolute_and_squared_errors_dbm(
-        pred_freq_last, tgt_freq_last, normalization,
-    )
-    # (N, H, W, F)
-    pred_dbm = np.transpose(pred_dbm_freq_last, (0, 3, 1, 2))
-    tgt_dbm = np.transpose(tgt_freq_last, (0, 3, 1, 2))
-
     rows: list[dict[str, Any]] = []
     for site_name, (h, w) in site_grid_indices.items():
-        pred_site = pred_dbm[:, :, h, w]  # (N, F)
-        tgt_site = tgt_dbm[:, :, h, w]    # (N, F)
+        pred_site = prediction_dbm[:, :, h, w]  # (N, F)
+        tgt_site = target_dbm[:, :, h, w]       # (N, F)
         err = pred_site - tgt_site
         mae = float(np.mean(np.abs(err)))
         rmse = float(np.sqrt(np.mean(err ** 2)))
@@ -640,6 +629,64 @@ def evaluate_chunk(
                 f"split {split_name}; skipping export."
             )
             continue
+
+        # --- Per-site evaluation for 4D map models ---
+        representation = str(
+            config.get("data", {}).get("representation", "")
+        ).lower()
+        if model_name == "convlstm" and representation == "4d":
+            map_cfg = config.get("data", {}).get("map") or {}
+            map_dir = resolve_path(
+                map_cfg.get("output_dir", "data/maps")
+            )
+            map_name = map_cfg.get("name", "")
+            map_key = str(config["data"].get("map_key", "map_db"))
+            cache_path = map_dir / f"{map_name}_test.npz"
+            if cache_path.exists():
+                site_indices = find_site_grid_indices(
+                    cache_path, map_key,
+                )
+                site_rows: list[dict[str, Any]] = []
+                for horizon in horizons:
+                    site_errs = _per_site_map_errors(
+                        predictions_by_horizon[horizon],
+                        targets_by_horizon[horizon],
+                        site_indices,
+                    )
+                    for row in site_errs:
+                        row["chunk_id"] = chunk.chunk_id
+                        row["split"] = split_name
+                        row["horizon"] = horizon
+                    site_rows.extend(site_errs)
+
+                if site_rows:
+                    site_df = pd.DataFrame(site_rows)
+                    site_csv = output_directory / "site_metrics.csv"
+                    site_df.to_csv(site_csv, index=False)
+                    print(f"  Wrote {site_csv}")
+
+                    # Print summary table
+                    sites = sorted(site_indices.keys())
+                    print(f"\n  Per-site metrics ({chunk.start_mhz:g}-{chunk.end_mhz:g} MHz):")
+                    for site_name in sites:
+                        parts = []
+                        for h in horizons:
+                            match = [
+                                r for r in site_rows
+                                if r["site"] == site_name
+                                and r["horizon"] == h
+                            ]
+                            if match:
+                                r = match[0]
+                                parts.append(
+                                    f"t+{h}={r['mae_db']:.2f}/{r['rmse_db']:.2f}"
+                                )
+                        grid = site_indices[site_name]
+                        print(
+                            f"    {site_name}  (grid {grid[0]},{grid[1]}):  "
+                            + "  ".join(parts)
+                        )
+                    print()
 
         export_map_forecasts(
             output_directory,
