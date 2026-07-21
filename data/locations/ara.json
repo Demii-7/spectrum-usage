@@ -1,0 +1,162 @@
+{
+  "source": "https://www.google.com/maps/d/kml?mid=1MmTVzSlxQxJk24oCBj8Y3n48tQUaprQ&forcekml=1",
+  "folder": "Fixed UE Sites",
+  "count": 31,
+  "sites": [
+    {
+      "name": "agronomyfarm-ue-000",
+      "latitude": 42.018460117732,
+      "longitude": -93.7579171628103
+    },
+    {
+      "name": "agronomyfarm-ue-001",
+      "latitude": 42.0190775747883,
+      "longitude": -93.7612416251619
+    },
+    {
+      "name": "agronomyfarm-ue-010",
+      "latitude": 42.0192539899889,
+      "longitude": -93.7643879913161
+    },
+    {
+      "name": "agronomyfarm-ue-020",
+      "latitude": 42.0093739850217,
+      "longitude": -93.7837411123728
+    },
+    {
+      "name": "agronomyfarm-ue-030",
+      "latitude": 42.0196914,
+      "longitude": -93.7778129
+    },
+    {
+      "name": "agronomyfarm-ue-031",
+      "latitude": 42.0196964,
+      "longitude": -93.7774977
+    },
+    {
+      "name": "agronomyfarm-ue-032",
+      "latitude": 42.0196177,
+      "longitude": -93.7774467
+    },
+    {
+      "name": "agronomyfarm-ue-033",
+      "latitude": 42.0196127,
+      "longitude": -93.7776492
+    },
+    {
+      "name": "agronomyfarm-ue-034",
+      "latitude": 42.0196127,
+      "longitude": -93.7778866
+    },
+    {
+      "name": "agronomyfarm-ue-035",
+      "latitude": 42.019536,
+      "longitude": -93.7774414
+    },
+    {
+      "name": "agronomyfarm-ue-100",
+      "latitude": 42.049023,
+      "longitude": -93.7807678
+    },
+    {
+      "name": "ames-ue-000",
+      "latitude": 42.0116096,
+      "longitude": -93.659232
+    },
+    {
+      "name": "ames-ue-140",
+      "latitude": 42.003499774435,
+      "longitude": -93.6565962457279
+    },
+    {
+      "name": "beeffarm-ue-000",
+      "latitude": 42.0570225,
+      "longitude": -93.6826344
+    },
+    {
+      "name": "curtissfarm-ue-000",
+      "latitude": 42.004776,
+      "longitude": -93.665329
+    },
+    {
+      "name": "curtissfarm-ue-001",
+      "latitude": 42.002693,
+      "longitude": -93.6629196
+    },
+    {
+      "name": "curtissfarm-ue-002",
+      "latitude": 42.002158,
+      "longitude": -93.6619837
+    },
+    {
+      "name": "dairyfarm-ue-000",
+      "latitude": 41.9791001124202,
+      "longitude": -93.6495801730155
+    },
+    {
+      "name": "feedmill-ue-000",
+      "latitude": 42.0061095,
+      "longitude": -93.6598809
+    },
+    {
+      "name": "feedmill-ue-001",
+      "latitude": 42.0061103,
+      "longitude": -93.6599509
+    },
+    {
+      "name": "gilbert-ue-003",
+      "latitude": 42.1206745,
+      "longitude": -93.6012512
+    },
+    {
+      "name": "horticulture-ue-000",
+      "latitude": 42.1140999908969,
+      "longitude": -93.5848728559517
+    },
+    {
+      "name": "horticulture-ue-001",
+      "latitude": 42.1105611120264,
+      "longitude": -93.5804046524244
+    },
+    {
+      "name": "horticulture-ue-004",
+      "latitude": 42.0613320549951,
+      "longitude": -93.6179377051917
+    },
+    {
+      "name": "isics-ue-000",
+      "latitude": 41.978084,
+      "longitude": -93.474706
+    },
+    {
+      "name": "isics-ue-020",
+      "latitude": 42.0075295,
+      "longitude": -93.5617329
+    },
+    {
+      "name": "kitchenfarm-ue-000",
+      "latitude": 41.999315975183,
+      "longitude": -93.7027667054721
+    },
+    {
+      "name": "kitchenfarm-ue-010",
+      "latitude": 42.008748,
+      "longitude": -93.7027684
+    },
+    {
+      "name": "portable-ue-000",
+      "latitude": 42.0021128970322,
+      "longitude": -93.6604201427117
+    },
+    {
+      "name": "sheepfarm-ue-000",
+      "latitude": 41.9896915287523,
+      "longitude": -93.655234404223
+    },
+    {
+      "name": "woodland-ue-000",
+      "latitude": 42.1672674,
+      "longitude": -93.6213969
+    }
+  ]
+}

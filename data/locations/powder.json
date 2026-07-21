@@ -1,0 +1,59 @@
+{
+  "source": "https://www.powderwireless.net/powder-map.php",
+  "rpc_url": "https://www.powderwireless.net/server-ajax.php",
+  "rpc_route": "map-support",
+  "rpc_method": "GetFixedEndpoints",
+  "count": 10,
+  "endpoints": [
+    {
+      "name": "bookstore",
+      "latitude": 40.76414,
+      "longitude": -111.84759
+    },
+    {
+      "name": "central parking garage",
+      "latitude": 40.76148,
+      "longitude": -111.84201
+    },
+    {
+      "name": "ebc",
+      "latitude": 40.7677,
+      "longitude": -111.83814
+    },
+    {
+      "name": "guest house",
+      "latitude": 40.76627,
+      "longitude": -111.83632
+    },
+    {
+      "name": "humanities",
+      "latitude": 40.76486,
+      "longitude": -111.84319
+    },
+    {
+      "name": "law 73",
+      "latitude": 40.76163,
+      "longitude": -111.85185
+    },
+    {
+      "name": "madsen",
+      "latitude": 40.75788,
+      "longitude": -111.83634
+    },
+    {
+      "name": "moran",
+      "latitude": 40.77004,
+      "longitude": -111.83786
+    },
+    {
+      "name": "sage point",
+      "latitude": 40.7628,
+      "longitude": -111.83062
+    },
+    {
+      "name": "web",
+      "latitude": 40.76793,
+      "longitude": -111.84559
+    }
+  ]
+}
