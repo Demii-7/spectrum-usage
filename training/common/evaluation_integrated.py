@@ -661,6 +661,7 @@ def evaluate_chunk(
                 abs_err=absolute_error,
                 sq_err=squared_error,
                 bands=bands,
+                feature_labels=data.feature_labels,
             )
 
             predictions_by_horizon[

@@ -1,0 +1,9 @@
+bin_index,frequency_mhz,train_mean_dbm,test_target_mean_dbm,train_test_shift_db,prediction_mean_dbm,signed_prediction_bias_db,model_mae_db,persistence_mae_db,interpretation
+0,600.5,-116.85,-108.52,8.33,-115.95,-7.43,7.43,0.26,severe_negative_bias
+1,601.5,-116.44,-109.62,6.82,-115.62,-6.00,6.04,0.30,severe_negative_bias
+2,602.5,-115.16,-111.77,3.40,-115.30,-3.53,3.60,0.30,moderate_negative_bias
+3,603.5,-113.04,-110.74,2.30,-112.27,-1.54,1.73,0.31,moderate_negative_bias
+4,604.5,-107.78,-107.86,-0.07,-107.06,0.79,1.37,0.27,close_match
+5,605.5,-107.08,-106.94,0.14,-106.71,0.22,1.22,0.25,close_match
+6,606.5,-105.62,-107.00,-1.38,-105.44,1.56,1.66,0.26,moderate_positive_bias
+7,607.5,-106.76,-108.56,-1.79,-106.93,1.62,1.70,0.27,moderate_positive_bias

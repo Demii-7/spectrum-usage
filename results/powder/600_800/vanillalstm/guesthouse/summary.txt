@@ -1,0 +1,3 @@
+Model: vanillalstm
+Aggregate rows: 4
+Best aggregate MAE: 1.0461 dB on powder_600_800 guesthouse_test h=1

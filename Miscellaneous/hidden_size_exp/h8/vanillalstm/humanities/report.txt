@@ -1,0 +1,10 @@
+Model: vanillalstm
+Aggregate rows: 4
+Per-frequency rows: 800
+Per-band rows: 68
+Best aggregate MAE: 1.4468 dB on powder_600_800 humanities_test h=1
+Evaluation start time: 2026-07-20T13:18:59+00:00
+Evaluation end time: 2026-07-20T13:19:02+00:00
+Total evaluation time seconds: 2.77
+Chunks evaluated: 1
+Chunks skipped: 0

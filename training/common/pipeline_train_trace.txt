@@ -1,0 +1,262 @@
+Training Pipeline Trace — training/common
+=========================================
+
+Configuration Loading
+---------------------
+Module: config.py
+
+main() calls load_config()
+load_config() loads config.yaml into a dict, calls validate_config()
+validate_config() checks required sections exist, validates lookback/horizons/chunks
+config dict is returned
+
+Model Validation
+----------------
+Module: train_integrated.py
+Module: model_factory.py
+
+main() reads config["training"]["model_name"]
+main() checks it exists in SUPPORTED_MODELS from model_factory.py
+Currently integrated: vanillalstm, convlstm
+
+Preparing Output Directories
+----------------------------
+Module: results.py
+
+main() calls prepare_output_dirs()
+prepare_output_dirs() calls output_dir() then checkpoints_dir()
+output_dir() calls resolve_path() on config["outputs"]["root_dir"], appends model_name, creates dir
+checkpoints_dir() calls output_dir(), appends "checkpoints", creates dir
+
+Chunk Iteration
+---------------
+Module: data.py
+
+main() calls chunk_specs(config)
+chunk_specs() reads config["data"]["chunks"], returns list of ChunkSpec dataclass objects
+main() loops through each chunk; inside loop calls load_chunk(config, chunk, val_fraction)
+
+Data Loading — load_chunk()
+----------------------------
+Module: data.py
+Module: dataset_loader.py
+
+load_chunk() reads normalize, impute, prediction_start_row, loader, max_rows from config
+
+For POWDER (loader == "powder" || loader == "cosmos" || loader == "ara"):
+  reads reference_site, train_files, test_files (expects one file each)
+  calls resolve_path() on each path to make absolute
+  detects input_format from file suffix (.npz → "map", .csv → "csv")
+  calls load_powder_data(train_path, test_path, chunk_start_mhz, chunk_end_mhz,
+                         input_format, map_key, normalize, reference_site,
+                         max_rows, val_fraction, prediction_start_row, impute)
+
+For AERPAW (loader == "aerpaw"):
+  calls load_aerpaw_data() directly
+
+Data Loading — load_powder_data()
+---------------------------------
+Module: dataset_loader.py
+
+Validates: input_format, chunk ranges, val_fraction, max_rows
+
+CSV branch:
+  calls _load_powder_csv() for train and test separately
+  _load_powder_csv() reads CSV, extracts timestamps, validates timestamps,
+    normalizes frequency columns, sorts ascending, selects chunk range
+  returns: selected_frame, frequencies, timestamps
+  load_powder_data() converts DataFrames to train_raw / test_raw numpy arrays
+
+Map branch:
+  calls _load_powder_map() for train and test separately
+  _load_powder_map() loads NPZ archive, validates map_key/freqs_mhz,
+    loads (T, H, W, F) map_data + frequencies + timestamps,
+    validates timestamps, validates shape, selects chunk frequencies,
+    sorts frequencies ascending, rejects duplicates, reorders channels
+  returns: map_data, frequencies, timestamps
+
+Shared:
+  validates train_freqs == test_freqs
+
+Chronological extension (only if prediction_start_row is set):
+  requires timestamps for both splits
+  calls _prediction_extension_indices() to find overlap-free continuation range
+  concatenates borrowed test rows to end of train_raw
+  truncates test_raw to start at prediction_start_index
+
+Optional max_rows truncation (applied to train/test arrays + timestamps)
+
+For CSV: reconstructs raw DataFrames from truncated arrays
+
+Validates train_raw and test_raw are non-empty
+
+Computes fit_end = int(len(train_raw) * (1.0 - val_fraction))
+This is the train/validation boundary for leakage-safe normalization fitting
+
+Optional imputation (if impute == true):
+  calls clean_spectrum_data(train_raw) then clean_spectrum_data(test_raw)
+  handles both (T, F) and (T, H, W, F) shapes
+  for 4D: spatial nearest-neighbour via _fill_nearest_neighbor_2d()
+  then temporal linear interpolation per feature column
+  validates no NaN remains, rejects fully-NaN columns
+
+If impute disabled: train_filled = train_raw, test_filled = test_raw
+
+Validates train_filled and test_filled are fully finite
+
+train_model starts as train_filled; test_model starts as test_filled
+
+Optional normalization (if normalize == true):
+  calls fit_per_frequency_normalization(train_model[:fit_end])
+  computes per-frequency mean and std over all non-frequency axes
+  validates finite and non-zero std
+  calls apply_per_frequency_normalization(train_model, mean, std)
+  calls apply_per_frequency_normalization(test_model, mean, std)
+  stores normalization metadata dict
+
+Returns LoadedSpectrumData with:
+  files, raw_frames, filled_frames, reference_site, frequencies,
+  splits containing <site>_train / <site>_test SplitArrays
+  each SplitArrays has: raw_dbm, model_input, row_start, row_end
+
+Model Construction
+------------------
+Module: model_factory.py
+
+main() extracts train = data.splits[data.train_split].model_input
+main() calls build_model(model_name, config, train)
+
+build_model() reads model config, branches by model_name:
+
+vanillalstm:
+  verifies train.ndim == 2
+  derives input_size = train.shape[-1]
+  reads input_sequence_length, prediction_horizon, hidden_size,
+    num_layers, dropout, output_strategy, bidirectional from config
+  builds predictor_config dict
+  returns VanillaLSTMForecaster(predictor_config)
+
+convlstm:
+  verifies train.ndim == 4
+  derives input_channels, grid_height, grid_width from train data
+  returns ConvLSTMForecaster(predictor_config)
+
+Training — train_model()
+-------------------------
+Module: train_integrated.py
+
+main() calls train_model(model_name, model, train_data, config)
+
+Reads model_cfg and train_cfg from config
+Sets random seeds (numpy, torch, cuda)
+
+Reads training geometry:
+  lookback = input_sequence_length
+  prediction_horizon from model config
+  rollout_horizon = max(config["windowing"]["horizons"])
+  validates: prediction_horizon must be 1 or must equal rollout_horizon
+
+Reads hyperparameters: batch_size, epochs, val_fraction, train_stride, val_stride
+
+Calls build_window_loaders(data=train_data, ...)
+  build_window_loaders() from windowing.py:
+    validates val_fraction
+    split_index = int(len(data) * (1.0 - val_fraction))
+    train_data = data[:split_index]  (chronological first portion)
+    val_data = data[split_index:]    (chronological last portion)
+    calls make_window_starts() for each side to get valid window indices
+    make_window_starts() computes valid start positions given lookback, rollout, stride
+    creates WindowDataset for each side
+    WindowDataset calls to_model_layout() then stores as torch tensor
+    each WindowDataset.__getitem__ returns (lookback window, future target window)
+    wraps in DataLoader: train shuffled, val unshuffled
+  returns train_loader, val_loader
+
+Computes device via device_for() from runtime.py
+Moves model to device
+Creates criterion: nn.MSELoss()
+
+Selects optimizer from config (adam / adamw / sgd with momentum)
+Reads gradient_clip_norm, early_stopping, early_stopping_patience
+
+Initializes: best_val_loss, best_epoch, best_state, epochs_without_improvement, log_rows
+
+Epoch Loop:
+  Training phase:
+    model.train()
+    for each batch in train_loader:
+      x, y to device
+      optimizer.zero_grad()
+      calls forecast(model, x, prediction_horizon, rollout_horizon, targets=y)
+        forecast() from forecasting.py:
+          if prediction_horizon == 1 and targets provided:
+            calls teacher_forced_rollout()
+            iterates rollout_horizon steps, each step:
+              model predicts one timestep
+              window is updated with ground truth target
+          if prediction_horizon == 1 and no targets:
+            calls autoregressive_rollout()
+            same but window updated with prediction
+          if prediction_horizon == rollout_horizon:
+            direct model(x) call
+      validates pred.shape == y.shape
+      loss = MSE(pred, y)
+      loss.backward()
+      optional gradient clipping
+      optimizer.step()
+      accumulate weighted batch loss
+    computes mean train_loss
+
+  Validation phase:
+    model.eval()
+    torch.no_grad()
+    autoregressive pass:
+      calls forecast(model, x, prediction_horizon, rollout_horizon, targets=None)
+      accumulates val_loss
+      computes per-horizon step MSE (t+1, t+5, t+15, t+60)
+    teacher-forced diagnostic pass (only if prediction_horizon == 1):
+      calls forecast(model, x, 1, rollout_horizon, targets=y)
+      accumulates teacher-forced val_loss
+    computes val_loss, val_teacher_loss, per-horizon losses
+    prints: val_ar, teacher_val, per-horizon breakdown
+
+  Logging:
+    epoch_duration = time after epoch
+    calls epoch_log_row() from runtime.py
+    epoch_log_row() returns dict: epoch, train_loss, val_loss, start_time, end_time, duration, lr
+    appends: val_teacher_loss, val_loss_t1/t5/t15/t60
+    appends row to log_rows
+    prints standard epoch line
+
+  Best model tracking + early stopping:
+    if val_loss improves:
+      update best_val_loss, best_epoch
+      deep-copy model state to best_state
+      reset epochs_without_improvement
+    else:
+      increment counter
+      if early_stopping and patience reached:
+        print early stopping message
+        break
+
+After epoch loop:
+  restore best_state into model
+  convert log_rows to pandas DataFrame (log_frame)
+  compute training_results dict containing:
+    model_name, epochs_completed, best_epoch, best_val_loss,
+    train_loss_at_best_epoch, best_train_loss, final losses,
+    average losses, loss_gap, timing metrics, log_frame
+  returns model, training_results
+
+Saving Outputs — back in main()
+---------------------------------
+Module: train_integrated.py
+
+Writes training_log.csv:  log_frame to out / f"{chunk.chunk_id}_training_log.csv"
+Builds summary_lines (model, chunk, best epoch/losses, timing)
+Writes training_summary.txt:  to out / f"{chunk.chunk_id}_training_summary.txt"
+Saves checkpoint via torch.save() to checkpoints / f"{chunk.chunk_id}_{model_name}.pt"
+  checkpoint contains: model_name, model_state_dict, normalization, frequencies,
+  training_results without log_frame
+
+Continues to next chunk if any

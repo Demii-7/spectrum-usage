@@ -61,7 +61,7 @@ from training.common.windowing import (
 def train_model( model_name: str, model: nn.Module, train_data: np.ndarray, config: dict[str, Any],):
     """ Integrated Training, Validation, and Logging """
     
-    # Shared settings
+    # Load Shared settings
     model_cfg = config[model_name]["model"]
     train_cfg = config[model_name]["train"]
 
@@ -196,6 +196,8 @@ def train_model( model_name: str, model: nn.Module, train_data: np.ndarray, conf
         # Training phase
         model.train()
 
+        _t_train = time.perf_counter()
+
         train_loss_sum = 0.0
         train_sample_count = 0
 
@@ -253,6 +255,7 @@ def train_model( model_name: str, model: nn.Module, train_data: np.ndarray, conf
             train_loss_sum
             / max(train_sample_count, 1)
         )
+        _t_train = time.perf_counter() - _t_train
 
         #--- Validation phase ---
         model.eval()
@@ -260,39 +263,96 @@ def train_model( model_name: str, model: nn.Module, train_data: np.ndarray, conf
         val_loss_sum = 0.0
         val_sample_count = 0
 
+        val_teacher_sum = 0.0
+        val_teacher_count = 0
+
+        # Per-horizon accumulators (autoregressive)
+        horizons_cfg = sorted(config["windowing"]["horizons"])
+        horizon_step_map = {h: h - 1 for h in horizons_cfg}
+        val_horizon_sums = {h: 0.0 for h in horizons_cfg}
+        val_horizon_counts = {h: 0 for h in horizons_cfg}
+
+        _t_val_start = time.perf_counter()
+        _t_tf_acc = 0.0
+
         with torch.no_grad():
             for x, y in val_loader:
                 x = x.to(device)
                 y = y.to(device)
-                
-                pred = forecast(
+
+                # --- Autoregressive (current default) ---
+                pred_ar = forecast(
                     model=model,
                     x=x,
                     prediction_horizon=prediction_horizon,
                     rollout_horizon=rollout_horizon,
-                    targets= None,
+                    targets=None,
                 )
 
-                if pred.shape != y.shape:
+                if pred_ar.shape != y.shape:
                     raise RuntimeError(
                         "Validation shape mismatch:\n"
-                        f"Prediction shape: {tuple(pred.shape)}\n"
+                        f"Prediction shape: {tuple(pred_ar.shape)}\n"
                         f"Target shape:     {tuple(y.shape)}"
                     )
 
-                loss = criterion(pred, y)
-
+                loss_ar = criterion(pred_ar, y)
                 batch_samples = x.size(0)
-
-                val_loss_sum += (
-                    loss.item() * batch_samples
-                )
-
+                val_loss_sum += loss_ar.item() * batch_samples
                 val_sample_count += batch_samples
 
-        val_loss = (
-            val_loss_sum
-            / max(val_sample_count, 1)
+                # Per-horizon breakdown
+                step_mse = ((pred_ar - y) ** 2).mean(
+                    dim=tuple(range(2, pred_ar.ndim))
+                )
+                for h in horizons_cfg:
+                    idx = horizon_step_map[h]
+                    val_horizon_sums[h] += step_mse[:, idx].sum().item()
+                    val_horizon_counts[h] += batch_samples
+
+                # --- Teacher-forced (diagnostic) ---
+                if prediction_horizon == 1:
+                    _t_tf = time.perf_counter()
+                    pred_tf = forecast(
+                        model=model,
+                        x=x,
+                        prediction_horizon=1,
+                        rollout_horizon=rollout_horizon,
+                        targets=y,
+                    )
+                    loss_tf = criterion(pred_tf, y)
+                    val_teacher_sum += loss_tf.item() * batch_samples
+                    val_teacher_count += batch_samples
+                    _t_tf_acc += time.perf_counter() - _t_tf
+
+        _t_val_total = time.perf_counter() - _t_val_start
+        _t_val_ar = _t_val_total - _t_tf_acc
+        _t_val_tf = _t_tf_acc
+
+        val_loss = val_loss_sum / max(val_sample_count, 1)
+        val_teacher_loss = (
+            val_teacher_sum / max(val_teacher_count, 1)
+            if val_teacher_count > 0
+            else None
+        )
+
+        val_horizon_losses = {
+            h: val_horizon_sums[h] / max(val_horizon_counts[h], 1)
+            for h in horizons_cfg
+        }
+
+        horizon_str = "  ".join(
+            f"t+{h}={val_horizon_losses[h]:.6f}"
+            for h in horizons_cfg
+        )
+        teacher_str = (
+            f"  teacher_val={val_teacher_loss:.6f}"
+            if val_teacher_loss is not None
+            else ""
+        )
+        print(
+            f"  val_ar={val_loss:.6f}{teacher_str}  "
+            f"horizons: {horizon_str}"
         )
 
         #--- Log epoch results ---
@@ -301,19 +361,22 @@ def train_model( model_name: str, model: nn.Module, train_data: np.ndarray, conf
             - epoch_start_counter
         )
 
-        log_rows.append(
-            epoch_log_row(
-                epoch=epoch,
-                train_loss=train_loss,
-                val_loss=val_loss,
-                epoch_start_time=epoch_start_time,
-                epoch_end_time=timestamp_utc(),
-                epoch_duration_sec=epoch_duration,
-                learning_rate=float(
-                    optimizer.param_groups[0]["lr"]
-                ),
-            )
+        log_row = epoch_log_row(
+            epoch=epoch,
+            train_loss=train_loss,
+            val_loss=val_loss,
+            epoch_start_time=epoch_start_time,
+            epoch_end_time=timestamp_utc(),
+            epoch_duration_sec=epoch_duration,
+            learning_rate=float(
+                optimizer.param_groups[0]["lr"]
+            ),
         )
+        if val_teacher_loss is not None:
+            log_row["val_teacher_loss"] = val_teacher_loss
+        for h in horizons_cfg:
+            log_row[f"val_loss_t{h}"] = val_horizon_losses[h]
+        log_rows.append(log_row)
 
         print(
             f"{model_name} "
@@ -321,6 +384,17 @@ def train_model( model_name: str, model: nn.Module, train_data: np.ndarray, conf
             f"train_loss={train_loss:.6f} "
             f"val_loss={val_loss:.6f} "
             f"time={epoch_duration:.1f}s"
+        )
+
+        _t_overhead = epoch_duration - _t_train - _t_val_total
+        print(
+            f"=== EPOCH PROFILE ===\n"
+            f"  Training fwd+bwd+opt:    {_t_train:>8.1f} s  ({_t_train/epoch_duration*100:>5.1f}%)\n"
+            f"  Validation AR:           {_t_val_ar:>8.1f} s  ({_t_val_ar/epoch_duration*100:>5.1f}%)\n"
+            f"  Validation TF:           {_t_val_tf:>8.1f} s  ({_t_val_tf/epoch_duration*100:>5.1f}%)\n"
+            f"  Epoch overhead:          {_t_overhead:>8.1f} s  ({_t_overhead/epoch_duration*100:>5.1f}%)\n"
+            f"  Total:                   {epoch_duration:>8.1f} s\n"
+            f"====================="
         )
 
         # Best model and early stopping
@@ -434,37 +508,42 @@ def train_model( model_name: str, model: nn.Module, train_data: np.ndarray, conf
 
 
 def parse_args() -> argparse.Namespace:
+    """ Set up Parsers for command line inputs """
+    
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=Path, default=None)
-    parser.add_argument("--output-dir", type=Path, default=None)
+    parser.add_argument("--config", type=Path, default=None)    # config path to yaml file
+    parser.add_argument("--output-dir", type=Path, default = None) # path to ouput directory
     return parser.parse_args()
 
 def main() -> None:
+    # Load config into program
     args = parse_args()
     config = load_config(args.config)
     
     # Load current model being executed and enforce lowercase to be consistent with config
     model_name = str(config["training"]["model_name"]).lower()
 
+    # Ensures models are already integrated into the shared pipeline
     if model_name not in SUPPORTED_MODELS:
         raise ValueError(
             f"Error! Integrated training supports "
             f"{sorted(SUPPORTED_MODELS)}, got {model_name!r}."
         )
-
+    # Load training specs from config
     train_cfg = config[model_name]["train"]
-
+    
+    # Set validation set percentage
     val_fraction = float(
         train_cfg.get("val_fraction", 0.1)
     )
     
-    # Create output directories
+    # Create output directories for current model
     out, checkpoints = prepare_output_dirs(
         config,
         model_name,
     )
     
-    # Ensures Output directory exists
+    # Ensures Output directory exists if provided at cli
     if args.output_dir is not None:
         out = args.output_dir
         out.mkdir(parents=True, exist_ok=True)

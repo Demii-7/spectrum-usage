@@ -1,0 +1,44 @@
+{
+  "best_trial_id": "arch_0012",
+  "selection_rule": "lowest finite mean_horizon_rmse_db",
+  "model_parameters": {
+    "hidden_size": 16,
+    "num_layers": 1,
+    "dropout": 0.0,
+    "learning_rate": 0.001,
+    "batch_size": 32,
+    "weight_decay": 0.0001,
+    "optimizer": "adam",
+    "gradient_clip_norm": 1.0,
+    "output_strategy": "final_hidden",
+    "bidirectional": false
+  },
+  "training_parameters": {
+    "learning_rate": 0.001,
+    "batch_size": 32,
+    "weight_decay": 0.0001,
+    "optimizer": "adam",
+    "gradient_clip_norm": 1.0,
+    "epochs_completed": 6,
+    "best_epoch": 3
+  },
+  "best_epoch": 3,
+  "horizon_rmse_db": {
+    "t+1": 2.1883035020132557,
+    "t+5": 2.277929328605935,
+    "t+15": 2.3210741872193528,
+    "t+60": 2.469864161039413
+  },
+  "horizon_mae_db": {
+    "t+1": 1.1547493399154474,
+    "t+5": 1.2142595443632862,
+    "t+15": 1.2488027509067476,
+    "t+60": 1.3619379557042834
+  },
+  "mean_horizon_rmse_db": 2.3142927947194893,
+  "mean_horizon_mae_db": 1.2449373977224414,
+  "total_training_time_sec": 64.87,
+  "checkpoint_path": "/home/jovyan/work/spectrum-usage/results/powder/600_800/hyperparameter_search/checkpoints/arch_0012_best.pt",
+  "epoch_log_path": "",
+  "results_file": "grid_search_results.csv"
+}

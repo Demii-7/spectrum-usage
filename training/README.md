@@ -39,6 +39,10 @@ horizon in a single forward call.
 Training, validation, and evaluation all call the same `forecast()` function from
 `training/common/forecasting.py`.
 
+**Per-horizon validation:** During validation, `train_integrated.py` tracks per-step MSE
+for each configured horizon (`val_loss_t{h}` columns in the training log).  A separate
+teacher-forcing diagnostic pass computes `val_teacher_loss` (one-step models only).
+
 ### Data representations
 
 Source data layouts (as read by the loaders):
@@ -56,13 +60,17 @@ by the selected model.  Users do not manually reshape the data before training.
 
 ### Dataset behavior
 
-The integrated data interface supports multiple dataset types through shared loaders:
+The integrated data interface loads all dataset types through the single entry point
+`load_chunk()` in `training/common/data.py`.  It auto-detects the input format (`.csv`
+vs `.npz`) from the file extension, dispatches to `load_powder_data()` or
+`load_aerpaw_data()` in `training/common/dataset_loader.py`, and returns a unified
+`LoadedSpectrumData` dataclass:
 
 - **AERPAW CSV** (`loader: aerpaw`) — single-site CSV files, chronological train/test split
-- **POWDER CSV** (`loader: powder`) — separate short-training and long-test CSV recordings,
-  optional chronological training extension
-- **POWDER map** (`loader: powder` with `train_map_path` / `test_map_path`) — pre-interpolated
-  `.npz` archives shaped `(T, H, W, F)`
+- **POWDER CSV / map** (`loader: powder` / `cosmos` / `ara`) — `train_files` / `test_files`
+  can be either `.csv` (2D time-frequency) or `.npz` (4D time-height-width-frequency map).
+  The unified `load_powder_data()` handles both representations internally, removing the
+  old separate `load_powder_map_data()` path.
 
 Frequency chunks are configured centrally under `data.chunks`.  Training runs independently
 for each configured chunk.
@@ -72,7 +80,7 @@ recording before that row extends the training set.  Timestamps are required for
 After chronological construction, optional `data.max_rows` truncation is applied.  Completely
 unusable map timesteps (all-NaN) are removed before map cleaning and normalization.
 
-### Normalization
+### Normalization and imputation
 
 Normalization is per-frequency (z-score).  Statistics are:
 
@@ -82,6 +90,13 @@ Normalization is per-frequency (z-score).  Statistics are:
 - used to convert predictions back to dBm during evaluation (via `metrics.py`).
 
 Validation and test data never fit their own normalization statistics.
+
+When `preprocessing.impute: true` in config, missing values are filled by
+`clean_spectrum_data()` in `training/common/preprocessing.py`:
+- **4D map data** (`T, H, W, F`): spatial nearest-neighbor filling per time/frequency
+  slice via Euclidean distance transform, then temporal linear interpolation per feature.
+- **2D CSV data** (`T, F`): temporal linear interpolation per frequency column.
+- After imputation any remaining NaN or non-finite values raise an error.
 
 ### Environment (Docker)
 
@@ -104,8 +119,18 @@ cd ~/work/spectrum-usage
 Install additional dependencies:
 
 ```bash
-pip install pyyaml momentfm==0.1.4 gdown
+pip install pyyaml gdown
+pip install setuptools --upgrade
+pip install numpy
+pip install momentfm==0.1.4 --no-deps
+pip install transformers
 ```
+
+**Note:** `momentfm==0.1.4` pins exact versions of `numpy`, `huggingface-hub`, and
+`transformers` that lack Python 3.13 wheels.  The sequence above installs the
+package without its pinned dependencies (`--no-deps`) and separately installs
+`transformers` (latest) and `numpy` (system), which avoids Rust build requirements
+for `tokenizers` and `numpy` on Python 3.13.
 
 Install `screen` for long-running training jobs (required inside the container):
 
@@ -142,11 +167,24 @@ report.txt
 checkpoints/
 ```
 
+LinearAutoRegressive is also available through the shared integrated pipeline
+as `linearar1d` (CSV data) or `linearar4d` (map data).  See "Training through
+the common integrated pipeline" below.
+
+### Run LookbackMean (baseline — GitHub)
+
+LookbackMean is now supported by the shared integrated pipeline.  See
+"Training through the common integrated pipeline" above.
+
+A parameter-free baseline that predicts the mean of the lookback window.
+Supports 1D, 2D, and 4D input shapes via model names `lookbackmean1d`,
+`lookbackmean2d`, and `lookbackmean4d`.
+
 ### Training through the common integrated pipeline
 
-Both Vanilla LSTM and ConvLSTM are trained through the shared entry point at
-`training/common/train_integrated.py`.  The model is selected by setting
-`training.model_name` in the configuration.
+Vanilla LSTM, ConvLSTM, TimeRAN, LookbackMean, and LinearAutoregressive are
+trained through the shared entry point at `training/common/train_integrated.py`.
+The model is selected by setting `training.model_name` in the configuration.
 
 #### Configuration reference
 
@@ -155,13 +193,11 @@ training and evaluation.  Key fields to inspect before each run:
 
 ```yaml
 data:
-  loader:                       # "aerpaw" or "powder"
+  loader:                       # "aerpaw", "powder", "cosmos", or "ara"
   data_dir:                     # AERPAW CSV directory (loader: aerpaw)
-  reference_site:               # e.g. "CC2" (aerpaw) or "humanities, guesthouse" (powder)
-  train_files: []               # POWDER CSV training recordings (loader: powder, CSV mode)
-  test_files:                   # POWDER CSV long-test recording
-  train_map_path:               # POWDER map training archive (loader: powder, map mode)
-  test_map_path:                # POWDER map test archive
+  reference_site:               # e.g. "CC2" (aerpaw) or "humanities" (powder)
+  train_files:                  # POWDER single CSV or NPZ path (loader: powder)
+  test_files:                   # POWDER single CSV or NPZ path (loader: powder)
   map_key: map_db               # Key inside the .npz archive
   prediction_start_row:         # 1-based row in long test where final evaluation begins
   max_rows:                     # Optional row limit applied after chronological construction
@@ -174,17 +210,15 @@ windowing:
   lookback: 60                  # Input sequence length (minutes)
   horizons: [1, 5, 15, 60]     # Forecast horizons to report
 outputs:
-  root_dir: results/powder/600_800   # Base output directory; {model_name}/ is appended
+  root_dir: results/powder/600_800   # Base output directory; {model_name}/{reference_site}/ is appended
 
 training:
   device: auto                  # "auto", "cuda", or "cpu"
-  model_name: vanillalstm       # Model to train: vanillalstm or convlstm
+  model_name: vanillalstm       # Model to train: vanillalstm, convlstm, timeran, lookbackmean*, linearar*
 
 preprocessing:
   normalize: true               # Per-frequency z-score normalization
-  imputation:
-    enabled: true
-    method: nearest_spatial_then_train_frequency_mean
+  impute: false                 # Enable NaN imputation via clean_spectrum_data()
 ```
 
 **Vanilla LSTM settings** (under `vanillalstm:`):
@@ -210,6 +244,15 @@ vanillalstm:
     early_stopping: true
     early_stopping_patience: 10
 ```
+
+`output_strategy` (for Vanilla LSTM):
+- `final_hidden` (default): extracts the last hidden state `hn[-1]` → `Linear(H*D, T_out*F)` → `(B, T_out, F)`.
+- `all_hidden`: flattens all LSTM outputs `out.reshape(B, T*H*D)` → `Linear(T*H*D, T_out*F)` → `(B, T_out, F)`.
+
+Dropout is applied at two points in Vanilla LSTM: (1) internally within the `nn.LSTM`
+module between stacked layers (PyTorch-native, active only when `num_layers > 1`), and
+(2) as a standalone `nn.Dropout` layer on the LSTM output before the linear head
+(**always active** regardless of `num_layers`).
 
 **ConvLSTM settings** (under `convlstm:`):
 
@@ -244,6 +287,36 @@ convlstm:
     early_stopping_patience: 8
     train_stride: 1                     # Step size between consecutive training windows
     test_stride: 1                      # Step size between consecutive test windows
+```
+
+**TimeRAN settings** (under `timeran:`):
+
+```yaml
+timeran:
+  evaluation: {}
+  #These parameters are for model definition
+  model:
+    input_sequence_length: 60            # Number of past sequence / lookback
+    prediction_horizon: 1               # 1 for one-step autoregressive rollout
+    checkpoint_size: base               # Pretrained MOMENT backbone size: small, base, or large
+    freeze_encoder: true                # Freeze MOMENT encoder weights during head training
+    freeze_embedder: true               # Freeze MOMENT embedder weights during head training
+    freeze_head: false                  # Allow the forecasting head to update
+
+  #These parameters are for training
+  train:
+    val_fraction: 0.1                   # Fraction of training data held out for validation
+    train_stride: 1                     # Step size between consecutive training windows
+    val_stride: 1                       # Step size between consecutive validation windows
+    batch_size: 1                       # Number of samples per gradient update
+    epochs: 10                          # Number of full passes over the training data
+    learning_rate: 0.00001              # Optimizer learning rate
+    weight_decay: 0.0                   # L2 weight-decay regularization strength
+    optimizer: adam                     # Optimizer: adam, adamw, or sgd
+    gradient_clip_norm: 5.0             # Maximum global gradient norm for clipping
+    early_stopping: true                # Stop training when validation loss stops improving
+    early_stopping_patience: 10         # Number of epochs without improvement before stopping
+    seed: 42                            # Random seed for reproducibility
 ```
 
 The integrated trainer dispatches the optimizer based on the config `optimizer` field.
@@ -371,61 +444,33 @@ report.txt
 
 ### Run TimeRAN
 
-The integrated TimeRAN runner trains a MOMENT forecasting head per chunk using the shared lookback and horizon values.
+TimeRAN is now supported by the shared integrated pipeline.  See
+"Training through the common integrated pipeline" above.
 
-#### Prerequisites — Download Pretrained Checkpoint
-
-TimeRAN's pretrained backbone weights exceed GitHub's file size limits and must be downloaded from Google Drive before training. The checkpoint path is derived automatically from `config.timeran.checkpoint_size` (default: `base`).
+TimeRAN trains a MOMENT forecasting head per chunk.  Its pretrained backbone
+weights exceed GitHub's file size limits and must be downloaded separately.
+Without these checkpoints, the pipeline falls back to raw MOMENT weights (no
+TimeRAN pretraining).
 
 ```bash
-# Install gdown for Google Drive downloads
-pip install momentfm==0.1.4 gdown
+# Install momentfm and gdown (see Docker/Environment section for Python 3.13 notes)
+pip install gdown
+pip install momentfm==0.1.4 --no-deps
 
 # Create checkpoint directories
 mkdir -p training/TimeRAN/checkpoints/{small,base,large}
 
-# Download checkpoints from the upstream TimeRAN repository.
-#
 # NOTE: The upstream TimeRAN README mislabels these file IDs.
 # ID 1fJNCk... is the small variant (d_model=512, ~145 MB), NOT base.
 # ID 1gz23m... is the base variant (d_model=768, ~433 MB), NOT small.
-# We save them with correct names here.
 gdown 1fJNCkufmfWC6zHecz10PUyreD0PhBOMJ -O training/TimeRAN/checkpoints/small/TimeRAN_small.pth
 gdown 1gz23mmP4ZiNznCloObEaSlVaJH21fyxJ -O training/TimeRAN/checkpoints/base/TimeRAN_base.pth
 gdown 1We9zE5BV6Iwkc_EKSAhP28B3wcM7RZRd -O training/TimeRAN/checkpoints/large/TimeRAN_large.pth
 ```
 
-Without these checkpoints, the pipeline falls back to raw MOMENT weights (no TimeRAN pretraining).
-
-#### Run
-
-```bash
-python3 training/TimeRAN/train_integrated.py
-```
-
-Training outputs go to `training/results/TimeRAN/` by default:
-
-```text
-<chunk_id>_training_log.csv
-checkpoints/
-```
-
-#### Evaluate
-
-Loads the checkpoint saved by training, runs inference on the test set, and writes metrics.
-
-```bash
-python3 training/TimeRAN/evaluate_integrated.py
-```
-
-Evaluation outputs go to `training/results/TimeRAN/` by default:
-
-```text
-aggregate_metrics.csv
-per_frequency_metrics.csv
-per_band_metrics.csv
-report.txt
-```
+The model-specific script at `training/TimeRAN/train_integrated.py` and
+evaluator at `training/TimeRAN/evaluate_integrated.py` remain available for
+backward compatibility but are superseded by the common entry points.
 
 ### Run TSS-LCD
 
@@ -1224,7 +1269,7 @@ spectrum-usage/
 │   │   ├── config.yaml             # Central configuration
 │   │   ├── config.py               # YAML loading and path resolution
 │   │   ├── data.py                 # Chunk specs and loader dispatch
-│   │   ├── dataset_loader.py       # AERPAW / POWDER CSV / POWDER map loaders
+│   │   ├── dataset_loader.py       # Unified AERPAW / POWDER loader (CSV and map)
 │   │   ├── preprocessing.py        # Normalization, imputation, cleaning
 │   │   ├── windowing.py            # Temporal window construction, layout conversion
 │   │   ├── forecasting.py          # Teacher-forced / autoregressive / direct forecast
@@ -1236,7 +1281,14 @@ spectrum-usage/
 │   │   ├── forecast_export.py      # Forecast artifact serialization
 │   │   ├── plot_forecasts.py       # Forecast and error plot generation
 │   │   ├── runtime.py              # Device selection, timestamps, log rows
+│   │   ├── pipeline_train_trace.txt# Detailed pipeline execution trace
+│   │   ├── training_configs.txt    # Training config snapshots
 │   │   └── assemble_results.py     # Cross-model result assembly
+│   ├── grid_search/                # Hyperparameter search scripts and results
+│   │   ├── grid_search.py          # Grid search runner
+│   │   ├── plot_hyperparameter_search.py # Search result visualization
+│   │   ├── config_convlstm.yaml    # ConvLSTM grid search config
+│   │   └── results/                # Search artifacts, plots, summaries
 │   ├── data/                       # Dataset files
 │   │   ├── download_dryad.py       # Dryad downloader (Anubis PoW solver)
 │   │   └── merged_power_data_sub6GHz_avg_per_minute.csv(.json)
@@ -1260,6 +1312,8 @@ spectrum-usage/
 │   └── README.md
 ├── results/                        # Evaluation results
 │   └── README.md
+├── Miscellaneous/                  # Experimental runs (hidden_size experiments, etc.)
+├── presentation/                   # Presentation artifacts organized by date
 ├── ResultsCC1Feb2022_SigMF.zip     # Downloaded zip archives
 ├── ResultsCC2Feb2022_SigMF.zip
 ├── ResultsLW1Feb2022_SigMF.zip

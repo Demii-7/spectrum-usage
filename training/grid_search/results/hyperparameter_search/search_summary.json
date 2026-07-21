@@ -1,0 +1,23 @@
+{
+  "search_name": "vanillalstm_powder_600_800",
+  "total_trials": 49,
+  "completed_trials": 49,
+  "failed_trials": 0,
+  "selection_metric": "mean_horizon_rmse_db",
+  "best_trial_id": "arch_0012",
+  "best_parameters": {
+    "hidden_size": 16,
+    "num_layers": 1,
+    "dropout": 0.0,
+    "learning_rate": 0.001,
+    "batch_size": 32,
+    "weight_decay": 0.0001
+  },
+  "best_metrics": {
+    "rmse_t1_db": 2.1883035020132553,
+    "rmse_t5_db": 2.277929328605935,
+    "rmse_t15_db": 2.3210741872193528,
+    "rmse_t60_db": 2.469864161039413,
+    "mean_horizon_rmse_db": 2.3142927947194893
+  }
+}

@@ -80,8 +80,11 @@ LSTM over time
    input_size  = F
    hidden_size = configurable
    num_layers  = configurable
-   dropout     = configurable
+   dropout     = configurable (between layers, PyTorch-native)
    batch_first = true
+   ↓
+Dropout (always-on)
+   nn.Dropout(dropout)
    ↓
 Output head
    final_hidden: Linear(hidden -> T_out * F)
@@ -97,6 +100,10 @@ Reshape
 Default: `final_hidden`
 
 The final hidden state of the last LSTM layer is projected directly into the full forecast horizon.
+
+A standalone `nn.Dropout` layer is always applied on the LSTM output before the
+output head, regardless of `num_layers`.  This is in addition to the dropout that
+PyTorch's `nn.LSTM` applies internally between stacked layers.
 
 ---
 
@@ -204,7 +211,7 @@ Evaluation exports denormalized dBm predictions as:
 | `input_size` | `250` | Must match `n_frequency_bins` |
 | `hidden_size` | `128` | LSTM hidden size |
 | `num_layers` | `1` | Number of stacked LSTM layers |
-| `dropout` | `0.1` | LSTM dropout when `num_layers > 1` |
+| `dropout` | `0.1` | LSTM internal dropout (between layers, PyTorch-native) and post-LSTM dropout on output head input |
 | `output_strategy` | `final_hidden` | `final_hidden` or `all_hidden` |
 | `bidirectional` | `false` | Optional bidirectional LSTM |
 

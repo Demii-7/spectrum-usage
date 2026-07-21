@@ -14,7 +14,6 @@ Primary responsibilities include:
 - reporting missing, malformed, or unreadable configuration files clearly;
 - preserving the location of the active configuration for relative path
   resolution;
-- expanding user-home references where supported;
 - resolving relative data, checkpoint, output, and metadata paths;
 - returning normalized absolute Path objects to calling modules; and
 - preventing individual scripts from applying inconsistent path rules.
@@ -23,7 +22,6 @@ This module does not interpret model architecture or dataset semantics beyond
 the basic structural validation needed to load the shared configuration.
 Detailed setting validation remains in the module that consumes each setting.
 """
-
 
 
 
@@ -40,6 +38,8 @@ DEFAULT_CONFIG = Path(__file__).with_name("config.yaml")
 
 
 def resolve_path(value: str | Path) -> Path:
+    """Add root to path"""
+    
     path = Path(value)
     if path.is_absolute():
         return path
@@ -47,6 +47,8 @@ def resolve_path(value: str | Path) -> Path:
 
 
 def load_config(path: str | Path | None = None) -> dict[str, Any]:
+    """ Loads configuration file"""
+    
     config_path = Path(path) if path is not None else DEFAULT_CONFIG
     with config_path.open("r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
@@ -55,8 +57,15 @@ def load_config(path: str | Path | None = None) -> dict[str, Any]:
 
 
 def validate_config(config: dict[str, Any]) -> None:
+    """" Checks to ensure all expected config settings are present"""
+    
+    # List of main config sections
     required = ("data", "windowing", "preprocessing", "outputs")
+    
+    # Checks for ecag section in config
     missing = [key for key in required if key not in config]
+    
+    #Throw error for missing section
     if missing:
         raise ValueError(f"Missing config section(s): {', '.join(missing)}")
 
