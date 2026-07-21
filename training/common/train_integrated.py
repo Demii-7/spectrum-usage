@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 import sys
 import time
@@ -520,7 +522,8 @@ def parse_args() -> argparse.Namespace:
     
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=None)    # config path to yaml file
-    parser.add_argument("--output-dir", type=Path, default = None) # path to ouput directory
+    parser.add_argument("--name", type=str, default=None)       # experiment name (default: <model>_<timestamp>)
+    parser.add_argument("--output-dir", type=Path, default=None) # override run directory
     return parser.parse_args()
 
 def main() -> None:
@@ -545,18 +548,21 @@ def main() -> None:
         train_cfg.get("val_fraction", 0.1)
     )
     
-    # Create output directories for current model
-    out, checkpoints = prepare_output_dirs(
-        config,
-        model_name,
-    )
-    
-    # Ensures Output directory exists if provided at cli
+    # Construct run directory
     if args.output_dir is not None:
-        out = args.output_dir
-        out.mkdir(parents=True, exist_ok=True)
-        checkpoints = out / "checkpoints"
-        checkpoints.mkdir(parents=True, exist_ok=True)
+        run_dir = args.output_dir
+    else:
+        exp_name = args.name or f"{model_name}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+        run_dir = Path("runs") / exp_name
+    
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    # Copy the config used for this run into the run directory
+    config_source = args.config or Path(__file__).with_name("config.yaml")
+    shutil.copy2(config_source, run_dir / "config.yaml")
+
+    # Create output directories for current model
+    out, checkpoints = prepare_output_dirs(run_dir)
         
     # Iterate through each chunk segments
     for chunk in chunk_specs(config):

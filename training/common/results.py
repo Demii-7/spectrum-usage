@@ -147,32 +147,22 @@ def append_metric_rows(
         )
 
 
-def prepare_output_dirs( config: dict[str, Any], model_name: str,) -> tuple[Path, Path]:
-    """ Create ouput directory parent directory and checkpoint child for current model and return their paths"""
-    out = output_dir(
-        config,
-        model_name,
-    )
+def prepare_output_dirs(run_dir: Path) -> tuple[Path, Path]:
+    """ Create output and checkpoint directories inside *run_dir* and return their paths."""
+    run_dir.mkdir(parents=True, exist_ok=True)
+    checkpoints = run_dir / "checkpoints"
+    checkpoints.mkdir(parents=True, exist_ok=True)
+    return run_dir, checkpoints
 
-    checkpoints = checkpoints_dir(
-        config,
-        model_name,
-    )
-
-    return out, checkpoints
-
-def output_dir(config: dict[str, Any], model_name: str) -> Path:
-    """ Create ouput directory for current model"""
-    reference_site = str(config["data"].get("reference_site", "Not provided")).lower()
-    path = resolve_path(config["outputs"]["root_dir"]) / model_name / reference_site
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+def output_dir(run_dir: Path) -> Path:
+    """ Create and return the output directory for a run."""
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir
 
 
-def checkpoints_dir(config: dict[str, Any], model_name: str) -> Path:
-    """ Create checkpoints directory for current model"""
-    
-    path = output_dir(config, model_name) / "checkpoints"
+def checkpoints_dir(run_dir: Path) -> Path:
+    """ Create and return the checkpoints directory for a run."""
+    path = run_dir / "checkpoints"
     path.mkdir(parents=True, exist_ok=True)
     return path
 

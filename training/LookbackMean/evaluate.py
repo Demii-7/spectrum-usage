@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import torch
+import yaml
 from torch.utils.data import DataLoader
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -21,10 +23,26 @@ from training.common.runtime import device_for
 
 ROOT = Path(__file__).resolve().parents[2]
 
-train_csv = ROOT / "evaluation" / "powder" / "guesthouse-nuc1" / "20260618T0036Z" / "600_800" / "power_1mhz_avg_per_minute.csv"
-test_csv = ROOT / "evaluation" / "powder" / "guesthouse-nuc1" / "20260628T0436Z" / "600_800" / "power_1mhz_avg_per_minute.csv"
-train_map = ROOT / "evaluation" / "results" / "idw" / "powder_20260618T0036Z_humanities_guesthouse_600_800.npz"
-test_map = ROOT / "evaluation" / "results" / "idw" / "powder_20260628T0436Z_humanities_guesthouse_600_800.npz"
+
+def resolve_path(path_str: str) -> Path:
+    p = Path(path_str)
+    if p.is_absolute():
+        return p
+    return ROOT / p
+
+
+def load_and_concat_csvs(file_entries: list[dict], start_mhz: float, end_mhz: float) -> tuple[np.ndarray, list[float]]:
+    arrays = []
+    freqs = None
+    for entry in file_entries:
+        path = resolve_path(entry["path"])
+        df = pd.read_csv(path)
+        freq_cols = [c for c in df.columns[1:] if start_mhz <= float(c) <= end_mhz]
+        freq_cols.sort(key=float)
+        if freqs is None:
+            freqs = [float(c) for c in freq_cols]
+        arrays.append(df[freq_cols].to_numpy(dtype=np.float32))
+    return np.concatenate(arrays, axis=0), freqs
 
 
 def make_full_test_loader(data_norm: np.ndarray, lookback: int, rollout_horizon: int, batch_size: int = 32) -> DataLoader:
@@ -39,18 +57,15 @@ def mae_denorm(pred_norm: np.ndarray, target_norm: np.ndarray, mean, std) -> flo
     return float(np.mean(np.abs(pred_dbm - target_dbm)))
 
 
-def evaluate_csv(ckpt_path: Path, freq_index: int | None = None, lookback: int = 60) -> float:
+def evaluate_csv(ckpt_path: Path, train_files: list[dict], test_files: list[dict], freq_index: int | None = None, lookback: int = 60) -> float:
     ckpt = torch.load(ckpt_path, weights_only=False, map_location="cpu")
     norm = ckpt["normalization"]
     mean = np.asarray(norm["mean_dbm"], dtype=np.float32)
     std = np.asarray(norm["std_dbm"], dtype=np.float32)
 
     start_mhz, end_mhz = 600.0, 800.0
-    train_df = pd.read_csv(train_csv)
-    test_df = pd.read_csv(test_csv)
-    freq_cols = sorted([c for c in train_df.columns[1:] if start_mhz <= float(c) <= end_mhz], key=float)
-    train_arr = train_df[freq_cols].to_numpy(dtype=np.float32)
-    test_arr = test_df[freq_cols].to_numpy(dtype=np.float32)
+    train_arr, _ = load_and_concat_csvs(train_files, start_mhz, end_mhz)
+    test_arr, _ = load_and_concat_csvs(test_files, start_mhz, end_mhz)
 
     if freq_index is not None:
         train_arr = train_arr[:, freq_index:freq_index+1]
@@ -80,16 +95,21 @@ def evaluate_csv(ckpt_path: Path, freq_index: int | None = None, lookback: int =
     return mae_denorm(pred_np, targ_np, mean, std)
 
 
-def evaluate_map(ckpt_path: Path, lookback: int = 60) -> float:
+def evaluate_map(ckpt_path: Path, lookback: int = 60, map_dir: Path | None = None, map_name: str = "powder_600_800") -> float:
     ckpt = torch.load(ckpt_path, weights_only=False, map_location="cpu")
     norm = ckpt["normalization"]
     mean = norm["mean_dbm"].astype(np.float32)
     std = norm["std_dbm"].astype(np.float32)
 
     start_mhz, end_mhz = 600.0, 800.0
-    train_raw = np.load(train_map)["map_db"].astype(np.float32)
-    test_raw = np.load(test_map)["map_db"].astype(np.float32)
-    freqs_arr = np.load(train_map)["freqs_mhz"]
+    if map_dir is None:
+        map_dir = ROOT / "evaluation" / "results" / "idw"
+    train_map = map_dir / f"{map_name}_train.npz"
+    test_map_path = map_dir / f"{map_name}_test.npz"
+
+    train_raw = np.load(str(train_map))["map_db"].astype(np.float32)
+    test_raw = np.load(str(test_map_path))["map_db"].astype(np.float32)
+    freqs_arr = np.load(str(train_map))["freqs_mhz"]
     freq_mask = np.array([(start_mhz <= f <= end_mhz) for f in freqs_arr])
     train_raw = train_raw[:, :, :, freq_mask]
     test_raw = test_raw[:, :, :, freq_mask]
@@ -122,28 +142,39 @@ def evaluate_map(ckpt_path: Path, lookback: int = 60) -> float:
 
 
 def main():
-    import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["1d", "2d", "4d", "all"], default="all")
+    parser.add_argument("--config", default=None, help="Path to config YAML.")
     parser.add_argument("--freq-index", type=int, default=100)
     args = parser.parse_args()
+
+    config_path = Path(args.config) if args.config else ROOT / "training" / "LookbackMean" / "config.yaml"
+    with open(config_path) as f:
+        config = yaml.safe_load(f)
+
+    data_files = config.get("data", {}).get("files", [])
+    train_files = [f for f in data_files if f.get("partition") == "train"]
+    test_files = [f for f in data_files if f.get("partition") == "test"]
 
     ckpt_dir = ROOT / "training" / "results" / "baselines"
     lookback = 60
 
     results = {}
     if args.mode in ("1d", "all"):
-        mae = evaluate_csv(ckpt_dir / "lookbackmean1d.pt", freq_index=args.freq_index, lookback=lookback)
+        mae = evaluate_csv(ckpt_dir / "lookbackmean1d.pt", train_files, test_files, freq_index=args.freq_index, lookback=lookback)
         results["lookbackmean1d"] = mae
         print(f"  lookbackmean1d  MAE: {mae:.4f} dB")
 
     if args.mode in ("2d", "all"):
-        mae = evaluate_csv(ckpt_dir / "lookbackmean2d.pt", freq_index=None, lookback=lookback)
+        mae = evaluate_csv(ckpt_dir / "lookbackmean2d.pt", train_files, test_files, freq_index=None, lookback=lookback)
         results["lookbackmean2d"] = mae
         print(f"  lookbackmean2d  MAE: {mae:.4f} dB")
 
     if args.mode in ("4d", "all"):
-        mae = evaluate_map(ckpt_dir / "lookbackmean4d.pt", lookback=lookback)
+        map_cfg = config.get("data", {}).get("map", {})
+        map_dir = resolve_path(map_cfg.get("output_dir", "evaluation/results/idw")) if map_cfg.get("output_dir") else None
+        map_name = map_cfg.get("name", "powder_600_800")
+        mae = evaluate_map(ckpt_dir / "lookbackmean4d.pt", lookback=lookback, map_dir=map_dir, map_name=map_name)
         results["lookbackmean4d"] = mae
         print(f"  lookbackmean4d  MAE: {mae:.4f} dB")
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 from pathlib import Path
 import sys
 import time
@@ -26,7 +27,8 @@ from model import (  # noqa: E402
     DiffusionModel,
 )
 from training.common.config import load_config  # noqa: E402
-from training.common.integrated import epoch_log_row, prepare_output_dirs, timestamp_utc  # noqa: E402
+from training.common.runtime import epoch_log_row, timestamp_utc  # noqa: E402
+from training.common.results import prepare_output_dirs  # noqa: E402
 from training.common.data import chunk_specs, load_chunk  # noqa: E402
 from training.common.data_loader import data_loader_kwargs  # noqa: E402
 from training.common.windowing import make_window_starts  # noqa: E402
@@ -451,18 +453,21 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=None)
     parser.add_argument("--output-dir", type=Path, default=None)
+    parser.add_argument("--name", type=str, default=None)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     config = load_config(args.config)
-    out, checkpoints = prepare_output_dirs(config, "TSS-LCD")
+    model_name = "tss-lcd"
     if args.output_dir is not None:
-        out = args.output_dir
-        out.mkdir(parents=True, exist_ok=True)
-        checkpoints = out / "checkpoints"
-        checkpoints.mkdir(parents=True, exist_ok=True)
+        run_dir = args.output_dir
+    else:
+        exp_name = args.name or f"{model_name}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+        run_dir = Path("runs") / exp_name
+    run_dir.mkdir(parents=True, exist_ok=True)
+    out, checkpoints = prepare_output_dirs(run_dir)
 
     for chunk in chunk_specs(config):
         print(f"Training TSS-LCD for {chunk.chunk_id} "

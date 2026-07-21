@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 from pathlib import Path
 import sys
 import time
@@ -22,7 +23,8 @@ if str(SCRIPT_DIR) not in sys.path:
 from model import ConvLSTMPredictor  # noqa: E402
 from training.common.config import load_config  # noqa: E402
 from training.common.data_loader import data_loader_kwargs  # noqa: E402
-from training.common.integrated import epoch_log_row, prepare_output_dirs, timestamp_utc  # noqa: E402
+from training.common.runtime import epoch_log_row, timestamp_utc  # noqa: E402
+from training.common.results import prepare_output_dirs  # noqa: E402
 from training.common.windowing import make_window_starts, selected_horizon_index  # noqa: E402
 from training.common.interpolated_map import (  # noqa: E402
     load_interpolated_map_npz,
@@ -439,18 +441,21 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=None)
     parser.add_argument("--output-dir", type=Path, default=None)
+    parser.add_argument("--name", type=str, default=None)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     config = load_config(args.config)
-    out, checkpoints = prepare_output_dirs(config, "ConvLSTM")
+    model_name = "convlstm"
     if args.output_dir is not None:
-        out = args.output_dir
-        out.mkdir(parents=True, exist_ok=True)
-        checkpoints = out / "checkpoints"
-        checkpoints.mkdir(parents=True, exist_ok=True)
+        run_dir = args.output_dir
+    else:
+        exp_name = args.name or f"{model_name}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+        run_dir = Path("runs") / exp_name
+    run_dir.mkdir(parents=True, exist_ok=True)
+    out, checkpoints = prepare_output_dirs(run_dir)
 
     if config["data"].get("train_map_path") or config["convlstm"].get("interpolated_map", {}).get("enabled", False):
         print("Interpolated-map mode enabled — training on map data.")

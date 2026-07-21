@@ -60,6 +60,7 @@ Export layouts:
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 from pathlib import Path
 import sys
 import time
@@ -99,6 +100,8 @@ from training.common.model_factory import (
     load_checkpoint_into_model,
     checkpoint_path_for_chunk,
 )
+
+from training.common.map_builder import find_site_grid_indices
 
 from training.common.windowing import (
     make_window_batch_array,
@@ -272,7 +275,6 @@ def evaluation_parameters(
 
 def calculate_errors_and_export_arrays(
     *,
-    model_name: str,
     prediction_normalized: np.ndarray,
     target_raw_model_layout: np.ndarray,
     normalization: dict[str, Any] | None,
@@ -290,136 +292,80 @@ def calculate_errors_and_export_arrays(
         target_dbm_export
         absolute_error_for_append_metric_rows
         squared_error_for_append_metric_rows
-
-    `training.common.metrics.denormalize()` expects frequency to be the last
-    axis because its mean/std vectors are shaped (F,). ConvLSTM forecasts use
-    frequency as axis 1, so map forecasts are temporarily converted to
-    frequency-last layout for denormalization and error calculation.
     """
 
-    if model_name == "vanillalstm":
-        (
+    if prediction_normalized.ndim == 4:
+        # Map layout: (N, F, H, W) -> transpose to (N, H, W, F) for normalization
+        prediction_frequency_last = np.transpose(prediction_normalized, (0, 2, 3, 1))
+        target_frequency_last = np.transpose(target_raw_model_layout, (0, 2, 3, 1))
+
+        prediction_dbm_freq_last, abs_err_freq_last, sq_err_freq_last = (
+            absolute_and_squared_errors_dbm(prediction_frequency_last, target_frequency_last, normalization)
+        )
+
+        prediction_dbm = np.transpose(prediction_dbm_freq_last, (0, 3, 1, 2)).astype(np.float32, copy=False)
+        abs_err_map = np.transpose(abs_err_freq_last, (0, 3, 1, 2))
+        sq_err_map = np.transpose(sq_err_freq_last, (0, 3, 1, 2))
+
+        # Average spatial dims -> (N, F) for metric rows
+        absolute_error = np.mean(abs_err_map, axis=(2, 3)).astype(np.float32, copy=False)
+        squared_error = np.mean(sq_err_map, axis=(2, 3)).astype(np.float32, copy=False)
+
+        return (
             prediction_dbm,
+            target_raw_model_layout.astype(np.float32, copy=False),
             absolute_error,
             squared_error,
-        ) = absolute_and_squared_errors_dbm(
-            prediction_normalized,
-            target_raw_model_layout,
-            normalization,
         )
 
-        return (
-            prediction_dbm.astype(
-                np.float32,
-                copy=False,
-            ),
-            target_raw_model_layout.astype(
-                np.float32,
-                copy=False,
-            ),
-            absolute_error.astype(
-                np.float32,
-                copy=False,
-            ),
-            squared_error.astype(
-                np.float32,
-                copy=False,
-            ),
-        )
-
-    if model_name == "convlstm":
-        if prediction_normalized.ndim != 4:
-            raise ValueError(
-                "ConvLSTM predictions must be shaped "
-                "(samples, frequency, height, width), "
-                f"got {prediction_normalized.shape}."
-            )
-
-        if target_raw_model_layout.ndim != 4:
-            raise ValueError(
-                "ConvLSTM targets must be shaped "
-                "(samples, frequency, height, width), "
-                f"got {target_raw_model_layout.shape}."
-            )
-
-        # Convert model/export layout:
-        #     (N, F, H, W)
-        #
-        # Into normalization layout:
-        #     (N, H, W, F)
-        prediction_frequency_last = np.transpose(
-            prediction_normalized,
-            (0, 2, 3, 1),
-        )
-
-        target_frequency_last = np.transpose(
-            target_raw_model_layout,
-            (0, 2, 3, 1),
-        )
-
-        (
-            prediction_dbm_frequency_last,
-            absolute_error_frequency_last,
-            squared_error_frequency_last,
-        ) = absolute_and_squared_errors_dbm(
-            prediction_frequency_last,
-            target_frequency_last,
-            normalization,
-        )
-
-        # Convert back to common map export layout:
-        #     (N, F, H, W)
-        prediction_dbm = np.transpose(
-            prediction_dbm_frequency_last,
-            (0, 3, 1, 2),
-        ).astype(
-            np.float32,
-            copy=False,
-        )
-
-        absolute_error_map = np.transpose(
-            absolute_error_frequency_last,
-            (0, 3, 1, 2),
-        )
-
-        squared_error_map = np.transpose(
-            squared_error_frequency_last,
-            (0, 3, 1, 2),
-        )
-
-        # append_metric_rows expects:
-        #     (N, F)
-        #
-        # Average each frequency's error across the spatial grid.
-        absolute_error_for_metrics = np.mean(
-            absolute_error_map,
-            axis=(2, 3),
-        ).astype(
-            np.float32,
-            copy=False,
-        )
-
-        squared_error_for_metrics = np.mean(
-            squared_error_map,
-            axis=(2, 3),
-        ).astype(
-            np.float32,
-            copy=False,
-        )
-
-        return (
-            prediction_dbm,
-            target_raw_model_layout.astype(
-                np.float32,
-                copy=False,
-            ),
-            absolute_error_for_metrics,
-            squared_error_for_metrics,
-        )
-
-    raise ValueError(
-        f"Unsupported metric adapter: {model_name!r}."
+    # Vector layout: (N, F)
+    prediction_dbm, absolute_error, squared_error = absolute_and_squared_errors_dbm(
+        prediction_normalized, target_raw_model_layout, normalization
     )
+
+    return (
+        prediction_dbm.astype(np.float32, copy=False),
+        target_raw_model_layout.astype(np.float32, copy=False),
+        absolute_error.astype(np.float32, copy=False),
+        squared_error.astype(np.float32, copy=False),
+    )
+
+
+def _per_site_map_errors(
+    prediction_normalized: np.ndarray,
+    target_raw_model_layout: np.ndarray,
+    normalization: dict[str, Any] | None,
+    site_grid_indices: dict[str, tuple[int, int]],
+) -> list[dict[str, Any]]:
+    """Compute MAE/RMSE at the grid point nearest each collection site.
+
+    Both arrays must be in model layout (N, F, H, W).
+    """
+    pred_freq_last = np.transpose(prediction_normalized, (0, 2, 3, 1))
+    tgt_freq_last = np.transpose(target_raw_model_layout, (0, 2, 3, 1))
+
+    pred_dbm_freq_last, _, _ = absolute_and_squared_errors_dbm(
+        pred_freq_last, tgt_freq_last, normalization,
+    )
+    # (N, H, W, F)
+    pred_dbm = np.transpose(pred_dbm_freq_last, (0, 3, 1, 2))
+    tgt_dbm = np.transpose(tgt_freq_last, (0, 3, 1, 2))
+
+    rows: list[dict[str, Any]] = []
+    for site_name, (h, w) in site_grid_indices.items():
+        pred_site = pred_dbm[:, :, h, w]  # (N, F)
+        tgt_site = tgt_dbm[:, :, h, w]    # (N, F)
+        err = pred_site - tgt_site
+        mae = float(np.mean(np.abs(err)))
+        rmse = float(np.sqrt(np.mean(err ** 2)))
+        rows.append({
+            "site": site_name,
+            "grid_h": h,
+            "grid_w": w,
+            "mae_db": mae,
+            "rmse_db": rmse,
+        })
+    return rows
 
 
 # ===========================================================================
@@ -540,7 +486,10 @@ def evaluate_chunk(
         }
         
         model.eval()
-        device = next(model.parameters()).device
+        try:
+            device = next(model.parameters()).device
+        except StopIteration:
+            device = torch.device("cpu")
         
         with torch.no_grad():
             for batch_start in range(
@@ -621,7 +570,6 @@ def evaluate_chunk(
                 absolute_error,
                 squared_error,
             ) = calculate_errors_and_export_arrays(
-                model_name=model_name,
                 prediction_normalized=prediction_normalized,
                 target_raw_model_layout=target_raw,
                 normalization=data.normalization,
@@ -803,6 +751,17 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--name",
+        type=str,
+        default=None,
+        help=(
+            "Experiment name. Must match the name used during training. "
+            "Defaults to <model>_<timestamp> if neither --name nor "
+            "--output-dir is given."
+        ),
+    )
+
+    parser.add_argument(
         "--checkpoint",
         type=Path,
         default=None,
@@ -849,24 +808,17 @@ def main() -> None:
             f"{sorted(SUPPORTED_MODELS)}, got {model_name!r}."
         )
 
-    # This is the standard model output location used by training.
-    standard_output_directory, standard_checkpoint_directory = (
-        prepare_output_dirs(
-            config,
-            model_name,
-        )
-    )
+    # Construct run directory
+    if args.output_dir is not None:
+        run_dir = args.output_dir
+    else:
+        exp_name = args.name or f"{model_name}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+        run_dir = Path("runs") / exp_name
 
-    output_directory = (
-        standard_output_directory
-        if args.output_dir is None
-        else args.output_dir
-    )
+    output_directory = run_dir
+    output_directory.mkdir(parents=True, exist_ok=True)
 
-    output_directory.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    standard_checkpoint_directory = output_directory / "checkpoints"
 
     bands = load_band_definitions(
         config

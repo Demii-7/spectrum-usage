@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 from pathlib import Path
 import sys
 import time
@@ -19,9 +20,10 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from model import VanillaLSTMForecaster  # noqa: E402
+from models.VanillaLSTM import VanillaLSTMForecaster  # noqa: E402
 from training.common.config import load_config  # noqa: E402
-from training.common.integrated import epoch_log_row, prepare_output_dirs, timestamp_utc  # noqa: E402
+from training.common.runtime import epoch_log_row, timestamp_utc  # noqa: E402
+from training.common.results import prepare_output_dirs  # noqa: E402
 from training.common.data import chunk_specs, load_chunk  # noqa: E402
 from training.common.data_loader import data_loader_kwargs  # noqa: E402
 from training.common.windowing import make_window_starts  # noqa: E402
@@ -57,12 +59,10 @@ def device_for(config: dict[str, Any]) -> torch.device:
 def build_model_config(config: dict[str, Any], n_bins: int) -> dict[str, Any]:
     vcfg = config["vanillalstm"]
     return {
-        "windowing": {
-            "input_sequence_length": int(vcfg.get("input_sequence_length", config["windowing"]["lookback"])),
-            "prediction_horizon": int(vcfg.get("prediction_horizon", max(config["windowing"]["horizons"]))),
-        },
         "model": {
             "input_size": n_bins,
+            "input_sequence_length": int(vcfg.get("input_sequence_length", config["windowing"]["lookback"])),
+            "prediction_horizon": int(vcfg.get("prediction_horizon", max(config["windowing"]["horizons"]))),
             "hidden_size": int(vcfg.get("hidden_size", 128)),
             "num_layers": int(vcfg.get("num_layers", 1)),
             "dropout": float(vcfg.get("dropout", 0.0)),
@@ -104,7 +104,7 @@ def autoregressive_rollout(
 
     return torch.stack(preds, dim=1)
     
-def train_one_model(config: dict[str, Any], train_matrix: np.ndarray, segments, checkpoints: Path, out: Path, chunk_id: str) -> VanillaLSTMForecaster:
+def train_one_model(config: dict[str, Any], train_matrix: np.ndarray, segments, checkpoints: Path, out: Path, chunk_id: str, normalization=None, frequencies=None) -> VanillaLSTMForecaster:
     vcfg = config["vanillalstm"]
     lookback = int(vcfg.get("input_sequence_length", config["windowing"]["lookback"]))
     prediction_horizon = int(vcfg.get("prediction_horizon", max(config["windowing"]["horizons"])))
@@ -143,6 +143,7 @@ def train_one_model(config: dict[str, Any], train_matrix: np.ndarray, segments, 
     criterion = nn.MSELoss()
 
     best_loss = float("inf")
+    best_epoch = 0
     best_state = None
     no_improve = 0
     log_rows: list[dict[str, Any]] = []
@@ -199,6 +200,7 @@ def train_one_model(config: dict[str, Any], train_matrix: np.ndarray, segments, 
 
         if val_loss < best_loss:
             best_loss = val_loss
+            best_epoch = epoch
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
             no_improve = 0
         else:
@@ -212,12 +214,20 @@ def train_one_model(config: dict[str, Any], train_matrix: np.ndarray, segments, 
     pd.DataFrame(log_rows).to_csv(out / f"{chunk_id}_training_log.csv", index=False)
     torch.save(
         {
+            "model_name": "vanillalstm",
             "model_state_dict": model.state_dict(),
+            "normalization": normalization,
+            "frequencies": frequencies,
             "model_config": model_config,
-            "common_config": config,
-            "training_start_time": training_start_time,
-            "training_end_time": timestamp_utc(),
-            "training_duration_sec": total_time,
+            "training_results": {
+                "model_name": "vanillalstm",
+                "epochs_completed": len(log_rows),
+                "best_epoch": best_epoch,
+                "best_val_loss": float(best_loss),
+                "training_start_time": training_start_time,
+                "training_end_time": timestamp_utc(),
+                "training_duration_sec": total_time,
+            },
         },
         checkpoints / f"{chunk_id}_vanillalstm.pt",
     )
@@ -228,26 +238,34 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=None)
     parser.add_argument("--output-dir", type=Path, default=None)
+    parser.add_argument("--name", type=str, default=None)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     config = load_config(args.config)
-    out, checkpoints = prepare_output_dirs(config, "VanillaLSTM")
+
+    vcfg = config.get("vanillalstm", {})
+    val_fraction = float(vcfg.get("train", {}).get("val_fraction", 0.1))
+
+    model_name = "vanillalstm"
     if args.output_dir is not None:
-        out = args.output_dir
-        out.mkdir(parents=True, exist_ok=True)
-        checkpoints = out / "checkpoints"
-        checkpoints.mkdir(parents=True, exist_ok=True)
+        run_dir = args.output_dir
+    else:
+        exp_name = args.name or f"{model_name}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+        run_dir = Path("runs") / exp_name
+    run_dir.mkdir(parents=True, exist_ok=True)
+    out, checkpoints = prepare_output_dirs(run_dir)
 
     for chunk in chunk_specs(config):
         print(f"Training VanillaLSTM for {chunk.chunk_id} ({chunk.start_mhz:g}-{chunk.end_mhz:g} MHz)")
-        data = load_chunk(config, chunk)
+        data = load_chunk(config, chunk, val_fraction=val_fraction)
         train = data.splits[data.train_split].model_input
         train_one_model(
             config, train, data.splits[data.train_split].segments,
             checkpoints, out, chunk.chunk_id,
+            normalization=data.normalization, frequencies=data.frequencies,
         )
 
 

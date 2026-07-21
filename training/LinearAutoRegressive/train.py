@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 from pathlib import Path
 import pickle
 import sys
@@ -16,10 +17,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from training.common.config import load_config  # noqa: E402
-from training.common.integrated import finalize_results, prepare_output_dirs, timestamp_utc  # noqa: E402
+from training.common.runtime import timestamp_utc  # noqa: E402
+from training.common.results import append_metric_rows, finalize_results, load_band_definitions, prepare_output_dirs  # noqa: E402
 from training.common.data import chunk_specs, load_chunk  # noqa: E402
 from training.common.metrics import absolute_and_squared_errors_dbm  # noqa: E402
-from training.common.results import append_metric_rows, load_band_definitions  # noqa: E402
 from training.common.windowing import lagged_matrix, target_rows_for  # noqa: E402
 
 
@@ -48,12 +49,12 @@ def predict_lar(x: np.ndarray, target_rows: np.ndarray, horizon: int, lookback: 
     return preds
 
 
-def evaluate_chunk(config: dict[str, Any], chunk, bands: pd.DataFrame):
+def evaluate_chunk(config: dict[str, Any], chunk, bands: pd.DataFrame, val_fraction: float = 0.1):
     lookback = int(config["windowing"]["lookback"])
     min_history = int(config["windowing"].get("min_history", 4320))
     horizons = [int(h) for h in config["windowing"]["horizons"]]
     alpha = float(config.get("linear_autoregressive", {}).get("ridge_alpha", 1.0))
-    data = load_chunk(config, chunk)
+    data = load_chunk(config, chunk, val_fraction=val_fraction)
     test_splits = config["data"].get("test_splits", [data.test_split])
     train = data.splits[data.train_split].model_input
     train_raw = data.splits[data.train_split].raw_dbm
@@ -98,6 +99,7 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands: pd.DataFrame):
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=None)
+    parser.add_argument("--name", type=str, default=None)
     parser.add_argument("--output-dir", type=Path, default=None)
     return parser.parse_args()
 
@@ -105,7 +107,13 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     config = load_config(args.config)
-    out, checkpoints = prepare_output_dirs(config, "LinearAutoRegressive")
+    model_name = "linearautoregressive"
+    if args.output_dir is not None:
+        run_dir = args.output_dir
+    else:
+        exp_name = args.name or f"{model_name}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+        run_dir = Path("runs") / exp_name
+    out, checkpoints = prepare_output_dirs(run_dir)
     if args.output_dir is not None:
         out = args.output_dir
         out.mkdir(parents=True, exist_ok=True)
@@ -118,11 +126,15 @@ def main() -> None:
     all_band: list[dict[str, Any]] = []
     report_lines: list[str] = []
 
+    val_fraction = float(config.get("linear_autoregressive", {}).get("val_fraction",
+        config.get("vanillalstm", {}).get("train", {}).get("val_fraction",
+        config.get("train", {}).get("val_fraction", 0.1))))
+
     for chunk in chunk_specs(config):
         chunk_start_time = timestamp_utc()
         chunk_start = time.perf_counter()
         print(f"Training LinearAutoRegressive for {chunk.chunk_id} ({chunk.start_mhz:g}-{chunk.end_mhz:g} MHz)")
-        aggregate, frequency, band, models = evaluate_chunk(config, chunk, bands)
+        aggregate, frequency, band, models = evaluate_chunk(config, chunk, bands, val_fraction=val_fraction)
         chunk_duration = time.perf_counter() - chunk_start
         chunk_end_time = timestamp_utc()
         all_aggregate.extend(aggregate)

@@ -136,7 +136,7 @@ def main() -> None:
     args = parse_args()
     config: dict[str, Any] = load_config(args.config)
     input_dirs = args.input_dirs or [resolve_path(path) for path in DEFAULT_INPUTS]
-    out = args.output_dir or (resolve_path(config["outputs"]["root_dir"]) / "overall")
+    out = args.output_dir or (ROOT / "runs" / "overall")
     out.mkdir(parents=True, exist_ok=True)
 
     aggregate = add_skill_scores(combine_metric_files(input_dirs, "aggregate_metrics.csv"))

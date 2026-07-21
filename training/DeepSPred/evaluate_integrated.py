@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 from pathlib import Path
 import sys
 import time
@@ -21,9 +22,9 @@ from dataset import SpectrumFrameDataset, _colormap, _make_frames, _normalize, _
 from model import SwinSTB3D
 from utils import invert_colormap
 from training.common.config import load_config
-from training.common.integrated import finalize_results, prepare_output_dirs, timestamp_utc
+from training.common.runtime import timestamp_utc
+from training.common.results import append_metric_rows, finalize_results, load_band_definitions, prepare_output_dirs
 from training.common.data import chunk_specs, load_chunk
-from training.common.results import append_metric_rows, load_band_definitions
 from training.common.metrics import absolute_and_squared_errors_dbm
 
 
@@ -162,16 +163,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=Path, default=None)
     parser.add_argument("--checkpoint", type=Path, default=None, help="Override checkpoint path template (use {chunk_id} for per-chunk substitution)")
     parser.add_argument("--output-dir", type=Path, default=None)
+    parser.add_argument("--name", type=str, default=None)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     config = load_config(args.config)
-    out, _ = prepare_output_dirs(config, "DeepSPred")
+    model_name = MODEL_NAME
     if args.output_dir is not None:
-        out = args.output_dir
-        out.mkdir(parents=True, exist_ok=True)
+        run_dir = args.output_dir
+    else:
+        exp_name = args.name or f"{model_name}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+        run_dir = Path("runs") / exp_name
+    run_dir.mkdir(parents=True, exist_ok=True)
+    out, checkpoints = prepare_output_dirs(run_dir)
     bands = load_band_definitions(config)
 
     total_start_time = timestamp_utc()

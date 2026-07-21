@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 from pathlib import Path
 import sys
 import time
@@ -19,7 +20,8 @@ if str(SCRIPT_DIR) not in sys.path:
 from model import ConvLSTMPredictor
 from training.common.config import load_config
 from training.common.forecast_export import export_map_forecasts
-from training.common.integrated import finalize_results, prepare_output_dirs, timestamp_utc
+from training.common.runtime import timestamp_utc
+from training.common.results import finalize_results, prepare_output_dirs
 from training.common.interpolated_map import (
     denormalize_map,
     load_interpolated_map_npz,
@@ -587,16 +589,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=Path, default=None)
     parser.add_argument("--checkpoint", type=Path, default=None, help="Override checkpoint path (use {chunk_id} for per-chunk substitution in CSV mode)")
     parser.add_argument("--output-dir", type=Path, default=None)
+    parser.add_argument("--name", type=str, default=None)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     config = load_config(args.config)
-    out, _ = prepare_output_dirs(config, "ConvLSTM")
+    model_name = "convlstm"
     if args.output_dir is not None:
-        out = args.output_dir
-        out.mkdir(parents=True, exist_ok=True)
+        run_dir = args.output_dir
+    else:
+        exp_name = args.name or f"{model_name}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+        run_dir = Path("runs") / exp_name
+    run_dir.mkdir(parents=True, exist_ok=True)
+    out, checkpoints = prepare_output_dirs(run_dir)
 
     if config["data"].get("train_map_path") or config["convlstm"].get("interpolated_map", {}).get("enabled", False):
         print("Interpolated-map mode enabled — evaluating on map data.")

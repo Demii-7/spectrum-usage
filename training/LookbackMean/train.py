@@ -37,12 +37,25 @@ def load_config(config_path: str | Path | None = None) -> dict:
         return yaml.safe_load(f)
 
 
-def load_powder_csv(path: Path, start_mhz: float, end_mhz: float) -> tuple[np.ndarray, list[float]]:
-    df = pd.read_csv(path)
-    freq_cols = [c for c in df.columns[1:] if start_mhz <= float(c) <= end_mhz]
-    freq_cols.sort(key=float)
-    arr = df[freq_cols].to_numpy(dtype=np.float32)
-    return arr, [float(c) for c in freq_cols]
+def resolve_path(path_str: str) -> Path:
+    p = Path(path_str)
+    if p.is_absolute():
+        return p
+    return ROOT / p
+
+
+def load_and_concat_csvs(file_entries: list[dict], start_mhz: float, end_mhz: float) -> tuple[np.ndarray, list[float]]:
+    arrays = []
+    freqs = None
+    for entry in file_entries:
+        path = resolve_path(entry["path"])
+        df = pd.read_csv(path)
+        freq_cols = [c for c in df.columns[1:] if start_mhz <= float(c) <= end_mhz]
+        freq_cols.sort(key=float)
+        if freqs is None:
+            freqs = [float(c) for c in freq_cols]
+        arrays.append(df[freq_cols].to_numpy(dtype=np.float32))
+    return np.concatenate(arrays, axis=0), freqs
 
 
 def parse_args() -> argparse.Namespace:
@@ -69,12 +82,16 @@ def main() -> None:
     end_mhz = 800.0
     val_fraction = float(train_cfg.get("val_fraction", 0.1))
 
-    train_csv = ROOT / "evaluation" / "powder" / "guesthouse-nuc1" / "20260618T0036Z" / "600_800" / "power_1mhz_avg_per_minute.csv"
-    test_csv = ROOT / "evaluation" / "powder" / "guesthouse-nuc1" / "20260628T0436Z" / "600_800" / "power_1mhz_avg_per_minute.csv"
+    data_files = config.get("data", {}).get("files", [])
+    train_files = [f for f in data_files if f.get("partition") == "train"]
+    test_files = [f for f in data_files if f.get("partition") == "test"]
 
     if args.mode == "4d":
-        train_map = ROOT / "evaluation" / "results" / "idw" / "powder_20260618T0036Z_humanities_guesthouse_600_800.npz"
-        test_map = ROOT / "evaluation" / "results" / "idw" / "powder_20260628T0436Z_humanities_guesthouse_600_800.npz"
+        map_cfg = config.get("data", {}).get("map", {})
+        map_dir = resolve_path(map_cfg.get("output_dir", "evaluation/results/idw"))
+        map_name = map_cfg.get("name", "powder_600_800")
+        train_map = map_dir / f"{map_name}_train.npz"
+        test_map = map_dir / f"{map_name}_test.npz"
 
         train_raw = np.load(str(train_map))["map_db"].astype(np.float32)
         test_raw = np.load(str(test_map))["map_db"].astype(np.float32)
@@ -95,8 +112,8 @@ def main() -> None:
         print(f"4D mode: train={train_data.shape}, test={test_data.shape}")
 
     else:
-        train_raw, freqs = load_powder_csv(train_csv, start_mhz, end_mhz)
-        test_raw, _ = load_powder_csv(test_csv, start_mhz, end_mhz)
+        train_raw, freqs = load_and_concat_csvs(train_files, start_mhz, end_mhz)
+        test_raw, _ = load_and_concat_csvs(test_files, start_mhz, end_mhz)
         frequencies = freqs
 
         if args.mode == "1d":
