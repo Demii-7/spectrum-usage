@@ -18,6 +18,7 @@ if str(ROOT) not in sys.path:
 
 from momentfm import MOMENTPipeline  # noqa: E402
 from training.common.config import load_config  # noqa: E402
+from training.common.data_loader import data_loader_kwargs  # noqa: E402
 from training.common.integrated import epoch_log_row, prepare_output_dirs, timestamp_utc  # noqa: E402
 from training.common.data import chunk_specs, load_chunk  # noqa: E402
 from training.common.windowing import make_window_starts  # noqa: E402
@@ -108,8 +109,9 @@ def train_one_model(config: dict[str, Any], train_input: np.ndarray,
     train_ds = TimeRANDataset(train_input, train_starts, t_in, t_out)
     val_ds = TimeRANDataset(train_input, val_starts, t_in, t_out)
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, drop_last=True)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
+    loader_kwargs = data_loader_kwargs(config.get("data_loader"))
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, drop_last=True, **loader_kwargs)
+    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, **loader_kwargs)
 
     device = device_for()
     model = build_model(config, device, t_in, t_out)

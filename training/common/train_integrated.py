@@ -102,20 +102,6 @@ def train_model(
     train_stride = int( train_cfg.get("train_stride", 1))
     val_stride = int( train_cfg.get("val_stride", 1))
 
-    # DataLoader worker/pin settings
-    dl_cfg = config.get("data_loader") or {}
-    num_workers = int(dl_cfg.get("num_workers", 0))
-    pin_memory_raw = dl_cfg.get("pin_memory", False)
-    if pin_memory_raw == "auto":
-        pin_memory = torch.cuda.is_available()
-    else:
-        pin_memory = bool(pin_memory_raw)
-    persistent_workers = bool(dl_cfg.get("persistent_workers", False))
-    prefetch_factor = dl_cfg.get("prefetch_factor")
-    if prefetch_factor is not None:
-        prefetch_factor = int(prefetch_factor)
-    multiprocessing_context = dl_cfg.get("multiprocessing_context")
-
     # Build data loaders for training and validation
     train_loader, val_loader = build_window_loaders(
         data=train_data,
@@ -126,11 +112,7 @@ def train_model(
         train_stride=train_stride,
         val_stride=val_stride,
         segments=segments,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-        persistent_workers=persistent_workers,
-        prefetch_factor=prefetch_factor,
-        multiprocessing_context=multiprocessing_context,
+        data_loader_config=config.get("data_loader"),
     )
 
     #--- Build training components ----

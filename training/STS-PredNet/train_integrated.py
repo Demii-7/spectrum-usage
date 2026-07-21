@@ -21,6 +21,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from stsprednet import STSPredNet  # noqa: E402
 from training.common.config import load_config  # noqa: E402
+from training.common.data_loader import data_loader_kwargs  # noqa: E402
 from training.common.integrated import epoch_log_row, prepare_output_dirs, timestamp_utc  # noqa: E402
 from training.common.interpolated_map import (  # noqa: E402
     load_interpolated_map_npz,
@@ -148,10 +149,12 @@ def train_one_model(config: dict[str, Any], full_x: np.ndarray,
     train_loader = DataLoader(
         train_ds, batch_size=batch_size, shuffle=True,
         drop_last=True, collate_fn=collate_stsprednet,
+        **data_loader_kwargs(config.get("data_loader")),
     )
     val_loader = DataLoader(
         val_ds, batch_size=batch_size, shuffle=False,
         collate_fn=collate_stsprednet,
+        **data_loader_kwargs(config.get("data_loader")),
     )
 
     model_config = build_model_config(config, n_bins)
@@ -280,9 +283,11 @@ def train_map_model(
     val_ds = STSPredNetDataset(train_x, val_targets, lc, lp, period_interval)
     train_loader = DataLoader(
         train_ds, batch_size=batch_size, shuffle=True, drop_last=True, collate_fn=collate_stsprednet,
+        **data_loader_kwargs(config.get("data_loader")),
     )
     val_loader = DataLoader(
         val_ds, batch_size=batch_size, shuffle=False, collate_fn=collate_stsprednet,
+        **data_loader_kwargs(config.get("data_loader")),
     )
 
     _, n_freq, grid_h, grid_w = train_x.shape

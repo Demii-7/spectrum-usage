@@ -28,6 +28,7 @@ from model import (  # noqa: E402
 from training.common.config import load_config  # noqa: E402
 from training.common.integrated import epoch_log_row, prepare_output_dirs, timestamp_utc  # noqa: E402
 from training.common.data import chunk_specs, load_chunk  # noqa: E402
+from training.common.data_loader import data_loader_kwargs  # noqa: E402
 from training.common.windowing import make_window_starts  # noqa: E402
 
 MODEL_NAME = "tss_lcd"
@@ -100,7 +101,7 @@ def build_models(config: dict[str, Any], t_in: int, t_out: int,
 
 def build_dataloaders(train_matrix: np.ndarray, t_in: int, t_out: int,
                       batch_size: int, val_fraction: float = 0.1,
-                      segments=()):
+                      segments=(), data_loader_config=None):
     all_starts = make_window_starts(
         len(train_matrix), t_in, t_out, 1, segments
     )
@@ -116,10 +117,12 @@ def build_dataloaders(train_matrix: np.ndarray, t_in: int, t_out: int,
     train_loader = DataLoader(
         TSSLCDWindowDataset(train_matrix, train_starts, t_in, t_out),
         batch_size=batch_size, shuffle=True, drop_last=True,
+        **data_loader_kwargs(data_loader_config),
     )
     val_loader = DataLoader(
         TSSLCDWindowDataset(train_matrix, val_starts, t_in, t_out),
         batch_size=batch_size, shuffle=False,
+        **data_loader_kwargs(data_loader_config),
     )
     return train_loader, val_loader
 
@@ -480,6 +483,7 @@ def main() -> None:
         train_loader, val_loader = build_dataloaders(
             train, t_in, t_out, batch_size,
             segments=data.splits[data.train_split].segments,
+            data_loader_config=config.get("data_loader"),
         )
 
         print(f"  {chunk.chunk_id} training autoencoder...")

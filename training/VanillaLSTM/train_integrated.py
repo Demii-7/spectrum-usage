@@ -23,6 +23,7 @@ from model import VanillaLSTMForecaster  # noqa: E402
 from training.common.config import load_config  # noqa: E402
 from training.common.integrated import epoch_log_row, prepare_output_dirs, timestamp_utc  # noqa: E402
 from training.common.data import chunk_specs, load_chunk  # noqa: E402
+from training.common.data_loader import data_loader_kwargs  # noqa: E402
 from training.common.windowing import make_window_starts  # noqa: E402
 
 
@@ -127,11 +128,13 @@ def train_one_model(config: dict[str, Any], train_matrix: np.ndarray, segments, 
         batch_size=batch_size,
         shuffle=True,
         drop_last=True,
+        **data_loader_kwargs(config.get("data_loader")),
     )
     val_loader = DataLoader(
         VanillaWindowDataset(train_matrix, val_starts, lookback, prediction_horizon),
         batch_size=batch_size,
         shuffle=False,
+        **data_loader_kwargs(config.get("data_loader")),
     )
 
     model_config = build_model_config(config, train_matrix.shape[1])
