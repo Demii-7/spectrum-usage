@@ -180,7 +180,7 @@ def load_4d(
             )
         name, location = find_location(path, locations)
         frames.append(frame)
-        stamps.append(stamp)
+        stamps.append(stamp.floor("min") if stamp is not None else stamp)
         site_names.append(name)
         site_lons.append(float(location["longitude"]))
         site_lats.append(float(location["latitude"]))
