@@ -218,6 +218,11 @@ def build_window_loaders(
     train_stride: int,
     val_stride: int,
     segments: tuple[SequenceSegment, ...] = (),
+    num_workers: int = 0,
+    pin_memory: bool = False,
+    persistent_workers: bool = False,
+    prefetch_factor: int | None = None,
+    multiprocessing_context: str | None = None,
 ) -> tuple[DataLoader, DataLoader]:
 
     """Create training and validation DataLoaders."""
@@ -280,11 +285,23 @@ def build_window_loaders(
     )
     
     # Create loaders for training and validation with torch DataLoader
+    loader_kwargs = {}
+    if num_workers > 0:
+        loader_kwargs["num_workers"] = num_workers
+        loader_kwargs["persistent_workers"] = persistent_workers
+        if prefetch_factor is not None:
+            loader_kwargs["prefetch_factor"] = prefetch_factor
+        if multiprocessing_context is not None:
+            loader_kwargs["multiprocessing_context"] = multiprocessing_context
+    if pin_memory:
+        loader_kwargs["pin_memory"] = True
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
         drop_last=False,
+        **loader_kwargs,
     )
 
     val_loader = DataLoader(
@@ -292,6 +309,7 @@ def build_window_loaders(
         batch_size=batch_size,
         shuffle=False,
         drop_last=False,
+        **loader_kwargs,
     )
 
     return train_loader, val_loader
