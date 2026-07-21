@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 import matplotlib.dates as mdates
@@ -15,9 +14,7 @@ import pandas as pd
 
 EVALUATION_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = EVALUATION_ROOT.parent
-sys.path.insert(0, str(EVALUATION_ROOT))
-
-from spectrogram_colormap import ensure_minimum_db_span  # noqa: E402
+from spectrogram_colormap import ensure_minimum_db_span
 
 
 DEFAULT_ANNOTATION_ROOT = REPOSITORY_ROOT / "data" / "annotations"
