@@ -68,22 +68,53 @@ def frames_from_raw(raw: np.ndarray, config: dict[str, Any], vmin: float, vmax: 
     return frames_pad, frames_orig
 
 
-def build_frame_dataset(frames_pad: np.ndarray, frames_orig: np.ndarray, input_frames: int, output_frames: int, stride: int) -> SpectrumFrameDataset | None:
+def _frame_segments(segments, start: int, end: int, minutes_per_frame: int):
+    if not segments:
+        return ()
+    result = []
+    for segment in segments:
+        clipped_start = max(segment.start, start)
+        clipped_end = min(segment.end, end)
+        frame_start = (clipped_start - start + minutes_per_frame - 1) // minutes_per_frame
+        frame_end = (clipped_end - start) // minutes_per_frame
+        if frame_start < frame_end:
+            result.append(type(segment)(frame_start, frame_end, segment.label))
+    return tuple(result)
+
+
+def build_frame_dataset(
+    frames_pad: np.ndarray,
+    frames_orig: np.ndarray,
+    input_frames: int,
+    output_frames: int,
+    stride: int,
+    segments=(),
+) -> SpectrumFrameDataset | None:
     total = input_frames + output_frames
     if len(frames_pad) < total:
         return None
     indices = list(range(0, len(frames_pad) - total + 1, stride))
+    if segments:
+        indices = [
+            index for index in indices
+            if any(
+                index >= segment.start
+                and index + total <= segment.end
+                for segment in segments
+            )
+        ]
     if not indices:
         return None
     return SpectrumFrameDataset(frames_pad, frames_orig, input_frames, output_frames, indices, ["CC2"] * len(indices))
 
 
-def train_one_model(config: dict[str, Any], train_raw: np.ndarray, checkpoints: Path, out: Path, chunk_id: str):
+def train_one_model(config: dict[str, Any], train_raw: np.ndarray, segments, checkpoints: Path, out: Path, chunk_id: str):
     dcfg = config["deepspred"]
     runner = build_runner_config(config, train_raw.shape[1])
     input_frames = runner["windowing"]["input_frames"]
     output_frames = runner["windowing"]["output_frames"]
     stride = runner["windowing"]["stride"]
+    minutes_per_frame = runner["frames"]["minutes_per_frame"]
     split_idx = max(1, int(len(train_raw) * 0.9))
     train_part = train_raw[:split_idx]
     val_part = train_raw[split_idx:]
@@ -94,8 +125,14 @@ def train_one_model(config: dict[str, Any], train_raw: np.ndarray, checkpoints: 
 
     train_pad, train_orig = frames_from_raw(train_part, config, vmin, vmax)
     val_pad, val_orig = frames_from_raw(val_part, config, vmin, vmax)
-    train_ds = build_frame_dataset(train_pad, train_orig, input_frames, output_frames, stride)
-    val_ds = build_frame_dataset(val_pad, val_orig, input_frames, output_frames, stride)
+    train_segments = _frame_segments(segments, 0, split_idx, minutes_per_frame)
+    val_segments = _frame_segments(segments, split_idx, len(train_raw), minutes_per_frame)
+    train_ds = build_frame_dataset(
+        train_pad, train_orig, input_frames, output_frames, stride, train_segments
+    )
+    val_ds = build_frame_dataset(
+        val_pad, val_orig, input_frames, output_frames, stride, val_segments
+    )
     if train_ds is None:
         raise ValueError("Not enough frames for DeepSPred training.")
 
@@ -199,7 +236,10 @@ def main() -> None:
         print(f"Training DeepSPred for {chunk.chunk_id} ({chunk.start_mhz:g}-{chunk.end_mhz:g} MHz)")
         data = load_chunk(config, chunk)
         train_raw = data.splits[data.train_split].raw_dbm
-        train_one_model(config, train_raw, out / "checkpoints", out, chunk.chunk_id)
+        train_one_model(
+            config, train_raw, data.splits[data.train_split].segments,
+            out / "checkpoints", out, chunk.chunk_id,
+        )
 
 
 if __name__ == "__main__":

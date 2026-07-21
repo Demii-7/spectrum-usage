@@ -28,6 +28,7 @@ from model import (  # noqa: E402
 from training.common.config import load_config  # noqa: E402
 from training.common.integrated import epoch_log_row, prepare_output_dirs, timestamp_utc  # noqa: E402
 from training.common.data import chunk_specs, load_chunk  # noqa: E402
+from training.common.windowing import make_window_starts  # noqa: E402
 
 MODEL_NAME = "tss_lcd"
 
@@ -98,8 +99,11 @@ def build_models(config: dict[str, Any], t_in: int, t_out: int,
 
 
 def build_dataloaders(train_matrix: np.ndarray, t_in: int, t_out: int,
-                      batch_size: int, val_fraction: float = 0.1):
-    all_starts = np.arange(0, len(train_matrix) - t_in - t_out + 1)
+                      batch_size: int, val_fraction: float = 0.1,
+                      segments=()):
+    all_starts = make_window_starts(
+        len(train_matrix), t_in, t_out, 1, segments
+    )
     if len(all_starts) < 10:
         raise ValueError(
             f"Not enough windows ({len(all_starts)}) "
@@ -473,7 +477,10 @@ def main() -> None:
         device = device_for()
 
         enc, dec, tss_cc, diffusion = build_models(config, t_in, t_out, n_bins, device)
-        train_loader, val_loader = build_dataloaders(train, t_in, t_out, batch_size)
+        train_loader, val_loader = build_dataloaders(
+            train, t_in, t_out, batch_size,
+            segments=data.splits[data.train_split].segments,
+        )
 
         print(f"  {chunk.chunk_id} training autoencoder...")
         enc, dec = train_autoencoder(enc, dec, train_loader, val_loader,

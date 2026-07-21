@@ -20,6 +20,7 @@ from momentfm import MOMENTPipeline  # noqa: E402
 from training.common.config import load_config  # noqa: E402
 from training.common.integrated import epoch_log_row, prepare_output_dirs, timestamp_utc  # noqa: E402
 from training.common.data import chunk_specs, load_chunk  # noqa: E402
+from training.common.windowing import make_window_starts  # noqa: E402
 
 MODEL_NAME = "timeran"
 
@@ -76,7 +77,7 @@ def build_model(config: dict[str, Any], device: torch.device, t_in: int, t_out: 
 
 
 def train_one_model(config: dict[str, Any], train_input: np.ndarray,
-                    checkpoints: Path, out: Path, chunk_id: str):
+                    segments, checkpoints: Path, out: Path, chunk_id: str):
     tcfg = config["timeran"]
     lookback = int(config["windowing"]["lookback"])
     max_horizon = max(int(h) for h in config["windowing"]["horizons"])
@@ -91,7 +92,9 @@ def train_one_model(config: dict[str, Any], train_input: np.ndarray,
     t_out = max_horizon
     window_len = t_in + t_out
 
-    all_starts = np.arange(0, len(train_input) - window_len + 1)
+    all_starts = make_window_starts(
+        len(train_input), t_in, t_out, 1, segments
+    )
     if len(all_starts) < 10:
         raise ValueError(
             f"Not enough training windows ({len(all_starts)}) "
@@ -229,7 +232,10 @@ def main() -> None:
         print(f"Training TimeRAN for {chunk.chunk_id} ({chunk.start_mhz:g}-{chunk.end_mhz:g} MHz)")
         data = load_chunk(config, chunk)
         train = data.splits[data.train_split].model_input
-        train_one_model(config, train, checkpoints, out, chunk.chunk_id)
+        train_one_model(
+            config, train, data.splits[data.train_split].segments,
+            checkpoints, out, chunk.chunk_id,
+        )
 
 
 if __name__ == "__main__":

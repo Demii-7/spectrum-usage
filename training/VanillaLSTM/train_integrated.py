@@ -23,6 +23,7 @@ from model import VanillaLSTMForecaster  # noqa: E402
 from training.common.config import load_config  # noqa: E402
 from training.common.integrated import epoch_log_row, prepare_output_dirs, timestamp_utc  # noqa: E402
 from training.common.data import chunk_specs, load_chunk  # noqa: E402
+from training.common.windowing import make_window_starts  # noqa: E402
 
 
 MODEL_NAME = "vanillalstm"
@@ -102,7 +103,7 @@ def autoregressive_rollout(
 
     return torch.stack(preds, dim=1)
     
-def train_one_model(config: dict[str, Any], train_matrix: np.ndarray, checkpoints: Path, out: Path, chunk_id: str) -> VanillaLSTMForecaster:
+def train_one_model(config: dict[str, Any], train_matrix: np.ndarray, segments, checkpoints: Path, out: Path, chunk_id: str) -> VanillaLSTMForecaster:
     vcfg = config["vanillalstm"]
     lookback = int(vcfg.get("input_sequence_length", config["windowing"]["lookback"]))
     prediction_horizon = int(vcfg.get("prediction_horizon", max(config["windowing"]["horizons"])))
@@ -112,7 +113,9 @@ def train_one_model(config: dict[str, Any], train_matrix: np.ndarray, checkpoint
     clip_norm = float(vcfg.get("gradient_clip", 1.0))
     patience = int(vcfg.get("patience", 10))
 
-    starts = np.arange(0, len(train_matrix) - lookback - prediction_horizon + 1, dtype=np.int64)
+    starts = make_window_starts(
+        len(train_matrix), lookback, prediction_horizon, 1, segments
+    )
     if len(starts) < 2:
         raise ValueError(f"Not enough training rows for lookback={lookback} and horizon={prediction_horizon}")
     val_count = max(1, int(len(starts) * val_fraction))
@@ -239,7 +242,10 @@ def main() -> None:
         print(f"Training VanillaLSTM for {chunk.chunk_id} ({chunk.start_mhz:g}-{chunk.end_mhz:g} MHz)")
         data = load_chunk(config, chunk)
         train = data.splits[data.train_split].model_input
-        train_one_model(config, train, checkpoints, out, chunk.chunk_id)
+        train_one_model(
+            config, train, data.splits[data.train_split].segments,
+            checkpoints, out, chunk.chunk_id,
+        )
 
 
 if __name__ == "__main__":

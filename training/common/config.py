@@ -84,6 +84,38 @@ def validate_config(config: dict[str, Any]) -> None:
             if key not in chunk:
                 raise ValueError(f"Chunk is missing {key!r}: {chunk}")
 
+    data = config["data"]
+    if "representation" in data:
+        representation = str(data["representation"]).lower()
+        if representation not in {"1d", "2d", "4d"}:
+            raise ValueError("data.representation must be one of: 1d, 2d, 4d")
+        if not isinstance(data.get("files", []), list):
+            raise ValueError("data.files must be a list")
+        if representation != "4d" and not data["files"]:
+            raise ValueError("data.files must be a non-empty list")
+        if "train_files" in data or "test_files" in data:
+            raise ValueError("Use data.files; train_files and test_files are no longer supported")
+        if representation == "4d":
+            map_config = data.get("map") or {}
+            if not map_config.get("name"):
+                raise ValueError("4d configuration requires data.map.name")
+            if data["files"] and not map_config.get("locations"):
+                raise ValueError("4d map generation requires data.map.locations")
+        mask_config = data.get("mask") or {}
+        if mask_config:
+            if representation == "1d":
+                raise ValueError("data.mask is supported only for 2d and 4d")
+            if data.get("frequency_bins") or data.get("frequency_ranges"):
+                raise ValueError("data.mask cannot be combined with frequency selection")
+            if not mask_config.get("frequency_ranges"):
+                raise ValueError("data.mask.frequency_ranges is required")
+            if "noise_floor" not in mask_config:
+                raise ValueError("data.mask.noise_floor is required")
+
+    max_missing_gap = int(config["preprocessing"].get("max_missing_gap", 0))
+    if max_missing_gap < 0:
+        raise ValueError("preprocessing.max_missing_gap must be non-negative")
+
     prediction_start_row = config["data"].get("prediction_start_row")
     
     if prediction_start_row is not None:
@@ -95,13 +127,10 @@ def validate_config(config: dict[str, Any]) -> None:
                 "positive one-based row number when provided."
             )
     
-        if str(
-            config["data"].get(
-                "loader",
-                "aerpaw",
-            )
-        ).lower() != "powder":
+        representation = str(config["data"].get("representation", "")).lower()
+        loader = str(config["data"].get("loader", "aerpaw")).lower()
+        if representation not in {"1d", "2d", "4d"} and loader != "powder":
             raise ValueError(
                 "Error! data.prediction_start_row is currently "
-                "supported only by the POWDER loader."
+                "supported only by the unified representation loaders or POWDER."
             )

@@ -27,6 +27,7 @@ from training.common.interpolated_map import (  # noqa: E402
     normalize_map_by_frequency,
 )
 from training.common.data import chunk_specs, load_chunk  # noqa: E402
+from training.common.windowing import filter_target_rows  # noqa: E402
 
 MODEL_NAME = "stsprednet"
 
@@ -113,7 +114,7 @@ def build_map_model_config(config: dict[str, Any], n_freq: int, grid_h: int, gri
 
 
 def train_one_model(config: dict[str, Any], full_x: np.ndarray,
-                    checkpoints: Path, out: Path, chunk_id: str) -> STSPredNet:
+                    segments, checkpoints: Path, out: Path, chunk_id: str) -> STSPredNet:
     scfg = config["stsprednet"]
     lc = int(scfg["lc"])
     lp = int(scfg["lp"])
@@ -130,6 +131,7 @@ def train_one_model(config: dict[str, Any], full_x: np.ndarray,
 
     period_min = lp * period_interval
     all_targets = np.arange(period_min, len(full_x))
+    all_targets = filter_target_rows(all_targets, period_min, segments)
     if len(all_targets) < 100:
         raise ValueError(
             f"Not enough valid targets ({len(all_targets)}) "
@@ -446,7 +448,10 @@ def main() -> None:
         print(f"Training STS-PredNet for {chunk.chunk_id} ({chunk.start_mhz:g}-{chunk.end_mhz:g} MHz)")
         data = load_chunk(config, chunk)
         train = data.splits[data.train_split].model_input
-        train_one_model(config, train, checkpoints, out, chunk.chunk_id)
+        train_one_model(
+            config, train, data.splits[data.train_split].segments,
+            checkpoints, out, chunk.chunk_id,
+        )
 
 
 if __name__ == "__main__":

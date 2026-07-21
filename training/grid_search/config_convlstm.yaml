@@ -2,15 +2,15 @@
 # Run: /home/cc/spectrum-usage/.venv/bin/python3 -m training.common.grid_search --config training/common/config_convlstm.yaml
 
 data:
-    loader: powder
+    representation: 4d
     reference_site: humanities
-    train_files: data/powder_20260618T0036Z_humanities_guesthouse_600_800.npz
-    test_files: data/powder_20260628T0436Z_humanities_guesthouse_600_800.npz
+    files: []
+    map:
+        name: powder_600_800
+        output_dir: data/maps
     map_key: map_db
-    prediction_start_row:
-    data_dir:
-    test_rows:
-    max_rows:
+    split:
+        test_fraction: 0.2
     chunks:
     - id: powder_600_800
       start_mhz: 600.0
@@ -30,6 +30,7 @@ training:
 preprocessing:
   normalize: true
   impute: true
+  max_missing_gap: 5
 
 
 #----- ALL IMPLEMENTED MODELS' CONFIGURATION SETTINGS -----

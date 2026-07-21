@@ -13,22 +13,21 @@ This branch keeps a shared chunk-based training and evaluation pipeline under `t
 - Main config: `training/common/config.yaml`
 - Smoke config: `training/common/config.smoke.yaml`
 - Shared keys:
-  - `data`: AERPAW source path, chunk list, optional `max_rows`, optional `test_rows`
+  - `data`: representation (`1d`, `2d`, or `4d`), source `files`, frequency selection, split settings, and chunk list
   - `windowing`: shared evaluation horizons
   - `preprocessing`: shared normalization toggle for the common numeric pipeline
   - model-specific sections such as `convlstm`, `autoformer_csa`, `deepspred`
 
-## Chunk Loading
+## Data Loading
 
-- Shared loader: `training.common.data.load_chunk`
-- Source files: `evaluation/aerpaw/Results<Site>Feb2022_SigMF_power_1mhz_avg_per_minute.csv`
-- Default reference site: `CC2`
-- Default chunks:
-  - `chunk_600_800`
-  - `chunk_2400_2600`
-  - `chunk_3500_3700`
-
-The loader keeps a chronological train/test split. For smoke tests, `data.max_rows` and `data.test_rows` can reduce the split size without changing runner code.
+- Shared routing entry point: `training.common.data.load_chunk`
+- Single shared loader: `training.common.data`; spatial map construction is handled internally by `training.common.map_builder`.
+- `data.files` is the only source-file setting; train/test splits are chronological outputs, not separate inputs.
+- 4D loading can use a named cached map or build it from CSV files under `data/maps`.
+- Loaded splits carry sequence segments so windows cannot cross files, sites, or frequency-bin segments.
+- Set `data.map.permute: true` to randomly reassign collection-point coordinates; use `data.map.permute_seed` for reproducible permutations.
+- For 2D/4D inputs, `data.mask.frequency_ranges` preserves selected ranges and replaces all other channels with `data.mask.noise_floor`.
+- `preprocessing.max_missing_gap` bounds interpolation and forward/back filling.
 
 ## Horizons
 

@@ -1,9 +1,15 @@
 data:
-  data_dir: evaluation/aerpaw
+  representation: 2d
+  files:
+    - evaluation/aerpaw/ResultsCC2Feb2022_SigMF_power_1mhz_avg_per_minute.csv
+  concat: rows
+  split:
+    test_rows: 60
   band_definitions_path: evaluation/results/step2/band_definitions.csv
   reference_site: CC2
+  frequency_ranges:
+    - [600.0, 800.0]
   max_rows: 600
-  test_rows: 60
   chunks:
     - id: chunk_600_800
       start_mhz: 600.0
@@ -15,9 +21,8 @@ windowing:
 
 preprocessing:
   normalize: true
-  imputation:
-    enabled: true
-    window_steps: 2
+  impute: true
+  max_missing_gap: 2
 
 outputs:
   root_dir: training/results

@@ -53,11 +53,19 @@ from scipy.interpolate import interp1d
 
 
 @dataclass(frozen=True)
+class SequenceSegment:
+    start: int
+    end: int
+    label: str
+
+
+@dataclass(frozen=True)
 class SplitArrays:
     raw_dbm: np.ndarray
     model_input: np.ndarray
     row_start: int
     row_end: int
+    segments: tuple[SequenceSegment, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -84,6 +92,7 @@ def frequency_value(column: str) -> float:
 
 def fit_per_frequency_normalization(
     training_data: np.ndarray,
+    allow_zero_variance: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Calculate independent normalization metrics (Mean and Standard Deviation) 
@@ -126,10 +135,12 @@ def fit_per_frequency_normalization(
         )
 
     # Safety Check: If a frequency is completely dead (variance is 0), division will crash
-    if np.any(std == 0.0):
+    if np.any(std == 0.0) and not allow_zero_variance:
         raise ValueError(
             "Error! Cannot normalize a zero-variance frequency."
         )
+    if allow_zero_variance:
+        std = np.where(std == 0.0, 1.0, std)
 
     # Returns the calculated statistics arrays (each will have a length of 200)
     return mean, std

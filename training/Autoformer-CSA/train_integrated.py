@@ -24,6 +24,7 @@ from train import build_model  # noqa: E402
 from training.common.config import load_config  # noqa: E402
 from training.common.integrated import epoch_log_row, prepare_output_dirs, timestamp_utc  # noqa: E402
 from training.common.data import chunk_specs, load_chunk  # noqa: E402
+from training.common.windowing import make_window_starts  # noqa: E402
 
 
 MODEL_NAME = "autoformer_csa"
@@ -70,7 +71,7 @@ def run_forecast(model: nn.Module, seq_x: torch.Tensor, label_len: int, pred_len
     return model(seq_x, x_mark_enc, dec_input, x_mark_dec)
 
 
-def train_one_model(config: dict[str, Any], train_matrix: np.ndarray, checkpoints: Path, out: Path, chunk_id: str):
+def train_one_model(config: dict[str, Any], train_matrix: np.ndarray, segments, checkpoints: Path, out: Path, chunk_id: str):
     acfg = config["autoformer_csa"]
     seq_len = int(acfg.get("seq_len", config["windowing"]["lookback"]))
     label_len = int(acfg.get("label_len", seq_len // 2))
@@ -80,8 +81,10 @@ def train_one_model(config: dict[str, Any], train_matrix: np.ndarray, checkpoint
     patience = int(acfg.get("patience", 6))
     clip = float(acfg.get("gradient_clip", 5.0))
 
-    max_start = len(train_matrix) - seq_len - pred_len
-    starts = np.arange(0, max_start + 1, int(acfg.get("train_stride", 1)), dtype=np.int64)
+    starts = make_window_starts(
+        len(train_matrix), seq_len, pred_len,
+        int(acfg.get("train_stride", 1)), segments,
+    )
     if len(starts) < 2:
         raise ValueError(f"Not enough training rows for seq_len={seq_len} and pred_len={pred_len}")
     val_count = max(1, int(len(starts) * 0.1))
@@ -193,7 +196,10 @@ def main() -> None:
         print(f"Training Autoformer-CSA for {chunk.chunk_id} ({chunk.start_mhz:g}-{chunk.end_mhz:g} MHz)")
         data = load_chunk(config, chunk)
         train = data.splits[data.train_split].model_input
-        train_one_model(config, train, out / "checkpoints", out, chunk.chunk_id)
+        train_one_model(
+            config, train, data.splits[data.train_split].segments,
+            out / "checkpoints", out, chunk.chunk_id,
+        )
 
 
 if __name__ == "__main__":

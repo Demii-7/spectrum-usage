@@ -81,7 +81,7 @@ def denormalize_map(values: np.ndarray, stats: dict[str, Any]) -> np.ndarray:
     return values.astype(np.float32)
 
 
-def train_one_model(config: dict[str, Any], train_raw: np.ndarray, checkpoints: Path, out: Path, chunk_id: str):
+def train_one_model(config: dict[str, Any], train_raw: np.ndarray, segments, checkpoints: Path, out: Path, chunk_id: str):
     dcfg = config["dswinlstm_i"]
     split_idx = max(1, int(len(train_raw) * 0.9))
     train_map = to_pseudo_map(train_raw[:split_idx])
@@ -90,6 +90,7 @@ def train_one_model(config: dict[str, Any], train_raw: np.ndarray, checkpoints: 
         val_map = train_map[-max(2, int(len(train_map) * 0.1)) :]
     train_norm, val_norm, _, stats = normalize_splits(train_map, val_map, val_map, build_runner_config(config, train_raw.shape[1]))
     runner_config = build_runner_config(config, train_raw.shape[1])
+    runner_config["sequence_segments"] = segments
 
     train_ds = SpectrumMapDataset(train_norm, runner_config, split="train")
     val_ds = SpectrumMapDataset(val_norm, runner_config, split="val")
@@ -200,7 +201,10 @@ def main() -> None:
         print(f"Training DSwinLSTM-I for {chunk.chunk_id} ({chunk.start_mhz:g}-{chunk.end_mhz:g} MHz)")
         data = load_chunk(config, chunk)
         train_raw = data.splits[data.train_split].raw_dbm
-        train_one_model(config, train_raw, out / "checkpoints", out, chunk.chunk_id)
+        train_one_model(
+            config, train_raw, data.splits[data.train_split].segments,
+            out / "checkpoints", out, chunk.chunk_id,
+        )
 
 
 if __name__ == "__main__":

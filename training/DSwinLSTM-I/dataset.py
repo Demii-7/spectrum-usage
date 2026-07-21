@@ -231,6 +231,7 @@ class SpectrumMapDataset(Dataset):
         self.missing_rate = config["preprocessing"]["missing_rate"]
         self.missing_strategy = config["preprocessing"].get("missing_strategy", "random")
         self.mask_targets = config["preprocessing"].get("mask_targets", False)
+        self.sequence_segments = config.get("sequence_segments", ())
 
         stride_key = f"{split}_stride"
         stride = config["windowing"].get(stride_key)
@@ -245,6 +246,15 @@ class SpectrumMapDataset(Dataset):
         T_total = data.shape[0]
         total_len = self.T_in + self.T_out
         starts = list(range(0, T_total - total_len + 1, self.stride))
+        if self.sequence_segments:
+            starts = [
+                start for start in starts
+                if any(
+                    start >= segment.start
+                    and start + total_len <= segment.end
+                    for segment in self.sequence_segments
+                )
+            ]
         self.window_starts = starts
         return np.stack([data[s:s + total_len] for s in starts]) if starts else np.empty((0, total_len, *data.shape[1:]), dtype=np.float32)
 

@@ -22,7 +22,7 @@ if str(SCRIPT_DIR) not in sys.path:
 from model import ConvLSTMPredictor  # noqa: E402
 from training.common.config import load_config  # noqa: E402
 from training.common.integrated import epoch_log_row, prepare_output_dirs, timestamp_utc  # noqa: E402
-from training.common.windowing import selected_horizon_index  # noqa: E402
+from training.common.windowing import make_window_starts, selected_horizon_index  # noqa: E402
 from training.common.interpolated_map import (  # noqa: E402
     load_interpolated_map_npz,
     normalize_map_by_frequency,
@@ -281,7 +281,7 @@ def run_map_mode(config: dict[str, Any], out: Path, checkpoints: Path) -> None:
     print(f"Interpolated-map model saved to {checkpoints / 'interpolated_map_convlstm.pt'}")
 
 
-def train_one_model(config: dict[str, Any], train_matrix: np.ndarray, checkpoints: Path, out: Path, chunk_id: str) -> ConvLSTMPredictor:
+def train_one_model(config: dict[str, Any], train_matrix: np.ndarray, segments, checkpoints: Path, out: Path, chunk_id: str) -> ConvLSTMPredictor:
     ccfg = config["convlstm"]
     lookback = int(ccfg.get("input_sequence_length", config["windowing"]["lookback"]))
     prediction_horizon = int(ccfg.get("prediction_horizon", max(config["windowing"]["horizons"])))
@@ -295,7 +295,10 @@ def train_one_model(config: dict[str, Any], train_matrix: np.ndarray, checkpoint
         raise ValueError(f"lookback must be > 0, got {lookback}")
 
     frames = model_matrix_to_convlstm_frames(train_matrix)
-    origins = np.arange(lookback - 1, len(frames) - prediction_horizon, dtype=np.int64)
+    starts = make_window_starts(
+        len(frames), lookback, prediction_horizon, 1, segments
+    )
+    origins = starts + lookback - 1
     if len(origins) < 2:
         raise ValueError(f"Not enough training rows for lookback={lookback} and horizon={prediction_horizon}")
     val_count = max(1, int(len(origins) * val_fraction)) if val_fraction > 0 else 0
@@ -453,7 +456,10 @@ def main() -> None:
         print(f"Training ConvLSTM for {chunk.chunk_id} ({chunk.start_mhz:g}-{chunk.end_mhz:g} MHz)")
         data = load_chunk(config, chunk)
         train = data.splits[data.train_split].model_input
-        train_one_model(config, train, checkpoints, out, chunk.chunk_id)
+        train_one_model(
+            config, train, data.splits[data.train_split].segments,
+            checkpoints, out, chunk.chunk_id,
+        )
 
 
 if __name__ == "__main__":

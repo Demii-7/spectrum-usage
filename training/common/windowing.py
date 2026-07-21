@@ -24,6 +24,7 @@ Primary responsibilities include:
 - materializing evaluation lookback windows in batches;
 - converting loader arrays into model-ready layouts; and
 - selecting raw target rows and converting them into model/output layout.
+- honoring sequence segments so windows do not cross files, sites, or frequency bins.
 
 Layout conversions:
 
@@ -45,6 +46,8 @@ from __future__ import annotations
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
+
+from training.common.preprocessing import SequenceSegment
 
 def target_rows_for(
     split_length: int,
@@ -84,7 +87,14 @@ def selected_horizon_index(horizon: int) -> int:
 class WindowDataset(Dataset):
     """Create input and target windows from time-first data."""
 
-    def __init__(self, data: np.ndarray, starts: np.ndarray, lookback: int, rollout_horizon: int,):
+    def __init__(
+        self,
+        data: np.ndarray,
+        starts: np.ndarray,
+        lookback: int,
+        rollout_horizon: int,
+        segments: tuple[SequenceSegment, ...] = (),
+    ):
         # If data is a 4D map (T, Lat, Long, Freq), swap axes to (T, Freq, Lat, Long)
         # Complete dataset with time as dimension 0.
         self.data = torch.from_numpy(
@@ -92,7 +102,19 @@ class WindowDataset(Dataset):
         ).float()
         
         # Starting position of each valid input window.
-        self.starts = np.asarray(starts, dtype=np.int64)
+        starts = np.asarray(starts, dtype=np.int64)
+        if segments:
+            starts = starts[
+                [
+                    any(
+                        start >= segment.start
+                        and start + lookback + rollout_horizon <= segment.end
+                        for segment in segments
+                    )
+                    for start in starts
+                ]
+            ]
+        self.starts = starts
 
         # Number of past timesteps given to the model.
         self.lookback = lookback
@@ -122,7 +144,13 @@ class WindowDataset(Dataset):
         return x, y
 
 
-def make_window_starts( n_timesteps: int, lookback: int, rollout_horizon: int, stride: int,) -> np.ndarray:
+def make_window_starts(
+    n_timesteps: int,
+    lookback: int,
+    rollout_horizon: int,
+    stride: int,
+    segments: tuple[SequenceSegment, ...] = (),
+) -> np.ndarray:
     """Create every valid starting position for a window."""
     
     if stride <= 0:
@@ -136,6 +164,20 @@ def make_window_starts( n_timesteps: int, lookback: int, rollout_horizon: int, s
     if rollout_horizon <= 0:
         raise ValueError("Error! Rollout_horizon must be greater than 0")
 
+    if segments:
+        starts = []
+        for segment in segments:
+            if segment.end - segment.start < lookback + rollout_horizon:
+                continue
+            segment_starts = make_window_starts(
+                segment.end - segment.start,
+                lookback,
+                rollout_horizon,
+                stride,
+            )
+            starts.extend(segment.start + segment_starts)
+        return np.asarray(starts, dtype=np.int64)
+
     number_of_windows = (n_timesteps - lookback - rollout_horizon + 1 )
 
     if number_of_windows <= 0:
@@ -147,7 +189,36 @@ def make_window_starts( n_timesteps: int, lookback: int, rollout_horizon: int, s
 
     return np.arange(0, number_of_windows, stride, dtype=np.int64)
 
-def build_window_loaders( data: np.ndarray, lookback: int, rollout_horizon: int, batch_size: int, val_fraction: float, train_stride: int, val_stride: int,) -> tuple[DataLoader, DataLoader]:
+
+def filter_target_rows(
+    target_rows: np.ndarray,
+    history: int,
+    segments: tuple[SequenceSegment, ...],
+) -> np.ndarray:
+    """Keep targets whose required history stays within one segment."""
+    if not segments:
+        return target_rows
+    return target_rows[
+        [
+            any(
+                target - history >= segment.start
+                and target < segment.end
+                for segment in segments
+            )
+            for target in target_rows
+        ]
+    ]
+
+def build_window_loaders(
+    data: np.ndarray,
+    lookback: int,
+    rollout_horizon: int,
+    batch_size: int,
+    val_fraction: float,
+    train_stride: int,
+    val_stride: int,
+    segments: tuple[SequenceSegment, ...] = (),
+) -> tuple[DataLoader, DataLoader]:
 
     """Create training and validation DataLoaders."""
 
@@ -162,20 +233,33 @@ def build_window_loaders( data: np.ndarray, lookback: int, rollout_horizon: int,
     # Split data into train and Validation sets
     train_data = data[:split_index]
     val_data = data[split_index:]
+
+    train_segments = tuple(
+        SequenceSegment(segment.start, min(segment.end, split_index), segment.label)
+        for segment in segments
+        if segment.start < split_index and segment.start < min(segment.end, split_index)
+    )
+    val_segments = tuple(
+        SequenceSegment(max(segment.start, split_index) - split_index, segment.end - split_index, segment.label)
+        for segment in segments
+        if segment.end > split_index and max(segment.start, split_index) < segment.end
+    )
     
     # Establish valid start positions for train set
     train_starts = make_window_starts(
         n_timesteps=len(train_data),
         lookback=lookback,
         rollout_horizon=rollout_horizon,
-        stride = train_stride
+        stride=train_stride,
+        segments=train_segments,
     )
     # Establish valid start positions for validation set
     val_starts = make_window_starts(
         n_timesteps=len(val_data),
         lookback=lookback,
         rollout_horizon=rollout_horizon,
-        stride = val_stride
+        stride=val_stride,
+        segments=val_segments,
     )
     
     # Create window datasets for training and validation
@@ -184,6 +268,7 @@ def build_window_loaders( data: np.ndarray, lookback: int, rollout_horizon: int,
         starts=train_starts,
         lookback=lookback,
         rollout_horizon=rollout_horizon,
+        segments=train_segments,
     )
 
     val_dataset = WindowDataset(
@@ -191,6 +276,7 @@ def build_window_loaders( data: np.ndarray, lookback: int, rollout_horizon: int,
         starts=val_starts,
         lookback=lookback,
         rollout_horizon=rollout_horizon,
+        segments=val_segments,
     )
     
     # Create loaders for training and validation with torch DataLoader

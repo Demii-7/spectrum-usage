@@ -58,7 +58,13 @@ from training.common.windowing import (
     build_window_loaders,
 )
 
-def train_model( model_name: str, model: nn.Module, train_data: np.ndarray, config: dict[str, Any],):
+def train_model(
+    model_name: str,
+    model: nn.Module,
+    train_data: np.ndarray,
+    config: dict[str, Any],
+    segments=(),
+):
     """ Integrated Training, Validation, and Logging """
     
     # Load Shared settings
@@ -105,6 +111,7 @@ def train_model( model_name: str, model: nn.Module, train_data: np.ndarray, conf
         val_fraction=val_fraction,
         train_stride=train_stride,
         val_stride=val_stride,
+        segments=segments,
     )
 
     #--- Build training components ----
@@ -573,6 +580,7 @@ def main() -> None:
             model=model,
             train_data=train,
             config=config,
+            segments=data.splits[data.train_split].segments,
         )
         
         # Directly stream the pre-compiled log_frame to file  to avoid wasting CPU cycles reconstructing the table
