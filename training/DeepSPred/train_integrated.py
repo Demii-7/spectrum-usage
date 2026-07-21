@@ -23,6 +23,7 @@ from dataset import SpectrumFrameDataset, _colormap, _make_frames, _normalize, _
 from model import SwinSTB3D  # noqa: E402
 from utils import invert_colormap  # noqa: E402
 from training.common.config import load_config  # noqa: E402
+from training.common.data_loader import data_loader_kwargs  # noqa: E402
 from training.common.integrated import epoch_log_row, prepare_output_dirs, timestamp_utc  # noqa: E402
 from training.common.data import chunk_specs, load_chunk  # noqa: E402
 
@@ -136,8 +137,9 @@ def train_one_model(config: dict[str, Any], train_raw: np.ndarray, segments, che
     if train_ds is None:
         raise ValueError("Not enough frames for DeepSPred training.")
 
-    train_loader = DataLoader(train_ds, batch_size=int(dcfg.get("batch_size", 2)), shuffle=True, drop_last=True)
-    val_loader = DataLoader(val_ds, batch_size=int(dcfg.get("batch_size", 2)), shuffle=False) if val_ds is not None else None
+    loader_kwargs = data_loader_kwargs(config.get("data_loader"))
+    train_loader = DataLoader(train_ds, batch_size=int(dcfg.get("batch_size", 2)), shuffle=True, drop_last=True, **loader_kwargs)
+    val_loader = DataLoader(val_ds, batch_size=int(dcfg.get("batch_size", 2)), shuffle=False, **loader_kwargs) if val_ds is not None else None
     model = SwinSTB3D(runner).to(device_for(config))
     optimizer = torch.optim.AdamW(model.parameters(), lr=float(dcfg.get("learning_rate", 0.001)), weight_decay=float(dcfg.get("weight_decay", 0.05)))
     criterion = nn.MSELoss()

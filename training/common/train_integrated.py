@@ -112,6 +112,7 @@ def train_model(
         train_stride=train_stride,
         val_stride=val_stride,
         segments=segments,
+        data_loader_config=config.get("data_loader"),
     )
 
     #--- Build training components ----

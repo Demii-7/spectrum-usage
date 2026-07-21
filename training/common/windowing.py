@@ -47,6 +47,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
 
+from training.common.data_loader import data_loader_kwargs
 from training.common.preprocessing import SequenceSegment
 
 def target_rows_for(
@@ -218,6 +219,7 @@ def build_window_loaders(
     train_stride: int,
     val_stride: int,
     segments: tuple[SequenceSegment, ...] = (),
+    data_loader_config: dict | None = None,
 ) -> tuple[DataLoader, DataLoader]:
 
     """Create training and validation DataLoaders."""
@@ -285,6 +287,7 @@ def build_window_loaders(
         batch_size=batch_size,
         shuffle=True,
         drop_last=False,
+        **data_loader_kwargs(data_loader_config),
     )
 
     val_loader = DataLoader(
@@ -292,6 +295,7 @@ def build_window_loaders(
         batch_size=batch_size,
         shuffle=False,
         drop_last=False,
+        **data_loader_kwargs(data_loader_config),
     )
 
     return train_loader, val_loader

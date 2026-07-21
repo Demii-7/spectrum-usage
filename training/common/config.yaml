@@ -31,6 +31,13 @@ data:
       start_mhz: 600.0
       end_mhz: 800.0
 
+data_loader:
+  num_workers: 0
+  persistent_workers: false
+  prefetch_factor:
+  pin_memory: auto
+  multiprocessing_context:
+
 windowing:
   lookback: 60
   horizons: [1, 5, 15, 60]

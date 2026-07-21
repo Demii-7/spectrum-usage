@@ -22,6 +22,7 @@ if str(SCRIPT_DIR) not in sys.path:
 from dataset import SequenceDataset  # noqa: E402
 from train import build_model  # noqa: E402
 from training.common.config import load_config  # noqa: E402
+from training.common.data_loader import data_loader_kwargs  # noqa: E402
 from training.common.integrated import epoch_log_row, prepare_output_dirs, timestamp_utc  # noqa: E402
 from training.common.data import chunk_specs, load_chunk  # noqa: E402
 from training.common.windowing import make_window_starts  # noqa: E402
@@ -91,8 +92,9 @@ def train_one_model(config: dict[str, Any], train_matrix: np.ndarray, segments, 
     train_starts = starts[:-val_count]
     val_starts = starts[-val_count:]
 
-    train_loader = DataLoader(make_dataset(train_matrix, seq_len, label_len, pred_len, train_starts), batch_size=batch_size, shuffle=True, drop_last=True)
-    val_loader = DataLoader(make_dataset(train_matrix, seq_len, label_len, pred_len, val_starts), batch_size=batch_size, shuffle=False)
+    loader_kwargs = data_loader_kwargs(config.get("data_loader"))
+    train_loader = DataLoader(make_dataset(train_matrix, seq_len, label_len, pred_len, train_starts), batch_size=batch_size, shuffle=True, drop_last=True, **loader_kwargs)
+    val_loader = DataLoader(make_dataset(train_matrix, seq_len, label_len, pred_len, val_starts), batch_size=batch_size, shuffle=False, **loader_kwargs)
 
     runner_config = build_runner_config(config, train_matrix.shape[1])
     model, model_cfg = build_model(runner_config, device_for(config))
