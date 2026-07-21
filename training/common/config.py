@@ -46,6 +46,18 @@ def resolve_path(value: str | Path) -> Path:
     return ROOT / path
 
 
+def unique_run_dir(path: Path) -> Path:
+    """Create and return the first available path with a numeric suffix."""
+    suffix = 0
+    while True:
+        candidate = path if suffix == 0 else path.with_name(f"{path.name}_{suffix}")
+        try:
+            candidate.mkdir(parents=True)
+            return candidate
+        except FileExistsError:
+            suffix += 1
+
+
 def load_config(path: str | Path | None = None) -> dict[str, Any]:
     """ Loads configuration file"""
     
@@ -60,7 +72,7 @@ def validate_config(config: dict[str, Any]) -> None:
     """" Checks to ensure all expected config settings are present"""
     
     # List of main config sections
-    required = ("data", "windowing", "preprocessing", "outputs")
+    required = ("data", "windowing", "preprocessing", "training")
     
     # Checks for ecag section in config
     missing = [key for key in required if key not in config]
@@ -68,6 +80,8 @@ def validate_config(config: dict[str, Any]) -> None:
     #Throw error for missing section
     if missing:
         raise ValueError(f"Missing config section(s): {', '.join(missing)}")
+
+    model_names(config)
 
     lookback = int(config["windowing"]["lookback"])
     horizons = [int(h) for h in config["windowing"]["horizons"]]
@@ -83,6 +97,8 @@ def validate_config(config: dict[str, Any]) -> None:
         for key in ("id", "start_mhz", "end_mhz"):
             if key not in chunk:
                 raise ValueError(f"Chunk is missing {key!r}: {chunk}")
+        if float(chunk["start_mhz"]) > float(chunk["end_mhz"]):
+            raise ValueError(f"Chunk start_mhz exceeds end_mhz: {chunk}")
 
     data = config["data"]
     if "representation" in data:
@@ -145,3 +161,22 @@ def validate_config(config: dict[str, Any]) -> None:
                 "Error! data.prediction_start_row is currently "
                 "supported only by the unified representation loaders or POWDER."
             )
+
+
+def model_names(config: dict[str, Any]) -> list[str]:
+    """Return the ordered model list from a single- or multi-model config."""
+    training = config.get("training") or {}
+    raw_names = training.get("models")
+    if raw_names is None:
+        raw_name = training.get("model_name")
+        raw_names = [] if raw_name is None else [raw_name]
+    if not isinstance(raw_names, list) or not raw_names:
+        raise ValueError("training requires model_name or a non-empty models list")
+
+    names = [str(name).lower() for name in raw_names]
+    if len(names) != len(set(names)):
+        raise ValueError("training.models must not contain duplicates")
+    missing = [name for name in names if name not in config]
+    if missing:
+        raise ValueError(f"Missing model configuration section(s): {', '.join(missing)}")
+    return names

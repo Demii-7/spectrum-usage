@@ -42,9 +42,6 @@ windowing:
   lookback: 60
   horizons: [1, 5, 15, 60]
 
-outputs:
-  root_dir: results/powder/600_800
-  
 training:
     device: auto
     # Models: linear_autoregressive, convlstm, stsprednet, timeran, tss_lcd, vanillalstm, autoformer_csa, dswinlstm_i, deepspred

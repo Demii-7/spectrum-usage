@@ -25,9 +25,6 @@ preprocessing:
   impute: true
   max_missing_gap: 2
 
-outputs:
-  root_dir: training/results
-
 training:
   device: auto
   model_name: vanillalstm

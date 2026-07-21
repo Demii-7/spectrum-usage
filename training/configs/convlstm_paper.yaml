@@ -45,9 +45,6 @@ preprocessing:
   impute: true
   max_missing_gap: 5
 
-outputs:
-  root_dir: results/powder/600_800
-
 training:
   device: auto
   model_name: convlstm

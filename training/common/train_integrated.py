@@ -35,7 +35,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 #--- Import custom utilities--- 
 # Loads global yaml configuration file
-from training.common.config import load_config
+from training.common.config import load_config, model_names, unique_run_dir
 
 # Helper for runtime functions: GPU/CPU Compute Check, metric logging, and clean formatting of UTC dates.
 from training.common.runtime import device_for, epoch_log_row, timestamp_utc
@@ -526,42 +526,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=None) # override run directory
     return parser.parse_args()
 
-def main() -> None:
-    # Load config into program
-    args = parse_args()
-    config = load_config(args.config)
-    
-    # Load current model being executed and enforce lowercase to be consistent with config
-    model_name = str(config["training"]["model_name"]).lower()
-
-    # Ensures models are already integrated into the shared pipeline
+def train_one_model(config: dict[str, Any], model_name: str, run_dir: Path) -> None:
     if model_name not in SUPPORTED_MODELS:
         raise ValueError(
             f"Error! Integrated training supports "
             f"{sorted(SUPPORTED_MODELS)}, got {model_name!r}."
         )
-    # Load training specs from config
     train_cfg = config[model_name]["train"]
-    
-    # Set validation set percentage
-    val_fraction = float(
-        train_cfg.get("val_fraction", 0.1)
-    )
-    
-    # Construct run directory
-    if args.output_dir is not None:
-        run_dir = args.output_dir
-    else:
-        exp_name = args.name or f"{model_name}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
-        run_dir = Path("runs") / exp_name
-    
-    run_dir.mkdir(parents=True, exist_ok=True)
-
-    # Copy the config used for this run into the run directory
-    config_source = args.config or Path(__file__).with_name("config.yaml")
-    shutil.copy2(config_source, run_dir / "config.yaml")
-
-    # Create output directories for current model
+    val_fraction = float(train_cfg.get("val_fraction", 0.1))
     out, checkpoints = prepare_output_dirs(run_dir)
         
     # Iterate through each chunk segments
@@ -667,6 +639,31 @@ def main() -> None:
             },
             checkpoints/ f"{chunk.chunk_id}_{model_name}.pt",
         )
+
+
+def main() -> None:
+    args = parse_args()
+    config = load_config(args.config)
+    models = model_names(config)
+    unsupported = [model for model in models if model not in SUPPORTED_MODELS]
+    if unsupported:
+        raise ValueError(
+            f"Integrated training does not support: {', '.join(unsupported)}"
+        )
+
+    default_name = (
+        models[0] if len(models) == 1 else "comparison"
+    ) + f"_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+    requested_dir = args.output_dir or Path("runs") / (args.name or default_name)
+    run_dir = unique_run_dir(requested_dir)
+
+    config_source = args.config or Path(__file__).with_name("config.yaml")
+    shutil.copy2(config_source, run_dir / "config.yaml")
+    for model_name in models:
+        model_run_dir = run_dir if len(models) == 1 else run_dir / model_name
+        train_one_model(config, model_name, model_run_dir)
+
+    print(f"Training run written to {run_dir}")
 
 
 if __name__ == "__main__":

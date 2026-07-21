@@ -60,7 +60,6 @@ Export layouts:
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
 from pathlib import Path
 import sys
 import time
@@ -82,7 +81,7 @@ if str(ROOT) not in sys.path:
 # ---------------------------------------------------------------------------
 # Project imports
 # ---------------------------------------------------------------------------
-from training.common.config import load_config, resolve_path
+from training.common.config import load_config, model_names, resolve_path
 from training.common.data import ChunkSpec, chunk_specs, load_chunk
 from training.common.forecasting import forecast
 from training.common.forecast_export import export_map_forecasts
@@ -803,8 +802,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Experiment name. Must match the name used during training. "
-            "Defaults to <model>_<timestamp> if neither --name nor "
-            "--output-dir is given."
+            "Required unless --output-dir is given."
         ),
     )
 
@@ -814,7 +812,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Optional checkpoint path override. Use "
-            "'{chunk_id}' in the path for per-chunk substitution."
+            "'{model_name}' and '{chunk_id}' in the path for substitution."
         ),
     )
 
@@ -838,32 +836,18 @@ def parse_args() -> argparse.Namespace:
 
 
 
-def main() -> None:
-    args = parse_args()
-
-    config = load_config(
-        args.config
-    )
-
-    model_name = str(
-        config["training"]["model_name"]
-    ).lower()
-
+def evaluate_one_model(
+    config: dict[str, Any],
+    model_name: str,
+    output_directory: Path,
+    checkpoint_override: Path | None,
+    skip_plots: bool,
+) -> None:
     if model_name not in SUPPORTED_MODELS:
         raise ValueError(
             f"Error! Integrated evaluation currently supports "
             f"{sorted(SUPPORTED_MODELS)}, got {model_name!r}."
         )
-
-    # Construct run directory
-    if args.output_dir is not None:
-        run_dir = args.output_dir
-    else:
-        exp_name = args.name or f"{model_name}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
-        run_dir = Path("runs") / exp_name
-
-    output_directory = run_dir
-    output_directory.mkdir(parents=True, exist_ok=True)
 
     standard_checkpoint_directory = output_directory / "checkpoints"
 
@@ -879,7 +863,20 @@ def main() -> None:
     band_rows: list[dict[str, Any]] = []
 
     evaluated_chunks = 0
-    skipped_chunks = 0
+
+    missing_checkpoints = []
+    for chunk in chunk_specs(config):
+        checkpoint_path = checkpoint_path_for_chunk(
+            checkpoint_override=checkpoint_override,
+            default_checkpoint_directory=standard_checkpoint_directory,
+            chunk_id=chunk.chunk_id,
+            model_name=model_name,
+        )
+        if not checkpoint_path.exists():
+            missing_checkpoints.append(checkpoint_path)
+    if missing_checkpoints:
+        paths = "\n".join(f"  {path}" for path in missing_checkpoints)
+        raise FileNotFoundError(f"Missing checkpoint(s):\n{paths}")
 
     for chunk in chunk_specs(config):
         print(
@@ -890,22 +887,13 @@ def main() -> None:
         )
 
         checkpoint_path = checkpoint_path_for_chunk(
-            checkpoint_override=args.checkpoint,
+            checkpoint_override=checkpoint_override,
             default_checkpoint_directory=(
                 standard_checkpoint_directory
             ),
             chunk_id=chunk.chunk_id,
             model_name=model_name,
         )
-
-        if not checkpoint_path.exists():
-            print(
-                f"  Checkpoint not found: "
-                f"{checkpoint_path}; skipping."
-            )
-
-            skipped_chunks += 1
-            continue
 
         (
             chunk_aggregate_rows,
@@ -963,8 +951,7 @@ def main() -> None:
                 f"{evaluated_chunks}"
             ),
             (
-                "Chunks skipped: "
-                f"{skipped_chunks}"
+                "Chunks skipped: 0"
             ),
         ],
     )
@@ -975,7 +962,7 @@ def main() -> None:
         f"{output_directory / 'aggregate_metrics.csv'}"
     )
 
-    if not args.skip_plots:
+    if not skip_plots:
         from training.common.plot_forecasts import (
             generate_all_plots,
         )
@@ -986,6 +973,49 @@ def main() -> None:
             bins=(30, 150),
             max_steps=500,
             horizons=config["windowing"].get("horizons", [1]),
+        )
+
+
+def main() -> None:
+    args = parse_args()
+    config = load_config(args.config)
+    models = model_names(config)
+
+    if args.output_dir is None and args.name is None:
+        raise ValueError("Evaluation requires --name or --output-dir for an existing run")
+    run_dir = args.output_dir or Path("runs") / args.name
+    if not run_dir.is_dir():
+        raise FileNotFoundError(f"Run directory does not exist: {run_dir}")
+
+    model_run_dirs = {
+        model_name: run_dir if len(models) == 1 else run_dir / model_name
+        for model_name in models
+    }
+    missing_paths = []
+    for model_name, model_run_dir in model_run_dirs.items():
+        if not model_run_dir.is_dir():
+            missing_paths.append(model_run_dir)
+            continue
+        for chunk in chunk_specs(config):
+            checkpoint_path = checkpoint_path_for_chunk(
+                checkpoint_override=args.checkpoint,
+                default_checkpoint_directory=model_run_dir / "checkpoints",
+                chunk_id=chunk.chunk_id,
+                model_name=model_name,
+            )
+            if not checkpoint_path.exists():
+                missing_paths.append(checkpoint_path)
+    if missing_paths:
+        paths = "\n".join(f"  {path}" for path in missing_paths)
+        raise FileNotFoundError(f"Run is incomplete; missing path(s):\n{paths}")
+
+    for model_name in models:
+        evaluate_one_model(
+            config,
+            model_name,
+            model_run_dirs[model_name],
+            args.checkpoint,
+            args.skip_plots,
         )
 
 

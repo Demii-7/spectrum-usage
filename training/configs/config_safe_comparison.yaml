@@ -25,23 +25,19 @@ windowing:
   lookback: 60
   horizons: [1, 5, 15, 60]
 
-outputs:
-  root_dir: results/powder/600_800
-
 training:
   device: auto
-  model_name: vanillalstm
+  models:
+    - vanillalstm
+    - lookbackmean2d
+    - linearar2d
 
 preprocessing:
   normalize: true
   impute: true
   max_missing_gap: 10
 
-linear_autoregressive:
-  ridge_alpha: 1.0
-  seed: 42
-
-# VanillaLSTM "safe" config — conservative settings
+# VanillaLSTM "safe" config - conservative settings
 vanillalstm:
   evaluation: {}
   model:
@@ -67,29 +63,6 @@ vanillalstm:
     early_stopping_patience: 10
     seed: 42
 
-# LookbackMean config (read directly by train.py as config["model"] / config["train"])
-model:
-  input_sequence_length: 60
-  prediction_horizon: 1
-
-train:
-  val_fraction: 0.15
-  train_stride: 1
-  val_stride: 1
-  test_stride: 1
-  batch_size: 32
-  epochs: 20
-  learning_rate: 0.0
-  weight_decay: 0.0
-  optimizer: adam
-  gradient_clip_norm: 1.0
-  early_stopping: false
-  early_stopping_patience: 10
-  seed: 42
-
-evaluation: {}
-
-# LookbackMean section for build_model (model_factory.py)
 lookbackmean2d:
   evaluation: {}
   model:
@@ -110,7 +83,6 @@ lookbackmean2d:
     early_stopping_patience: 10
     seed: 42
 
-# LinearAR section for build_model
 linearar2d:
   evaluation: {}
   model:

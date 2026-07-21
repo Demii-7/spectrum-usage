@@ -98,6 +98,22 @@ def _slice_source(source: LoadedSource, start: int, end: int) -> LoadedSource:
     )
 
 
+def _select_chunk(source: LoadedSource, chunk: ChunkSpec) -> LoadedSource:
+    mask = (source.frequencies >= chunk.start_mhz) & (source.frequencies <= chunk.end_mhz)
+    if not np.any(mask):
+        raise ValueError(
+            f"Chunk {chunk.chunk_id!r} contains no frequencies in "
+            f"{chunk.start_mhz:g}-{chunk.end_mhz:g} MHz"
+        )
+    indices = np.flatnonzero(mask)
+    return replace(
+        source,
+        data=np.take(source.data, indices, axis=-1),
+        frequencies=source.frequencies[indices],
+        feature_labels=[source.feature_labels[index] for index in indices],
+    )
+
+
 def _load_partition(
     files: list[Path],
     partition: str,
@@ -191,6 +207,8 @@ def load_chunk(
         frequency_bins, frequency_ranges, concat, impute, max_missing_gap,
         mask_ranges, noise_floor,
     )
+    train_source = _select_chunk(train_source, chunk)
+    test_source = _select_chunk(test_source, chunk)
     if not np.array_equal(train_source.frequencies, test_source.frequencies):
         raise ValueError("Train and test partitions have different frequency columns")
 

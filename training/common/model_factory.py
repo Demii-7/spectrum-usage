@@ -216,7 +216,7 @@ def checkpoint_path_for_chunk(
             str(checkpoint_override).replace(
                 "{chunk_id}",
                 chunk_id,
-            )
+            ).replace("{model_name}", model_name)
         )
 
     return (
