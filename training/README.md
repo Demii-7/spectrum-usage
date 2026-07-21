@@ -119,8 +119,18 @@ cd ~/work/spectrum-usage
 Install additional dependencies:
 
 ```bash
-pip install pyyaml momentfm==0.1.4 gdown
+pip install pyyaml gdown
+pip install setuptools --upgrade
+pip install numpy
+pip install momentfm==0.1.4 --no-deps
+pip install transformers
 ```
+
+**Note:** `momentfm==0.1.4` pins exact versions of `numpy`, `huggingface-hub`, and
+`transformers` that lack Python 3.13 wheels.  The sequence above installs the
+package without its pinned dependencies (`--no-deps`) and separately installs
+`transformers` (latest) and `numpy` (system), which avoids Rust build requirements
+for `tokenizers` and `numpy` on Python 3.13.
 
 Install `screen` for long-running training jobs (required inside the container):
 
@@ -443,8 +453,9 @@ Without these checkpoints, the pipeline falls back to raw MOMENT weights (no
 TimeRAN pretraining).
 
 ```bash
-# Install gdown for Google Drive downloads
-pip install momentfm==0.1.4 gdown
+# Install momentfm and gdown (see Docker/Environment section for Python 3.13 notes)
+pip install gdown
+pip install momentfm==0.1.4 --no-deps
 
 # Create checkpoint directories
 mkdir -p training/TimeRAN/checkpoints/{small,base,large}
