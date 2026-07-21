@@ -1,0 +1,27 @@
+# VanillaLSTM "safe" configuration
+# Conservative settings: larger hidden size, moderate dropout, direct multi-step prediction
+# Contrasts with the grid-search "optimal" (hidden_size=16, dropout=0.0, prediction_horizon=1)
+vanillalstm:
+  evaluation: {}
+  model:
+    input_sequence_length: 60
+    prediction_horizon: 60
+    hidden_size: 128
+    num_layers: 1
+    dropout: 0.1
+    output_strategy: final_hidden
+    bidirectional: false
+  train:
+    val_fraction: 0.15
+    train_stride: 1
+    val_stride: 1
+    test_stride: 1
+    batch_size: 32
+    epochs: 20
+    learning_rate: 0.001
+    weight_decay: 0.0
+    optimizer: adam
+    gradient_clip_norm: 1.0
+    early_stopping: true
+    early_stopping_patience: 10
+    seed: 42
