@@ -2,6 +2,7 @@
 """Synchronize power CSV files from S3-compatible object storage into data/."""
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import os
 import sys
 from pathlib import Path
@@ -50,11 +51,26 @@ def parse_args():
     parser.add_argument("--output-dir", type=Path, default=Path(__file__).resolve().parent)
     parser.add_argument("--env-file", type=Path, default=Path(__file__).resolve().parent / ".env")
     parser.add_argument("--dry-run", action="store_true", help="List downloads without downloading")
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=int(os.environ.get("S3_SYNC_WORKERS", "4")),
+        help="Maximum files downloaded concurrently (default: 4).",
+    )
+    parser.add_argument(
+        "--parts",
+        type=int,
+        default=int(os.environ.get("S3_SYNC_PARTS", "4")),
+        help="Concurrent range downloads per file (default: 4).",
+    )
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
+    if args.workers <= 0 or args.parts <= 0:
+        print("ERROR: --workers and --parts must be positive", file=sys.stderr)
+        return 2
     try:
         load_env_file(args.env_file)
         import fsspec
@@ -68,13 +84,19 @@ def main():
     endpoint_url = os.environ.get("S3_ENDPOINT_URL", "")
     try:
         fs = fsspec.filesystem("s3", **fs_kwargs(endpoint_url))
-        entries = fs.find(remote_root, detail=True)
+        listing_roots = [
+            f"{remote_root}/{site.strip('/')}"
+            for site in args.sites
+        ] if args.sites else [remote_root]
+        entries = {}
+        for listing_root in listing_roots:
+            entries.update(fs.find(listing_root, detail=True))
     except Exception as exc:
         print(f"ERROR: object storage listing failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
 
     csv_entries = entries.items() if isinstance(entries, dict) else ((entry, {}) for entry in entries)
-    downloaded = 0
+    downloads = []
     for remote_path, info in sorted(csv_entries):
         if not remote_path.endswith("power_1mhz_avg_per_minute.csv"):
             continue
@@ -91,14 +113,42 @@ def main():
         current = local_path.stat() if local_path.exists() else None
         if current and remote_size == current.st_size and (remote_mtime is None or remote_mtime <= current.st_mtime):
             continue
-        print(f"{'would download' if args.dry_run else 'downloading'} s3://{remote_path} -> {local_path}")
-        if not args.dry_run:
-            local_path.parent.mkdir(parents=True, exist_ok=True)
-            fs.get(remote_path, str(local_path))
-            if remote_mtime is not None:
-                os.utime(local_path, (remote_mtime, remote_mtime))
-        downloaded += 1
-    print(f"{downloaded} file(s) {'would be ' if args.dry_run else ''}updated")
+        downloads.append((remote_path, local_path, remote_mtime))
+
+    if args.dry_run:
+        for remote_path, local_path, _ in downloads:
+            print(f"would download s3://{remote_path} -> {local_path}")
+        print(f"{len(downloads)} file(s) would be updated")
+        return 0
+
+    def download_one(item):
+        remote_path, local_path, remote_mtime = item
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = local_path.with_name(local_path.name + ".part")
+        print(f"downloading s3://{remote_path} -> {local_path}")
+        fs.get(
+            remote_path,
+            str(temporary_path),
+            max_concurrency=args.parts,
+            chunksize=64 * 1024 * 1024,
+        )
+        if remote_mtime is not None:
+            os.utime(temporary_path, (remote_mtime, remote_mtime))
+        os.replace(temporary_path, local_path)
+
+    failures = 0
+    with ThreadPoolExecutor(max_workers=args.workers) as executor:
+        futures = [executor.submit(download_one, item) for item in downloads]
+        for future in as_completed(futures):
+            try:
+                future.result()
+            except Exception as exc:
+                failures += 1
+                print(f"ERROR: download failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+    if failures:
+        print(f"{failures} download(s) failed", file=sys.stderr)
+        return 1
+    print(f"{len(downloads)} file(s) updated")
     return 0
 
 
