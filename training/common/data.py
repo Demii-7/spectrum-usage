@@ -10,7 +10,7 @@ import numpy as np
 
 from training.common.config import resolve_path
 from training.common.data_sources import LoadedSource, load_csv_sources
-from training.common.map_builder import load_4d
+from training.common.map_builder import load_4d, load_map_layout, prepare_4d_partitions
 from training.common.preprocessing import (
     LoadedSpectrumData,
     SequenceSegment,
@@ -126,6 +126,10 @@ def _load_partition(
     max_missing_gap: int,
     mask_ranges: list[list[float]] | None,
     noise_floor: float | None,
+    expected_layout: dict[str, object] | None = None,
+    selected_sites: list[str] | None = None,
+    excluded_sites: list[str] | None = None,
+    outage_threshold: int | None = None,
 ) -> LoadedSource:
     if representation in {"1d", "2d"}:
         return load_csv_sources(
@@ -165,6 +169,10 @@ def _load_partition(
         ),
         mask_ranges=mask_ranges,
         noise_floor=noise_floor,
+        expected_layout=expected_layout,
+        selected_sites=selected_sites,
+        excluded_sites=excluded_sites,
+        outage_threshold=outage_threshold,
     )
 
 
@@ -197,15 +205,35 @@ def load_chunk(
     noise_floor = float(mask_cfg["noise_floor"]) if mask_cfg else None
     concat = str(data_cfg.get("concat", "rows"))
 
+    selected_sites = excluded_sites = None
+    outage_threshold = None
+    if representation == "4d":
+        map_cfg = data_cfg.get("map") or {}
+        locations = map_cfg.get("locations")
+        if not locations:
+            raise ValueError("4d map generation requires data.map.locations")
+        outage_threshold = max(int(value) for value in config["windowing"]["horizons"])
+        partitions, selected_sites, excluded_sites = prepare_4d_partitions(
+            partitions, resolve_path(locations), str(map_cfg.get("collection_key", "endpoints")),
+            frequency_bins, frequency_ranges, outage_threshold,
+        )
+
     train_source = _load_partition(
         partitions["train"], "train", representation, data_cfg,
         frequency_bins, frequency_ranges, concat, impute, max_missing_gap,
-        mask_ranges, noise_floor,
+        mask_ranges, noise_floor, None, selected_sites, excluded_sites, outage_threshold,
     )
+    training_layout = None
+    if representation == "4d":
+        map_cfg = data_cfg.get("map") or {}
+        training_layout = load_map_layout(
+            resolve_path(map_cfg.get("output_dir", "data/maps"))
+            / f"{map_cfg['name']}_train.npz"
+        )
     test_source = _load_partition(
         partitions["test"], "test", representation, data_cfg,
         frequency_bins, frequency_ranges, concat, impute, max_missing_gap,
-        mask_ranges, noise_floor,
+        mask_ranges, noise_floor, training_layout, selected_sites, excluded_sites, outage_threshold,
     )
     train_source = _select_chunk(train_source, chunk)
     test_source = _select_chunk(test_source, chunk)

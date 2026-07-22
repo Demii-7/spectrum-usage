@@ -10,6 +10,7 @@ import numpy as np
 
 from training.common.data_sources import (
     LoadedSource,
+    clean_name,
     find_location,
     impute_array,
     impute_frame,
@@ -140,6 +141,112 @@ def _load_cached(path: Path, map_key: str, frequency_bins, frequency_ranges) -> 
     )
 
 
+def _request_metadata(
+    files, grid, permute, permute_seed, frequency_bins, frequency_ranges,
+    selected_sites, excluded_sites, outage_threshold,
+):
+    return {
+        "files": [
+            {
+                "path": str(path.resolve()),
+                "size": path.stat().st_size,
+                "mtime_ns": path.stat().st_mtime_ns,
+            }
+            for path in files
+        ],
+        "grid": grid,
+        "permute": permute,
+        "permute_seed": permute_seed,
+        "frequency_bins": frequency_bins,
+        "frequency_ranges": frequency_ranges,
+        "selected_sites": selected_sites,
+        "excluded_sites": excluded_sites,
+        "outage_threshold": outage_threshold,
+    }
+
+
+def _has_long_nonfinite_run(frame, threshold):
+    invalid = ~np.isfinite(frame.to_numpy(dtype=np.float64))
+    for values in invalid.T:
+        padded = np.concatenate(([False], values, [False])).astype(np.int8)
+        edges = np.flatnonzero(np.diff(padded))
+        if np.any(edges[1::2] - edges[::2] > threshold):
+            return True
+    return False
+
+
+def prepare_4d_partitions(
+    partitions: dict[str, list[Path]], locations_path: Path, collection_key: str,
+    frequency_bins, frequency_ranges, outage_threshold: int,
+) -> tuple[dict[str, list[Path]], list[str], list[str]]:
+    """Validate and deterministically filter paired 4D site partitions."""
+    locations = load_locations(locations_path, collection_key)
+    indexed = {}
+    outages = set()
+    for partition, files in partitions.items():
+        sites = {}
+        for path in files:
+            name, location = find_location(path, locations)
+            identity = clean_name(name)
+            if identity in sites:
+                raise ValueError(f"Duplicate canonical site {identity!r} in {partition} partition")
+            frame, _ = _read_csv(path)
+            frame = select_frequencies(frame, frequency_bins, frequency_ranges)
+            sites[identity] = (path, float(location["longitude"]), float(location["latitude"]))
+            if _has_long_nonfinite_run(frame, outage_threshold):
+                outages.add(identity)
+        indexed[partition] = sites
+
+    train_sites = set(indexed["train"])
+    test_sites = set(indexed["test"])
+    if train_sites != test_sites:
+        missing = sorted(train_sites - test_sites)
+        extra = sorted(test_sites - train_sites)
+        raise ValueError(f"Train/test canonical site sets differ; missing from test: {missing}; extra in test: {extra}")
+    for identity in sorted(train_sites):
+        if indexed["train"][identity][1:] != indexed["test"][identity][1:]:
+            raise ValueError(f"Train/test coordinates differ for canonical site {identity!r}")
+
+    selected = sorted(train_sites - outages)
+    excluded = sorted(outages)
+    if not selected:
+        raise ValueError("All 4D sites were excluded by the non-finite outage threshold")
+    ordered = {
+        partition: [indexed[partition][identity][0] for identity in selected]
+        for partition in ("train", "test")
+    }
+    return ordered, selected, excluded
+
+
+def load_map_layout(path: Path) -> dict[str, object]:
+    """Load the source-site layout and grid coordinate system from a map cache."""
+    with np.load(path, allow_pickle=True) as archive:
+        required = {"site_names", "site_lons", "site_lats", "position_permutation", "grid_x", "grid_y"}
+        missing = required - set(archive.files)
+        if missing:
+            raise ValueError(f"Map cache {path} is missing layout fields: {', '.join(sorted(missing))}")
+        permutation = np.asarray(archive["position_permutation"], dtype=np.intp)
+        inverse = np.argsort(permutation)
+        return {
+            "site_names": [str(value) for value in archive["site_names"]],
+            "site_lons": np.asarray(archive["site_lons"], dtype=np.float64)[inverse],
+            "site_lats": np.asarray(archive["site_lats"], dtype=np.float64)[inverse],
+            "grid_x": np.asarray(archive["grid_x"], dtype=np.float64),
+            "grid_y": np.asarray(archive["grid_y"], dtype=np.float64),
+        }
+
+
+def _layout_error(actual_names, actual_lons, actual_lats, expected):
+    expected_names = list(expected["site_names"])
+    if actual_names != expected_names:
+        return f"site names/order differ: expected {expected_names}, got {actual_names}"
+    if not np.array_equal(np.asarray(actual_lons), np.asarray(expected["site_lons"])) or not np.array_equal(
+        np.asarray(actual_lats), np.asarray(expected["site_lats"])
+    ):
+        return "site coordinates differ from the training layout"
+    return None
+
+
 def load_4d(
     files: list[Path],
     map_name: str,
@@ -157,34 +264,87 @@ def load_4d(
     permute_seed: int | None = 42,
     mask_ranges: list[list[float]] | None = None,
     noise_floor: float | None = None,
+    expected_layout: dict[str, object] | None = None,
+    selected_sites: list[str] | None = None,
+    excluded_sites: list[str] | None = None,
+    outage_threshold: int | None = None,
 ) -> LoadedSource:
     if not map_name:
         raise ValueError("data.map.name is required for 4d loading")
     cache_path = map_dir / f"{map_name}.npz"
+    locations = None
+    if files and locations_path is not None:
+        locations = load_locations(locations_path, collection_key)
+        files = sorted(files, key=lambda path: clean_name(find_location(path, locations)[0]))
+    request_metadata = _request_metadata(
+        files, grid, permute, permute_seed, frequency_bins, frequency_ranges,
+        selected_sites, excluded_sites, outage_threshold,
+    )
+    requested_layout = None
+    if files and locations_path is not None:
+        requested_names = []
+        requested_lons = []
+        requested_lats = []
+        for path in files:
+            name, location = find_location(path, locations)
+            requested_names.append(name)
+            requested_lons.append(float(location["longitude"]))
+            requested_lats.append(float(location["latitude"]))
+        requested_layout = (requested_names, requested_lons, requested_lats)
+    cache_error = None
     if cache_path.exists() and not force_rebuild:
-        source = _load_cached(cache_path, map_key, frequency_bins, frequency_ranges)
-        if impute:
-            source = replace(source, data=impute_array(source.data, max_missing_gap))
-        if mask_ranges is not None:
-            if noise_floor is None:
-                raise ValueError("noise_floor is required when frequency masking is enabled")
-            source = replace(
-                source,
-                data=mask_outside_frequency_ranges(
-                    source.data, source.frequencies, mask_ranges, noise_floor
-                ),
-            )
-        if not np.isfinite(source.data).all():
-            raise ValueError("Missing or non-finite values remain after 4d imputation")
-        return source
+        try:
+            with np.load(cache_path, allow_pickle=True) as archive:
+                if "metadata" not in archive:
+                    raise ValueError("cache has no request metadata")
+                cached_metadata = json.loads(str(archive["metadata"].item()))
+            if files and cached_metadata != request_metadata:
+                raise ValueError("cached request metadata does not match the requested sources or map settings")
+            if requested_layout is not None:
+                cached_layout = load_map_layout(cache_path)
+                error = _layout_error(*requested_layout, cached_layout)
+                if error:
+                    raise ValueError(error)
+            if expected_layout is not None:
+                cached_layout = load_map_layout(cache_path)
+                error = _layout_error(
+                    cached_layout["site_names"], cached_layout["site_lons"],
+                    cached_layout["site_lats"], expected_layout,
+                )
+                if error:
+                    raise ValueError(error)
+                if not np.array_equal(cached_layout["grid_x"], expected_layout["grid_x"]) or not np.array_equal(
+                    cached_layout["grid_y"], expected_layout["grid_y"]
+                ):
+                    raise ValueError("grid coordinates differ from the training map")
+            source = _load_cached(cache_path, map_key, frequency_bins, frequency_ranges)
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            cache_error = str(exc)
+            source = None
+        if source is not None:
+            if impute:
+                source = replace(source, data=impute_array(source.data, max_missing_gap))
+            if mask_ranges is not None:
+                if noise_floor is None:
+                    raise ValueError("noise_floor is required when frequency masking is enabled")
+                source = replace(
+                    source,
+                    data=mask_outside_frequency_ranges(
+                        source.data, source.frequencies, mask_ranges, noise_floor
+                    ),
+                )
+            if not np.isfinite(source.data).all():
+                raise ValueError("Missing or non-finite values remain after 4d imputation")
+            return source
     if not files:
         raise ValueError(
-            "4d map is unavailable and data.files contains no CSV sources"
+            f"4d map is unavailable or incompatible ({cache_error}) and data.files contains no CSV sources"
         )
     if locations_path is None:
         raise ValueError("4d map generation requires data.map.locations")
 
-    locations = load_locations(locations_path, collection_key)
+    if locations is None:
+        locations = load_locations(locations_path, collection_key)
     frames = []
     stamps = []
     site_names = []
@@ -195,6 +355,8 @@ def load_4d(
         frame = select_frequencies(frame, frequency_bins, frequency_ranges)
         if impute:
             frame = impute_frame(frame, max_missing_gap)
+        if not np.isfinite(frame.to_numpy(dtype=np.float64)).all():
+            raise ValueError(f"Missing or non-finite values remain after 4d imputation: {path}")
         if mask_ranges is not None:
             if noise_floor is None:
                 raise ValueError("noise_floor is required when frequency masking is enabled")
@@ -211,6 +373,11 @@ def load_4d(
         site_names.append(name)
         site_lons.append(float(location["longitude"]))
         site_lats.append(float(location["latitude"]))
+
+    if expected_layout is not None:
+        error = _layout_error(site_names, site_lons, site_lats, expected_layout)
+        if error:
+            raise ValueError(f"Test map must use the training site layout: {error}")
 
     columns = list(frames[0].columns)
     if any(list(frame.columns) != columns for frame in frames[1:]):
@@ -245,6 +412,11 @@ def load_4d(
         site_lats_array,
         grid,
     )
+    if expected_layout is not None and (
+        not np.array_equal(grid_x, expected_layout["grid_x"])
+        or not np.array_equal(grid_y, expected_layout["grid_y"])
+    ):
+        raise ValueError("Test map grid coordinates differ from the training map")
     valid_timesteps = np.isfinite(mapped).any(axis=(1, 2, 3))
     mapped = mapped[valid_timesteps]
     if timestamps is not None:
@@ -259,12 +431,7 @@ def load_4d(
         "position_permutation": position_permutation,
         "grid_x": grid_x,
         "grid_y": grid_y,
-        "metadata": np.asarray(json.dumps({
-            "files": [str(path) for path in files],
-            "grid": grid,
-            "permute": permute,
-            "permute_seed": permute_seed,
-        })),
+        "metadata": np.asarray(json.dumps(request_metadata)),
     }
     if timestamps is not None:
         payload["timestamps"] = np.asarray(timestamps.astype(str))

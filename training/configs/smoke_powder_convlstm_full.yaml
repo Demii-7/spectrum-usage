@@ -58,11 +58,11 @@ convlstm:
     decoder_kernel_size: [1, 1]
     decoder_lstm_hidden: 128
     dropout: 0.3
-    use_batch_norm: true
+    use_batch_norm: false
     fc_hidden_channels: 0
     fc_kernel_size: [1, 3]
     fc_intermediate_activation: relu
-    cell_activation: relu
+    cell_activation: tanh
     use_channel_projection: false
     channel_projection_dim: 16
   train:
@@ -76,6 +76,7 @@ convlstm:
     weight_decay: 0.004
     optimizer: adam
     gradient_clip_norm: 5.0
+    validation_prediction_magnitude_threshold: 20.0
     early_stopping: false
     early_stopping_patience: 20
     seed: 42

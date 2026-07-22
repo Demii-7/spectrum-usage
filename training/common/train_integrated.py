@@ -48,6 +48,12 @@ from training.common.data import chunk_specs, load_chunk
 
 #Helper for Model forecasting
 from training.common.forecasting import forecast
+from training.common.validation_diagnostics import (
+    max_abs_prediction_by_horizon,
+    prediction_diagnostic_log,
+    prediction_guard_status,
+    prediction_guard_threshold,
+)
 
 # Helper utilities for model construction
 from training.common.model_factory import (
@@ -72,6 +78,11 @@ def train_model(
     # Load Shared settings
     model_cfg = config[model_name]["model"]
     train_cfg = config[model_name]["train"]
+    convlstm_guard_threshold = (
+        prediction_guard_threshold(train_cfg)
+        if model_name == "convlstm"
+        else None
+    )
 
 
     seed = int(train_cfg.get("seed", 42))
@@ -289,6 +300,7 @@ def train_model(
         horizon_step_map = {h: h - 1 for h in horizons_cfg}
         val_horizon_sums = {h: 0.0 for h in horizons_cfg}
         val_horizon_counts = {h: 0 for h in horizons_cfg}
+        max_abs_by_horizon = [0.0] * rollout_horizon
 
         _t_val_start = time.perf_counter()
         _t_tf_acc = 0.0
@@ -315,6 +327,14 @@ def train_model(
                     )
 
                 loss_ar = criterion(pred_ar, y)
+                if convlstm_guard_threshold is not None:
+                    batch_maxima = max_abs_prediction_by_horizon(pred_ar)
+                    max_abs_by_horizon = [
+                        max(current, batch)
+                        if np.isfinite(current) and np.isfinite(batch)
+                        else float("nan")
+                        for current, batch in zip(max_abs_by_horizon, batch_maxima)
+                    ]
                 batch_samples = x.size(0)
                 val_loss_sum += loss_ar.item() * batch_samples
                 val_sample_count += batch_samples
@@ -396,13 +416,30 @@ def train_model(
             log_row["val_teacher_loss"] = val_teacher_loss
         for h in horizons_cfg:
             log_row[f"val_loss_t{h}"] = val_horizon_losses[h]
+        selection_eligible = True
+        guard_status = "not_applicable"
+        if convlstm_guard_threshold is not None:
+            selection_eligible, guard_status = prediction_guard_status(
+                max_abs_by_horizon,
+                convlstm_guard_threshold,
+            )
+            log_row.update(prediction_diagnostic_log(max_abs_by_horizon))
+            log_row["validation_selection_eligible"] = selection_eligible
+            log_row["validation_guard_status"] = guard_status
         log_rows.append(log_row)
 
+        diagnostic_str = (
+            f"max_abs_pred={max(max_abs_by_horizon):.6g} "
+            f"guard={guard_status} "
+            if convlstm_guard_threshold is not None
+            else ""
+        )
         print(
             f"{model_name} "
             f"epoch {epoch:03d}/{epochs} "
             f"train_loss={train_loss:.6f} "
             f"val_loss={val_loss:.6f} "
+            f"{diagnostic_str}"
             f"time={epoch_duration:.1f}s"
         )
 
@@ -418,7 +455,7 @@ def train_model(
         )
 
         # Best model and early stopping
-        if val_loss < best_val_loss:
+        if selection_eligible and np.isfinite(val_loss) and val_loss < best_val_loss:
             best_val_loss = val_loss
             best_epoch = epoch
 
@@ -430,7 +467,7 @@ def train_model(
 
             epochs_without_improvement = 0
 
-        else:
+        elif selection_eligible:
             epochs_without_improvement += 1
 
             if early_stopping and epochs_without_improvement >= patience:
@@ -448,6 +485,13 @@ def train_model(
     )
     
     if best_state is None:
+        if convlstm_guard_threshold is not None:
+            raise RuntimeError(
+                "Error! ConvLSTM training finished without an eligible validation "
+                "epoch; all predictions were non-finite or exceeded "
+                f"validation_prediction_magnitude_threshold="
+                f"{convlstm_guard_threshold:g}"
+            )
         raise RuntimeError(
             "Error! Training finished without saving a model state"
         )

@@ -100,14 +100,14 @@ convlstm:
         decoder_hidden_channels: 32         # Hidden channel count for the decoder ConvLSTMCell
         decoder_kernel_size: [1, 1]         # Convolution kernel for the decoder cell [height, width]
         dropout: 0.3                        # Set dropout percentage after decoder cell
-        use_batch_norm: true
+        use_batch_norm: false
         decoder_lstm_hidden: 128            # Hidden size of the transfer LSTM bottleneck
         
         fc_hidden_channels: 0               # Add fc layers to make model think deeper before ouput
         fc_kernel_size: [1, 3]              # Kernel dim for fc layer (only active for fc_hidden_channels > 0)
         fc_intermediate_activation: "relu"  # Set actavtion fc layer (only active for fc_hidden_channels > 0)
         
-        cell_activation: "relu"             # Activation for cell candidate and cell-state output
+        cell_activation: "tanh"             # Activation for cell candidate and cell-state output
         
         use_channel_projection: false       # Channel ptojection true compresses channels into lower dimm super feature
         channel_projection_dim: 16          # Dimension after channel projection (only active for use_channel_projection true)
@@ -126,6 +126,7 @@ convlstm:
         early_stopping: false                # Stop training when validation loss stops improving
         early_stopping_patience: 8          # Number of epochs without improvement before stopping
         gradient_clip_norm: 5.0             # Maximum global gradient norm for clipping
+        validation_prediction_magnitude_threshold: 20.0 # Normalized units; epochs above this cannot be selected
         seed: 42                            # Random seed for reproducibility
 
 timeran:
