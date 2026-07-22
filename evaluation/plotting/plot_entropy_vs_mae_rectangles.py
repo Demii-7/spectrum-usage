@@ -23,7 +23,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lookback-mae-column", default="lookback_mae_db")
     parser.add_argument("--model-mae-column", default="model_mae_db")
     parser.add_argument("--rectangle-width", type=float, default=None)
-    parser.add_argument("--label-bands", action="store_true")
     return parser.parse_args()
 
 
@@ -78,15 +77,6 @@ def plot(data: pd.DataFrame, args: argparse.Namespace) -> None:
         )
         if height == 0:
             ax.hlines(bottom, x, x + width, color=cmap(norm(0)), linewidth=3)
-        if args.label_bands:
-            ax.annotate(
-                str(row[args.band_column]),
-                (float(row[args.entropy_column]), max(lookback_mae, model_mae)),
-                xytext=(0, 3),
-                textcoords="offset points",
-                ha="center",
-                fontsize=7,
-            )
 
     mae = data[[args.lookback_mae_column, args.model_mae_column]].to_numpy(dtype=float)
     padding = max(float(np.ptp(mae)) * 0.08, 0.05)
