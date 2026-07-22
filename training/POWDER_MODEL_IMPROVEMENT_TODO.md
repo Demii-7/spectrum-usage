@@ -14,6 +14,55 @@ Report MAE and RMSE at horizons 1, 5, 15, and 60 minutes. For spatial models,
 report both full-grid metrics and metrics at physical site locations. Treat the
 physical-site metrics as the primary result.
 
+## Experiment Table
+
+Run the rows in order. Each row is one run. Use seed 42 for every trainable
+model; the seed is fixed for reproducibility and is not an experiment. "Selected"
+means the setting with the lowest mean physical-site validation MAE from the
+referenced completed rows. If a row fails or the current code does not support
+its config, record the error, mark that row `failed` or `skipped`, and continue
+with every row that does not depend on it.
+
+| Order | Run name | Model | Training data and validation | Config path | Config changes from the preceding applicable run |
+|---:|---|---|---|---|---|
+| 1 | `powder_dev_2d_baselines_jun18_val15` | LookbackMean2D + LinearAR2D | June 18, three site segments; trailing 15% validation | `training/configs/powder_dev_2d_baselines.yaml` | Enable both 2D baselines; `val_fraction: 0.15`; horizons 1, 5, 15, 60 |
+| 2 | `powder_vanilla_v0_jun18_val15` | VanillaLSTM | Same as row 1 | `training/configs/powder_vanilla_v0_jun18_val15.yaml` | Current one-layer architecture; recurrent dropout `0.0`; seed 42 |
+| 3 | `powder_vanilla_v1_one_step_jun18_val15` | VanillaLSTM | Same as row 1 | `training/configs/powder_vanilla_v1_one_step.yaml` | From row 2, set `prediction_horizon: 1`; evaluate recursive rollout through 60 minutes |
+| 4 | `powder_vanilla_v1_direct60_jun18_val15` | VanillaLSTM | Same as row 1 | `training/configs/powder_vanilla_v1_direct60.yaml` | From row 2, set `prediction_horizon: 60` |
+| 5 | `powder_vanilla_v2_h64_l1_jun18_val15` | VanillaLSTM | Same as row 1 | `training/configs/powder_vanilla_v2_h64_l1.yaml` | Use selected V1 prediction strategy; hidden 64; one layer; dropout 0.0 |
+| 6 | `powder_vanilla_v2_h128_l1_jun18_val15` | VanillaLSTM | Same as row 1 | `training/configs/powder_vanilla_v2_h128_l1.yaml` | From row 5, hidden 128 |
+| 7 | `powder_vanilla_v2_h128_l2_jun18_val15` | VanillaLSTM | Same as row 1 | `training/configs/powder_vanilla_v2_h128_l2.yaml` | Hidden 128; two layers; dropout 0.1 |
+| 8 | `powder_vanilla_v2_h256_l2_jun18_val15` | VanillaLSTM | Same as row 1 | `training/configs/powder_vanilla_v2_h256_l2.yaml` | Hidden 256; two layers; dropout 0.2 |
+| 9 | `powder_vanilla_v3_lb015_jun18_val15` | VanillaLSTM | Same as row 1 | `training/configs/powder_vanilla_v3_lb015.yaml` | Use selected V2 model; lookback 15 |
+| 10 | `powder_vanilla_v3_lb030_jun18_val15` | VanillaLSTM | Same as row 1 | `training/configs/powder_vanilla_v3_lb030.yaml` | From row 9, lookback 30 |
+| 11 | `powder_vanilla_v3_lb060_jun18_val15` | VanillaLSTM | Same as row 1 | `training/configs/powder_vanilla_v3_lb060.yaml` | From row 9, lookback 60 |
+| 12 | `powder_vanilla_v3_lb120_jun18_val15` | VanillaLSTM | Same as row 1 | `training/configs/powder_vanilla_v3_lb120.yaml` | From row 9, lookback 120 |
+| 13 | `powder_vanilla_v3_lb240_jun18_val15` | VanillaLSTM | Same as row 1 | `training/configs/powder_vanilla_v3_lb240.yaml` | From row 9, lookback 240 |
+| 14 | `powder_vanilla_v4_lr1e3_wd0_jun18_val15` | VanillaLSTM | Same as row 1 | `training/configs/powder_vanilla_v4_lr1e3_wd0.yaml` | Use selected V3 config; Adam; LR 0.001; weight decay 0; gradient clip 1.0 |
+| 15 | `powder_vanilla_v4_lr3e4_wd0_jun18_val15` | VanillaLSTM | Same as row 1 | `training/configs/powder_vanilla_v4_lr3e4_wd0.yaml` | Adam; LR 0.0003; weight decay 0; gradient clip 1.0 |
+| 16 | `powder_vanilla_v4_lr3e4_wd1e4_jun18_val15` | VanillaLSTM | Same as row 1 | `training/configs/powder_vanilla_v4_lr3e4_wd1e4.yaml` | Adam; LR 0.0003; weight decay 0.0001; gradient clip 1.0 |
+| 17 | `powder_vanilla_v4_lr1e4_wd1e4_jun18_val15` | VanillaLSTM | Same as row 1 | `training/configs/powder_vanilla_v4_lr1e4_wd1e4.yaml` | Adam; LR 0.0001; weight decay 0.0001; gradient clip 1.0 |
+| 18 | `powder_dev_4d_baselines_jun28_7site_val15` | LookbackMean4D + LinearAR4D | Combined June 28 seven-node map; trailing 15% validation | `training/configs/powder_dev_4d_baselines.yaml` | Enable both 4D baselines; fixed map geometry; `val_fraction: 0.15`; site and grid metrics |
+| 19 | `powder_convlstm_c1_current_jun28_7site_val15` | ConvLSTM | Same as row 18 | `training/configs/powder_convlstm_c1_current.yaml` | Current ConvLSTM architecture and map representation; seed 42 |
+| 20 | `powder_convlstm_c2_one_step_jun28_7site_val15` | ConvLSTM | Same as row 18 | `training/configs/powder_convlstm_c2_one_step.yaml` | From row 19, set `prediction_horizon: 1`; evaluate recursive rollout through 60 minutes |
+| 21 | `powder_convlstm_c2_direct60_jun28_7site_val15` | ConvLSTM | Same as row 18 | `training/configs/powder_convlstm_c2_direct60.yaml` | From row 19, set `prediction_horizon: 60` |
+| 22 | `powder_convlstm_c3_hc8_l1_jun28_7site_val15` | ConvLSTM | Same as row 18 | `training/configs/powder_convlstm_c3_hc8_l1.yaml` | Use selected C2 strategy; hidden `[8]`; decoder 8; dropout 0; kernel 3x3 |
+| 23 | `powder_convlstm_c3_hc16_l1_jun28_7site_val15` | ConvLSTM | Same as row 18 | `training/configs/powder_convlstm_c3_hc16_l1.yaml` | Hidden `[16]`; decoder 16; dropout 0; kernel 3x3 |
+| 24 | `powder_convlstm_c3_hc16_32_l2_jun28_7site_val15` | ConvLSTM | Same as row 18 | `training/configs/powder_convlstm_c3_hc16_32_l2.yaml` | Hidden `[16, 32]`; decoder 16; dropout 0.1; kernel 3x3 |
+| 25 | `powder_convlstm_c3_hc32_64_l2_jun28_7site_val15` | ConvLSTM | Same as row 18 | `training/configs/powder_convlstm_c3_hc32_64_l2.yaml` | Hidden `[32, 64]`; decoder 32; dropout 0.3; retain current kernel unless config supports 3x3 |
+| 26 | `powder_convlstm_c4_grid04x04_jun28_7site_val15` | ConvLSTM | Same seven June 28 nodes; trailing 15% validation | `training/configs/powder_convlstm_c4_grid04x04.yaml` | Use selected C3 model; rebuild map at 4x4; unique map cache name |
+| 27 | `powder_convlstm_c4_grid06x06_jun28_7site_val15` | ConvLSTM | Same as row 26 | `training/configs/powder_convlstm_c4_grid06x06.yaml` | Rebuild map at 6x6; unique map cache name |
+| 28 | `powder_convlstm_c4_grid10x10_jun28_7site_val15` | ConvLSTM | Same as row 26 | `training/configs/powder_convlstm_c4_grid10x10.yaml` | Rebuild map at 10x10; unique map cache name |
+| 29 | `powder_convlstm_c5_adam_2e4_4e3_jun28_7site_val15` | ConvLSTM | Same as row 18 | `training/configs/powder_convlstm_c5_adam_2e4_4e3.yaml` | Use selected C4 config; Adam; LR 0.0002; weight decay 0.004 |
+| 30 | `powder_convlstm_c5_adam_1e4_1e4_jun28_7site_val15` | ConvLSTM | Same as row 18 | `training/configs/powder_convlstm_c5_adam_1e4_1e4.yaml` | Adam; LR 0.0001; weight decay 0.0001 |
+| 31 | `powder_convlstm_c5_adamw_3e4_1e4_jun28_7site_val15` | ConvLSTM | Same as row 18 | `training/configs/powder_convlstm_c5_adamw_3e4_1e4.yaml` | AdamW; LR 0.0003; weight decay 0.0001 |
+| 32 | `powder_vanilla_final_all_prejul` | VanillaLSTM | June 18 + June 28 + June 30 as separate segments; trailing 15% validation | `training/configs/powder_vanilla_final_all_prejul.yaml` | Selected V4 settings; replace training paths with all pre-July 2D files |
+| 33 | `powder_convlstm_final_jun28_7site` | ConvLSTM | Combined June 28 seven-node map; trailing 15% validation | `training/configs/powder_convlstm_final_jun28_7site.yaml` | Selected C5 settings; retain the selected grid and map representation |
+| 34 | `powder_final_eval_jul03_vanilla` | VanillaLSTM evaluation | Row 32 checkpoint; July 3 seven sites as test only | Row 32 config plus July 3 evaluation paths | Evaluate horizons 1, 5, 15, 60; write aggregate, frequency, band, and site metrics |
+| 35 | `powder_final_eval_jul03_convlstm` | ConvLSTM evaluation | Row 33 checkpoint; July 3 same seven-node map as test only | Row 33 config plus July 3 evaluation map | Reuse June 28 normalization and selected grid; report site and full-grid metrics |
+| 36 | `powder_final_eval_jul03_baselines_2d` | 2D baseline evaluation | Selected row 1 baseline settings; July 3 seven sites as test only | `training/configs/powder_final_eval_jul03_baselines_2d.yaml` | Match row 34 inputs, target rows, lookback, and horizons |
+| 37 | `powder_final_eval_jul03_baselines_4d` | 4D baseline evaluation | Selected row 18 baseline settings; July 3 seven-node map as test only | `training/configs/powder_final_eval_jul03_baselines_4d.yaml` | Match row 35 map, target rows, lookback, and horizons |
+
 ## Remote Environment
 
 Run all training and evaluation on:
@@ -52,8 +101,8 @@ Do not edit Python files, model implementations, loaders, evaluators, plotting
 code, analysis code, location metadata, annotations, or repository structure.
 Do not add scripts. Do not refactor, rename, or clean up unrelated files. If an
 experiment cannot run with existing code and config settings, record the exact
-blocker in the experiment index and stop. Do not implement a fix and do not ask
-for approval to implement one.
+error, mark only that run `skipped`, and continue with the remaining independent
+rows. Do not implement a fix and do not ask for approval to implement one.
 
 ## Available 600–800 MHz Collections
 
@@ -214,10 +263,10 @@ Name runs as:
 powder_vanilla_v2_<suffix>_jun18_val15
 ```
 
-Stop a candidate if it runs out of memory, produces non-finite loss, or its
-validation MAE is worse than LookbackMean at every horizon after early
-stopping. Do not increase capacity further when the training-validation gap
-grows.
+If a candidate runs out of memory or produces non-finite loss, mark that row
+`failed` and continue with the next row. Record candidates whose validation MAE
+is worse than LookbackMean at every horizon. Do not increase capacity beyond
+the listed rows when the training-validation gap grows.
 
 ### V3: Lookback sweep
 
@@ -254,19 +303,6 @@ powder_vanilla_v4_<suffix>_jun18_val15
 Use early stopping with patience 10 and a maximum of 100 epochs. Save the best
 validation checkpoint, not the last checkpoint.
 
-### V5: Seed confirmation
-
-Run the selected VanillaLSTM configuration with seeds 7, 42, and 2026:
-
-```text
-powder_vanilla_v5_seed007_jun18_val15
-powder_vanilla_v5_seed042_jun18_val15
-powder_vanilla_v5_seed2026_jun18_val15
-```
-
-Report mean and standard deviation of validation MAE. Select the configuration,
-not the best seed.
-
 ## ConvLSTM Spatial Data Policy
 
 ConvLSTM training and test must use the same set of physical nodes. Use these
@@ -300,8 +336,8 @@ verify:
 3. The training and test maps use identical grid dimensions and site indices.
 4. June 28 normalization is reused for July 3 evaluation.
 5. No July 3 values are used to fit normalization or select an epoch.
-6. The CPG location resolves correctly. If it does not, record the blocker and
-   stop without editing code or location metadata.
+6. The CPG location resolves correctly. If it does not, skip the ConvLSTM rows,
+   record the error, and continue the VanillaLSTM rows and reports.
 7. Site-level metrics are reported for all seven nodes.
 
 Treat full-grid metrics as secondary because most grid cells are interpolated.
@@ -410,18 +446,6 @@ validation checkpoint. Plot training and validation losses. Reject a candidate
 with non-finite values or a widening training-validation gap without improved
 site-level MAE.
 
-### C6: Seed confirmation
-
-Run the selected ConvLSTM configuration with seeds 7, 42, and 2026:
-
-```text
-powder_convlstm_c6_seed007_jun28_7site_val15
-powder_convlstm_c6_seed042_jun28_7site_val15
-powder_convlstm_c6_seed2026_jun28_7site_val15
-```
-
-Report mean and standard deviation across seeds for every site and horizon.
-
 ## Expanded-Data Stage
 
 Perform this stage only after selecting configurations from chronological
@@ -433,13 +457,7 @@ Train on June 18, June 28, and June 30 as separate chronological segments. Use
 a chronological trailing 15% holdout from this same combined pre-July training
 dataset. Never let a window cross from one site or collection into another.
 
-Run names:
-
-```text
-powder_vanilla_final_all_prejul_seed007
-powder_vanilla_final_all_prejul_seed042
-powder_vanilla_final_all_prejul_seed2026
-```
+Run name: `powder_vanilla_final_all_prejul`.
 
 ### ConvLSTM final training
 
@@ -448,24 +466,14 @@ only pre-July collection with the same seven nodes as the July 3 test dataset.
 Use its chronological trailing 15% for validation. Do not add June 18 or June 30
 to this run because their node sets differ.
 
-Run names:
-
-```text
-powder_convlstm_final_jun28_7site_seed007
-powder_convlstm_final_jun28_7site_seed042
-powder_convlstm_final_jun28_7site_seed2026
-```
+Run name: `powder_convlstm_final_jun28_7site`.
 
 ## Final July 3 Evaluation
 
-Evaluate only the selected three-seed VanillaLSTM and ConvLSTM runs on all seven
-July 3 sites. Also evaluate matching LookbackMean and LinearAR baselines.
-
-Evaluate each seed in its own existing run directory. Do not overwrite one
-seed's metrics with another seed. After all seed evaluations finish, run a
-separate aggregation script that reads the three result tables and writes mean
-and standard deviation tables. Use an existing aggregation script. If none
-exists, record the missing report as a blocker; do not add code.
+Evaluate the selected VanillaLSTM and ConvLSTM runs on all seven July 3 sites.
+Also evaluate matching LookbackMean and LinearAR baselines. Use the four final
+evaluation names in rows 34 through 37. Use existing reporting scripts; if one
+report is unavailable, record the omission and produce every other report.
 
 Required output tables:
 
@@ -480,13 +488,12 @@ Required summaries:
 
 1. MAE and RMSE by model and horizon.
 2. MAE and RMSE by physical site and horizon.
-3. Mean and standard deviation across seeds.
-4. Difference from LookbackMean at each site and horizon.
-5. Metrics by annotated frequency region.
-6. Entropy-versus-MAE rectangle plots produced by the committed analysis and
+3. Difference from LookbackMean at each site and horizon.
+4. Metrics by annotated frequency region.
+5. Entropy-versus-MAE rectangle plots produced by the committed analysis and
    plotting scripts.
 
-Use final evaluation labels when writing the cross-seed summaries:
+Use these final evaluation labels:
 
 ```text
 powder_final_eval_jul03_vanilla
@@ -532,9 +539,10 @@ validation_collections,test_collections,sites,representation,lookback,
 prediction_horizon,best_epoch,best_validation_loss,run_directory,status,notes
 ```
 
-Set `status` to one of `planned`, `running`, `completed`, `failed`, or
-`rejected`. Record the full error in `notes` for failed runs. Do not silently
-rerun a failed name and replace its record.
+Set `status` to one of `planned`, `running`, `completed`, `failed`, `skipped`,
+or `rejected`. Record the full error in `notes` for failed and skipped runs. Do
+not silently rerun a failed name and replace its record. Continue with the next
+independent table row after recording a failure.
 
 ## Selection Rules
 
@@ -545,8 +553,7 @@ Use these rules in order:
 3. Require the candidate to improve over its same-representation LookbackMean
    baseline at least at one target horizon.
 4. Prefer the smaller model when validation differences are within 1%.
-5. Prefer stable seed performance over one exceptional seed.
-6. Report negative results. Do not hide experiments where LookbackMean wins.
+5. Report negative results. Do not hide experiments where LookbackMean wins.
 
 Do not use full-grid ConvLSTM metrics as the primary selection criterion. The
 grid contains interpolated cells, while the scientific target is forecasting
