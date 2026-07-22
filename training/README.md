@@ -19,10 +19,17 @@ supports:
 |-------|-------------|---------------------|--------------|
 | Vanilla LSTM | `vanillalstm` | CSV frequency vectors | `(B, T, F)` |
 | ConvLSTM | `convlstm` | Spectrum maps | `(B, T, F, H, W)` |
+| DSwinLSTM-I | `dswinlstm_i` | Spectrum maps | `(B, T, F, H, W)` |
+| TimeRAN | `timeran` | CSV frequency vectors | `(B, T, F)` |
+| Lookback Mean | `lookbackmean1d`/`2d`/`4d` | CSV / maps | `(B, T, F)` or `(B, T, F, H, W)` |
+| Linear AutoRegressive | `linearar1d`/`2d`/`4d` | CSV / maps | `(B, T, F)` or `(B, T, F, H, W)` |
+| Residual Vanilla LSTM | `residualvanillalstm` | CSV frequency vectors | `(B, T, F)` |
+| Residual ConvLSTM | `residualconvlstm` | Spectrum maps | `(B, T, F, H, W)` |
+| Residual Linear AR | `residuallinearar1d`/`2d`/`4d` | CSV / maps | `(B, T, F)` or `(B, T, F, H, W)` |
 
-The architecture classes live in `models/VanillaLSTM.py` and `models/ConvLSTM.py`.  The shared
-model factory (`model_factory.py`) imports the correct class and derives input dimensions from
-the loaded training data.
+Architecture classes live under `models/` (e.g. `VanillaLSTM.py`, `ConvLSTM.py`,
+`DSwinLSTM_I.py`).  The shared model factory (`model_factory.py`) imports the correct
+class and derives input dimensions from the loaded training data.
 
 ### Shared forecasting behavior
 
@@ -61,24 +68,23 @@ by the selected model.  Users do not manually reshape the data before training.
 ### Dataset behavior
 
 The integrated data interface loads all dataset types through the single entry point
-`load_chunk()` in `training/common/data.py`.  It auto-detects the input format (`.csv`
-vs `.npz`) from the file extension, dispatches to `load_powder_data()` or
-`load_aerpaw_data()` in `training/common/dataset_loader.py`, and returns a unified
-`LoadedSpectrumData` dataclass:
+`load_chunk()` in `training/common/data.py`.  It reads source files configured under
+`data.files` (each entry has a `path` and `partition: train|test`), dispatches to
+`data_sources.py` for raw CSV/NPZ loading, and for 4D maps uses `map_builder.py` to
+construct spatial grids from collection-point coordinates.
 
-- **AERPAW CSV** (`loader: aerpaw`) — single-site CSV files, chronological train/test split
-- **POWDER CSV / map** (`loader: powder` / `cosmos` / `ara`) — `train_files` / `test_files`
-  can be either `.csv` (2D time-frequency) or `.npz` (4D time-height-width-frequency map).
-  The unified `load_powder_data()` handles both representations internally, removing the
-  old separate `load_powder_map_data()` path.
+Source files are partitioned into train and test sets by their `partition` label.
+Validation is carved from the training partition.  Loaded splits carry sequence
+segments so windows cannot cross files, sites, or frequency-bin boundaries.
 
-Frequency chunks are configured centrally under `data.chunks`.  Training runs independently
-for each configured chunk.
+Frequency chunks are configured centrally under `data.chunks`.  Training runs
+independently for each configured chunk.
 
-When `data.prediction_start_row` is configured, the non-overlapping portion of the long test
-recording before that row extends the training set.  Timestamps are required for this extension.
-After chronological construction, optional `data.max_rows` truncation is applied.  Completely
-unusable map timesteps (all-NaN) are removed before map cleaning and normalization.
+When `data.prediction_start_row` is configured, the non-overlapping portion of the
+long test recording before that row extends the training set.  Timestamps are required
+for this extension.  After chronological construction, optional `data.max_rows`
+truncation is applied.  Completely unusable map timesteps (all-NaN) are removed
+before map cleaning and normalization.
 
 ### Normalization and imputation
 
@@ -93,8 +99,9 @@ Validation and test data never fit their own normalization statistics.
 
 When `preprocessing.impute: true` in config, missing values are filled by
 `clean_spectrum_data()` in `training/common/preprocessing.py`:
-- **4D map data** (`T, H, W, F`): spatial nearest-neighbor filling per time/frequency
-  slice via Euclidean distance transform, then temporal linear interpolation per feature.
+- **4D map data** (`T, H, W, F`): imputation is disabled — any NaN values
+  raise an error. All-NaN timesteps are removed earlier in the data-loading
+  pipeline.
 - **2D CSV data** (`T, F`): temporal linear interpolation per frequency column.
 - After imputation any remaining NaN or non-finite values raise an error.
 
@@ -182,8 +189,11 @@ Supports 1D, 2D, and 4D input shapes via model names `lookbackmean1d`,
 
 ### Training through the common integrated pipeline
 
-Vanilla LSTM, ConvLSTM, TimeRAN, LookbackMean, and LinearAutoregressive are
-trained through the shared entry point at `training/common/train_integrated.py`.
+Vanilla LSTM, ConvLSTM, TimeRAN, DSwinLSTM-I, LookbackMean, and
+LinearAutoregressive are trained through the shared entry point at
+`training/common/train_integrated.py`.  Residual variants exist for
+Vanilla LSTM (`residualvanillalstm`), ConvLSTM (`residualconvlstm`),
+and LinearAutoregressive (`residuallinearar1d` / `2d` / `4d`).
 The model is selected by setting `training.model_name` in the configuration.
 
 #### Configuration reference
@@ -193,32 +203,38 @@ training and evaluation.  Key fields to inspect before each run:
 
 ```yaml
 data:
-  loader:                       # "aerpaw", "powder", "cosmos", or "ara"
-  data_dir:                     # AERPAW CSV directory (loader: aerpaw)
-  reference_site:               # e.g. "CC2" (aerpaw) or "humanities" (powder)
-  train_files:                  # POWDER single CSV or NPZ path (loader: powder)
-  test_files:                   # POWDER single CSV or NPZ path (loader: powder)
-  map_key: map_db               # Key inside the .npz archive
-  prediction_start_row:         # 1-based row in long test where final evaluation begins
-  max_rows:                     # Optional row limit applied after chronological construction
+  representation: 4d            # "1d" (CSV vectors), "2d" (maps), or "4d" (spatial maps)
+  reference_site: guesthouse    # e.g. "CC2" (aerpaw) or "humanities" (powder)
+  files:                        # List of source files with partition labels
+    - path: data/<file>.csv
+      partition: train          # "train" or "test"
+  map:                          # Required for 4d representation
+    name: powder_600_800        # Map name
+    locations: data/locations/powder.json  # Collection-point coordinates
+  concat: rows                  # Row-wise concatenation across files
+  prediction_start_row:         # 1-based row where final evaluation begins
+  max_rows:                     # Optional row limit
   chunks:                       # List of frequency chunks
     - id: powder_600_800
       start_mhz: 600.0
       end_mhz: 800.0
 
+data_loader:
+  num_workers: 0                # DataLoader worker count
+  pin_memory: auto              # Pin memory for GPU transfer
+
 windowing:
   lookback: 60                  # Input sequence length (minutes)
   horizons: [1, 5, 15, 60]     # Forecast horizons to report
-outputs:
-  root_dir: results/powder/600_800   # Base output directory; {model_name}/{reference_site}/ is appended
 
 training:
   device: auto                  # "auto", "cuda", or "cpu"
-  model_name: vanillalstm       # Model to train: vanillalstm, convlstm, timeran, lookbackmean*, linearar*
+  model_name: vanillalstm       # Model to train (see supported models table)
 
 preprocessing:
   normalize: true               # Per-frequency z-score normalization
-  impute: false                 # Enable NaN imputation via clean_spectrum_data()
+  impute: true                  # Enable NaN imputation via clean_spectrum_data()
+  max_missing_gap: 5            # Max consecutive missing values to interpolate
 ```
 
 **Vanilla LSTM settings** (under `vanillalstm:`):
@@ -227,22 +243,26 @@ preprocessing:
 vanillalstm:
   model:
     input_sequence_length: 60   # Lookback (must match windowing.lookback)
-    prediction_horizon: 60      # 1 for one-step, or rollout_horizon for direct multi-step
+    prediction_horizon: 1       # 1 for one-step autoregressive rollout
     hidden_size: 128
     num_layers: 1
     dropout: 0.1
     output_strategy: final_hidden
+    bidirectional: false        # false for forward LSTM, true for bidirectional
   train:
-    batch_size: 32
-    epochs: 20
-    learning_rate: 0.001
-    optimizer: adam                     # Optimizer: adam, adamw, or sgd
-    val_fraction: 0.1
+    val_fraction: 0.15
     train_stride: 1
+    val_stride: 1
     test_stride: 1
+    batch_size: 32
+    epochs: 100
+    learning_rate: 0.005
+    weight_decay: 1.0e-4
+    optimizer: adam                     # Optimizer: adam, adamw, or sgd
     gradient_clip_norm: 1.0
-    early_stopping: true
+    early_stopping: false
     early_stopping_patience: 10
+    seed: 42                            # Random seed for reproducibility
 ```
 
 `output_strategy` (for Vanilla LSTM):
@@ -260,7 +280,7 @@ module between stacked layers (PyTorch-native, active only when `num_layers > 1`
 convlstm:
   model:
     input_sequence_length: 60           # Lookback (must match windowing.lookback)
-    prediction_horizon: 60              # 1 for one-step, or rollout_horizon for direct multi-step
+    prediction_horizon: 1               # 1 for one-step autoregressive rollout
     hidden_channels: [32, 64]           # Hidden channels per ConvLSTM layer
     kernel_size: [[1, 3], [1, 1]]       # Convolution kernel per layer [height, width]
     num_encoder_layers: 2               # Number of stacked ConvLSTM encoder layers
@@ -268,25 +288,27 @@ convlstm:
     decoder_kernel_size: [1, 1]         # Convolution kernel for the decoder cell
     decoder_lstm_hidden: 128            # Hidden size of the transfer LSTM bottleneck
     dropout: 0.3                        # Dropout after decoder cell
-    use_batch_norm: true                # Whether to apply batch norm after each layer
+    use_batch_norm: false               # Whether to apply batch norm after each layer
     fc_hidden_channels: 0               # Extra FC layer channels (0 disables)
     fc_kernel_size: [1, 3]              # Kernel for FC layer (used only when fc_hidden_channels > 0)
     fc_intermediate_activation: relu    # Activation for FC layer
-    cell_activation: relu               # Activation for cell candidate / cell-state output
+    cell_activation: tanh               # Activation for cell candidate / cell-state output
     use_channel_projection: false       # Compress channels into lower-dim super feature
     channel_projection_dim: 16          # Projection dimension (used only when use_channel_projection true)
   train:
+    train_stride: 1                     # Step size between consecutive training windows
+    val_stride: 1                       # Step size between consecutive validation windows
+    test_stride: 1                      # Step size between consecutive test windows
     batch_size: 32
     epochs: 30
     learning_rate: 0.0002
     weight_decay: 0.004
-    val_fraction: 0.1
-    gradient_clip_norm: 5.0
+    val_fraction: 0.15
     optimizer: adam                     # Optimizer: adam, adamw, or sgd
-    early_stopping: true
+    early_stopping: false
     early_stopping_patience: 8
-    train_stride: 1                     # Step size between consecutive training windows
-    test_stride: 1                      # Step size between consecutive test windows
+    gradient_clip_norm: 5.0
+    seed: 42                            # Random seed for reproducibility
 ```
 
 **TimeRAN settings** (under `timeran:`):
@@ -299,6 +321,7 @@ timeran:
     input_sequence_length: 60            # Number of past sequence / lookback
     prediction_horizon: 1               # 1 for one-step autoregressive rollout
     checkpoint_size: base               # Pretrained MOMENT backbone size: small, base, or large
+    use_timeran_checkpoint: true        # Load the matching checkpoint from training/TimeRAN/checkpoints
     freeze_encoder: true                # Freeze MOMENT encoder weights during head training
     freeze_embedder: true               # Freeze MOMENT embedder weights during head training
     freeze_head: false                  # Allow the forecasting head to update
@@ -309,7 +332,7 @@ timeran:
     train_stride: 1                     # Step size between consecutive training windows
     val_stride: 1                       # Step size between consecutive validation windows
     batch_size: 1                       # Number of samples per gradient update
-    epochs: 10                          # Number of full passes over the training data
+    epochs: 50                          # Number of full passes over the training data
     learning_rate: 0.00001              # Optimizer learning rate
     weight_decay: 0.0                   # L2 weight-decay regularization strength
     optimizer: adam                     # Optimizer: adam, adamw, or sgd
@@ -326,8 +349,8 @@ also be set in the model's `train` section).
 #### Training Vanilla LSTM on CSV data
 
 1. Set `training.model_name: vanillalstm` in the config.
-2. Ensure `data.loader` points to the correct loader (`aerpaw` or `powder`).
-3. Verify CSV data paths and frequency chunks under `data.chunks`.
+2. Set `data.representation: 1d` and configure `data.files` with `path` / `partition` entries.
+3. Verify frequency chunks under `data.chunks`.
 4. Verify `vanillalstm.model.input_sequence_length` and `prediction_horizon`.
 5. Run:
 
@@ -340,7 +363,7 @@ Optional `--output-dir` overrides the default output location.
 Training runs once per configured chunk.  Checkpoints are written to:
 
 ```text
-{outputs.root_dir}/vanillalstm/checkpoints/{chunk_id}_vanillalstm.pt
+runs/<name>/vanillalstm/checkpoints/{chunk_id}_vanillalstm.pt
 ```
 
 Training outputs for each chunk:
@@ -353,8 +376,8 @@ Training outputs for each chunk:
 #### Training ConvLSTM on spectrum-map data
 
 1. Set `training.model_name: convlstm` in the config.
-2. Set `data.loader: powder` and provide `train_map_path` / `test_map_path`.
-3. Verify `data.map_key` matches the key inside the `.npz` archive.
+2. Set `data.representation: 2d` or `4d` and provide `data.files` with `path` / `partition` entries.
+3. For 4D maps, configure `data.map.name` and `data.map.locations`.
 4. Verify `data.chunks` entries and `convlstm.model.*` settings.
 5. Run the same command:
 
@@ -362,7 +385,7 @@ Training outputs for each chunk:
 python3 training/common/train_integrated.py --config training/common/config.yaml
 ```
 
-Checkpoints and output files are written under `{outputs.root_dir}/convlstm/` with
+Checkpoints and output files are written under `runs/<name>/convlstm/` with
 identical naming conventions.
 
 #### Evaluating a trained model
@@ -624,20 +647,19 @@ After training and evaluation jobs finish, combine their metric files:
 python3 -m training.common.assemble_results
 ```
 
-By default the assembler reads from the legacy model-specific output locations
-(`training/results/*`).  For results from the common integrated pipeline, use
-`--input-dir` to point to each model's output directory and `--output-dir` to
-set the combined output location:
+By default the assembler reads from `training/results/*` (one directory per
+model).  For results from specific runs, use `--input-dir` to point to each
+model's output directory and `--output-dir` to set the combined output location:
 
 ```bash
 python3 -m training.common.assemble_results \
-  --input-dir results/powder/600_800/vanillalstm \
-  --input-dir results/powder/600_800/convlstm \
-  --output-dir results/powder/600_800/overall
+  --input-dir runs/<name>/vanillalstm \
+  --input-dir runs/<name>/convlstm \
+  --output-dir runs/overall
 ```
 
 The default output directory (when `--output-dir` is omitted) is
-`{config.outputs.root_dir}/overall/`.  Combined outputs:
+`runs/overall/`.  Combined outputs:
 
 ```text
 aggregate_metrics.csv
@@ -958,10 +980,10 @@ files were generated with consistent frequency boundaries.
 
 ### Mismatched map frequencies
 
-When training with spectrum maps, the loader checks that `train_map_path` and
-`test_map_path` contain identical frequency arrays.  If they differ, evaluation
-statistics will be misaligned.  Regenerate the maps with consistent frequency
-ranges.
+When training with spectrum maps, the pipeline validates that train and test
+partitions contain identical frequency arrays.  If they differ, evaluation
+statistics will be misaligned.  Verify that all source files under `data.files`
+were generated with consistent frequency ranges.
 
 ### Incorrect map shape
 
@@ -1265,11 +1287,15 @@ spectrum-usage/
 │   ├── README.md                   # This file
 │   ├── common/                     # Shared integrated pipeline
 │   │   ├── config.yaml             # Central configuration
+│   │   ├── config.smoke.yaml       # Smoke-test configuration
 │   │   ├── config.py               # YAML loading and path resolution
 │   │   ├── data.py                 # Chunk specs and loader dispatch
-│   │   ├── dataset_loader.py       # Unified AERPAW / POWDER loader (CSV and map)
+│   │   ├── data_sources.py         # Raw CSV/NPZ file loading
+│   │   ├── data_loader.py          # PyTorch DataLoader construction
+│   │   ├── map_builder.py          # 4D spatial map construction from CSVs + locations
 │   │   ├── preprocessing.py        # Normalization, imputation, cleaning
 │   │   ├── windowing.py            # Temporal window construction, layout conversion
+│   │   ├── validation_diagnostics.py # Prediction guard checks, diagnostics
 │   │   ├── forecasting.py          # Teacher-forced / autoregressive / direct forecast
 │   │   ├── model_factory.py        # Model construction and checkpoint handling
 │   │   ├── train_integrated.py     # Model-agnostic training entry point
@@ -1281,7 +1307,9 @@ spectrum-usage/
 │   │   ├── runtime.py              # Device selection, timestamps, log rows
 │   │   ├── pipeline_train_trace.txt# Detailed pipeline execution trace
 │   │   ├── training_configs.txt    # Training config snapshots
-│   │   └── assemble_results.py     # Cross-model result assembly
+│   │   ├── assemble_results.py     # Cross-model result assembly
+│   │   ├── test_data_loader.py     # DataLoader tests
+│   │   └── test_map_builder.py     # Map builder tests
 │   ├── grid_search/                # Hyperparameter search scripts and results
 │   │   ├── grid_search.py          # Grid search runner
 │   │   ├── plot_hyperparameter_search.py # Search result visualization
@@ -1302,6 +1330,13 @@ spectrum-usage/
 ├── models/                         # Model architecture definitions
 │   ├── VanillaLSTM.py              # VanillaLSTMForecaster
 │   ├── ConvLSTM.py                 # ConvLSTMForecaster
+│   ├── DSwinLSTM_I.py              # DSwinLSTM-IForecaster
+│   ├── TimeRAN.py                  # TimeRANForecaster
+│   ├── LinearAutoregressive.py     # LinearAutoregressiveForecaster
+│   ├── LookbackMean.py             # LookbackMeanForecaster
+│   ├── ResidualVanillaLSTM.py      # ResidualVanillaLSTMForecaster
+│   ├── ResidualConvLSTM.py         # ResidualConvLSTMForecaster
+│   ├── ResidualLinearAutoregressive.py # ResidualLinearAutoregressiveForecaster
 │   └── README.md
 ├── evaluation/                     # Evaluation data collection
 │   ├── collect_spectrum.py         # USRP-based spectrum acquisition
