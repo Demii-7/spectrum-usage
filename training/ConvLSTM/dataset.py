@@ -379,16 +379,17 @@ def create_datasets(csv_path, n_nodes, n_bins, t_in, t_out, stride=1,
         n_train_raw = int(T * train_ratio)
         train_segment_end = n_train_raw
         train_segment = data_3d[:train_segment_end] if train_segment_end > 0 else data_3d[:1]
-        mean, std = compute_norm_stats(train_segment)
+        stats_segment = train_segment
     else:
-        mean, std = compute_norm_stats(data_3d)
+        stats_segment = data_3d
 
     # Apply the chosen normalization method.
     if normalization == "zscore":
+        mean, std = compute_norm_stats(stats_segment)
         data_norm = zscore(data_3d, mean, std)
     elif normalization == "minmax":
-        dmin = data_3d.min(axis=0, keepdims=True)
-        dmax = data_3d.max(axis=0, keepdims=True)
+        dmin = stats_segment.min(axis=0, keepdims=True)
+        dmax = stats_segment.max(axis=0, keepdims=True)
         data_norm = ((data_3d - dmin) / (dmax - dmin + 1e-8)).astype(np.float32)
         # Repurpose mean/std to store min/max-info for later denormalization.
         mean, std = dmin.astype(np.float32), (dmax - dmin + 1e-8).astype(np.float32)
