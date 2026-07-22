@@ -460,6 +460,7 @@ def evaluate_chunk(
             lookback=lookback,
             rollout_horizon=max_horizon,
             stride=test_stride,
+            segments=split.segments,
         )
 
         windows = make_window_batch_array(

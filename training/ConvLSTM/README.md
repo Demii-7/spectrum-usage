@@ -51,12 +51,13 @@ Training creates `training/ConvLSTM/checkpoints/` with `best_model.pt`, `last_mo
 
 ### Evaluate
 
-```bash
-python3 training/ConvLSTM/evaluate.py \
-    --checkpoint training/ConvLSTM/checkpoints/best_model.pt
-```
+Use the common integrated evaluator with the same configuration used for training:
 
-Output: per-horizon and per-node RMSE/MAE/R², spectrogram plots, full-test `predictions.csv` / `ground_truth.csv`, and `metadata.json`.
+```bash
+python3 training/common/evaluation_integrated.py \
+    --config training/common/config.yaml \
+    --name <run-name>
+```
 
 ### Run Inference on New Data
 
@@ -88,23 +89,6 @@ python3 training/ConvLSTM/train.py [--config CONFIG] [options]
 
 Output: `checkpoints/best_model.pt`, `checkpoints/last_model.pt`, `checkpoints/normalization_stats.pt`.
 
-### `evaluate.py` — Evaluate a trained model
-
-```bash
-python3 training/ConvLSTM/evaluate.py --checkpoint CHECKPOINT [options]
-```
-
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `--checkpoint` | — | Path to `.pt` checkpoint from training (required) |
-| `--config` | from checkpoint | Path to config (overrides checkpoint's embedded config) |
-| `--horizons` | `[1, 3, 6]` | Specific future time steps to report metrics for |
-| `--output` | `evaluation/` | Output directory for metrics, plots, and CSVs |
-
-Output (CSV mode): `evaluation/metrics.json`, `evaluation/predictions.csv`, `evaluation/ground_truth.csv`, `evaluation/metadata.json`, `evaluation/spectrogram_*.png`, `evaluation/error_analysis.png`.
-
-Output (map mode): `evaluation/metrics.json`, `evaluation/map_comparison_t*.png`, `evaluation/spatial_rmse_map.png`, `evaluation/per_frequency_rmse.png`.
-
 ### `inference.py` — Predict on new CSV data
 
 ```bash
@@ -123,7 +107,7 @@ Output: CSV with all predicted PSD frames flattened row-by-row plus a companion 
 
 ### `dataset.py` — Data loading and preprocessing (library)
 
-Imported by `train.py` and `evaluate.py`. Key functions:
+Imported by the legacy training and inference utilities. Key functions:
 
 | Function | Returns | Description |
 |----------|---------|-------------|
@@ -136,7 +120,7 @@ Imported by `train.py` and `evaluate.py`. Key functions:
 | `clean_nan_csv(data_3d, ...)` / `clean_nan_map(data_4d, ...)` | `(cleaned, stats)` | Trims only trailing all-NaN timesteps, then fills internal NaNs from local time neighbours followed by nearby frequency bins/channels |
 | `denormalize(data, mean, std)` | `ndarray` | Reverses z-score normalization |
 
-`stats` dict (`{"mean": ndarray, "std": ndarray}`) is saved alongside checkpoints and used by `evaluate.py` and `inference.py` for denormalization.
+`stats` dict (`{"mean": ndarray, "std": ndarray}`) is saved alongside checkpoints and used by the common evaluator and `inference.py` for denormalization.
 
 ### `utils.py` — Metrics and helpers (library)
 
@@ -161,7 +145,6 @@ training/ConvLSTM/
 ├── dataset.py               # SpectrumDataset, data loading, normalization, windowing
 ├── model.py                 # ConvLSTMCell, ConvLSTM, ConvLSTMPredictor
 ├── train.py                 # Training loop, logging, checkpointing
-├── evaluate.py              # Evaluation on test set, metrics, visualizations
 ├── utils.py                 # Helpers: normalization, metrics, seeding, device setup
 ├── inference.py             # Predict on new data, convert to CSV/plots
 └── requirements.txt         # Dependencies: torch, numpy, matplotlib, PyYAML, etc.
@@ -174,7 +157,7 @@ training/ConvLSTM/
 | `dataset.py` | `SpectrumDataset` / `InterpolatedMapDataset` (torch `Dataset`s), CSV loading, `.npz` loading, z-score normalization, sliding windows, train/val/test splitting for both CSV and map modes |
 | `model.py` | `ConvLSTMCell`, `ConvLSTM` (multi-layer, from reference), `ConvLSTMPredictor` (seq2seq encoder–decoder with optional channel projection) |
 | `train.py` | Training loop, data format branching, teacher forcing, gradient clipping, LR scheduling, early stopping, checkpoint saving |
-| `evaluate.py` | Test set evaluation, data format branching, RMSE/MAE/R² per horizon (+ per node in CSV mode, per frequency in map mode), spectrogram/map visualization, prediction CSV export |
+| `training/common/evaluation_integrated.py` | Shared test-set evaluation, metrics, forecast export, and visualizations |
 | `utils.py` | Normalization statistics, metrics, seed setting, device detection, denormalization |
 | `inference.py` | Load checkpoint + normalization stats, predict on arbitrary input, save predictions as CSV |
 | `config.yaml` | All hyperparameters (see Configuration Reference) |
@@ -188,12 +171,11 @@ config.yaml
     │
     ▼
 dataset.py ──► train.py ──► model.pt
-                              │
-                              ▼
-                         evaluate.py ──► metrics, plots, predictions.csv
-                              │
-                              ▼
-                         inference.py ──► predictions on new data
+                               │
+                               ├── training/common/evaluation_integrated.py ──► metrics, forecasts, plots
+                               │
+                               ▼
+                          inference.py ──► predictions on new data
 ```
 
 ---

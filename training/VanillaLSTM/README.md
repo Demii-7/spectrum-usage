@@ -20,8 +20,8 @@ Integrated outputs are written to `training/results/VanillaLSTM/` with metrics t
 ## Quick Start
 
 ```bash
-python3 training/VanillaLSTM/train.py --config training/VanillaLSTM/config.yaml
-python3 training/VanillaLSTM/evaluate.py --checkpoint training/VanillaLSTM/checkpoints/best_model.pt
+python3 training/common/train_integrated.py --config training/common/config.yaml
+python3 training/common/evaluation_integrated.py --config training/common/config.yaml
 ```
 
 ---
@@ -257,13 +257,10 @@ For the smoke test, report:
 Recommended smoke-test command shape:
 
 ```bash
-python3 training/VanillaLSTM/train.py \
-  --config training/VanillaLSTM/config.yaml \
-  --csv training/data/cc2_smoke_test.csv \
-  --epochs 5
+python3 training/common/train_integrated.py \
+  --config training/common/config.smoke.yaml
 
-python3 training/VanillaLSTM/evaluate.py \
-  --checkpoint training/VanillaLSTM/checkpoints/best_model.pt \
-  --config training/VanillaLSTM/config.yaml \
-  --csv training/data/cc2_smoke_test.csv
+python3 training/common/evaluation_integrated.py \
+  --config training/common/config.smoke.yaml \
+  --name <smoke-run-name>
 ```

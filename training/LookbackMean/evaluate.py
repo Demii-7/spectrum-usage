@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from models.LookbackMean import LookbackMeanForecaster
 from training.common.forecasting import forecast
 from training.common.preprocessing import apply_per_frequency_normalization
+from training.common.preprocessing import SequenceSegment
 from training.common.windowing import WindowDataset, make_window_starts
 from training.common.runtime import device_for
 
@@ -31,9 +32,15 @@ def resolve_path(path_str: str) -> Path:
     return ROOT / p
 
 
-def load_and_concat_csvs(file_entries: list[dict], start_mhz: float, end_mhz: float) -> tuple[np.ndarray, list[float]]:
+def load_and_concat_csvs(
+    file_entries: list[dict],
+    start_mhz: float,
+    end_mhz: float,
+) -> tuple[np.ndarray, list[float], tuple[SequenceSegment, ...]]:
     arrays = []
     freqs = None
+    segments = []
+    offset = 0
     for entry in file_entries:
         path = resolve_path(entry["path"])
         df = pd.read_csv(path)
@@ -42,12 +49,26 @@ def load_and_concat_csvs(file_entries: list[dict], start_mhz: float, end_mhz: fl
         if freqs is None:
             freqs = [float(c) for c in freq_cols]
         arrays.append(df[freq_cols].to_numpy(dtype=np.float32))
-    return np.concatenate(arrays, axis=0), freqs
+        segments.append(SequenceSegment(offset, offset + len(df), str(path)))
+        offset += len(df)
+    return np.concatenate(arrays, axis=0), freqs, tuple(segments)
 
 
-def make_full_test_loader(data_norm: np.ndarray, lookback: int, rollout_horizon: int, batch_size: int = 32) -> DataLoader:
-    starts = make_window_starts(len(data_norm), lookback, rollout_horizon, stride=1)
-    ds = WindowDataset(data_norm, starts, lookback, rollout_horizon)
+def make_full_test_loader(
+    data_norm: np.ndarray,
+    lookback: int,
+    rollout_horizon: int,
+    batch_size: int = 32,
+    segments: tuple[SequenceSegment, ...] = (),
+) -> DataLoader:
+    starts = make_window_starts(
+        len(data_norm),
+        lookback,
+        rollout_horizon,
+        stride=1,
+        segments=segments,
+    )
+    ds = WindowDataset(data_norm, starts, lookback, rollout_horizon, segments=segments)
     return DataLoader(ds, batch_size=batch_size, shuffle=False)
 
 
@@ -64,8 +85,8 @@ def evaluate_csv(ckpt_path: Path, train_files: list[dict], test_files: list[dict
     std = np.asarray(norm["std_dbm"], dtype=np.float32)
 
     start_mhz, end_mhz = 600.0, 800.0
-    train_arr, _ = load_and_concat_csvs(train_files, start_mhz, end_mhz)
-    test_arr, _ = load_and_concat_csvs(test_files, start_mhz, end_mhz)
+    train_arr, _, _ = load_and_concat_csvs(train_files, start_mhz, end_mhz)
+    test_arr, _, test_segments = load_and_concat_csvs(test_files, start_mhz, end_mhz)
 
     if freq_index is not None:
         train_arr = train_arr[:, freq_index:freq_index+1]
@@ -74,7 +95,12 @@ def evaluate_csv(ckpt_path: Path, train_files: list[dict], test_files: list[dict
     train_norm = apply_per_frequency_normalization(train_arr, mean, std).astype(np.float32)
     test_norm = apply_per_frequency_normalization(test_arr, mean, std).astype(np.float32)
 
-    test_loader = make_full_test_loader(test_norm, lookback, rollout_horizon=1)
+    test_loader = make_full_test_loader(
+        test_norm,
+        lookback,
+        rollout_horizon=1,
+        segments=test_segments,
+    )
 
     input_size = int(np.prod(train_arr.shape[1:]))
     model_cfg = {"model": {"input_sequence_length": lookback, "prediction_horizon": 1, "input_size": input_size}}

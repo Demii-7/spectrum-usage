@@ -24,7 +24,7 @@ from training.common.config import load_config
 from training.common.runtime import timestamp_utc
 from training.common.results import append_metric_rows, finalize_results, load_band_definitions, prepare_output_dirs
 from training.common.data import chunk_specs, load_chunk
-from training.common.windowing import target_rows_for
+from training.common.windowing import make_window_starts
 
 
 MODEL_NAME = "dswinlstm_i"
@@ -125,14 +125,26 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands, out: Path, checkpoint_p
             split = data.splits[split_name]
             split_raw = split.raw_dbm
             split_map = to_pseudo_map(split_raw)
-            full_train, _, full_test, stats = normalize_splits(train_map, split_map, split_map, build_runner_config(config, train_raw.shape[1]), full_data=np.concatenate([train_map, split_map], axis=0))
-            full_norm = np.concatenate([full_train, full_test], axis=0)
-            full_raw = np.vstack([train_raw, split_raw]).astype(np.float32)
-            history_offset = len(train_raw)
-            target_rows = target_rows_for(len(split_raw), history_offset, horizon, lookback, min_history)
-            pred_norm = predict_for_targets(model, full_norm, target_rows, horizon, lookback, batch_size)
+            _, _, split_norm, stats = normalize_splits(
+                train_map,
+                split_map,
+                split_map,
+                build_runner_config(config, train_raw.shape[1]),
+            )
+            starts = make_window_starts(
+                n_timesteps=len(split_norm),
+                lookback=lookback,
+                rollout_horizon=horizon,
+                stride=1,
+                segments=split.segments,
+            )
+            target_rows = starts + lookback + horizon - 1
+            target_rows = target_rows[target_rows >= min_history]
+            if len(target_rows) == 0:
+                continue
+            pred_norm = predict_for_targets(model, split_norm, target_rows, horizon, lookback, batch_size)
             pred_raw = denormalize_map(pred_norm, stats)
-            target = full_raw[target_rows]
+            target = split_raw[target_rows]
             abs_err = np.abs(pred_raw - target)
             sq_err = (pred_raw - target) ** 2
             append_metric_rows(
@@ -145,8 +157,8 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands, out: Path, checkpoint_p
                 split_name=split_name,
                 horizon=horizon,
                 model=MODEL_NAME,
-                target_rows=target_rows,
-                history_offset=history_offset,
+                target_rows=target_rows + int(split.row_start),
+                history_offset=int(split.row_start),
                 freqs=data.frequencies,
                 abs_err=abs_err,
                 sq_err=sq_err,
