@@ -41,35 +41,19 @@ at the end of training.
 
 ## Code-Change Policy
 
-Do not modify application code unless a required experiment cannot run
-correctly with the current implementation. Prefer these actions in order:
+Do not modify source code. This runbook is config-only. The agent may:
 
 1. Reuse an existing config and override only experiment settings.
 2. Create a new config under `training/configs/`.
 3. Reuse an existing analysis or plotting script.
-4. Add a small analysis script when no existing script produces the required
-   table.
-5. Modify shared training, loading, model, or evaluation code only when a
-   concrete prerequisite in this runbook is missing.
+4. Write generated tables and figures under the applicable run directory.
 
-Do not refactor working code while preparing an experiment. Do not rename files,
-reorganize directories, replace APIs, introduce compatibility layers, or clean
-up unrelated style. Do not modify model architecture code merely to expose a
-setting that the config already controls.
-
-Before changing shared code:
-
-1. Write down the exact experiment blocked by the current behavior.
-2. Identify the smallest function that must change.
-3. Add a focused regression test that fails before the change.
-4. Make the smallest change that passes the test.
-5. Run existing tests and a bounded smoke test.
-6. Commit the code change separately from configs and generated results.
-7. Push the commit and pull it on the remote before starting training.
-
-If an experiment can run correctly without a code change, do not change code.
-If a requested feature would require a broad redesign, stop and record the
-blocker in the experiment index instead of improvising an architecture.
+Do not edit Python files, model implementations, loaders, evaluators, plotting
+code, analysis code, location metadata, annotations, or repository structure.
+Do not add scripts. Do not refactor, rename, or clean up unrelated files. If an
+experiment cannot run with existing code and config settings, record the exact
+blocker in the experiment index and stop. Do not implement a fix and do not ask
+for approval to implement one.
 
 ## Available 600–800 MHz Collections
 
@@ -105,53 +89,43 @@ Reserve all `20260703T1839Z` data for final testing. Do not use it to:
 - decide which frequencies, regions, or sites to report.
 
 Running the final test repeatedly and selecting the best result is test-set
-leakage. During development, use June 28 as the chronological validation
-collection. Run July 3 evaluation only after selecting a configuration from
-June 28 validation results.
+leakage. Run July 3 evaluation only after selecting a configuration from
+validation data drawn from the same dataset as training.
 
-## Required Data-Split Work
+## Validation and Test Policy
 
-The current trainer applies `val_fraction` to the tail of a concatenated
-training array. That is insufficient for multi-collection experiments because
-it can place portions of different sites or collections on both sides of the
-split. Complete this work before tuning models:
+Validation must always come from the same dataset used for training. Use a
+chronological trailing holdout, not a different collection and not a random
+sample. The default validation fraction is `0.15`.
 
-1. Add explicit `train`, `validation`, and `test` partitions to the shared data
-   configuration and loader.
-2. Preserve each source file as a separate temporal segment. Windows must not
-   cross site or collection boundaries.
-3. Fit normalization on the training partition only.
-4. Apply the saved training normalization to validation and test data.
-5. Reject configurations where a file appears in more than one partition.
-6. Record source paths, row counts, timestamp ranges, and segment counts in the
-   run metadata.
-7. Add a test proving that no lookback or target window crosses a segment
-   boundary.
-8. Add a test proving that validation and test timestamps occur after all
-   training timestamps for the chronological protocol.
-9. Split data before imputation or other temporal preprocessing. Training
-   values must not fill validation gaps, and validation values must not fill
-   training gaps.
-10. Preserve timestamps in split metadata so chronology checks and run
-    manifests can inspect actual ranges.
-11. Update config validation, `load_chunk()`, trainer inputs, evaluator inputs,
-    and checkpoint normalization checks together. Do not implement a third
-    partition in only one layer of the pipeline.
-12. Add validation MAE logging and an explicit checkpoint-selection metric.
-    The current trainer selects checkpoints by MSE. Do not claim selection by
-    MAE until the trainer supports and records it.
-
-Use this development split after the loader supports it:
+For the first development stage:
 
 ```text
-Training:   June 18 collection
-Validation: June 28 collection
-Test:       July 3 collection, locked
+Training input: June 18 collection
+Validation:     final 15% of the June 18 training input
+Test:           July 3 collection, locked
 ```
 
-Use June 30 only in the later expanded-data stage. Its two-site composition is
-not comparable with the seven-site July 3 collection, so do not use June 30 as
-the only validation collection for spatial models.
+The existing shared trainer already creates a chronological trailing validation
+split with `val_fraction`. Use that behavior for the first baselines and model
+experiments. Do not modify partition code before running the config-only
+experiments.
+
+When training expands to June 18, June 28, and June 30, those pre-July
+collections together form the training dataset. Validation must still be a
+chronological trailing 15% holdout from that same pre-July dataset. July 3
+remains the separate test dataset.
+
+Preserve source files as temporal segments. Windows must not cross site or
+collection boundaries. The current segment-aware window generation should be
+verified with a smoke test before each full run. If the existing trailing split
+places validation windows in only the final concatenated site, record that
+limitation and continue with the initial config-only experiments. Do not redesign
+the partition system. Record the limitation in each affected run.
+
+The current trainer selects checkpoints by validation MSE. Use that behavior
+throughout this runbook. Report both validation MSE and evaluation MAE without
+claiming they are the same selection criterion.
 
 ## Required Baselines
 
@@ -169,13 +143,14 @@ training/configs/powder_dev_4d_baselines.yaml
 Use these run names:
 
 ```text
-powder_dev_2d_baselines_jun18_val_jun28
-powder_dev_4d_baselines_jun18_val_jun28
+powder_dev_2d_baselines_jun18_val15
+powder_dev_4d_baselines_jun28_7site_val15
 ```
 
-The 2D run must include `lookbackmean2d` and `linearar2d`. The 4D run must
-include `lookbackmean4d` and `linearar4d`. Evaluate the 4D baselines at physical
-site cells as well as over the full grid.
+The 2D run must include `lookbackmean2d` and `linearar2d` on June 18 with its
+trailing 15% validation split. The 4D run must include `lookbackmean4d` and
+`linearar4d` on all seven June 28 nodes with its trailing 15% validation split.
+Evaluate the 4D baselines at physical site cells as well as over the full grid.
 
 ## VanillaLSTM Development Stage
 
@@ -184,13 +159,13 @@ site cells as well as over the full grid.
 Create:
 
 ```text
-training/configs/powder_vanilla_v0_jun18_val_jun28.yaml
+training/configs/powder_vanilla_v0_jun18_val15.yaml
 ```
 
 Run name:
 
 ```text
-powder_vanilla_v0_jun18_val_jun28
+powder_vanilla_v0_jun18_val15
 ```
 
 Use the current architecture and seed 42. Fix the current warning before
@@ -198,9 +173,9 @@ running: a one-layer PyTorch LSTM does not apply recurrent dropout. Set dropout
 to `0.0` for one layer or use two layers. For V0, set dropout to `0.0` so the
 architecture remains one layer.
 
-Train on all June 18 site segments. Validate on all June 28 site segments. Do
-not evaluate July 3 until V0 and the experiments below have been selected using
-June 28.
+Train on all June 18 site segments and use `val_fraction: 0.15` from that same
+training input. Do not evaluate July 3 until V0 and the experiments below have
+been selected using the June 18 validation holdout.
 
 ### V1: One-step versus direct 60-step prediction
 
@@ -214,8 +189,8 @@ training/configs/powder_vanilla_v1_direct60.yaml
 Run names:
 
 ```text
-powder_vanilla_v1_one_step_jun18_val_jun28
-powder_vanilla_v1_direct60_jun18_val_jun28
+powder_vanilla_v1_one_step_jun18_val15
+powder_vanilla_v1_direct60_jun18_val15
 ```
 
 For `one_step`, set `prediction_horizon: 1` and use autoregressive rollout to
@@ -236,7 +211,7 @@ Use the better prediction strategy from V1. Run these candidates with seed 42:
 Name runs as:
 
 ```text
-powder_vanilla_v2_<suffix>_jun18_val_jun28
+powder_vanilla_v2_<suffix>_jun18_val15
 ```
 
 Stop a candidate if it runs out of memory, produces non-finite loss, or its
@@ -252,11 +227,11 @@ Keep the forecast horizons `[1, 5, 15, 60]`.
 Name runs as:
 
 ```text
-powder_vanilla_v3_lb015_jun18_val_jun28
-powder_vanilla_v3_lb030_jun18_val_jun28
-powder_vanilla_v3_lb060_jun18_val_jun28
-powder_vanilla_v3_lb120_jun18_val_jun28
-powder_vanilla_v3_lb240_jun18_val_jun28
+powder_vanilla_v3_lb015_jun18_val15
+powder_vanilla_v3_lb030_jun18_val15
+powder_vanilla_v3_lb060_jun18_val15
+powder_vanilla_v3_lb120_jun18_val15
+powder_vanilla_v3_lb240_jun18_val15
 ```
 
 ### V4: Optimizer and regularization sweep
@@ -273,95 +248,66 @@ Use the best architecture and lookback. Test this small grid:
 Name runs as:
 
 ```text
-powder_vanilla_v4_<suffix>_jun18_val_jun28
+powder_vanilla_v4_<suffix>_jun18_val15
 ```
 
 Use early stopping with patience 10 and a maximum of 100 epochs. Save the best
 validation checkpoint, not the last checkpoint.
 
-### V5: Per-site normalization
-
-The current 2D row-concatenated input shares per-frequency normalization across
-sites. Add an option to fit normalization by site and frequency using training
-data only. Compare:
-
-```text
-powder_vanilla_v5_global_norm_jun18_val_jun28
-powder_vanilla_v5_site_norm_jun18_val_jun28
-```
-
-Store the site-specific means and standard deviations in the checkpoint. The
-evaluator must reject a site that has no applicable normalization policy unless
-an explicit fallback is configured. Because five July 3 sites are absent from
-June 18, define the fallback before running this experiment. The fallback must
-use training-derived global per-frequency statistics; it must not fit statistics
-from June 28 or July 3.
-
-### V6: Seed confirmation
+### V5: Seed confirmation
 
 Run the selected VanillaLSTM configuration with seeds 7, 42, and 2026:
 
 ```text
-powder_vanilla_v6_seed007_jun18_val_jun28
-powder_vanilla_v6_seed042_jun18_val_jun28
-powder_vanilla_v6_seed2026_jun18_val_jun28
+powder_vanilla_v5_seed007_jun18_val15
+powder_vanilla_v5_seed042_jun18_val15
+powder_vanilla_v5_seed2026_jun18_val15
 ```
 
 Report mean and standard deviation of validation MAE. Select the configuration,
 not the best seed.
 
-## ConvLSTM Spatial Data Work
+## ConvLSTM Spatial Data Policy
 
-Do not tune ConvLSTM until the map pipeline handles multiple collections and
-changing site availability correctly.
+ConvLSTM training and test must use the same set of physical nodes. Use these
+seven nodes for both datasets:
 
-1. Build one map segment per collection. Do not intersect timestamps across
-   June 18 and June 28 because those collections do not overlap in time.
-2. Within a collection, align sites by `timestamp_utc`.
-3. Preserve collection boundaries as sequence boundaries.
-4. Use the fixed physical coordinates in `data/locations/powder.json`.
-5. Add or verify a `cpg-nuc1` alias for the `central parking garage` location
-   entry before building June 28 or July 3 maps. Add a focused alias-resolution
-   test only if the current code cannot resolve both names.
-6. Keep grid geometry identical across train, validation, and test. Fix the
-   geographic bounds, origin, dimensions, and resolution in config. Do not let
-   each collection derive its extent from the sites present in that collection.
-7. Add an observation mask with one at measured site cells and zero elsewhere.
-8. Keep the observation mask separate from the interpolated power map.
-9. Keep aligned raw site-value targets separate from the interpolated map. Use
-   raw site values for observed-site loss and site metrics. Do not treat the
-   nearest interpolated grid cell as a physical measurement.
-10. Detect grid-cell collisions when two sites quantize to the same cell. Stop
-    map generation if a collision makes site-level targets ambiguous.
-11. Define a missing-timestamp policy and record a time-varying observation
-    mask. Do not silently change interpolation support as sites appear or
-    disappear at individual timestamps.
-12. Fit normalization on June 18 training maps only.
-13. Do not use July 3 values to fit interpolation, normalization, or map
-   parameters.
-14. Save site names, site coordinates, grid indices, source files, timestamp
-    ranges, and observation masks in map metadata.
-15. Fingerprint map caches using source files, collection IDs, site set,
-    geographic bounds, grid dimensions, interpolation settings, masks, and
-    preprocessing settings. Do not reuse a cache based only on map name and
-    partition.
-
-The primary ConvLSTM loss should initially use aligned raw physical-site targets
-only. Do not assume a fixed number of observed grid cells: site availability
-changes by collection, and grid collisions must be checked. Keep full-grid loss
-as an optional secondary term.
-
-Implement configurable loss weights:
-
-```yaml
-convlstm:
-  train:
-    observed_site_loss_weight: 1.0
-    interpolated_grid_loss_weight: 0.0
+```text
+cpg-nuc1
+ebc-nuc1
+guesthouse-nuc1
+humanities-nuc1
+madsen-nuc1
+moran-nuc1
+sagepoint-nuc1
 ```
 
-Later test interpolated-grid weights `0.01`, `0.1`, and `1.0`, but retain
-observed-site MAE as the model-selection metric.
+Use the combined `20260628T0436Z` and `20260628T0437Z` collection as the
+ConvLSTM training dataset. Align the seven nodes by `timestamp_utc`. Use the
+chronological trailing 15% of this June 28 map sequence for validation. Use the
+same seven nodes from `20260703T1839Z` only for final testing.
+
+Do not include June 18 or June 30 in the main ConvLSTM run because those
+collections have different node sets.
+
+Start with the existing map builder and ConvLSTM implementation. Do not add
+masks, new losses, raw-site target tensors, cache fingerprinting, or a new map
+loader before running the config-only baselines and C1 reproduction. First
+verify:
+
+1. All seven expected files appear in the June 28 training map metadata.
+2. All seven expected files appear in the July 3 test map metadata.
+3. The training and test maps use identical grid dimensions and site indices.
+4. June 28 normalization is reused for July 3 evaluation.
+5. No July 3 values are used to fit normalization or select an epoch.
+6. The CPG location resolves correctly. If it does not, record the blocker and
+   stop without editing code or location metadata.
+7. Site-level metrics are reported for all seven nodes.
+
+Treat full-grid metrics as secondary because most grid cells are interpolated.
+Use the existing site-level evaluator as the primary comparison. Record that
+site values come from mapped grid cells. Do not add masks, raw-site targets, or
+new loss weighting in this runbook.
 
 ## ConvLSTM Development Stage
 
@@ -382,13 +328,12 @@ training/configs/powder_convlstm_c1_current.yaml
 Run name:
 
 ```text
-powder_convlstm_c1_current_jun18_val_jun28
+powder_convlstm_c1_current_jun28_7site_val15
 ```
 
-Use June 18 maps for training and June 28 maps for validation. Use observed-site
-loss only. Record site-level validation metrics separately for Guesthouse,
-Humanities, and every June 28 site. Mark June 28 sites absent from June 18 as
-spatial generalization sites.
+Train on the seven-node June 28 map and use its chronological trailing 15% for
+validation. Do not use July 3 during this stage. Record validation metrics for
+all seven mapped site cells.
 
 ### C2: One-step versus direct 60-step prediction
 
@@ -402,8 +347,8 @@ training/configs/powder_convlstm_c2_direct60.yaml
 Run names:
 
 ```text
-powder_convlstm_c2_one_step_jun18_val_jun28
-powder_convlstm_c2_direct60_jun18_val_jun28
+powder_convlstm_c2_one_step_jun28_7site_val15
+powder_convlstm_c2_direct60_jun28_7site_val15
 ```
 
 Keep architecture and loss fixed. Compare site-level MAE at horizons 1, 5, 15,
@@ -412,7 +357,7 @@ assume it is preferable.
 
 ### C3: Smaller architecture sweep
 
-The current ConvLSTM has enough capacity to overfit June 18. Test smaller
+The current ConvLSTM has enough capacity to overfit June 28. Test smaller
 models before larger ones:
 
 | Suffix | Hidden channels | Encoder layers | Decoder channels | Dropout |
@@ -426,68 +371,38 @@ Use `3 × 3` spatial kernels for the first three candidates. The current `1 × 3
 kernel only spans one map axis. Name runs as:
 
 ```text
-powder_convlstm_c3_<suffix>_jun18_val_jun28
+powder_convlstm_c3_<suffix>_jun28_7site_val15
 ```
 
 ### C4: Grid resolution
 
-Two or three observed June 18 sites do not justify a dense `10 × 10` target
-grid without a mask-aware loss. Compare fixed grids:
+Compare these fixed grid sizes while keeping the same seven nodes:
 
 ```text
-powder_convlstm_c4_grid04x04_jun18_val_jun28
-powder_convlstm_c4_grid06x06_jun18_val_jun28
-powder_convlstm_c4_grid10x10_jun18_val_jun28
+powder_convlstm_c4_grid04x04_jun28_7site_val15
+powder_convlstm_c4_grid06x06_jun28_7site_val15
+powder_convlstm_c4_grid10x10_jun28_7site_val15
 ```
 
 Rebuild separate map caches for each grid. Include grid size in the cache name
 so one experiment cannot load another experiment's cache.
 
-### C5: Map input representation
+### C5: Optimizer and regularization
 
-Compare these inputs while retaining observed-site loss:
-
-1. Interpolated power map only.
-2. Interpolated power map plus observation-mask channel.
-3. Sparse observed values plus mask, with unobserved values set to the training
-   mean.
-
-Name runs:
-
-```text
-powder_convlstm_c5_interpolated_jun18_val_jun28
-powder_convlstm_c5_interpolated_mask_jun18_val_jun28
-powder_convlstm_c5_sparse_mask_jun18_val_jun28
-```
-
-This experiment determines whether ConvLSTM learns RF behavior or artifacts of
-the interpolation procedure.
-
-### C6: Normalization
-
-Compare global per-frequency normalization with site-aware normalization at
-observed cells. Do not fit a separate normalization from June 28 or July 3.
-
-```text
-powder_convlstm_c6_global_norm_jun18_val_jun28
-powder_convlstm_c6_site_norm_jun18_val_jun28
-```
-
-### C7: Optimizer and regularization
-
-Use the best architecture, grid, input, and normalization. Test:
+Use the best architecture and grid with the existing input and normalization.
+Test:
 
 | Suffix | Optimizer | Learning rate | Weight decay |
 |---|---|---:|---:|
 | `adam_2e4_4e3` | Adam | 0.0002 | 0.004 |
 | `adam_1e4_1e4` | Adam | 0.0001 | 0.0001 |
 | `adamw_3e4_1e4` | AdamW | 0.0003 | 0.0001 |
-| `nadam_2e4_4e3` | NAdam | 0.0002 | 0.004 |
 
-Add NAdam support before the last candidate. Name runs as:
+Do not add another optimizer unless a later experiment explicitly requests it.
+Name runs as:
 
 ```text
-powder_convlstm_c7_<suffix>_jun18_val_jun28
+powder_convlstm_c5_<suffix>_jun28_7site_val15
 ```
 
 Use a maximum of 150 epochs, patience 20, gradient clipping, and the best
@@ -495,29 +410,28 @@ validation checkpoint. Plot training and validation losses. Reject a candidate
 with non-finite values or a widening training-validation gap without improved
 site-level MAE.
 
-### C8: Seed confirmation
+### C6: Seed confirmation
 
 Run the selected ConvLSTM configuration with seeds 7, 42, and 2026:
 
 ```text
-powder_convlstm_c8_seed007_jun18_val_jun28
-powder_convlstm_c8_seed042_jun18_val_jun28
-powder_convlstm_c8_seed2026_jun18_val_jun28
+powder_convlstm_c6_seed007_jun28_7site_val15
+powder_convlstm_c6_seed042_jun28_7site_val15
+powder_convlstm_c6_seed2026_jun28_7site_val15
 ```
 
 Report mean and standard deviation across seeds for every site and horizon.
 
 ## Expanded-Data Stage
 
-Perform this stage only after selecting VanillaLSTM and ConvLSTM configurations
-from June 28 validation results.
+Perform this stage only after selecting configurations from chronological
+validation holdouts drawn from each model's training dataset.
 
 ### VanillaLSTM expanded training
 
 Train on June 18, June 28, and June 30 as separate chronological segments. Use
-the final 15% of each June 30 site segment for validation, or add explicit
-validation segments from the end of the latest pre-July collection. Never let a
-window cross from one site or collection into another.
+a chronological trailing 15% holdout from this same combined pre-July training
+dataset. Never let a window cross from one site or collection into another.
 
 Run names:
 
@@ -527,22 +441,19 @@ powder_vanilla_final_all_prejul_seed042
 powder_vanilla_final_all_prejul_seed2026
 ```
 
-### ConvLSTM expanded training
+### ConvLSTM final training
 
-June 30 has only Law73 and WEB, while July 3 has seven different sites. Do not
-make June 30 the sole spatial validation set. Build separate map segments for
-June 18, June 28, and June 30. Train on June 18 plus June 28. Use a chronological
-tail of June 28 as the primary validation segment and June 30 as a secondary
-site-availability stress test. After selecting the epoch policy, optionally fit
-on all pre-July segments while retaining a pre-July chronological validation
-tail.
+Keep the seven-node June 28 training dataset for the final ConvLSTM. It is the
+only pre-July collection with the same seven nodes as the July 3 test dataset.
+Use its chronological trailing 15% for validation. Do not add June 18 or June 30
+to this run because their node sets differ.
 
 Run names:
 
 ```text
-powder_convlstm_final_prejul_seed007
-powder_convlstm_final_prejul_seed042
-powder_convlstm_final_prejul_seed2026
+powder_convlstm_final_jun28_7site_seed007
+powder_convlstm_final_jun28_7site_seed042
+powder_convlstm_final_jun28_7site_seed2026
 ```
 
 ## Final July 3 Evaluation
@@ -553,9 +464,8 @@ July 3 sites. Also evaluate matching LookbackMean and LinearAR baselines.
 Evaluate each seed in its own existing run directory. Do not overwrite one
 seed's metrics with another seed. After all seed evaluations finish, run a
 separate aggregation script that reads the three result tables and writes mean
-and standard deviation tables. If no aggregation script exists, add one focused
-analysis script under `evaluation/analysis/`; do not modify the evaluator to
-perform unrelated cross-run orchestration.
+and standard deviation tables. Use an existing aggregation script. If none
+exists, record the missing report as a blocker; do not add code.
 
 Required output tables:
 
@@ -592,7 +502,8 @@ For every experiment:
 1. Create a config under `training/configs/` with the run name in the filename.
 2. Confirm all configured files exist.
 3. Print each file's first and last timestamp and row count.
-4. Confirm the training, validation, and test file sets are disjoint.
+4. Confirm test files are disjoint from training files. Confirm validation is a
+   chronological trailing 15% holdout from the same training dataset.
 5. Confirm normalization uses training data only.
 6. Run a bounded smoke test before the full run.
 7. Run training with an explicit `--name` or `--output-dir`.
