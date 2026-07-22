@@ -516,12 +516,9 @@ report.txt
 
 ### Run VanillaLSTM
 
-Vanilla LSTM is now supported by the shared integrated pipeline.  See
-"Training through the common integrated pipeline" above.
-
-The model-specific script at `training/VanillaLSTM/train_integrated.py` and
-evaluator at `training/VanillaLSTM/evaluate_integrated.py` remain available for
-backward compatibility but are superseded by the common entry points.
+Vanilla LSTM is supported by the shared integrated pipeline. See
+"Training through the common integrated pipeline" above. The old
+model-specific evaluator has been removed.
 
 ### Run Autoformer-CSA
 

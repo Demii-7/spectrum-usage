@@ -32,7 +32,7 @@ from training.common.interpolated_map import (
 from training.common.data import chunk_specs, load_chunk
 from training.common.metrics import absolute_and_squared_errors_dbm
 from training.common.results import append_metric_rows, load_band_definitions
-from training.common.windowing import target_rows_for
+from training.common.windowing import filter_target_rows
 
 
 MODEL_NAME = "stsprednet"
@@ -295,23 +295,27 @@ def evaluate_csv_chunk(config: dict[str, Any], chunk, bands, out: Path, checkpoi
         min_needed = max(period_min_base + horizon - 1, min_history_base, horizon + lc - 1)
         for split_name in test_splits:
             split = data.splits[split_name]
-            full_x = np.vstack([train, split.model_input]).astype(np.float32)
-            full_raw = np.vstack([train_raw, split.raw_dbm]).astype(np.float32)
-            history_offset = len(train)
-
-            target_rows = target_rows_for(
-                len(split.raw_dbm), history_offset, horizon,
-                lc, min_needed,
+            split_x = split.model_input.astype(np.float32)
+            split_raw = split.raw_dbm.astype(np.float32)
+            target_rows = np.arange(
+                min_needed,
+                len(split_raw),
+                dtype=np.int64,
+            )
+            target_rows = filter_target_rows(
+                target_rows,
+                history=max(horizon + lc - 1, horizon - 1 + period_min_base),
+                segments=split.segments,
             )
             if len(target_rows) == 0:
                 print(f"  No valid target rows for {chunk.chunk_id} {split_name} h={horizon}")
                 continue
 
             pred = predict_recursive(
-                model, device, full_x, target_rows, horizon,
+                model, device, split_x, target_rows, horizon,
                 lc, lp, period_interval,
             )
-            target = full_raw[target_rows]
+            target = split_raw[target_rows]
             _, abs_err, sq_err = absolute_and_squared_errors_dbm(
                 pred, target, data.normalization,
             )
@@ -323,8 +327,8 @@ def evaluate_csv_chunk(config: dict[str, Any], chunk, bands, out: Path, checkpoi
                 split_name=split_name,
                 horizon=horizon,
                 model=MODEL_NAME,
-                target_rows=target_rows,
-                history_offset=history_offset,
+                target_rows=target_rows + int(split.row_start),
+                history_offset=int(split.row_start),
                 freqs=data.frequencies,
                 abs_err=abs_err,
                 sq_err=sq_err,

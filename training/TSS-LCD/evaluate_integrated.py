@@ -29,7 +29,7 @@ from training.common.runtime import timestamp_utc
 from training.common.results import append_metric_rows, finalize_results, load_band_definitions, prepare_output_dirs
 from training.common.data import chunk_specs, load_chunk
 from training.common.metrics import absolute_and_squared_errors_dbm
-from training.common.windowing import target_rows_for
+from training.common.windowing import make_window_starts
 
 
 MODEL_NAME = "tss_lcd"
@@ -148,27 +148,26 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands, out: Path,
 
     for split_name in test_splits:
         split = data.splits[split_name]
-        full_x = np.vstack([train, split.model_input]).astype(np.float32)
-        full_raw = np.vstack([train_raw, split.raw_dbm]).astype(np.float32)
-        history_offset = len(train)
-
-        origins = target_rows_for(
-            len(split.raw_dbm), history_offset, max_horizon,
-            t_in + max_horizon, 1,
+        split_x = split.model_input.astype(np.float32)
+        split_raw = split.raw_dbm.astype(np.float32)
+        starts = make_window_starts(
+            n_timesteps=len(split_x),
+            lookback=t_in,
+            rollout_horizon=max_horizon,
+            stride=1,
+            segments=split.segments,
         )
-        max_valid = len(full_raw) - max_horizon
-        origins = origins[origins <= max_valid]
-        if len(origins) == 0:
+        if len(starts) == 0:
             print(f"  No valid target rows for {chunk.chunk_id} {split_name}")
             continue
 
-        target_origins = origins + max_horizon - 1
+        target_origins = starts + t_in + max_horizon - 1
         y_hat = generate_full_predictions(
             tss_cc, diffusion, dec, device,
-            full_x, target_origins, t_in, t_out, batch_size,
+            split_x, target_origins, t_in, t_out, batch_size,
         )
         target = np.stack(
-            [full_raw[o - max_horizon + 1:o + 1] for o in target_origins],
+            [split_raw[o - max_horizon + 1:o + 1] for o in target_origins],
             axis=0,
         ).astype(np.float32)
 
@@ -186,8 +185,8 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands, out: Path,
                 split_name=split_name,
                 horizon=horizon,
                 model=MODEL_NAME,
-                target_rows=target_origins,
-                history_offset=history_offset,
+                target_rows=target_origins + int(split.row_start),
+                history_offset=int(split.row_start),
                 freqs=data.frequencies,
                 abs_err=abs_err,
                 sq_err=sq_err,

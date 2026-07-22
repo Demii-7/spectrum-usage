@@ -109,12 +109,21 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands, out: Path, checkpoint_p
     for split_name in test_splits:
         split = data.splits[split_name]
         split_raw = split.raw_dbm
-        full_raw = np.vstack([train_raw, split_raw]).astype(np.float32)
-        frame_pad, _ = frames_from_raw(full_raw, config, stats["vmin"], stats["vmax"])
-        train_frame_count = len(train_raw) // frame_height
-        total_frames = len(full_raw) // frame_height
+        frame_pad, _ = frames_from_raw(split_raw, config, stats["vmin"], stats["vmax"])
+        frame_segments = _frame_segments(split.segments, 0, len(split_raw), frame_height)
+        total_frames = len(frame_pad)
         max_start = total_frames - input_frames - output_frames
-        starts = list(range(max(train_frame_count - input_frames, 0), max_start + 1))
+        starts = list(range(0, max_start + 1))
+        if split.segments:
+            total_window = input_frames + output_frames
+            starts = [
+                start for start in starts
+                if any(
+                    start >= segment.start
+                    and start + total_window <= segment.end
+                    for segment in frame_segments
+                )
+            ]
         if not starts:
             continue
         pred_rgb = predict_frame_windows(model, frame_pad, starts, int(dcfg.get("batch_size", 2)))
@@ -132,10 +141,10 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands, out: Path, checkpoint_p
                 dtype=np.int64,
             )
             pred = pred_dbm_frames[:, frame_offset, minute_offset, :]
-            valid = target_rows < len(full_raw)
+            valid = target_rows < len(split_raw)
             pred = pred[valid]
             target_rows = target_rows[valid]
-            target = full_raw[target_rows]
+            target = split_raw[target_rows]
             abs_err = np.abs(pred - target)
             sq_err = (pred - target) ** 2
             append_metric_rows(
@@ -148,8 +157,8 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands, out: Path, checkpoint_p
                 split_name=split_name,
                 horizon=horizon,
                 model=MODEL_NAME,
-                target_rows=target_rows,
-                history_offset=len(train_raw),
+                target_rows=target_rows + int(split.row_start),
+                history_offset=int(split.row_start),
                 freqs=data.frequencies,
                 abs_err=abs_err,
                 sq_err=sq_err,
