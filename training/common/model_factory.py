@@ -38,18 +38,22 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from models.ARIMA import ARIMAForecaster
 from models.ConvLSTM import ConvLSTMForecaster
+from models.LSTMAttn import LSTMAttnForecaster
 from models.LookbackMean import LookbackMeanForecaster
 from models.LinearAutoregressive import LinearAutoregressiveForecaster
 from models.ResidualLinearAutoregressive import ResidualLinearAutoregressiveForecaster
 from models.ResidualConvLSTM import ResidualConvLSTMForecaster
 from models.ResidualVanillaLSTM import ResidualVanillaLSTMForecaster
 from models.TimeRAN import TimeRANForecaster
+from models.TemporalConvNet import TemporalConvNetForecaster
 from models.VanillaLSTM import VanillaLSTMForecaster
 
 
 
 SUPPORTED_MODELS = {
+    "arima",
     "vanillalstm",
     "convlstm",
     "timeran",
@@ -64,6 +68,8 @@ SUPPORTED_MODELS = {
     "residuallinearar4d",
     "residualvanillalstm",
     "residualconvlstm",
+    "temporalconvnet",
+    "lstmattn",
 }
 
 
@@ -78,6 +84,25 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
     """
     model_name = str(model_name).lower()
     model_cfg = config[model_name]["model"]
+
+    if model_name in ("temporalconvnet", "lstmattn", "arima"):
+        if train_data.ndim != 2:
+            raise ValueError(
+                f"Error! {model_name} expects training data shaped "
+                f"(time, features), got {train_data.shape}"
+            )
+        predictor_config = {
+            "model": {
+                **dict(model_cfg),
+                "input_size": int(train_data.shape[-1]),
+            }
+        }
+        model_types = {
+            "temporalconvnet": TemporalConvNetForecaster,
+            "lstmattn": LSTMAttnForecaster,
+            "arima": ARIMAForecaster,
+        }
+        return model_types[model_name](predictor_config)
 
     if model_name == "vanillalstm":
         if train_data.ndim != 2:
