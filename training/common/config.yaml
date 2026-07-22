@@ -10,14 +10,21 @@
 #
 
 data:
-    representation: 2d
+    representation: 4d
     band_definitions_path: evaluation/results/statistical_analysis/frequency_segments_600_800.csv
-    reference_site: humanities # No space use underscore or camel case
+    reference_site: guesthouse # No space use underscore or camel case
     files:
+      - path: data/powder_20260618T0036Z_guesthouse_600_800.csv
+        partition: train
       - path: data/powder_20260618T0036Z_humanities_600_800.csv
         partition: train
+      - path: data/powder_20260628T0436Z_guesthouse_600_800.csv
+        partition: test
       - path: data/powder_20260628T0436Z_humanities_600_800.csv
         partition: test
+    map:
+      name: powder_600_800
+      locations: data/locations/powder.json
     concat: rows
     # Optional for 2d/4d: preserve these ranges and replace all other
     # frequency channels with the configured dBm noise floor.
@@ -45,7 +52,7 @@ windowing:
 training:
     device: auto
     # Models: linear_autoregressive, convlstm, stsprednet, timeran, tss_lcd, vanillalstm, autoformer_csa, dswinlstm_i, deepspred
-    model_name: vanillalstm 
+    model_name: dswinlstm_i 
     
 
 preprocessing:
@@ -65,7 +72,7 @@ vanillalstm:
   #These parameters are for model definition
   model:
     input_sequence_length: 60            # Number of past sequence / lookback
-    prediction_horizon: 60               # Horizon, all N done simultaneously by the model
+    prediction_horizon: 1                # Horizon, all N done simultaneously by the model
     hidden_size: 128                     # Hidden state size
     num_layers: 1                        # Number of LSTM layers to stack
     dropout: 0.1                         # Set dropout percentage. Active only when num_layers > 1
@@ -74,17 +81,17 @@ vanillalstm:
     
   #These parameters are for training
   train:
-    val_fraction: 0.1                   # Fraction of training data held out for validation
+    val_fraction: 0.15                   # Fraction of training data held out for validation
     train_stride: 1                     # Step size between consecutive training windows
     val_stride: 1                       # Step size between consecutive validation windows
     test_stride: 1                      # Step size between consecutive test windows (used in evaluation)
     batch_size: 32                      # Number of samples per gradient update
-    epochs: 20                          # Number of full passes over the training data
-    learning_rate: 0.001                # Optimizer learning rate
-    weight_decay: 0.0                   # L2 weight-decay regularization strength
+    epochs: 100                          # Number of full passes over the training data
+    learning_rate: 0.005                # Optimizer learning rate
+    weight_decay: 1.0e-4                  # L2 weight-decay regularization strength
     optimizer: adam                     # Optimizer: adam, adamw, or sgd
     gradient_clip_norm: 1.0             # Maximum global gradient norm for clipping
-    early_stopping: true                # Stop training when validation loss stops improving
+    early_stopping: false                # Stop training when validation loss stops improving
     early_stopping_patience: 10         # Number of epochs without improvement before stopping
     seed: 42                            # Random seed for reproducibility
 
@@ -147,7 +154,7 @@ timeran:
     train_stride: 1                     # Step size between consecutive training windows
     val_stride: 1                       # Step size between consecutive validation windows
     batch_size: 1                       # Number of samples per gradient update
-    epochs: 10                          # Number of full passes over the training data
+    epochs: 50                          # Number of full passes over the training data
     learning_rate: 0.00001              # Optimizer learning rate
     weight_decay: 0.0                   # L2 weight-decay regularization strength
     optimizer: adam                     # Optimizer: adam, adamw, or sgd
@@ -155,6 +162,49 @@ timeran:
     early_stopping: true                # Stop training when validation loss stops improving
     early_stopping_patience: 10         # Number of epochs without improvement before stopping
     seed: 42                            # Random seed for reproducibility
+
+
+dswinlstm_i:
+  evaluation: {}
+  #These parameters are for model definition
+  model:
+    input_sequence_length: 60            # Number of past sequence / lookback
+    prediction_horizon: 60               # Multi-step prediction horizon (direct output)
+    patch_shape: [1, 2]                  # Spatial patch size for patch embedding [height, width]
+    embed_dim: 32                        # Base embedding dimension
+    hidden_dims: [32, 64]                # Hidden dimensions for each encoder stage
+    encoder_units: 2                     # Number of SwinLSTM encoder units
+    decoder_units: 2                     # Number of SwinLSTM decoder units
+    swin_depths: [1, 1, 1, 1]           # Swin Transformer depth per stage
+    num_heads: [2, 4, 4, 2]             # Attention heads per stage
+    window_size: 4                       # Swin attention window size
+    use_patch_merging: true              # Downsample between encoder stages via patch merging
+    use_patch_expanding: true            # Upsample between decoder stages via patch expanding
+    use_imputation_unit: true            # Enable imputation within encoder SwinLSTMCellI
+    mask_as_input_channel: false         # Concatenate mask as extra input channel
+    output_activation: tanh              # Final activation: tanh or none
+    decoder_feedback: pixel_feedback     # Decoder feedback strategy: pixel_feedback
+    padding_mode: reflect                # Padding for spatial boundaries: reflect or replicate
+    
+  #These parameters are for training
+  train:
+    train_stride: 1                      # Step size between consecutive training windows
+    val_stride: 1                        # Step size between consecutive validation windows
+    test_stride: 60                      # Step size between consecutive test windows (used in evaluation)
+    batch_size: 2                        # Number of samples per gradient update
+    epochs: 6                            # Number of full passes over the training data
+    learning_rate: 0.0001                # Optimizer learning rate
+    weight_decay: 0.0                    # L2 weight-decay regularization strength
+    optimizer: adam                      # Optimizer: adam, adamw, or sgd
+    gradient_clip_norm: 5.0              # Maximum global gradient norm for clipping
+    early_stopping: true                 # Stop training when validation loss stops improving
+    early_stopping_patience: 6           # Number of epochs without improvement before stopping
+    seed: 42                             # Random seed for reproducibility
+
+
+
+
+
 
 stsprednet:
   lc: 36
@@ -265,69 +315,9 @@ autoformer_csa:
   seed: 42
 
 
-dswinlstm_i:
-  input_sequence_length: 60
-  prediction_horizon: 60
-  train_stride: 1
-  val_stride: 1
-  test_stride: 60
-  batch_size: 2
-  epochs: 6
-  learning_rate: 0.0001
-  optimizer: adam
-  loss: mse
-  gradient_clip_norm: 5.0
-  early_stopping: true
-  early_stopping_patience: 6
-  teacher_forcing_ratio: 1.0
-  normalization: minmax
-  minmax_range: [-1, 1]
-  missing_rate: 0.3
-  missing_strategy: random
-  model:
-    patch_shape: [1, 2]
-    embed_dim: 32
-    hidden_dims: [32, 64]
-    encoder_units: 2
-    decoder_units: 2
-    swin_depths: [1, 1, 1, 1]
-    num_heads: [2, 4, 4, 2]
-    window_size: 4
-    use_patch_merging: true
-    use_patch_expanding: true
-    use_imputation_unit: true
-    mask_as_input_channel: false
-    output_activation: tanh
-    decoder_feedback: pixel_feedback
-    padding_mode: reflect
-  seed: 42
 
 
-deepspred:
-  minutes_per_frame: 60
-  input_frames: 1
-  output_frames: 1
-  stride: 1
-  batch_size: 2
-  epochs: 6
-  learning_rate: 0.001
-  weight_decay: 0.05
-  colormap: jet
-  normalization: minmax
-  model:
-    embed_dim: 32
-    depths: [2, 2, 2]
-    num_heads: [2, 4, 4]
-    patch_size: [1, 4, 4]
-    window_size: [1, 7, 7]
-    mlp_ratio: 4.0
-    drop_rate: 0.0
-    attn_drop_rate: 0.0
-    drop_path_rate: 0.0
-  early_stopping_patience: 4
-  early_stopping_threshold: 0.01
-  early_stopping_epochs: 4
-  seed: 42
+
 
 # Run: /home/cc/spectrum-usage/.venv/bin/python3 -m training.common.grid_search
 hyperparameter_search:

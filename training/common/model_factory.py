@@ -39,6 +39,7 @@ import torch
 import torch.nn as nn
 
 from models.ConvLSTM import ConvLSTMForecaster
+from models.DSwinLSTM_I import DSwinLSTM_IForecaster
 from models.LookbackMean import LookbackMeanForecaster
 from models.LinearAutoregressive import LinearAutoregressiveForecaster
 from models.ResidualLinearAutoregressive import ResidualLinearAutoregressiveForecaster
@@ -53,6 +54,7 @@ SUPPORTED_MODELS = {
     "vanillalstm",
     "convlstm",
     "timeran",
+    "dswinlstm_i",
     "lookbackmean1d",
     "lookbackmean2d",
     "lookbackmean4d",
@@ -255,6 +257,24 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
             }
         }
         return ResidualLinearAutoregressiveForecaster(predictor_config)
+
+    if model_name == "dswinlstm_i":
+        if train_data.ndim != 4:
+            raise ValueError(
+                "Error! DSwinLSTM-I expects training map data shaped "
+                f"(time, height, width, channels), got {train_data.shape}"
+            )
+        predictor_config = {
+            "model": {
+                **dict(model_cfg),
+                "input_sequence_length": int(model_cfg["input_sequence_length"]),
+                "prediction_horizon": int(model_cfg["prediction_horizon"]),
+                "map_height": int(train_data.shape[1]),
+                "map_width": int(train_data.shape[2]),
+                "input_channels": int(train_data.shape[3]),
+            },
+        }
+        return DSwinLSTM_IForecaster(predictor_config)
 
     raise ValueError(
         f"Unsupported model: {model_name}"
