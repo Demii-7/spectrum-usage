@@ -31,6 +31,13 @@ def _load(tmp_path, files, locations, name="sample", **kwargs):
     )
 
 
+def _write(path, values, timestamps=None):
+    frame = pd.DataFrame({"100.0": values})
+    if timestamps is not None:
+        frame.insert(0, "timestamp_utc", timestamps)
+    frame.to_csv(path, index=False)
+
+
 def test_incompatible_cache_rebuilds_from_available_csvs(tmp_path):
     files, locations = _sources(tmp_path)
     first = _load(tmp_path, files, locations)
@@ -74,6 +81,9 @@ def test_cache_validates_permutation_and_grid_settings(tmp_path):
 def test_prepare_partitions_excludes_site_with_long_outage(tmp_path):
     train_files, locations = _sources(tmp_path / "train")
     test_files, _ = _sources(tmp_path / "test")
+    pd.DataFrame({"100.0": [1.0] * 4, "101.0": [3.0] * 4}).to_csv(
+        train_files[0], index=False
+    )
     pd.DataFrame({"100.0": [1.0, np.nan, np.nan, 2.0], "101.0": [3.0] * 4}).to_csv(
         train_files[1], index=False
     )
@@ -98,3 +108,68 @@ def test_prepare_partitions_rejects_different_site_sets(tmp_path):
         prepare_4d_partitions(
             {"train": train_files, "test": test_files}, locations, "endpoints", None, None, 1
         )
+
+
+def test_leading_missing_prefix_trims_instead_of_excluding(tmp_path):
+    train_files, locations = _sources(tmp_path / "train")
+    test_files, _ = _sources(tmp_path / "test")
+    _write(train_files[0], [np.nan, np.nan, 1.0, 2.0])
+    _write(train_files[1], [3.0, 4.0, 5.0, 6.0])
+
+    partitions, selected, excluded = prepare_4d_partitions(
+        {"train": train_files, "test": test_files}, locations, "endpoints", [100.0], None, 1
+    )
+    source = _load(tmp_path, partitions["train"], locations, frequency_bins=[100.0])
+
+    assert selected == ["alpha", "beta"]
+    assert excluded == []
+    assert len(source.data) == 2
+
+
+def test_short_internal_gap_is_forward_filled_without_compression(tmp_path):
+    files, locations = _sources(tmp_path, names=("alpha",), coordinates=((-73.0, 40.0),))
+    _write(files[0], [1.0, np.nan, 5.0])
+
+    source = _load(tmp_path, files, locations, frequency_bins=[100.0], outage_threshold=1)
+
+    assert source.data[:, 0, 0, 0].tolist() == pytest.approx([1.0, 1.0, 5.0])
+
+
+@pytest.mark.parametrize("gap, is_excluded", [(2, True), (1, False)])
+def test_post_start_outage_threshold_filters_both_partitions(tmp_path, gap, is_excluded):
+    train_files, locations = _sources(tmp_path / "train")
+    test_files, _ = _sources(tmp_path / "test")
+    values = [1.0] + [np.nan] * gap + [2.0]
+    _write(train_files[1], values)
+    _write(train_files[0], [3.0] * len(values))
+    _write(test_files[0], [3.0] * len(values))
+    _write(test_files[1], [4.0] * len(values))
+
+    partitions, selected, excluded = prepare_4d_partitions(
+        {"train": train_files, "test": test_files}, locations, "endpoints", [100.0], None, 1
+    )
+
+    assert ("beta" in excluded) is is_excluded
+    assert ("beta" in selected) is not is_excluded
+    for partition in ("train", "test"):
+        assert (any(path.parent.name == "beta" for path in partitions[partition])) is not is_excluded
+
+
+def test_common_timestamp_rows_stay_aligned_after_trim_and_fill(tmp_path):
+    files, locations = _sources(tmp_path)
+    _write(files[0], [np.nan, 10.0, np.nan, 30.0], pd.date_range("2024-01-01", periods=4, freq="min", tz="UTC"))
+    _write(files[1], [20.0, 40.0, 50.0], pd.to_datetime([
+        "2024-01-01T00:01Z", "2024-01-01T00:02Z", "2024-01-01T00:03Z"
+    ]))
+
+    source = _load(tmp_path, files, locations, frequency_bins=[100.0], outage_threshold=1)
+
+    expected = pd.to_datetime([
+        "2024-01-01T00:01Z", "2024-01-01T00:02Z", "2024-01-01T00:03Z"
+    ])
+    assert source.timestamps.tolist() == expected.tolist()
+    assert len(source.data) == 3
+    with np.load(tmp_path / "maps" / "sample.npz", allow_pickle=True) as archive:
+        metadata = json.loads(str(archive["metadata"].item()))
+    assert metadata["timeline_semantics"] == "aligned-common-start-causal-ffill-v1"
+    assert metadata["timeline_start"].startswith("2024-01-01 00:01:00")

@@ -13,7 +13,6 @@ from training.common.data_sources import (
     clean_name,
     find_location,
     impute_array,
-    impute_frame,
     load_locations,
     mask_outside_frequency_ranges,
     select_frequencies,
@@ -162,6 +161,7 @@ def _request_metadata(
         "selected_sites": selected_sites,
         "excluded_sites": excluded_sites,
         "outage_threshold": outage_threshold,
+        "timeline_semantics": "aligned-common-start-causal-ffill-v1",
     }
 
 
@@ -175,6 +175,34 @@ def _has_long_nonfinite_run(frame, threshold):
     return False
 
 
+def _align_frames(frames, stamps):
+    if all(stamp is not None for stamp in stamps):
+        common = stamps[0]
+        for stamp in stamps[1:]:
+            common = common.intersection(stamp)
+        if common.empty:
+            raise ValueError("Map source CSVs have no common timestamps")
+        common = common.sort_values()
+        frames = [
+            frame.iloc[stamp.get_indexer(common)].reset_index(drop=True)
+            for frame, stamp in zip(frames, stamps)
+        ]
+        return frames, common
+    if any(stamp is not None for stamp in stamps) or len({len(frame) for frame in frames}) != 1:
+        raise ValueError("Map source CSVs require common timestamps or equal row counts")
+    return [frame.reset_index(drop=True) for frame in frames], None
+
+
+def _common_finite_start(frames):
+    finite = np.logical_and.reduce([
+        np.isfinite(frame.to_numpy(dtype=np.float64)).all(axis=1) for frame in frames
+    ])
+    rows = np.flatnonzero(finite)
+    if not len(rows):
+        raise ValueError("4D site data has no common row where all selected values are finite")
+    return int(rows[0])
+
+
 def prepare_4d_partitions(
     partitions: dict[str, list[Path]], locations_path: Path, collection_key: str,
     frequency_bins, frequency_ranges, outage_threshold: int,
@@ -182,7 +210,6 @@ def prepare_4d_partitions(
     """Validate and deterministically filter paired 4D site partitions."""
     locations = load_locations(locations_path, collection_key)
     indexed = {}
-    outages = set()
     for partition, files in partitions.items():
         sites = {}
         for path in files:
@@ -190,11 +217,11 @@ def prepare_4d_partitions(
             identity = clean_name(name)
             if identity in sites:
                 raise ValueError(f"Duplicate canonical site {identity!r} in {partition} partition")
-            frame, _ = _read_csv(path)
+            frame, stamp = _read_csv(path)
             frame = select_frequencies(frame, frequency_bins, frequency_ranges)
-            sites[identity] = (path, float(location["longitude"]), float(location["latitude"]))
-            if _has_long_nonfinite_run(frame, outage_threshold):
-                outages.add(identity)
+            sites[identity] = (
+                path, float(location["longitude"]), float(location["latitude"]), frame, stamp,
+            )
         indexed[partition] = sites
 
     train_sites = set(indexed["train"])
@@ -204,13 +231,30 @@ def prepare_4d_partitions(
         extra = sorted(test_sites - train_sites)
         raise ValueError(f"Train/test canonical site sets differ; missing from test: {missing}; extra in test: {extra}")
     for identity in sorted(train_sites):
-        if indexed["train"][identity][1:] != indexed["test"][identity][1:]:
+        if indexed["train"][identity][1:3] != indexed["test"][identity][1:3]:
             raise ValueError(f"Train/test coordinates differ for canonical site {identity!r}")
 
-    selected = sorted(train_sites - outages)
-    excluded = sorted(outages)
-    if not selected:
-        raise ValueError("All 4D sites were excluded by the non-finite outage threshold")
+    selected = sorted(train_sites)
+    excluded = set()
+    while True:
+        outages = set()
+        for partition in ("train", "test"):
+            entries = [indexed[partition][identity] for identity in selected]
+            frames, _ = _align_frames(
+                [entry[3] for entry in entries],
+                [entry[4].floor("min") if entry[4] is not None else None for entry in entries],
+            )
+            start = _common_finite_start(frames)
+            for identity, frame in zip(selected, frames):
+                if _has_long_nonfinite_run(frame.iloc[start:], outage_threshold):
+                    outages.add(identity)
+        if not outages:
+            break
+        excluded.update(outages)
+        selected = sorted(set(selected) - outages)
+        if not selected:
+            raise ValueError("All 4D sites were excluded by the non-finite outage threshold")
+    excluded = sorted(excluded)
     ordered = {
         partition: [indexed[partition][identity][0] for identity in selected]
         for partition in ("train", "test")
@@ -298,7 +342,9 @@ def load_4d(
                 if "metadata" not in archive:
                     raise ValueError("cache has no request metadata")
                 cached_metadata = json.loads(str(archive["metadata"].item()))
-            if files and cached_metadata != request_metadata:
+            comparable_metadata = dict(cached_metadata)
+            comparable_metadata.pop("timeline_start", None)
+            if files and comparable_metadata != request_metadata:
                 raise ValueError("cached request metadata does not match the requested sources or map settings")
             if requested_layout is not None:
                 cached_layout = load_map_layout(cache_path)
@@ -353,10 +399,6 @@ def load_4d(
     for path in files:
         frame, stamp = _read_csv(path)
         frame = select_frequencies(frame, frequency_bins, frequency_ranges)
-        if impute:
-            frame = impute_frame(frame, max_missing_gap)
-        if not np.isfinite(frame.to_numpy(dtype=np.float64)).all():
-            raise ValueError(f"Missing or non-finite values remain after 4d imputation: {path}")
         if mask_ranges is not None:
             if noise_floor is None:
                 raise ValueError("noise_floor is required when frequency masking is enabled")
@@ -382,20 +424,15 @@ def load_4d(
     columns = list(frames[0].columns)
     if any(list(frame.columns) != columns for frame in frames[1:]):
         raise ValueError("Map source CSVs must contain matching frequency columns")
-    if all(stamp is not None for stamp in stamps):
-        common = stamps[0]
-        for stamp in stamps[1:]:
-            common = common.intersection(stamp)
-        if common.empty:
-            raise ValueError("Map source CSVs have no common timestamps")
-        common = common.sort_values()
-        site_data = np.stack([frame.loc[stamp.get_indexer(common)].to_numpy(np.float32) for frame, stamp in zip(frames, stamps)])
-        timestamps = common
-    else:
-        if any(stamp is not None for stamp in stamps) or len({len(frame) for frame in frames}) != 1:
-            raise ValueError("Map source CSVs require common timestamps or equal row counts")
-        site_data = np.stack([frame.to_numpy(np.float32) for frame in frames])
-        timestamps = None
+    frames, timestamps = _align_frames(frames, stamps)
+    start = _common_finite_start(frames)
+    frames = [frame.iloc[start:].ffill() for frame in frames]
+    if timestamps is not None:
+        timestamps = timestamps[start:]
+    for path, frame in zip(files, frames):
+        if not np.isfinite(frame.to_numpy(dtype=np.float64)).all():
+            raise ValueError(f"Missing or non-finite values remain after causal 4d imputation: {path}")
+    site_data = np.stack([frame.to_numpy(np.float32) for frame in frames])
 
     site_lons_array = np.asarray(site_lons, dtype=np.float64)
     site_lats_array = np.asarray(site_lats, dtype=np.float64)
@@ -417,11 +454,8 @@ def load_4d(
         or not np.array_equal(grid_y, expected_layout["grid_y"])
     ):
         raise ValueError("Test map grid coordinates differ from the training map")
-    valid_timesteps = np.isfinite(mapped).any(axis=(1, 2, 3))
-    mapped = mapped[valid_timesteps]
-    if timestamps is not None:
-        timestamps = timestamps[valid_timesteps]
     map_dir.mkdir(parents=True, exist_ok=True)
+    request_metadata["timeline_start"] = str(timestamps[0]) if timestamps is not None else start
     payload = {
         map_key: mapped,
         "freqs_mhz": np.asarray([float(column) for column in columns], dtype=np.float32),
