@@ -42,6 +42,7 @@ from models.ConvLSTM import ConvLSTMForecaster
 from models.LookbackMean import LookbackMeanForecaster
 from models.LinearAutoregressive import LinearAutoregressiveForecaster
 from models.ResidualLinearAutoregressive import ResidualLinearAutoregressiveForecaster
+from models.ResidualConvLSTM import ResidualConvLSTMForecaster
 from models.ResidualVanillaLSTM import ResidualVanillaLSTMForecaster
 from models.TimeRAN import TimeRANForecaster
 from models.VanillaLSTM import VanillaLSTMForecaster
@@ -62,6 +63,7 @@ SUPPORTED_MODELS = {
     "residuallinearar2d",
     "residuallinearar4d",
     "residualvanillalstm",
+    "residualconvlstm",
 }
 
 
@@ -180,6 +182,24 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
         }
     
         return ConvLSTMForecaster(predictor_config)
+
+    if model_name == "residualconvlstm":
+        if train_data.ndim != 4:
+            raise ValueError(
+                "Error! ResidualConvLSTM expects training map data shaped "
+                f"(time, height, width, channels), got {train_data.shape}"
+            )
+        predictor_config = {
+            "model": {
+                **dict(model_cfg),
+                "input_sequence_length": int(model_cfg["input_sequence_length"]),
+                "prediction_horizon": int(model_cfg["prediction_horizon"]),
+                "input_channels": int(train_data.shape[3]),
+                "grid_height": int(train_data.shape[1]),
+                "grid_width": int(train_data.shape[2]),
+            },
+        }
+        return ResidualConvLSTMForecaster(predictor_config)
 
     if model_name in ("lookbackmean1d", "lookbackmean2d", "lookbackmean4d"):
         if model_name == "lookbackmean4d" and train_data.ndim != 4:
