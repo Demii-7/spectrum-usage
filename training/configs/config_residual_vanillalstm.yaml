@@ -1,8 +1,4 @@
-# Shared configuration for safe VanillaLSTM + LookbackMean + LinearAR comparison
-# Training: POWDER 6/18, guesthouse + humanities, 600-800 MHz
-# Evaluation: POWDER 6/28, same sites and band
-# Validation split: 0.15
-
+# Residual VanillaLSTM diagnostic config
 data:
   representation: 2d
   reference_site: humanities
@@ -28,42 +24,13 @@ windowing:
 training:
   device: auto
   models:
-    - vanillalstm
     - lookbackmean2d
-    - linearar2d
-    - residuallinearar2d
     - residualvanillalstm
 
 preprocessing:
   normalize: true
   impute: true
   max_missing_gap: 10
-
-# VanillaLSTM "safe" config - conservative settings
-vanillalstm:
-  evaluation: {}
-  model:
-    input_sequence_length: 60
-    prediction_horizon: 60
-    hidden_size: 128
-    num_layers: 1
-    dropout: 0.1
-    output_strategy: final_hidden
-    bidirectional: false
-  train:
-    val_fraction: 0.15
-    train_stride: 1
-    val_stride: 1
-    test_stride: 1
-    batch_size: 32
-    epochs: 20
-    learning_rate: 0.001
-    weight_decay: 0.0
-    optimizer: adam
-    gradient_clip_norm: 1.0
-    early_stopping: true
-    early_stopping_patience: 10
-    seed: 42
 
 lookbackmean2d:
   evaluation: {}
@@ -82,47 +49,6 @@ lookbackmean2d:
     optimizer: adam
     gradient_clip_norm: 1.0
     early_stopping: false
-    early_stopping_patience: 10
-    seed: 42
-
-linearar2d:
-  evaluation: {}
-  model:
-    input_sequence_length: 60
-    prediction_horizon: 1
-    ridge_alpha: 1.0
-  train:
-    val_fraction: 0.15
-    train_stride: 1
-    val_stride: 1
-    test_stride: 1
-    batch_size: 32
-    epochs: 1
-    learning_rate: 0.001
-    weight_decay: 0.0
-    optimizer: adam
-    gradient_clip_norm: 1.0
-    early_stopping: false
-    early_stopping_patience: 10
-    seed: 42
-
-residuallinearar2d:
-  evaluation: {}
-  model:
-    input_sequence_length: 60
-    prediction_horizon: 1
-  train:
-    val_fraction: 0.15
-    train_stride: 1
-    val_stride: 1
-    test_stride: 1
-    batch_size: 32
-    epochs: 20
-    learning_rate: 0.001
-    weight_decay: 0.0001
-    optimizer: adamw
-    gradient_clip_norm: 1.0
-    early_stopping: true
     early_stopping_patience: 10
     seed: 42
 
@@ -150,3 +76,5 @@ residualvanillalstm:
     early_stopping: true
     early_stopping_patience: 10
     seed: 42
+
+evaluation: {}

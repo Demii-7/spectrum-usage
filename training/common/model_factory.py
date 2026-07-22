@@ -41,6 +41,8 @@ import torch.nn as nn
 from models.ConvLSTM import ConvLSTMForecaster
 from models.LookbackMean import LookbackMeanForecaster
 from models.LinearAutoregressive import LinearAutoregressiveForecaster
+from models.ResidualLinearAutoregressive import ResidualLinearAutoregressiveForecaster
+from models.ResidualVanillaLSTM import ResidualVanillaLSTMForecaster
 from models.TimeRAN import TimeRANForecaster
 from models.VanillaLSTM import VanillaLSTMForecaster
 
@@ -56,6 +58,10 @@ SUPPORTED_MODELS = {
     "linearar1d",
     "linearar2d",
     "linearar4d",
+    "residuallinearar1d",
+    "residuallinearar2d",
+    "residuallinearar4d",
+    "residualvanillalstm",
 }
 
 
@@ -96,6 +102,23 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
             },
         }
         return VanillaLSTMForecaster(predictor_config)
+
+    if model_name == "residualvanillalstm":
+        if train_data.ndim != 2:
+            raise ValueError(
+                "Error! ResidualVanillaLSTM expects training data shaped "
+                f"(time, features), got {train_data.shape}"
+            )
+
+        predictor_config = {
+            "model": {
+                **dict(model_cfg),
+                "input_size": int(train_data.shape[-1]),
+                "num_layers": 1,
+                "bidirectional": False,
+            },
+        }
+        return ResidualVanillaLSTMForecaster(predictor_config)
 
     if model_name == "timeran":
         if train_data.ndim != 2:
@@ -189,6 +212,29 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
             }
         }
         return LinearAutoregressiveForecaster(predictor_config)
+
+    if model_name in (
+        "residuallinearar1d",
+        "residuallinearar2d",
+        "residuallinearar4d",
+    ):
+        if model_name == "residuallinearar4d" and train_data.ndim != 4:
+            raise ValueError(
+                "Error! ResidualLinearAR4D expects map data shaped "
+                f"(time, height, width, channels), got {train_data.shape}"
+            )
+        if model_name in ("residuallinearar1d", "residuallinearar2d") and train_data.ndim != 2:
+            raise ValueError(
+                "Error! ResidualLinearAR1D/2D expects CSV data shaped "
+                f"(time, features), got {train_data.shape}"
+            )
+        predictor_config = {
+            "model": {
+                **dict(model_cfg),
+                "input_size": int(np.prod(train_data.shape[1:])),
+            }
+        }
+        return ResidualLinearAutoregressiveForecaster(predictor_config)
 
     raise ValueError(
         f"Unsupported model: {model_name}"
