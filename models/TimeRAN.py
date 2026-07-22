@@ -15,7 +15,9 @@ MOMENT format:
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
+import warnings
 
 import torch
 import torch.nn as nn
@@ -96,6 +98,47 @@ class TimeRANForecaster(nn.Module):
 
         # Explicitly initialize the inner weights and configurations of the MOMENT pipeline
         self.moment.init()
+
+        if bool(model_cfg.get("use_timeran_checkpoint", True)):
+            configured_path = model_cfg.get("timeran_checkpoint_path")
+            checkpoint_path = (
+                Path(configured_path).expanduser()
+                if configured_path
+                else Path(__file__).resolve().parents[1]
+                / "training"
+                / "TimeRAN"
+                / "checkpoints"
+                / checkpoint_size
+                / f"TimeRAN_{checkpoint_size}.pth"
+            )
+            if checkpoint_path.is_file():
+                state_dict = torch.load(
+                    checkpoint_path,
+                    map_location="cpu",
+                    weights_only=True,
+                )
+                if not isinstance(state_dict, dict):
+                    raise ValueError(
+                        "TimeRAN checkpoint must contain a state dictionary, "
+                        f"got {type(state_dict).__name__} from {checkpoint_path}."
+                    )
+                if any(key.startswith("module.") for key in state_dict):
+                    state_dict = {
+                        key.removeprefix("module."): value
+                        for key, value in state_dict.items()
+                    }
+
+                # The MOMENT forecasting head depends on this run's horizon.
+                state_dict.pop("head.linear.weight", None)
+                state_dict.pop("head.linear.bias", None)
+                self.moment.load_state_dict(state_dict, strict=False)
+            else:
+                warnings.warn(
+                    f"TimeRAN checkpoint not found at {checkpoint_path}; "
+                    "using raw MOMENT weights. Set use_timeran_checkpoint: false "
+                    "to request raw MOMENT explicitly.",
+                    stacklevel=2,
+                )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """

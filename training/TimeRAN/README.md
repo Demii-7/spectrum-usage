@@ -1,4 +1,4 @@
-# TimeRAN Spectrum Prediction — Adaptation
+# TimeRAN Spectrum Prediction Adaptation
 
 > **Based on:** *A Family of Open Time-Series Foundation Models for the Radio Access Network* — Panitsas, Tassiulas (arXiv 2026)
 >
@@ -13,14 +13,18 @@
 
 ## Integrated Pipeline Usage
 
-Use the integrated runner for the shared AERPAW chunk pipeline:
+Set `training.model_name: timeran` in the selected configuration, then use the
+shared AERPAW chunk pipeline:
 
 ```bash
-./.venv/bin/python training/TimeRAN/train_integrated.py --config training/common/config.yaml
-./.venv/bin/python training/TimeRAN/train_integrated.py --config training/common/config.smoke.yaml
+./.venv/bin/python training/common/train_integrated.py --config training/common/config.yaml
+./.venv/bin/python training/common/evaluation_integrated.py --config training/common/config.yaml --name <experiment-name>
 ```
 
-Integrated outputs are written to `training/results/TimeRAN/` with metrics tables, per-chunk timing logs, `report.txt`, and `checkpoints/`.
+The shared runner writes checkpoints and results under `runs/<experiment-name>/`.
+The TimeRAN model section in `training/common/config.yaml` controls the MOMENT
+variant and upstream TimeRAN checkpoint loading. Set `use_timeran_checkpoint` to
+`false` when you want raw MOMENT weights.
 
 ## Quick Start
 

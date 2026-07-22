@@ -43,7 +43,7 @@ Use the integrated runner in the model directory:
 ```bash
 ./.venv/bin/python training/ConvLSTM/train_integrated.py --config training/common/config.yaml
 ./.venv/bin/python training/STS-PredNet/train_integrated.py --config training/common/config.yaml
-./.venv/bin/python training/TimeRAN/train_integrated.py --config training/common/config.yaml
+./.venv/bin/python training/common/train_integrated.py --config training/common/config.yaml
 ./.venv/bin/python training/TSS-LCD/train_integrated.py --config training/common/config.yaml
 ./.venv/bin/python training/VanillaLSTM/train_integrated.py --config training/common/config.yaml
 ./.venv/bin/python training/Autoformer-CSA/train_integrated.py --config training/common/config.yaml
@@ -95,7 +95,7 @@ Use the shared smoke config:
 ./.venv/bin/python training/LinearAutoRegressive/train.py --config training/common/config.smoke.yaml
 ./.venv/bin/python training/ConvLSTM/train_integrated.py --config training/common/config.smoke.yaml
 ./.venv/bin/python training/STS-PredNet/train_integrated.py --config training/common/config.smoke.yaml
-./.venv/bin/python training/TimeRAN/train_integrated.py --config training/common/config.smoke.yaml
+./.venv/bin/python training/common/train_integrated.py --config training/common/config.smoke.yaml
 ./.venv/bin/python training/TSS-LCD/train_integrated.py --config training/common/config.smoke.yaml
 ./.venv/bin/python training/VanillaLSTM/train_integrated.py --config training/common/config.smoke.yaml
 ./.venv/bin/python training/Autoformer-CSA/train_integrated.py --config training/common/config.smoke.yaml

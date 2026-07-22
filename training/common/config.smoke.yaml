@@ -92,16 +92,28 @@ stsprednet:
     output_channels: 1
 
 timeran:
-  batch_size: 1
-  epochs: 1
-  learning_rate: 1.0e-5
-  max_learning_rate: 1.0e-4
-  weight_decay: 0.0
-  gradient_clip_norm: 5.0
-  checkpoint_size: small
-  training_mode: linear_probing
-  seed: 42
-  device: auto
+  evaluation: {}
+  model:
+    input_sequence_length: 60
+    prediction_horizon: 1
+    checkpoint_size: small
+    use_timeran_checkpoint: true
+    freeze_encoder: true
+    freeze_embedder: true
+    freeze_head: false
+  train:
+    val_fraction: 0.1
+    train_stride: 1
+    val_stride: 1
+    batch_size: 1
+    epochs: 1
+    learning_rate: 1.0e-5
+    weight_decay: 0.0
+    optimizer: adam
+    gradient_clip_norm: 5.0
+    early_stopping: false
+    early_stopping_patience: 1
+    seed: 42
 
 tss_lcd:
   hidden_dim: 128

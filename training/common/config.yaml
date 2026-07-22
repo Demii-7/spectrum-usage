@@ -136,6 +136,7 @@ timeran:
     input_sequence_length: 60            # Number of past sequence / lookback
     prediction_horizon: 1               # 1 for one-step autoregressive rollout
     checkpoint_size: base               # Pretrained MOMENT backbone size: small, base, or large
+    use_timeran_checkpoint: true        # Load the matching checkpoint from training/TimeRAN/checkpoints
     freeze_encoder: true                # Freeze MOMENT encoder weights during head training
     freeze_embedder: true               # Freeze MOMENT embedder weights during head training
     freeze_head: false                  # Allow the forecasting head to update

@@ -468,9 +468,10 @@ gdown 1gz23mmP4ZiNznCloObEaSlVaJH21fyxJ -O training/TimeRAN/checkpoints/base/Tim
 gdown 1We9zE5BV6Iwkc_EKSAhP28B3wcM7RZRd -O training/TimeRAN/checkpoints/large/TimeRAN_large.pth
 ```
 
-The model-specific script at `training/TimeRAN/train_integrated.py` and
-evaluator at `training/TimeRAN/evaluate_integrated.py` remain available for
-backward compatibility but are superseded by the common entry points.
+Set `training.model_name: timeran` in the configuration and use
+`training/common/train_integrated.py` and
+`training/common/evaluation_integrated.py`. TimeRAN has no model-specific
+integrated runner.
 
 ### Run TSS-LCD
 
