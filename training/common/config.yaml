@@ -281,15 +281,16 @@ tss_lcd:
   seed: 42
 
 autoformer_csa:
-  seq_len: 60
-  label_len: 30
+  seq_len: 96
+  label_len: 48
   pred_len: 60
   train_stride: 1
   val_stride: 1
   test_stride: 1
-  batch_size: 8
-  epochs: 10
-  learning_rate: 0.0005
+  val_fraction: 0.1
+  batch_size: 32
+  epochs: 20
+  learning_rate: 0.0001
   optimizer: adam
   loss: rmse
   gradient_clip_norm: 5.0
@@ -298,19 +299,18 @@ autoformer_csa:
   architecture:
     model_variant: autoformer_csa
   model:
-    d_model: 64
-    d_ff: 256
-    encoder_layers: 1
+    d_model: 512
+    d_ff: 2048
+    encoder_layers: 2
     decoder_layers: 1
-    n_heads: 4
-    moving_avg: 13
-    dropout: 0.1
+    n_heads: 8
+    moving_avg: 25
+    dropout: 0.05
     factor: 3
     activation: relu
     embed: timeF
     freq: h
     csam_kernel_size: 7
-    csam_reduction: 16
     output_attention: false
   seed: 42
 
