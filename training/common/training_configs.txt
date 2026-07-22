@@ -175,8 +175,6 @@ data:
   reference_site: humanities, guesthouse
   train_files: [data/powder_20260618T0036Z_humanities_600_800.csv, data/powder_20260618T0036Z_guesthouse_600_800.csv]
   test_files:[data/powder_20260628T0436Z_humanities_600_800.csv, data/powder_20260628T0436Z_guesthouse_600_800.csv]
-  train_map_path:
-  test_map_path:
   map_key: map_db
   prediction_start_row:
   chunks:
