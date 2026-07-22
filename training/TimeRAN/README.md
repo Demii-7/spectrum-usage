@@ -35,13 +35,19 @@ variant and upstream TimeRAN checkpoint loading. Set `use_timeran_checkpoint` to
 git clone https://github.com/Demii-7/spectrum-usage.git
 cd spectrum-usage
 
-# Create and activate virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
+# Create and activate a Python 3.10 or 3.11 environment
+python3.11 -m venv training/TimeRAN/.venv
+source training/TimeRAN/.venv/bin/activate
 
-# Install dependencies (pinned to tested versions)
-pip install momentfm==0.1.4 numpy pyyaml tqdm scikit-learn gdown
+# Install the PyTorch build required by the host, then TimeRAN dependencies
+pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu124
+pip install ./training/TimeRAN
 ```
+
+`training/TimeRAN/pyproject.toml` requires Python 3.10 or 3.11 and pins the
+tested TimeRAN package versions. Python 3.12 cannot install the pinned NumPy
+1.25.2 dependency. Install a different PyTorch wheel when the host requires a
+different CUDA version or CPU-only execution.
 
 ### Download Pretrained Checkpoint
 
