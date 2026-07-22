@@ -30,8 +30,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--band", action="append", default=[], help="Band to include. Repeatable.")
     parser.add_argument("--input-root", type=Path, default=EVALUATION_ROOT)
     parser.add_argument("--annotation-root", type=Path, default=DEFAULT_ANNOTATION_ROOT)
-    parser.add_argument("--annotation-node", default=None, help="Node whose boundaries apply to every selected trace.")
-    parser.add_argument("--annotation-run", default=None, help="Run ID for the shared annotation boundaries.")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--max-time-bins", type=int, default=1500)
     parser.add_argument("--max-frequency-bins", type=int, default=1200)
@@ -66,23 +64,6 @@ def select_traces(annotations: pd.DataFrame, args: argparse.Namespace) -> pd.Dat
             selected = selected[selected[column].astype(str).isin(values)]
     columns = ["site", "node", "run_id", "band"]
     return selected[columns].drop_duplicates().sort_values(columns).reset_index(drop=True)
-
-
-def discover_traces(args: argparse.Namespace) -> pd.DataFrame:
-    if not args.site:
-        raise ValueError("--site is required with --annotation-node")
-    rows = []
-    root = args.input_root / args.site
-    for path in sorted(root.glob(f"*/*/*/{POWER_FILE}")):
-        node, run_id, band = path.relative_to(root).parts[:3]
-        if args.node and node not in args.node:
-            continue
-        if args.run and run_id not in args.run:
-            continue
-        if args.band and band not in args.band:
-            continue
-        rows.append({"site": args.site, "node": node, "run_id": run_id, "band": band})
-    return pd.DataFrame(rows, columns=["site", "node", "run_id", "band"])
 
 
 def frequency_columns(frame: pd.DataFrame) -> list[str]:
@@ -145,21 +126,10 @@ def load_trace(path: Path, max_time_bins: int, max_frequency_bins: int) -> tuple
     return times, reduced_frequencies, block_nanmean(values, row_edges, column_edges)
 
 
-def boundaries_for(
-    annotations: pd.DataFrame,
-    trace: pd.Series,
-    annotation_node: str | None = None,
-    annotation_run: str | None = None,
-) -> list[float]:
+def boundaries_for(annotations: pd.DataFrame, trace: pd.Series) -> list[float]:
     mask = np.ones(len(annotations), dtype=bool)
-    values = {
-        "site": trace["site"],
-        "node": annotation_node or trace["node"],
-        "run_id": annotation_run or trace["run_id"],
-        "band": trace["band"],
-    }
-    for column, value in values.items():
-        mask &= annotations[column].astype(str).to_numpy() == str(value)
+    for column in ("site", "node", "run_id", "band"):
+        mask &= annotations[column].astype(str).to_numpy() == str(trace[column])
     regions = annotations.loc[mask].sort_values("region_id")
     if regions.empty:
         raise ValueError(
@@ -171,7 +141,7 @@ def boundaries_for(
 def main() -> int:
     args = parse_args()
     annotations = load_annotations(args.annotation_root)
-    selected = discover_traces(args) if args.annotation_node else select_traces(annotations, args)
+    selected = select_traces(annotations, args)
     if selected.empty:
         raise SystemExit("ERROR: no annotations match the requested filters")
 
@@ -185,13 +155,7 @@ def main() -> int:
         finite = values[np.isfinite(values)]
         if finite.size:
             finite_values.append(finite)
-        traces.append((
-            trace,
-            times,
-            frequencies,
-            values,
-            boundaries_for(annotations, trace, args.annotation_node, args.annotation_run),
-        ))
+        traces.append((trace, times, frequencies, values, boundaries_for(annotations, trace)))
     if not finite_values:
         raise ValueError("selected traces contain no finite power values")
 
