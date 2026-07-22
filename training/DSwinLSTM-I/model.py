@@ -353,7 +353,7 @@ class Reconstruction(nn.Module):
         return x
 
 
-class DSwinLSTM_I(nn.Module):
+class DSwinLSTM_IForecaster(nn.Module):
     def __init__(self, config):
         super().__init__()
         model_cfg = config["model"]
@@ -381,7 +381,12 @@ class DSwinLSTM_I(nn.Module):
         self.num_merge_stages = 2 if self.use_patch_merging else 0
 
         self.padded_H, self.padded_W = self._compute_padded_shape(self.orig_H, self.orig_W)
-        self.patch_embed = PatchEmbed(img_size=(self.padded_H, self.padded_W), patch_size=self.patch_shape, in_chans=self.F, embed_dim=self.hidden_dims[0])
+        self.patch_embed = PatchEmbed(
+            img_size=(self.padded_H, self.padded_W), 
+            patch_size=self.patch_shape, 
+            in_chans=self.F, 
+            embed_dim=self.hidden_dims[0],
+        )
         self.mask_pool_stage0 = MaskPool(patch_size=self.patch_shape)
         self.stage0_resolution = tuple(self.patch_embed.patches_resolution)
         self.stage1_resolution = (self.stage0_resolution[0] // 2, self.stage0_resolution[1] // 2)
@@ -390,12 +395,54 @@ class DSwinLSTM_I(nn.Module):
         self.merge = PatchMerging(self.stage0_resolution, self.hidden_dims[0])
         self.expand = PatchExpand(self.stage1_resolution, self.hidden_dims[1], out_dim=self.hidden_dims[0])
 
-        self.enc_cell0 = SwinLSTMCellI(self.hidden_dims[0], self.stage0_resolution, self.num_heads[0], self.window_size, self.swin_depths[0], drop=self.drop_rate, attn_drop=self.attn_drop_rate, drop_path=self.drop_path_rate)
-        self.enc_cell1 = SwinLSTMCellI(self.hidden_dims[1], self.stage1_resolution, self.num_heads[1], self.window_size, self.swin_depths[1], drop=self.drop_rate, attn_drop=self.attn_drop_rate, drop_path=self.drop_path_rate)
-        self.dec_cell1 = SwinLSTMCell(self.hidden_dims[1], self.stage1_resolution, self.num_heads[2], self.window_size, self.swin_depths[2], drop=self.drop_rate, attn_drop=self.attn_drop_rate, drop_path=self.drop_path_rate)
-        self.dec_cell0 = SwinLSTMCell(self.hidden_dims[0], self.stage0_resolution, self.num_heads[3], self.window_size, self.swin_depths[3], drop=self.drop_rate, attn_drop=self.attn_drop_rate, drop_path=self.drop_path_rate)
+        self.enc_cell0 = SwinLSTMCellI(
+            self.hidden_dims[0], 
+            self.stage0_resolution, 
+            self.num_heads[0], 
+            self.window_size, 
+            self.swin_depths[0], 
+            drop=self.drop_rate, 
+            attn_drop=self.attn_drop_rate, 
+            drop_path=self.drop_path_rate,
+        )
+        
+        self.enc_cell1 = SwinLSTMCellI(
+            self.hidden_dims[1], 
+            self.stage1_resolution, 
+            self.num_heads[1], 
+            self.window_size, 
+            self.swin_depths[1], 
+            drop=self.drop_rate, 
+            attn_drop=self.attn_drop_rate, 
+            drop_path=self.drop_path_rate,
+        )
+        self.dec_cell1 = SwinLSTMCell(
+            self.hidden_dims[1], 
+            self.stage1_resolution, 
+            self.num_heads[2], 
+            self.window_size, 
+            self.swin_depths[2], 
+            drop=self.drop_rate, 
+            attn_drop=self.attn_drop_rate, 
+            drop_path=self.drop_path_rate,
+        )
+        self.dec_cell0 = SwinLSTMCell(
+            self.hidden_dims[0], 
+            self.stage0_resolution, 
+            self.num_heads[3], 
+            self.window_size, 
+            self.swin_depths[3], 
+            drop=self.drop_rate, 
+            attn_drop=self.attn_drop_rate, 
+            drop_path=self.drop_path_rate,
+        )
 
-        self.reconstruction = Reconstruction(in_dim=self.hidden_dims[0], out_channels=self.F, map_size=(self.padded_H, self.padded_W), patch_size=self.patch_shape)
+        self.reconstruction = Reconstruction(
+            in_dim=self.hidden_dims[0], 
+            out_channels=self.F, 
+            map_size=(self.padded_H,self.padded_W), 
+            patch_size=self.patch_shape,
+        )
 
     def _compute_padded_shape(self, H, W):
         h_factor = self.patch_shape[0] * (2 ** self.num_merge_stages) * self.window_size
