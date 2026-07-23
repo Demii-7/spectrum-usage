@@ -752,7 +752,7 @@ def evaluate_chunk(
                 "stored_horizons": horizons,
                 "forecast_layout": (
                     "N,F"
-                    if model_name == "vanillalstm"
+                    if full_x.ndim == 2
                     else "N,F,H,W"
                 ),
                 "checkpoint_path": str(

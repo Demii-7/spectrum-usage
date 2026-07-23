@@ -416,3 +416,77 @@ dswinlstm_i:
 
 # Check for:
 #   runs/powder_2400_2600_dswinlstm_i_*/checkpoints/
+
+# =============================================================================
+# Run 11 — Autoformer-CSA  600_800  (2d — direct multi-step, prediction_horizon=60, input_sequence_length=96)
+# =============================================================================
+data:
+  representation: 2d
+  reference_site: guesthouse
+  files:
+    - path: data/powder_20260618T0036Z_humanities_600_800.csv
+      partition: train
+    - path: data/powder_20260628T0436Z_humanities_600_800.csv
+      partition: test
+  chunks:
+    - id: powder_600_800
+      start_mhz: 600.0
+      end_mhz: 800.0
+
+windowing:
+  lookback: 60
+  horizons: [1, 5, 15, 60]
+
+training:
+  device: auto
+  model_name: autoformer_csa
+
+autoformer_csa:
+  model:
+    input_sequence_length: 96
+    prediction_horizon: 60
+    label_len: 48
+  train:
+    batch_size: 32
+    epochs: 20
+    learning_rate: 0.0001
+
+# Check for:
+#   runs/powder_600_800_autoformer_csa_*/checkpoints/
+
+# =============================================================================
+# Run 12 — Autoformer-CSA  2400_2600  (2d — direct multi-step, prediction_horizon=60, input_sequence_length=96)
+# =============================================================================
+data:
+  representation: 2d
+  reference_site: guesthouse
+  files:
+    - path: data/powder_20260618T0036Z_humanities_2400_2600.csv
+      partition: train
+    - path: data/powder_20260628T0436Z_humanities_2400_2600.csv
+      partition: test
+  chunks:
+    - id: powder_2400_2600
+      start_mhz: 2400.0
+      end_mhz: 2600.0
+
+windowing:
+  lookback: 60
+  horizons: [1, 5, 15, 60]
+
+training:
+  device: auto
+  model_name: autoformer_csa
+
+autoformer_csa:
+  model:
+    input_sequence_length: 96
+    prediction_horizon: 60
+    label_len: 48
+  train:
+    batch_size: 32
+    epochs: 20
+    learning_rate: 0.0001
+
+# Check for:
+#   runs/powder_2400_2600_autoformer_csa_*/checkpoints/

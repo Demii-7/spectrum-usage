@@ -10,7 +10,7 @@
 #
 
 data:
-    representation: 4d
+    representation: 2d
     band_definitions_path: evaluation/results/statistical_analysis/frequency_segments_600_800.csv
     reference_site: guesthouse # No space use underscore or camel case
     files:
@@ -60,7 +60,7 @@ windowing:
 training:
     device: auto
     # Models: linear_autoregressive, convlstm, stsprednet, timeran, tss_lcd, vanillalstm, autoformer_csa, dswinlstm_i, deepspred
-    model_name: dswinlstm_i 
+    model_name: autoformer_csa 
     
 
 preprocessing:
@@ -289,24 +289,13 @@ tss_lcd:
   seed: 42
 
 autoformer_csa:
-  seq_len: 96
-  label_len: 48
-  pred_len: 60
-  train_stride: 1
-  val_stride: 1
-  test_stride: 1
-  val_fraction: 0.1
-  batch_size: 32
-  epochs: 20
-  learning_rate: 0.0001
-  optimizer: adam
-  loss: rmse
-  gradient_clip_norm: 5.0
-  early_stopping: true
-  early_stopping_patience: 6
-  architecture:
-    model_variant: autoformer_csa
+  evaluation: {}
+
   model:
+    input_sequence_length: 96
+    prediction_horizon: 60
+    label_len: 48
+
     d_model: 512
     d_ff: 2048
     encoder_layers: 2
@@ -315,12 +304,29 @@ autoformer_csa:
     moving_avg: 25
     dropout: 0.05
     factor: 3
-    activation: relu
-    embed: timeF
-    freq: h
     csam_kernel_size: 7
     output_attention: false
-  seed: 42
+
+  train:
+    val_fraction: 0.1
+
+    train_stride: 1
+    val_stride: 1
+    test_stride: 1
+
+    batch_size: 32
+    epochs: 20
+
+    learning_rate: 0.0001
+    weight_decay: 0.0
+    optimizer: adam
+
+    gradient_clip_norm: 5.0
+
+    early_stopping: true
+    early_stopping_patience: 6
+
+    seed: 42
 
 
 

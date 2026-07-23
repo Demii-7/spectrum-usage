@@ -20,6 +20,7 @@ supports:
 | Vanilla LSTM | `vanillalstm` | CSV frequency vectors | `(B, T, F)` |
 | ConvLSTM | `convlstm` | Spectrum maps | `(B, T, F, H, W)` |
 | DSwinLSTM-I | `dswinlstm_i` | Spectrum maps | `(B, T, F, H, W)` |
+| Autoformer-CSA | `autoformer_csa` | CSV frequency vectors | `(B, T, F)` |
 | TimeRAN | `timeran` | CSV frequency vectors | `(B, T, F)` |
 | Lookback Mean | `lookbackmean1d`/`2d`/`4d` | CSV / maps | `(B, T, F)` or `(B, T, F, H, W)` |
 | Linear AutoRegressive | `linearar1d`/`2d`/`4d` | CSV / maps | `(B, T, F)` or `(B, T, F, H, W)` |
@@ -158,14 +159,20 @@ The basic workflow is three steps:
 #    vim training/common/config.yaml
 
 # 2. Train
-python3 training/common/train_integrated.py --name my_experiment
+python3 training/common/train_integrated.py \
+    --config training/common/config.yaml \
+    --name my_experiment
 
 # 3. Evaluate
-python3 training/common/evaluation_integrated.py --name my_experiment
+python3 training/common/evaluation_integrated.py \
+    --config training/common/config.yaml \
+    --name my_experiment
 ```
 
 All models use the same two entry points.  Model-specific settings live in the
 shared config under `{model_name}.model` and `{model_name}.train`.
+See [Training](#training) and [Evaluation](#evaluation) below for all available
+flags.
 
 ## Training
 
@@ -180,6 +187,14 @@ python3 training/common/train_integrated.py [--config CONFIG] [--name NAME] [--o
 | `--config PATH` | `training/common/config.yaml` | Path to the YAML configuration file |
 | `--name NAME` | `<model>_<timestamp>` | Experiment name; outputs go to `runs/<name>/` |
 | `--output-dir PATH` | `runs/<name>/` | Override the output directory (alternative to `--name`) |
+
+Example:
+
+```bash
+python3 training/common/train_integrated.py \
+    --config training/common/config.yaml \
+    --name my_experiment
+```
 
 The trainer reads `training.model_name` from the config, iterates over each
 chunk in `data.chunks`, and independently trains one model per chunk.
@@ -266,6 +281,7 @@ points.  The table below notes their specific requirements:
 | Vanilla LSTM | `vanillalstm` | 1d | `(B,T,F)` | One-step autoregressive |
 | ConvLSTM | `convlstm` | 4d | `(B,T,F,H,W)` | Has validation magnitude guard |
 | DSwinLSTM-I | `dswinlstm_i` | 4d | `(B,T,F,H,W)` | Multi-step direct; `prediction_horizon == rollout_horizon` |
+| Autoformer-CSA | `autoformer_csa` | 2d | `(B,T,F)` | Multi-step direct; `prediction_horizon == rollout_horizon`; `input_sequence_length` must match `seq_len` |
 | TimeRAN | `timeran` | 1d | `(B,T,F)` | Requires pretrained MOMENT checkpoint download (see "Run TimeRAN" below) |
 | Lookback Mean | `lookbackmean1d/2d/4d` | any | varies | Parameter-free baseline; predicts mean of lookback window |
 | Linear AR | `linearar1d/2d/4d` | any | varies | Ridge regression per bin |
@@ -283,7 +299,7 @@ training and evaluation.  Key top-level sections:
 
 ```yaml
 data:
-  representation: 1d             # "1d" (CSV vectors), "2d", or "4d" (spatial maps)
+  representation: 2d             # "2d" (CSV vectors) or "4d" (spatial maps)
   band_definitions_path: ...      # Optional CSV defining frequency bands for metrics
   reference_site: guesthouse      # Name used for split keys
   files:                          # List of source files with partition labels
@@ -487,35 +503,33 @@ model-specific evaluator has been removed.
 
 ### Run Autoformer-CSA
 
-The integrated Autoformer-CSA runner trains the restored Autoformer implementation per chunk against the shared chunk pipeline.
+Autoformer-CSA is supported by the shared integrated pipeline.  It uses
+CSV vector data (`representation: 2d`) and produces direct multi-step
+forecasts (`prediction_horizon == rollout_horizon`).  Set
+`training.model_name: autoformer_csa` in the configuration and use
+`training/common/train_integrated.py` and
+`training/common/evaluation_integrated.py`.
 
-```bash
-python3 training/Autoformer-CSA/train_integrated.py
-```
+Key configuration fields under `autoformer_csa.model`:
 
-Training outputs go to `training/results/Autoformer-CSA/` by default:
+| Field | Description |
+|-------|-------------|
+| `input_sequence_length` | Encoder input length (`seq_len` in Autoformer terms); must match the lookback window size |
+| `prediction_horizon` | Forecast horizon (`pred_len`); must equal `max(windowing.horizons)` |
+| `label_len` | Decoder's known future timesteps (uses the last `label_len` steps of the encoder input) |
+| `d_model` | Transformer model dimension |
+| `d_ff` | Feed-forward network hidden dimension |
+| `encoder_layers` / `decoder_layers` | Number of encoder/decoder layers |
+| `n_heads` | Number of attention heads |
+| `moving_avg` | Moving average kernel size |
+| `dropout` | Dropout rate |
+| `factor` | Attention factor |
+| `csam_kernel_size` | Kernel size for CSA-MLP block |
+| `output_attention` | Whether to output attention weights (default `false`) |
 
-```text
-<chunk_id>_training_log.csv
-checkpoints/
-```
-
-#### Evaluate
-
-Loads the checkpoint saved by training, runs inference on the test set, and writes metrics.
-
-```bash
-python3 training/Autoformer-CSA/evaluate_integrated.py
-```
-
-Evaluation outputs go to `training/results/Autoformer-CSA/` by default:
-
-```text
-aggregate_metrics.csv
-per_frequency_metrics.csv
-per_band_metrics.csv
-report.txt
-```
+Training hyperparameters live under `autoformer_csa.train` (`batch_size`,
+`epochs`, `learning_rate`, etc.).  No separate runner or checkpoint download
+is needed.
 
 ### Run DSwinLSTM-I
 
