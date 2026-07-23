@@ -191,9 +191,7 @@ python3 training/common/train_integrated.py [--config CONFIG] [--name NAME] [--o
 Example:
 
 ```bash
-python3 training/common/train_integrated.py \
-    --config training/common/config.yaml \
-    --name my_experiment
+python3 training/common/train_integrated.py --config training/common/config.yaml
 ```
 
 The trainer reads `training.model_name` from the config, iterates over each
@@ -240,8 +238,7 @@ inside the run directory.
 Example:
 
 ```bash
-python3 training/common/evaluation_integrated.py \
-    --name dswinlstm_i_20260722_190853
+python3 training/common/evaluation_integrated.py --name dswinlstm_i_20260722_190853
 ```
 
 ### Evaluation outputs
