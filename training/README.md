@@ -395,18 +395,33 @@ It reconstructs the model through the factory, loads the saved checkpoint, and
 runs inference on the final test split.
 
 ```bash
-python3 training/common/evaluation_integrated.py --config training/common/config.yaml
+python3 training/common/evaluation_integrated.py \
+    --config training/common/config.yaml \
+    --name <experiment_name>
 ```
+
+Required flags:
+
+| Flag | Purpose |
+|------|---------|
+| `--name NAME` | Experiment name (matches `runs/<name>/` directory from training) |
+| `--output-dir PATH` | Direct path to the run directory (alternative to `--name`) |
 
 Optional flags:
 
 | Flag | Purpose |
 |------|---------|
 | `--checkpoint PATH` | Override checkpoint path (use `{chunk_id}` for per-chunk substitution) |
-| `--output-dir PATH` | Override evaluation output directory (defaults to training output dir) |
 | `--skip-plots` | Skip plot generation |
 
-The evaluator auto-discovers checkpoints from the training output directory.
+One of `--name` or `--output-dir` is required. The evaluator auto-discovers checkpoints from the training output directory.
+
+Example for a trained DSwinLSTM-I model:
+
+```bash
+python3 training/common/evaluation_integrated.py \
+    --name dswinlstm_i_20260722_190853
+```
 
 Evaluation outputs (written to the model output directory):
 

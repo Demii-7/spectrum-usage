@@ -25,6 +25,14 @@ data:
     map:
       name: powder_600_800
       locations: data/locations/powder.json
+      collection_key: endpoints
+      output_dir: data/maps
+      grid:
+        height: 10
+        width: 10
+      force_rebuild: false
+      permute: false
+      permute_seed: 42
     concat: rows
     # Optional for 2d/4d: preserve these ranges and replace all other
     # frequency channels with the configured dBm noise floor.

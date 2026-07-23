@@ -86,6 +86,7 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
     """
     model_name = str(model_name).lower()
     model_cfg = config[model_name]["model"]
+    print(f"[DEBUG] build_model: model_name={model_name}, train_data.shape={train_data.shape}")
 
     if model_name in ("temporalconvnet", "lstmattn", "arima"):
         if train_data.ndim != 2:
@@ -299,7 +300,11 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
                 "input_channels": int(train_data.shape[3]),
             },
         }
-        return DSwinLSTM_IForecaster(predictor_config)
+        print(f"[DEBUG] build_model: DSwinLSTM_I map_height={train_data.shape[1]} map_width={train_data.shape[2]} input_channels={train_data.shape[3]}")
+        print(f"[DEBUG] build_model: creating DSwinLSTM_IForecaster ...")
+        model = DSwinLSTM_IForecaster(predictor_config)
+        print(f"[DEBUG] build_model: DSwinLSTM_IForecaster created, param_count={sum(p.numel() for p in model.parameters())}")
+        return model
 
     raise ValueError(
         f"Unsupported model: {model_name}"

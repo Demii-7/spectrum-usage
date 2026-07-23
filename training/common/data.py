@@ -182,14 +182,18 @@ def load_chunk(
     val_fraction: float,
 ) -> LoadedSpectrumData:
     """Load one configured dataset and prepare train/validation/test splits."""
+    print(f"[DEBUG] load_chunk entry: chunk={chunk.chunk_id}, val_fraction={val_fraction}")
     data_cfg = config["data"]
     representation = str(data_cfg.get("representation", "")).lower()
+    print(f"[DEBUG] load_chunk: representation={representation}")
     if representation not in {"1d", "2d", "4d"}:
         raise ValueError("data.representation must be one of: 1d, 2d, 4d")
     if representation == "1d" and str(data_cfg.get("concat", "rows")) != "rows":
         raise ValueError("1d loading only supports row-wise concatenation")
 
+    print(f"[DEBUG] load_chunk: parsing file list ...")
     partitions = _partition_files(data_cfg.get("files", []))
+    print(f"[DEBUG] load_chunk: train files={partitions.get('train', [])}, test files={partitions.get('test', [])}")
     frequency_bins = data_cfg.get("frequency_bins")
     frequency_ranges = data_cfg.get("frequency_ranges")
     mask_cfg = data_cfg.get("mask") or {}
@@ -208,35 +212,43 @@ def load_chunk(
     selected_sites = excluded_sites = None
     outage_threshold = None
     if representation == "4d":
+        print(f"[DEBUG] load_chunk: entering 4d branch ...")
         map_cfg = data_cfg.get("map") or {}
         locations = map_cfg.get("locations")
         if not locations:
             raise ValueError("4d map generation requires data.map.locations")
         outage_threshold = max(int(value) for value in config["windowing"]["horizons"])
+        print(f"[DEBUG] load_chunk: calling prepare_4d_partitions with locations={locations} ...")
         partitions, selected_sites, excluded_sites = prepare_4d_partitions(
             partitions, resolve_path(locations), str(map_cfg.get("collection_key", "endpoints")),
             frequency_bins, frequency_ranges, outage_threshold,
         )
+    print(f"[DEBUG] load_chunk: prepare_4d_partitions done, selected_sites={selected_sites}")
 
+    print(f"[DEBUG] load_chunk: loading train partition ...")
     train_source = _load_partition(
         partitions["train"], "train", representation, data_cfg,
         frequency_bins, frequency_ranges, concat, impute, max_missing_gap,
         mask_ranges, noise_floor, None, selected_sites, excluded_sites, outage_threshold,
     )
+    print(f"[DEBUG] load_chunk: train data shape={train_source.data.shape}")
     training_layout = None
     if representation == "4d":
         map_cfg = data_cfg.get("map") or {}
-        training_layout = load_map_layout(
-            resolve_path(map_cfg.get("output_dir", "data/maps"))
-            / f"{map_cfg['name']}_train.npz"
-        )
+        map_path = resolve_path(map_cfg.get("output_dir", "data/maps")) / f"{map_cfg['name']}_train.npz"
+        print(f"[DEBUG] load_chunk: loading training layout from {map_path}")
+        training_layout = load_map_layout(map_path)
+        print(f"[DEBUG] load_chunk: training layout loaded")
+    print(f"[DEBUG] load_chunk: loading test partition ...")
     test_source = _load_partition(
         partitions["test"], "test", representation, data_cfg,
         frequency_bins, frequency_ranges, concat, impute, max_missing_gap,
         mask_ranges, noise_floor, training_layout, selected_sites, excluded_sites, outage_threshold,
     )
+    print(f"[DEBUG] load_chunk: test data shape={test_source.data.shape}")
     train_source = _select_chunk(train_source, chunk)
     test_source = _select_chunk(test_source, chunk)
+    print(f"[DEBUG] load_chunk: after _select_chunk train.shape={train_source.data.shape} test.shape={test_source.data.shape}")
     if not np.array_equal(train_source.frequencies, test_source.frequencies):
         raise ValueError("Train and test partitions have different frequency columns")
 
@@ -247,10 +259,12 @@ def load_chunk(
             raise ValueError("data.max_rows must be positive when provided")
         train_source = _slice_source(train_source, 0, max_rows)
         test_source = _slice_source(test_source, 0, max_rows)
+        print(f"[DEBUG] load_chunk: after max_rows truncation train.shape={train_source.data.shape}")
 
     prediction_start_row = data_cfg.get("prediction_start_row")
     if prediction_start_row is not None:
         test_source = _slice_source(test_source, int(prediction_start_row) - 1, len(test_source.data))
+        print(f"[DEBUG] load_chunk: after prediction_start_row truncation test.shape={test_source.data.shape}")
 
     if not len(train_source.data) or not len(test_source.data):
         raise ValueError("Train and test partitions must both contain data")
@@ -258,6 +272,7 @@ def load_chunk(
         raise ValueError("validation fraction must be between 0 and 1")
 
     fit_end = int(len(train_source.data) * (1.0 - val_fraction))
+    print(f"[DEBUG] load_chunk: fit_end={fit_end} / {len(train_source.data)} (val_fraction={val_fraction})")
     if fit_end <= 0 or fit_end >= len(train_source.data):
         raise ValueError("validation split leaves an empty normalization-training portion")
 
@@ -267,11 +282,14 @@ def load_chunk(
     train_model = train_data
     test_model = test_data
     if bool(preprocessing.get("normalize", True)):
+        print(f"[DEBUG] load_chunk: fitting per-frequency normalization on first {fit_end} rows ...")
         mean, std = fit_per_frequency_normalization(
             train_data[:fit_end], allow_zero_variance=bool(mask_cfg)
         )
+        print(f"[DEBUG] load_chunk: normalization stats: mean.shape={mean.shape}, std.shape={std.shape}")
         train_model = apply_per_frequency_normalization(train_data, mean, std).astype(np.float32)
         test_model = apply_per_frequency_normalization(test_data, mean, std).astype(np.float32)
+        print(f"[DEBUG] load_chunk: normalization applied, train_model.shape={train_model.shape}")
         normalization = {
             "mean_dbm": mean,
             "std_dbm": std,
@@ -283,6 +301,7 @@ def load_chunk(
     train_segments = train_source.segments
     test_segments = test_source.segments
     if representation == "1d":
+        print(f"[DEBUG] load_chunk: flattening 1d segments ...")
         train_data, train_segments = _flatten_segments(train_data, train_segments)
         test_data, test_segments = _flatten_segments(test_data, test_segments)
         train_model, _ = _flatten_segments(
@@ -292,11 +311,13 @@ def load_chunk(
             test_model.reshape(-1, len(test_source.frequencies)), test_source.segments
         )
 
+    print(f"[DEBUG] load_chunk: building LoadedSpectrumData ...")
     reference_site = str(data_cfg.get("reference_site", representation))
     train_files = {f"train_{i}": path for i, path in enumerate(train_source.files)}
     test_files = {f"test_{i}": path for i, path in enumerate(test_source.files)}
     train_start = 0
     test_start = len(train_data)
+    print(f"[DEBUG] load_chunk: returning, train_model.shape={train_model.shape if hasattr(train_model, 'shape') else '?'}, test_model.shape={test_model.shape if hasattr(test_model, 'shape') else '?'}")
     return LoadedSpectrumData(
         files={**train_files, **test_files},
         raw_frames={},
