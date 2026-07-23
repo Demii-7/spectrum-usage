@@ -26,6 +26,9 @@ supports:
 | Residual Vanilla LSTM | `residualvanillalstm` | CSV frequency vectors | `(B, T, F)` |
 | Residual ConvLSTM | `residualconvlstm` | Spectrum maps | `(B, T, F, H, W)` |
 | Residual Linear AR | `residuallinearar1d`/`2d`/`4d` | CSV / maps | `(B, T, F)` or `(B, T, F, H, W)` |
+| TCN | `temporalconvnet` | CSV frequency vectors | `(B, T, F)` |
+| LSTM-Attention | `lstmattn` | CSV frequency vectors | `(B, T, F)` |
+| ARIMA | `arima` | CSV frequency vectors | `(B, T, F)` |
 
 Architecture classes live under `models/` (e.g. `VanillaLSTM.py`, `ConvLSTM.py`,
 `DSwinLSTM_I.py`).  The shared model factory (`model_factory.py`) imports the correct
@@ -145,285 +148,90 @@ Install `screen` for long-running training jobs (required inside the container):
 apt-get update && apt-get install -y screen
 ```
 
-### Run Baselines
+## Quickstart
 
-The evaluation baseline script writes persistence, historical mean, lookback mean, same-time last-3-days mean, AutoReg(60), and LAR metrics. Use `--normalize` to train the learned baselines on normalized inputs and report dBm metrics.
-
-```bash
-python3 evaluation/scripts/run_spectrum_steps_5_6.py \
-  --normalize \
-  --output-dir training/results/baselines
-```
-
-### Run LinearAutoRegressive
-
-This runner uses the shared config and trains one direct Ridge autoregressive model per frequency bin, per chunk, and per horizon.
+The basic workflow is three steps:
 
 ```bash
-python3 training/LinearAutoRegressive/train.py
+# 1. Edit the shared configuration
+#    Set training.model_name, data.files, data.chunks, and model-specific params
+#    vim training/common/config.yaml
+
+# 2. Train
+python3 training/common/train_integrated.py --name my_experiment
+
+# 3. Evaluate
+python3 training/common/evaluation_integrated.py --name my_experiment
 ```
 
-Outputs go to `training/results/LinearAutoRegressive/` by default:
+All models use the same two entry points.  Model-specific settings live in the
+shared config under `{model_name}.model` and `{model_name}.train`.
+
+## Training
+
+### Training command
+
+```bash
+python3 training/common/train_integrated.py [--config CONFIG] [--name NAME] [--output-dir PATH]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--config PATH` | `training/common/config.yaml` | Path to the YAML configuration file |
+| `--name NAME` | `<model>_<timestamp>` | Experiment name; outputs go to `runs/<name>/` |
+| `--output-dir PATH` | `runs/<name>/` | Override the output directory (alternative to `--name`) |
+
+The trainer reads `training.model_name` from the config, iterates over each
+chunk in `data.chunks`, and independently trains one model per chunk.
+
+### Training outputs
 
 ```text
-aggregate_metrics.csv
-per_frequency_metrics.csv
-per_band_metrics.csv
-chunk_<chunk_id>_training_log.csv
-report.txt
-checkpoints/
+runs/<experiment_name>/
+  config.yaml                            # Copy of the config used for training
+  checkpoints/
+    {chunk_id}_{model_name}.pt            # Best-epoch state dict + metadata
+  {chunk_id}_training_log.csv             # Per-epoch loss history
+  {chunk_id}_training_summary.txt         # Best-epoch summary statistics
 ```
 
-LinearAutoRegressive is also available through the shared integrated pipeline
-as `linearar1d` (CSV data) or `linearar4d` (map data).  See "Training through
-the common integrated pipeline" below.
+Each checkpoint stores:
 
-### Run LookbackMean (baseline — GitHub)
+- `model_name` — validated against config on load
+- `model_state_dict` — best-epoch weights
+- `normalization` — per-frequency mean/std for denormalization during evaluation
+- `frequencies` — frequency array, validated against loader output on evaluation
+- `training_results` — best/final/average losses and timing
 
-LookbackMean is now supported by the shared integrated pipeline.  See
-"Training through the common integrated pipeline" above.
+## Evaluation
 
-A parameter-free baseline that predicts the mean of the lookback window.
-Supports 1D, 2D, and 4D input shapes via model names `lookbackmean1d`,
-`lookbackmean2d`, and `lookbackmean4d`.
-
-### Training through the common integrated pipeline
-
-Vanilla LSTM, ConvLSTM, TimeRAN, DSwinLSTM-I, LookbackMean, and
-LinearAutoregressive are trained through the shared entry point at
-`training/common/train_integrated.py`.  Residual variants exist for
-Vanilla LSTM (`residualvanillalstm`), ConvLSTM (`residualconvlstm`),
-and LinearAutoregressive (`residuallinearar1d` / `2d` / `4d`).
-The model is selected by setting `training.model_name` in the configuration.
-
-#### Configuration reference
-
-The single shared file `training/common/config.yaml` controls every aspect of
-training and evaluation.  Key fields to inspect before each run:
-
-```yaml
-data:
-  representation: 4d            # "1d" (CSV vectors), "2d" (maps), or "4d" (spatial maps)
-  reference_site: guesthouse    # e.g. "CC2" (aerpaw) or "humanities" (powder)
-  files:                        # List of source files with partition labels
-    - path: data/<file>.csv
-      partition: train          # "train" or "test"
-  map:                          # Required for 4d representation
-    name: powder_600_800        # Map name
-    locations: data/locations/powder.json  # Collection-point coordinates
-  concat: rows                  # Row-wise concatenation across files
-  prediction_start_row:         # 1-based row where final evaluation begins
-  max_rows:                     # Optional row limit
-  chunks:                       # List of frequency chunks
-    - id: powder_600_800
-      start_mhz: 600.0
-      end_mhz: 800.0
-
-data_loader:
-  num_workers: 0                # DataLoader worker count
-  pin_memory: auto              # Pin memory for GPU transfer
-
-windowing:
-  lookback: 60                  # Input sequence length (minutes)
-  horizons: [1, 5, 15, 60]     # Forecast horizons to report
-
-training:
-  device: auto                  # "auto", "cuda", or "cpu"
-  model_name: vanillalstm       # Model to train (see supported models table)
-
-preprocessing:
-  normalize: true               # Per-frequency z-score normalization
-  impute: true                  # Enable NaN imputation via clean_spectrum_data()
-  max_missing_gap: 5            # Max consecutive missing values to interpolate
-```
-
-**Vanilla LSTM settings** (under `vanillalstm:`):
-
-```yaml
-vanillalstm:
-  model:
-    input_sequence_length: 60   # Lookback (must match windowing.lookback)
-    prediction_horizon: 1       # 1 for one-step autoregressive rollout
-    hidden_size: 128
-    num_layers: 1
-    dropout: 0.1
-    output_strategy: final_hidden
-    bidirectional: false        # false for forward LSTM, true for bidirectional
-  train:
-    val_fraction: 0.15
-    train_stride: 1
-    val_stride: 1
-    test_stride: 1
-    batch_size: 32
-    epochs: 100
-    learning_rate: 0.005
-    weight_decay: 1.0e-4
-    optimizer: adam                     # Optimizer: adam, adamw, or sgd
-    gradient_clip_norm: 1.0
-    early_stopping: false
-    early_stopping_patience: 10
-    seed: 42                            # Random seed for reproducibility
-```
-
-`output_strategy` (for Vanilla LSTM):
-- `final_hidden` (default): extracts the last hidden state `hn[-1]` → `Linear(H*D, T_out*F)` → `(B, T_out, F)`.
-- `all_hidden`: flattens all LSTM outputs `out.reshape(B, T*H*D)` → `Linear(T*H*D, T_out*F)` → `(B, T_out, F)`.
-
-Dropout is applied at two points in Vanilla LSTM: (1) internally within the `nn.LSTM`
-module between stacked layers (PyTorch-native, active only when `num_layers > 1`), and
-(2) as a standalone `nn.Dropout` layer on the LSTM output before the linear head
-(**always active** regardless of `num_layers`).
-
-**ConvLSTM settings** (under `convlstm:`):
-
-```yaml
-convlstm:
-  model:
-    input_sequence_length: 60           # Lookback (must match windowing.lookback)
-    prediction_horizon: 1               # 1 for one-step autoregressive rollout
-    hidden_channels: [32, 64]           # Hidden channels per ConvLSTM layer
-    kernel_size: [[1, 3], [1, 1]]       # Convolution kernel per layer [height, width]
-    num_encoder_layers: 2               # Number of stacked ConvLSTM encoder layers
-    decoder_hidden_channels: 32         # Hidden channels for the decoder ConvLSTMCell
-    decoder_kernel_size: [1, 1]         # Convolution kernel for the decoder cell
-    decoder_lstm_hidden: 128            # Hidden size of the transfer LSTM bottleneck
-    dropout: 0.3                        # Dropout after decoder cell
-    use_batch_norm: false               # Whether to apply batch norm after each layer
-    fc_hidden_channels: 0               # Extra FC layer channels (0 disables)
-    fc_kernel_size: [1, 3]              # Kernel for FC layer (used only when fc_hidden_channels > 0)
-    fc_intermediate_activation: relu    # Activation for FC layer
-    cell_activation: tanh               # Activation for cell candidate / cell-state output
-    use_channel_projection: false       # Compress channels into lower-dim super feature
-    channel_projection_dim: 16          # Projection dimension (used only when use_channel_projection true)
-  train:
-    train_stride: 1                     # Step size between consecutive training windows
-    val_stride: 1                       # Step size between consecutive validation windows
-    test_stride: 1                      # Step size between consecutive test windows
-    batch_size: 32
-    epochs: 30
-    learning_rate: 0.0002
-    weight_decay: 0.004
-    val_fraction: 0.15
-    optimizer: adam                     # Optimizer: adam, adamw, or sgd
-    early_stopping: false
-    early_stopping_patience: 8
-    gradient_clip_norm: 5.0
-    seed: 42                            # Random seed for reproducibility
-```
-
-**TimeRAN settings** (under `timeran:`):
-
-```yaml
-timeran:
-  evaluation: {}
-  #These parameters are for model definition
-  model:
-    input_sequence_length: 60            # Number of past sequence / lookback
-    prediction_horizon: 1               # 1 for one-step autoregressive rollout
-    checkpoint_size: base               # Pretrained MOMENT backbone size: small, base, or large
-    use_timeran_checkpoint: true        # Load the matching checkpoint from training/TimeRAN/checkpoints
-    freeze_encoder: true                # Freeze MOMENT encoder weights during head training
-    freeze_embedder: true               # Freeze MOMENT embedder weights during head training
-    freeze_head: false                  # Allow the forecasting head to update
-
-  #These parameters are for training
-  train:
-    val_fraction: 0.1                   # Fraction of training data held out for validation
-    train_stride: 1                     # Step size between consecutive training windows
-    val_stride: 1                       # Step size between consecutive validation windows
-    batch_size: 1                       # Number of samples per gradient update
-    epochs: 50                          # Number of full passes over the training data
-    learning_rate: 0.00001              # Optimizer learning rate
-    weight_decay: 0.0                   # L2 weight-decay regularization strength
-    optimizer: adam                     # Optimizer: adam, adamw, or sgd
-    gradient_clip_norm: 5.0             # Maximum global gradient norm for clipping
-    early_stopping: true                # Stop training when validation loss stops improving
-    early_stopping_patience: 10         # Number of epochs without improvement before stopping
-    seed: 42                            # Random seed for reproducibility
-```
-
-The integrated trainer dispatches the optimizer based on the config `optimizer` field.
-Supported values: `adam`, `adamw`, `sgd` (when using SGD the optional `momentum` field may
-also be set in the model's `train` section).
-
-#### Training Vanilla LSTM on CSV data
-
-1. Set `training.model_name: vanillalstm` in the config.
-2. Set `data.representation: 1d` and configure `data.files` with `path` / `partition` entries.
-3. Verify frequency chunks under `data.chunks`.
-4. Verify `vanillalstm.model.input_sequence_length` and `prediction_horizon`.
-5. Run:
+### Evaluation command
 
 ```bash
-python3 training/common/train_integrated.py --config training/common/config.yaml
+python3 training/common/evaluation_integrated.py --name <experiment_name>
 ```
 
-Optional `--output-dir` overrides the default output location.
+One of `--name` or `--output-dir` is required.  The evaluator locates checkpoints
+inside the run directory.
 
-Training runs once per configured chunk.  Checkpoints are written to:
-
-```text
-runs/<name>/vanillalstm/checkpoints/{chunk_id}_vanillalstm.pt
-```
-
-Training outputs for each chunk:
-
-```text
-{chunk_id}_training_log.csv        # Per-epoch loss history
-{chunk_id}_training_summary.txt    # Best-epoch summary statistics
-```
-
-#### Training ConvLSTM on spectrum-map data
-
-1. Set `training.model_name: convlstm` in the config.
-2. Set `data.representation: 2d` or `4d` and provide `data.files` with `path` / `partition` entries.
-3. For 4D maps, configure `data.map.name` and `data.map.locations`.
-4. Verify `data.chunks` entries and `convlstm.model.*` settings.
-5. Run the same command:
-
-```bash
-python3 training/common/train_integrated.py --config training/common/config.yaml
-```
-
-Checkpoints and output files are written under `runs/<name>/convlstm/` with
-identical naming conventions.
-
-#### Evaluating a trained model
-
-Evaluation uses the shared evaluator at `training/common/evaluation_integrated.py`.
-It reconstructs the model through the factory, loads the saved checkpoint, and
-runs inference on the final test split.
-
-```bash
-python3 training/common/evaluation_integrated.py \
-    --config training/common/config.yaml \
-    --name <experiment_name>
-```
-
-Required flags:
-
-| Flag | Purpose |
-|------|---------|
-| `--name NAME` | Experiment name (matches `runs/<name>/` directory from training) |
+| Flag | Description |
+|------|-------------|
+| `--name NAME` | Experiment name (maps to `runs/<name>/`) |
 | `--output-dir PATH` | Direct path to the run directory (alternative to `--name`) |
+| `--config PATH` | Config path (defaults to `training/common/config.yaml`) |
+| `--checkpoint PATH` | Override checkpoint path; supports `{chunk_id}` and `{model_name}` substitution |
+| `--skip-plots` | Skip forecast plot generation |
 
-Optional flags:
-
-| Flag | Purpose |
-|------|---------|
-| `--checkpoint PATH` | Override checkpoint path (use `{chunk_id}` for per-chunk substitution) |
-| `--skip-plots` | Skip plot generation |
-
-One of `--name` or `--output-dir` is required. The evaluator auto-discovers checkpoints from the training output directory.
-
-Example for a trained DSwinLSTM-I model:
+Example:
 
 ```bash
 python3 training/common/evaluation_integrated.py \
     --name dswinlstm_i_20260722_190853
 ```
 
-Evaluation outputs (written to the model output directory):
+### Evaluation outputs
+
+Written to the run directory alongside training outputs:
 
 ```text
 aggregate_metrics.csv        # Per-chunk, per-horizon, per-split aggregate metrics
@@ -433,7 +241,7 @@ report.txt                   # Human-readable summary
 forecasts/                   # Forecast artifacts (map mode only)
 ```
 
-**What happens during evaluation:**
+### What happens during evaluation
 
 1. The shared loader and preprocessing recreate the same train/test split used
    during training.
@@ -447,6 +255,125 @@ forecasts/                   # Forecast artifacts (map mode only)
 7. Aggregate, per-frequency, and band-level MAE and RMSE are calculated.
 8. Forecast data and evaluation metadata are exported (map mode: `.npz` + `.json`).
 9. Optionally, forecast and error plots are generated.
+
+## Model-specific considerations
+
+All models use the same `train_integrated.py` / `evaluation_integrated.py` entry
+points.  The table below notes their specific requirements:
+
+| Model | Config name | Data rep | Layout | Notes |
+|-------|-------------|----------|--------|-------|
+| Vanilla LSTM | `vanillalstm` | 1d | `(B,T,F)` | One-step autoregressive |
+| ConvLSTM | `convlstm` | 4d | `(B,T,F,H,W)` | Has validation magnitude guard |
+| DSwinLSTM-I | `dswinlstm_i` | 4d | `(B,T,F,H,W)` | Multi-step direct; `prediction_horizon == rollout_horizon` |
+| TimeRAN | `timeran` | 1d | `(B,T,F)` | Requires pretrained MOMENT checkpoint download (see "Run TimeRAN" below) |
+| Lookback Mean | `lookbackmean1d/2d/4d` | any | varies | Parameter-free baseline; predicts mean of lookback window |
+| Linear AR | `linearar1d/2d/4d` | any | varies | Ridge regression per bin |
+| Residual Vanilla LSTM | `residualvanillalstm` | 1d | `(B,T,F)` | Predicts residuals of lookback mean |
+| Residual ConvLSTM | `residualconvlstm` | 4d | `(B,T,F,H,W)` | Predicts residuals of lookback mean |
+| Residual Linear AR | `residuallinearar1d/2d/4d` | any | varies | Predicts residuals of lookback mean |
+| TCN | `temporalconvnet` | 1d | `(B,T,F)` | Temporal convolutional network |
+| LSTM-Attention | `lstmattn` | 1d | `(B,T,F)` | LSTM with attention |
+| ARIMA | `arima` | 1d | `(B,T,F)` | Classical ARIMA model |
+
+## Configuration reference
+
+The single shared file `training/common/config.yaml` controls every aspect of
+training and evaluation.  Key top-level sections:
+
+```yaml
+data:
+  representation: 1d             # "1d" (CSV vectors), "2d", or "4d" (spatial maps)
+  band_definitions_path: ...      # Optional CSV defining frequency bands for metrics
+  reference_site: guesthouse      # Name used for split keys
+  files:                          # List of source files with partition labels
+    - path: data/<file>.csv
+      partition: train            # "train" or "test"
+  map:                            # Required for 4d representation
+    name: powder_600_800          # Map name (used for cache filename)
+    locations: data/locations/powder.json  # Collection-point coordinates JSON
+    collection_key: endpoints     # Key into the locations JSON
+    output_dir: data/maps         # Directory for cached .npz map files
+    grid:                         # Spatial grid dimensions
+      height: 10
+      width: 10
+    force_rebuild: false          # Set true to regenerate cached maps
+    permute: false                # Randomize site ordering
+    permute_seed: 42
+  concat: rows                    # Row-wise CSV concatenation (1d/2d only)
+  frequency_bins:                 # Optional: select specific frequency bins
+  frequency_ranges:               # Optional: select frequency ranges
+  mask:                           # Optional: frequency masking
+    frequency_ranges: [[650.0, 660.0]]
+    noise_floor: -120.0
+  prediction_start_row:           # 1-based row where test evaluation begins
+  max_rows:                       # Optional row limit for debugging
+  chunks:
+    - id: powder_600_800
+      start_mhz: 600.0
+      end_mhz: 800.0
+
+data_loader:
+  num_workers: 0
+  pin_memory: auto
+
+windowing:
+  lookback: 60                    # Input sequence length
+  horizons: [1, 5, 15, 60]       # Forecast horizons to report
+
+training:
+  device: auto                    # "auto", "cuda", or "cpu"
+  model_name: dswinlstm_i         # Model to train (see supported models table)
+
+preprocessing:
+  normalize: true                 # Per-frequency z-score normalization
+  impute: true                    # NaN imputation
+  max_missing_gap: 5              # Max consecutive NaNs to interpolate
+```
+
+Model-specific configuration lives under each model's key (e.g. `dswinlstm_i.model.*`,
+`vanillalstm.train.*`).  See `training/common/config.yaml` for the full set of parameters.
+
+### Optimizer configuration
+
+The integrated trainer dispatches the optimizer based on the `optimizer` field in the
+model's `train` section.  Supported values: `adam`, `adamw`, `sgd` (when using SGD
+the optional `momentum` field may also be set).
+
+## Pipeline walkthrough
+
+### Training flow
+
+For each chunk in `data.chunks`, `train_integrated.py`:
+
+1. Loads source files via `load_chunk()` — reads CSVs, builds 4D maps if needed,
+   applies frequency selection, imputation, normalization, and splits into train/validation/test.
+2. Builds temporal windows via `build_window_loaders()` — creates overlapping
+   lookback → horizon windows from the training and validation splits.
+3. Constructs the model through `build_model()` — the factory selects the architecture
+   class, infers input dimensions from training data, and returns an uninitialized model.
+4. Moves the model to the configured device and initializes the optimizer.
+5. For each epoch: trains on all training windows (teacher-forced for one-step models),
+   then validates on all validation windows (autoregressive rollout).
+6. Saves a checkpoint with the best validation epoch's weights, normalization stats,
+   frequencies, and model metadata.
+
+### Evaluation flow
+
+`evaluation_integrated.py`:
+
+1. Loads the same config and recreates the train/test split.  The test split is
+   identical to what was used during training (same files, same preprocessing).
+2. Builds the model through the factory with the same architecture.
+3. Loads the checkpoint — validates that model name, frequencies, and normalization
+   statistics match the current config and data.
+4. Windows the test split with the configured lookback.
+5. Runs inference: autoregressive rollout for one-step models, single forward pass
+   for direct multi-step models.
+6. Denormalizes predictions back to dBm.
+7. Computes aggregate, per-frequency, and band-level MAE and RMSE.
+8. Exports forecasts as `.npz` + `.json` (map mode only).
+9. Optionally generates forecast and error plots.
 
 ### Run STS-PredNet
 
