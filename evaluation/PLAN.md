@@ -151,7 +151,7 @@ Common comparison rules:
 - Fit normalization on the training interval only.
 - Allow validation and test targets to use earlier input rows from the same split; do not draw test inputs from outside the selected T6 interval.
 - Use validation for early stopping and model selection, then evaluate the selected checkpoint once on T6.
-
+- do each for 3 different seeds
 
 ## Test vs input sequence/prediction horizon
 
@@ -261,3 +261,122 @@ joint history of bins that belong to the target transmission region.
 
 
 ## Test relevance of spatial structure
+
+Spatial tests must distinguish three questions: whether other receivers help,
+whether their geographic arrangement helps, and whether forecasting an interpolated
+map directly helps more than forecasting receiver measurements and interpolating
+afterward. Score every comparison at physical receiver locations. Do not treat the
+100 IDW grid cells as independent ground truth.
+
+### Spatial-correlation strata
+
+Estimate spatial correlation for every frequency bin using only the training
+portion of the relevant experiment. For each bin, calculate Spearman correlation
+over time for every receiver pair, then average the pairwise correlations. Aggregate
+bins within the fixed behavior annotations using the median. Define low correlation
+as a region median below 0.25, moderate correlation as 0.25 through 0.50, and high
+correlation as greater than 0.50. Freeze these assignments before validation and
+test evaluation.
+
+The existing nine-receiver T4+T5 analysis gives the following preliminary strata.
+Recompute the values on the final training interval rather than copying these
+numbers into the results:
+
+| Stratum | Annotated non-noise regions and preliminary median pairwise temporal Spearman correlation |
+|---|---|
+| Low | R1 600.5--607.5 MHz (0.04) |
+| Moderate | R3 622.5--641.5 (0.38); R4 642.5--646.5 (0.32); R6 656.5--675.5 (0.46); R8 691.5--728.5 (0.41); R9 729.5--734.5 (0.44); R10 735.5--740.5 (0.48); R11 741.5--745.5 (0.37); R12 746.5--755.5 (0.48); R14 769.5--776.5 (0.36); R16 789.5--794.5 MHz (0.45) |
+| High | R5 647.5--655.5 MHz (0.65); R13 756.5--768.5 MHz (0.52) |
+
+Exclude the four noise-floor regions from claims about useful spatial structure.
+Report every spatial ablation separately for low-, moderate-, and high-correlation
+regions. Also report each region separately because receiver hardware, antenna
+response, local interference, and propagation conditions can weaken or reverse a
+simple relationship between geographic distance and correlation. As a descriptive
+check, report the association between receiver-pair distance and temporal
+correlation within each region; do not use distance alone to assign the strata.
+
+### Direct map forecasting versus receiver forecasting
+
+For architectures that support both receiver-vector and map inputs, compare two
+pipelines on the six-site Basic split:
+
+- **Receiver forecast then IDW:** train on the six `T × 200` receiver matrices,
+  forecast receiver power, and apply the fixed 10 × 10 IDW operator to each
+  forecast time and frequency.
+- **Direct map forecast:** apply the same IDW operator before training, train on
+  `T × 200 × 10 × 10` inputs, and forecast the 10 × 10 maps directly.
+
+Run this comparison for Lookback Mean, Linear AR, Residual Linear AR, ConvLSTM,
+Residual ConvLSTM, STS-PredNet, and Autoformer-CSA where both modes are supported.
+The first three provide architecture-neutral controls. ConvLSTM, STS-PredNet, and
+Autoformer-CSA are map-based in the cited spectrum-prediction setups but can accept
+receiver or frequency-vector adaptations; this comparison tests whether the map
+construction itself adds predictive value. DSwinLSTM-I and ConvLSTM-FM remain in
+the direct-map comparison only unless a receiver-vector implementation is added.
+
+Use identical receiver targets, forecast origins, input lengths, horizons, seeds,
+and IDW settings. Score both pipelines at the six physical receiver coordinates,
+before and after IDW when applicable. Report training time, peak accelerator memory,
+parameter count, and inference time alongside error because direct 4D forecasting
+has a larger computational cost.
+
+### Value of additional receivers
+
+For each target receiver `X`, train and evaluate the following conditions:
+
+- **Target only:** use only receiver `X` as input and predict `X`.
+- **All receivers:** use all available receivers, including `X`, and predict `X`.
+- **Other receivers only:** use every available receiver except `X` and predict
+  `X`. This is receiver holdout and tests spatial transfer rather than additional
+  context for an already observed receiver.
+
+For 4D models, construct each input map only from the receivers allowed by that
+condition. Keep the 10 × 10 grid bounds and cell centers fixed. Never include the
+held-out receiver in the IDW input or target-map construction. Score only at the
+physical coordinate of `X`. Compare the all-receiver and target-only conditions to
+measure the value of simultaneous multi-receiver context. Report the other-receiver
+condition separately because it is a harder interpolation-and-forecasting task.
+
+### Geometry permutation test
+
+Test whether a 4D model uses the geographic arrangement rather than only the
+collection of receiver streams. Train the model with the correct map geometry.
+At test time, randomly permute the assignment of receiver streams to coordinates
+before IDW while leaving target values, target coordinates, grid bounds, and model
+weights unchanged. Use at least 100 permutations shared across models and seeds.
+For each region, report
+
+`delta_error = error_permuted - error_original`.
+
+A positive paired delta for distance-structured regions indicates that the learned
+forecast depends on the correct geometry. Report the full permutation distribution
+and a blocked confidence interval over forecast origins. Run the same receiver
+permutations through 1D and 2D models as negative controls; their predictions must
+not change because those models receive no coordinates. A permutation effect in a
+low-correlation region indicates sensitivity to map construction, not useful
+geographic structure, so interpret the result together with the region's measured
+pairwise and distance-dependent correlation.
+
+### Dense T4+T5 spatial test
+
+Use T5 to add `law73` and `web` to the seven T4 receivers during their common
+600--800 MHz interval, approximately 2026-06-30 19:49 through 2026-07-03 02:54 UTC.
+Guesthouse is complete in T4 and should also be used in this separate nine-receiver spatial
+experiment; its T6 outage is the reason it is excluded from the Basic T4-to-T6
+test, not a defect in this overlap.
+
+Determine the exact common endpoint from the minute-aligned files before generating windows.
+
+Split the common interval chronologically into an initial training interval,
+followed by 12 hours of validation and 12 hours of test data. Restrict this compact
+experiment to a 60-minute input and horizons of 1, 15, and 60 minutes. Repeat the
+target-only, all-receiver, other-receiver, and geometry-permutation comparisons for
+each of the nine target receivers. Use one fixed 10 × 10 bounding box covering all
+nine sites.
+
+The T4+T5 experiment is the primary receiver-holdout and geometry test because it
+has the densest simultaneous POWDER layout. The six-site T4-to-T6 experiment remains
+the primary temporal generalization test because it has a later test period. Do not
+pool their metrics: report the nine-site within-period spatial results separately
+from the six-site later-period results.
