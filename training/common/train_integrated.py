@@ -72,6 +72,8 @@ def train_model(
     train_data: np.ndarray,
     config: dict[str, Any],
     segments=(),
+    val_data: np.ndarray | None = None,
+    val_segments=(),
 ):
     """ Integrated Training, Validation, and Logging """
     print(f"[DEBUG] train_model entry: model_name={model_name}, train_data.shape={train_data.shape}")
@@ -128,6 +130,8 @@ def train_model(
         val_stride=val_stride,
         segments=segments,
         data_loader_config=config.get("data_loader"),
+        val_data=val_data,
+        val_segments=val_segments,
     )
     print(f"[DEBUG] window loaders built: train={len(train_loader.dataset)} windows, val={len(val_loader.dataset) if val_loader else 0} windows")
 
@@ -625,6 +629,7 @@ def train_one_model(config: dict[str, Any], model_name: str, run_dir: Path) -> N
         data = load_chunk(config, chunk, val_fraction = val_fraction)
         print(f"[DEBUG] load_chunk done: train_split={data.train_split}, test_split={data.test_split}")
         train = data.splits[data.train_split].model_input
+        validation = data.splits.get(data.validation_split)
         print(f"[DEBUG] train data shape: {train.shape}, dtype: {train.dtype}")
         
         # Build model based on model specific needs
@@ -646,6 +651,8 @@ def train_one_model(config: dict[str, Any], model_name: str, run_dir: Path) -> N
             train_data=train,
             config=config,
             segments=data.splits[data.train_split].segments,
+            val_data=None if validation is None else validation.model_input,
+            val_segments=() if validation is None else validation.segments,
         )
         
         # Directly stream the pre-compiled log_frame to file  to avoid wasting CPU cycles reconstructing the table

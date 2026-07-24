@@ -34,6 +34,15 @@ data:
       permute: false
       permute_seed: 42
     concat: rows
+    # Optional inclusive UTC ranges. Validation is loaded separately from the
+    # train-partition files; when omitted, each model's val_fraction is used.
+    # split:
+    #   ranges:
+    #     train: {start: "2026-06-28T04:37:00Z", end: "2026-07-02T02:23:00Z"}
+    #     validation: {start: "2026-07-02T02:24:00Z", end: "2026-07-03T02:23:00Z"}
+    #     test:
+    #       - {start: "2026-07-03T18:39:00Z", end: "2026-07-04T14:48:00Z"}
+    #       - {start: "2026-07-05T18:39:00Z", end: "2026-07-06T14:48:00Z"}
     # Optional for 2d/4d: preserve these ranges and replace all other
     # frequency channels with the configured dBm noise floor.
     # mask:

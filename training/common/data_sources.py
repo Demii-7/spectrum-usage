@@ -149,6 +149,7 @@ def load_csv_sources(
     max_missing_gap: int = 0,
     mask_ranges: list[list[float]] | None = None,
     noise_floor: float | None = None,
+    timestamp_ranges: list[tuple[pd.Timestamp, pd.Timestamp]] | None = None,
 ) -> LoadedSource:
     if not files:
         raise ValueError("At least one CSV file is required")
@@ -157,26 +158,43 @@ def load_csv_sources(
 
     frames = []
     timestamps = []
+    block_paths = []
+    block_ranges = []
     for path in files:
         frame, stamp = _read_csv(path)
-        frame = select_frequencies(frame, frequency_bins, frequency_ranges)
-        if impute:
-            frame = impute_frame(frame, max_missing_gap)
-        if mask_ranges is not None:
-            if noise_floor is None:
-                raise ValueError("noise_floor is required when frequency masking is enabled")
-            frame = pd.DataFrame(
-                mask_outside_frequency_ranges(
-                    frame.to_numpy(),
-                    np.asarray([float(column) for column in frame.columns]),
-                    mask_ranges,
-                    noise_floor,
-                ),
-                columns=frame.columns,
-                index=frame.index,
-            )
-        frames.append(frame)
-        timestamps.append(stamp)
+        ranges = timestamp_ranges or [None]
+        if timestamp_ranges is not None and stamp is None:
+            raise ValueError(f"Explicit timestamp ranges require timestamp_utc in {path}")
+        for range_index, timestamp_range in enumerate(ranges):
+            block = frame
+            block_stamp = stamp
+            if timestamp_range is not None:
+                stamp_minutes = stamp.floor("min")
+                keep = (stamp_minutes >= timestamp_range[0]) & (stamp_minutes <= timestamp_range[1])
+                block = frame.loc[keep].reset_index(drop=True)
+                block_stamp = stamp[keep]
+                if block.empty:
+                    raise ValueError(f"{path} has no rows in selected timestamp range {range_index}")
+            block = select_frequencies(block, frequency_bins, frequency_ranges)
+            if impute:
+                block = impute_frame(block, max_missing_gap)
+            if mask_ranges is not None:
+                if noise_floor is None:
+                    raise ValueError("noise_floor is required when frequency masking is enabled")
+                block = pd.DataFrame(
+                    mask_outside_frequency_ranges(
+                        block.to_numpy(),
+                        np.asarray([float(column) for column in block.columns]),
+                        mask_ranges,
+                        noise_floor,
+                    ),
+                    columns=block.columns,
+                    index=block.index,
+                )
+            frames.append(block)
+            timestamps.append(block_stamp)
+            block_paths.append(path)
+            block_ranges.append(range_index)
 
     if concat == "rows":
         first_columns = list(frames[0].columns)
@@ -191,28 +209,48 @@ def load_csv_sources(
         labels = first_columns
         segments = []
         offset = 0
-        for path, frame in zip(files, frames):
-            segments.append(SequenceSegment(offset, offset + len(frame), str(path)))
+        for path, range_index, frame in zip(block_paths, block_ranges, frames):
+            segments.append(SequenceSegment(offset, offset + len(frame), f"{path}:range_{range_index}"))
             offset += len(frame)
     else:
-        if all(stamp is not None for stamp in timestamps):
-            common = timestamps[0]
-            for stamp in timestamps[1:]:
-                common = common.intersection(stamp)
-            if common.empty:
-                raise ValueError("Column-wise CSV concatenation has no common timestamps")
-            aligned = [frame.loc[stamp.get_indexer(common)] for frame, stamp in zip(frames, timestamps)]
-            combined_timestamps = common.sort_values()
-        else:
-            if any(stamp is not None for stamp in timestamps) or len({len(frame) for frame in frames}) != 1:
-                raise ValueError("Column-wise concatenation requires timestamps or equal row counts")
-            aligned = frames
-            combined_timestamps = None
+        range_blocks = []
+        timestamp_blocks = []
+        segments = []
         labels = []
-        for path, frame in zip(files, aligned):
-            labels.extend(f"{path.parent.name}:{column}" for column in frame.columns)
-        data_frame = pd.concat(aligned, axis=1)
-        segments = [SequenceSegment(0, len(data_frame), "columns")]
+        offset = 0
+        for range_index in range(len(timestamp_ranges or [None])):
+            indices = [i for i, value in enumerate(block_ranges) if value == range_index]
+            range_frames = [frames[i] for i in indices]
+            range_stamps = [timestamps[i] for i in indices]
+            if all(stamp is not None for stamp in range_stamps):
+                minute_stamps = [stamp.floor("min") for stamp in range_stamps]
+                common = minute_stamps[0]
+                for stamp in minute_stamps[1:]:
+                    common = common.intersection(stamp)
+                if common.empty:
+                    raise ValueError("Column-wise CSV concatenation has no common timestamps")
+                common = common.sort_values()
+                aligned = [
+                    frame.iloc[stamp.get_indexer(common)].reset_index(drop=True)
+                    for frame, stamp in zip(range_frames, minute_stamps)
+                ]
+                timestamp_blocks.append(common)
+            else:
+                if any(stamp is not None for stamp in range_stamps) or len({len(frame) for frame in range_frames}) != 1:
+                    raise ValueError("Column-wise concatenation requires timestamps or equal row counts")
+                aligned = range_frames
+            block = pd.concat(aligned, axis=1)
+            range_blocks.append(block)
+            segments.append(SequenceSegment(offset, offset + len(block), f"columns:range_{range_index}"))
+            offset += len(block)
+        first_range_indices = [i for i, value in enumerate(block_ranges) if value == 0]
+        for path, index in zip(files, first_range_indices):
+            labels.extend(f"{path.parent.name}:{column}" for column in frames[index].columns)
+        data_frame = pd.concat(range_blocks, axis=0, ignore_index=True)
+        combined_timestamps = (
+            pd.DatetimeIndex(np.concatenate([stamp.to_numpy() for stamp in timestamp_blocks]))
+            if timestamp_blocks else None
+        )
 
     data = data_frame.to_numpy(dtype=np.float32)
     if not np.isfinite(data).all():

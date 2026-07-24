@@ -124,9 +124,15 @@ def _load_cached(path: Path, map_key: str, frequency_bins, frequency_ranges) -> 
         if "timestamps" in archive:
             import pandas as pd
             timestamps = pd.DatetimeIndex(pd.to_datetime(archive["timestamps"], utc=True))
+        segment_lengths = np.asarray(archive.get("segment_lengths", [len(data)]), dtype=np.int64)
     if data.ndim != 4:
         raise ValueError(f"cached map must have shape (T, H, W, F), got {data.shape}")
     valid_timesteps = np.isfinite(data).any(axis=(1, 2, 3))
+    boundaries = np.concatenate(([0], np.cumsum(segment_lengths)))
+    segment_lengths = np.asarray([
+        valid_timesteps[start:end].sum()
+        for start, end in zip(boundaries[:-1], boundaries[1:])
+    ])
     data = data[valid_timesteps]
     if timestamps is not None:
         timestamps = timestamps[valid_timesteps]
@@ -143,21 +149,26 @@ def _load_cached(path: Path, map_key: str, frequency_bins, frequency_ranges) -> 
         raise ValueError("Frequency selection produced no map channels")
     result_data = data[:, :, :, selected]
     print(f"[DEBUG] _load_cached: loaded, data.shape={result_data.shape}")
+    segments = []
+    offset = 0
+    for range_index, length in enumerate(segment_lengths):
+        segments.append(SequenceSegment(offset, offset + int(length), f"{path}:range_{range_index}"))
+        offset += int(length)
     return LoadedSource(
         result_data,
         frequencies[selected],
         timestamps,
         [path],
         [str(value) for value in frequencies[selected]],
-        (SequenceSegment(0, len(data), str(path)),),
+        tuple(segments),
     )
 
 
 def _request_metadata(
     files, grid, permute, permute_seed, frequency_bins, frequency_ranges,
-    selected_sites, excluded_sites, outage_threshold,
+    selected_sites, excluded_sites, outage_threshold, timestamp_ranges,
 ):
-    return {
+    metadata = {
         "files": [
             {
                 "path": str(path.resolve()),
@@ -174,8 +185,17 @@ def _request_metadata(
         "selected_sites": selected_sites,
         "excluded_sites": excluded_sites,
         "outage_threshold": outage_threshold,
-        "timeline_semantics": "aligned-common-start-causal-ffill-v1",
+        "timeline_semantics": (
+            "minute-range-aligned-common-start-causal-ffill-v2"
+            if timestamp_ranges is not None
+            else "aligned-common-start-causal-ffill-v1"
+        ),
     }
+    if timestamp_ranges is not None:
+        metadata["timestamp_ranges"] = [
+            [str(start), str(end)] for start, end in timestamp_ranges
+        ]
+    return metadata
 
 
 def _has_long_nonfinite_run(frame, threshold):
@@ -219,6 +239,7 @@ def _common_finite_start(frames):
 def prepare_4d_partitions(
     partitions: dict[str, list[Path]], locations_path: Path, collection_key: str,
     frequency_bins, frequency_ranges, outage_threshold: int,
+    timestamp_ranges: dict[str, list[tuple[object, object]]] | None = None,
 ) -> tuple[dict[str, list[Path]], list[str], list[str]]:
     """Validate and deterministically filter paired 4D site partitions."""
     locations = load_locations(locations_path, collection_key)
@@ -231,36 +252,54 @@ def prepare_4d_partitions(
             if identity in sites:
                 raise ValueError(f"Duplicate canonical site {identity!r} in {partition} partition")
             frame, stamp = _read_csv(path)
-            frame = select_frequencies(frame, frequency_bins, frequency_ranges)
+            range_blocks = []
+            for range_index, timestamp_range in enumerate(
+                timestamp_ranges[partition] if timestamp_ranges is not None else [None]
+            ):
+                block = frame
+                block_stamp = stamp
+                if timestamp_range is not None:
+                    if stamp is None:
+                        raise ValueError(f"Explicit timestamp ranges require timestamp_utc in {path}")
+                    start, end = timestamp_range
+                    stamp_minutes = stamp.floor("min")
+                    keep = (stamp_minutes >= start) & (stamp_minutes <= end)
+                    block = frame.loc[keep].reset_index(drop=True)
+                    block_stamp = stamp[keep]
+                    if block.empty:
+                        raise ValueError(f"{path} has no rows in selected timestamp range {range_index}")
+                block = select_frequencies(block, frequency_bins, frequency_ranges)
+                range_blocks.append((block, block_stamp))
             sites[identity] = (
-                path, float(location["longitude"]), float(location["latitude"]), frame, stamp,
+                path, float(location["longitude"]), float(location["latitude"]), range_blocks,
             )
         indexed[partition] = sites
 
     train_sites = set(indexed["train"])
-    test_sites = set(indexed["test"])
-    if train_sites != test_sites:
-        missing = sorted(train_sites - test_sites)
-        extra = sorted(test_sites - train_sites)
-        raise ValueError(f"Train/test canonical site sets differ; missing from test: {missing}; extra in test: {extra}")
+    for partition, sites in indexed.items():
+        if set(sites) != train_sites:
+            missing = sorted(train_sites - set(sites))
+            extra = sorted(set(sites) - train_sites)
+            raise ValueError(f"Train/{partition} canonical site sets differ; missing: {missing}; extra: {extra}")
     for identity in sorted(train_sites):
-        if indexed["train"][identity][1:3] != indexed["test"][identity][1:3]:
-            raise ValueError(f"Train/test coordinates differ for canonical site {identity!r}")
+        if any(indexed["train"][identity][1:3] != sites[identity][1:3] for sites in indexed.values()):
+            raise ValueError(f"Partition coordinates differ for canonical site {identity!r}")
 
     selected = sorted(train_sites)
     excluded = set()
     while True:
         outages = set()
-        for partition in ("train", "test"):
+        for partition in indexed:
             entries = [indexed[partition][identity] for identity in selected]
-            frames, _ = _align_frames(
-                [entry[3] for entry in entries],
-                [entry[4].floor("min") if entry[4] is not None else None for entry in entries],
-            )
-            start = _common_finite_start(frames)
-            for identity, frame in zip(selected, frames):
-                if _has_long_nonfinite_run(frame.iloc[start:], outage_threshold):
-                    outages.add(identity)
+            for range_index in range(len(entries[0][3])):
+                frames, _ = _align_frames(
+                    [entry[3][range_index][0] for entry in entries],
+                    [entry[3][range_index][1].floor("min") if entry[3][range_index][1] is not None else None for entry in entries],
+                )
+                start = _common_finite_start(frames)
+                for identity, frame in zip(selected, frames):
+                    if _has_long_nonfinite_run(frame.iloc[start:], outage_threshold):
+                        outages.add(identity)
         if not outages:
             break
         excluded.update(outages)
@@ -270,7 +309,7 @@ def prepare_4d_partitions(
     excluded = sorted(excluded)
     ordered = {
         partition: [indexed[partition][identity][0] for identity in selected]
-        for partition in ("train", "test")
+        for partition in indexed
     }
     return ordered, selected, excluded
 
@@ -325,6 +364,7 @@ def load_4d(
     selected_sites: list[str] | None = None,
     excluded_sites: list[str] | None = None,
     outage_threshold: int | None = None,
+    timestamp_ranges: list[tuple[object, object]] | None = None,
 ) -> LoadedSource:
     if not map_name:
         raise ValueError("data.map.name is required for 4d loading")
@@ -335,7 +375,7 @@ def load_4d(
         files = sorted(files, key=lambda path: clean_name(find_location(path, locations)[0]))
     request_metadata = _request_metadata(
         files, grid, permute, permute_seed, frequency_bins, frequency_ranges,
-        selected_sites, excluded_sites, outage_threshold,
+        selected_sites, excluded_sites, outage_threshold, timestamp_ranges,
     )
     requested_layout = None
     if files and locations_path is not None:
@@ -382,7 +422,11 @@ def load_4d(
             source = None
         if source is not None:
             if impute:
-                source = replace(source, data=impute_array(source.data, max_missing_gap))
+                blocks = [
+                    impute_array(source.data[segment.start:segment.end], max_missing_gap)
+                    for segment in source.segments
+                ]
+                source = replace(source, data=np.concatenate(blocks, axis=0))
             if mask_ranges is not None:
                 if noise_floor is None:
                     raise ValueError("noise_floor is required when frequency masking is enabled")
@@ -443,22 +487,6 @@ def load_4d(
     if any(list(frame.columns) != columns for frame in frames[1:]):
         raise ValueError("Map source CSVs must contain matching frequency columns")
 
-    print(f"[DEBUG] load_4d: aligning frames (n_sites={len(frames)}, n_cols={len(columns)}) ...")
-    frames, timestamps = _align_frames(frames, stamps)
-    print(f"[DEBUG] load_4d: aligned, frames[0].shape={frames[0].shape}")
-    print(f"[DEBUG] load_4d: finding common finite start ...")
-    start = _common_finite_start(frames)
-    print(f"[DEBUG] load_4d: common_finite_start={start}")
-    frames = [frame.iloc[start:].ffill() for frame in frames]
-    if timestamps is not None:
-        timestamps = timestamps[start:]
-    for path, frame in zip(files, frames):
-        if not np.isfinite(frame.to_numpy(dtype=np.float64)).all():
-            raise ValueError(f"Missing or non-finite values remain after causal 4d imputation: {path}")
-    print(f"[DEBUG] load_4d: stacking site data ...")
-    site_data = np.stack([frame.to_numpy(np.float32) for frame in frames])
-    print(f"[DEBUG] load_4d: site_data.shape={site_data.shape}")
-
     site_lons_array = np.asarray(site_lons, dtype=np.float64)
     site_lats_array = np.asarray(site_lats, dtype=np.float64)
     position_permutation = np.arange(len(site_lons_array))
@@ -468,12 +496,45 @@ def load_4d(
         site_lons_array = site_lons_array[position_permutation]
         site_lats_array = site_lats_array[position_permutation]
 
-    print(f"[DEBUG] load_4d: calling _map_from_sites (site_data.shape={site_data.shape}, grid={grid}) ...")
-    mapped, grid_x, grid_y = _map_from_sites(
-        site_data,
-        site_lons_array,
-        site_lats_array,
-        grid,
+    mapped_blocks = []
+    timestamp_blocks = []
+    segment_lengths = []
+    for range_index, timestamp_range in enumerate(timestamp_ranges or [None]):
+        range_frames = []
+        range_stamps = []
+        for path, frame, stamp in zip(files, frames, stamps):
+            block = frame
+            block_stamp = stamp
+            if timestamp_range is not None:
+                if stamp is None:
+                    raise ValueError(f"Explicit timestamp ranges require timestamp_utc in {path}")
+                stamp_minutes = stamp.floor("min")
+                keep = (stamp_minutes >= timestamp_range[0]) & (stamp_minutes <= timestamp_range[1])
+                block = frame.loc[keep].reset_index(drop=True)
+                block_stamp = stamp[keep]
+                if block.empty:
+                    raise ValueError(f"{path} has no rows in selected timestamp range {range_index}")
+            range_frames.append(block)
+            range_stamps.append(block_stamp.floor("min") if block_stamp is not None else None)
+        range_frames, range_timestamps = _align_frames(range_frames, range_stamps)
+        start = _common_finite_start(range_frames)
+        range_frames = [frame.iloc[start:].ffill() for frame in range_frames]
+        if range_timestamps is not None:
+            range_timestamps = range_timestamps[start:]
+            timestamp_blocks.append(range_timestamps)
+        for path, frame in zip(files, range_frames):
+            if not np.isfinite(frame.to_numpy(dtype=np.float64)).all():
+                raise ValueError(f"Missing or non-finite values remain after causal 4d imputation: {path}")
+        site_data = np.stack([frame.to_numpy(np.float32) for frame in range_frames])
+        mapped_block, grid_x, grid_y = _map_from_sites(
+            site_data, site_lons_array, site_lats_array, grid,
+        )
+        mapped_blocks.append(mapped_block)
+        segment_lengths.append(len(mapped_block))
+    mapped = np.concatenate(mapped_blocks, axis=0)
+    timestamps = (
+        type(timestamp_blocks[0])(np.concatenate([stamp.to_numpy() for stamp in timestamp_blocks]))
+        if timestamp_blocks else None
     )
     print(f"[DEBUG] load_4d: _map_from_sites done, mapped.shape={mapped.shape}")
     if expected_layout is not None and (
@@ -482,7 +543,7 @@ def load_4d(
     ):
         raise ValueError("Test map grid coordinates differ from the training map")
     map_dir.mkdir(parents=True, exist_ok=True)
-    request_metadata["timeline_start"] = str(timestamps[0]) if timestamps is not None else start
+    request_metadata["timeline_start"] = str(timestamps[0]) if timestamps is not None else 0
     payload = {
         map_key: mapped,
         "freqs_mhz": np.asarray([float(column) for column in columns], dtype=np.float32),
@@ -493,6 +554,7 @@ def load_4d(
         "grid_x": grid_x,
         "grid_y": grid_y,
         "metadata": np.asarray(json.dumps(request_metadata)),
+        "segment_lengths": np.asarray(segment_lengths, dtype=np.int64),
     }
     if timestamps is not None:
         payload["timestamps"] = np.asarray(timestamps.astype(str))
@@ -507,5 +569,8 @@ def load_4d(
         timestamps,
         [cache_path],
         [str(value) for value in payload["freqs_mhz"]],
-        (SequenceSegment(0, len(mapped), str(cache_path)),),
+        tuple(
+            SequenceSegment(sum(segment_lengths[:i]), sum(segment_lengths[:i + 1]), f"{cache_path}:range_{i}")
+            for i in range(len(segment_lengths))
+        ),
     )

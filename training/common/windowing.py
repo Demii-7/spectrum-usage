@@ -220,30 +220,32 @@ def build_window_loaders(
     val_stride: int,
     segments: tuple[SequenceSegment, ...] = (),
     data_loader_config: dict | None = None,
+    val_data: np.ndarray | None = None,
+    val_segments: tuple[SequenceSegment, ...] = (),
 ) -> tuple[DataLoader, DataLoader]:
 
     """Create training and validation DataLoaders."""
     print(f"[DEBUG] build_window_loaders: data.shape={data.shape}, lookback={lookback}, rollout_horizon={rollout_horizon}, batch_size={batch_size}, val_fraction={val_fraction}")
 
-    if not 0.0 < val_fraction < 1.0:
+    if val_data is None and not 0.0 < val_fraction < 1.0:
         raise ValueError(
             f"Error! val_fraction must be between 0 and 1, got {val_fraction}"
         )
     
     # Find Split index
-    split_index = int(len(data) * (1.0 - val_fraction))
+    split_index = int(len(data) * (1.0 - val_fraction)) if val_data is None else len(data)
     print(f"[DEBUG] build_window_loaders: split_index={split_index}, train_rows={split_index}, val_rows={len(data) - split_index}")
     
     # Split data into train and Validation sets
     train_data = data[:split_index]
-    val_data = data[split_index:]
+    val_data = data[split_index:] if val_data is None else val_data
 
     train_segments = tuple(
         SequenceSegment(segment.start, min(segment.end, split_index), segment.label)
         for segment in segments
         if segment.start < split_index and segment.start < min(segment.end, split_index)
     )
-    val_segments = tuple(
+    val_segments = val_segments or tuple(
         SequenceSegment(max(segment.start, split_index) - split_index, segment.end - split_index, segment.label)
         for segment in segments
         if segment.end > split_index and max(segment.start, split_index) < segment.end

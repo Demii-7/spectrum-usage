@@ -84,6 +84,10 @@ class LoadedSpectrumData:
         return f"{self.reference_site}_train"
 
     @property
+    def validation_split(self) -> str:
+        return f"{self.reference_site}_validation"
+
+    @property
     def test_split(self) -> str:
         return f"{self.reference_site}_test"
 

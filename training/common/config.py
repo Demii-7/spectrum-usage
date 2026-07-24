@@ -30,6 +30,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 import yaml
 
 
@@ -122,6 +123,25 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ValueError("Use data.files; train_files and test_files are no longer supported")
         if data.get("split", {}).get("test_rows") is not None:
             raise ValueError("Test data is selected by file partition; remove data.split.test_rows")
+        ranges = (data.get("split") or {}).get("ranges")
+        if ranges is not None:
+            if not isinstance(ranges, dict) or set(ranges) != {"train", "validation", "test"}:
+                raise ValueError("data.split.ranges must define train, validation, and test")
+            for name, bounds in ranges.items():
+                bounds_list = bounds if isinstance(bounds, list) else [bounds]
+                if not bounds_list:
+                    raise ValueError(f"data.split.ranges.{name} must not be empty")
+                for bounds_item in bounds_list:
+                    if not isinstance(bounds_item, dict) or set(bounds_item) != {"start", "end"}:
+                        raise ValueError(f"data.split.ranges.{name} requires start and end")
+                    start = pd.Timestamp(bounds_item["start"])
+                    end = pd.Timestamp(bounds_item["end"])
+                    if start.tzinfo is None or end.tzinfo is None:
+                        raise ValueError(f"data.split.ranges.{name} timestamps must include a UTC timezone")
+                    start = start.tz_convert("UTC")
+                    end = end.tz_convert("UTC")
+                    if start > end:
+                        raise ValueError(f"data.split.ranges.{name}.start must not exceed end")
         if representation == "4d":
             map_config = data.get("map") or {}
             if not map_config.get("name"):
