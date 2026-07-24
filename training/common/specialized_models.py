@@ -8,7 +8,6 @@ import sys
 from types import ModuleType
 from typing import Any
 
-
 SPECIALIZED_MODELS = {"stsprednet", "tss_lcd", "deepspred"}
 _MODEL_DIRECTORIES = {
     "stsprednet": "STS-PredNet",

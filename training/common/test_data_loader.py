@@ -4,7 +4,29 @@ from unittest.mock import patch
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from training.common.data_loader import data_loader_kwargs
+from training.common.data_loader import data_loader_kwargs, seed_everything
+
+
+class SeedEverythingTest(unittest.TestCase):
+    def test_seed_controls_initialized_parameters(self):
+        def initialized_parameters(seed):
+            seed_everything(seed)
+            return [
+                parameter.detach().clone()
+                for parameter in torch.nn.Linear(4, 3).parameters()
+            ]
+
+        with patch("training.common.data_loader.torch.cuda.is_available", return_value=False):
+            first = initialized_parameters(7)
+            repeated = initialized_parameters(7)
+            different = initialized_parameters(8)
+
+        self.assertTrue(
+            all(torch.equal(left, right) for left, right in zip(first, repeated))
+        )
+        self.assertTrue(
+            any(not torch.equal(left, right) for left, right in zip(first, different))
+        )
 
 
 class DataLoaderKwargsTest(unittest.TestCase):

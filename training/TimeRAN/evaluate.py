@@ -44,6 +44,14 @@ VARIANT_TO_MODEL = {
 }
 
 
+def _minimum_db_span(vmin, vmax):
+    vmin, vmax = float(vmin), float(vmax)
+    if vmax - vmin >= 5.0:
+        return vmin, vmax
+    center = (vmin + vmax) / 2.0
+    return center - 2.5, center + 2.5
+
+
 def build_model_from_config(config: dict, device: torch.device):
     """Construct a frozen MOMENT model for inference from a config dict.
 
@@ -126,8 +134,10 @@ def plot_spectrogram_comparison(ground_truth, prediction, node_name, save_path):
     gt_node = ground_truth.T
     pred_node = prediction.T
     # Shared colour limits so the two subplots are directly comparable.
-    vmin = min(gt_node.min(), pred_node.min())
-    vmax = max(gt_node.max(), pred_node.max())
+    vmin, vmax = _minimum_db_span(
+        min(gt_node.min(), pred_node.min()),
+        max(gt_node.max(), pred_node.max()),
+    )
 
     fig, axes = plt.subplots(2, 1, figsize=(12, 6), sharex=True, sharey=True,
                               constrained_layout=True)

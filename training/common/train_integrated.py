@@ -60,6 +60,7 @@ from training.common.model_factory import (
     SUPPORTED_MODELS,
     build_model,
 )
+from models.ConvLSTM_FM import pretrain_backbone
 from training.common.specialized_models import (
     SPECIALIZED_MODELS,
     train_specialized_chunk,
@@ -69,6 +70,7 @@ from training.common.specialized_models import (
 from training.common.windowing import (
     build_window_loaders,
 )
+from training.common.data_loader import seed_everything
 
 def train_model(
     model_name: str,
@@ -91,13 +93,6 @@ def train_model(
         else None
     )
 
-
-    seed = int(train_cfg.get("seed", 42))
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
 
     lookback = int(model_cfg["input_sequence_length"])
 
@@ -147,6 +142,21 @@ def train_model(
 
     # Move the model to GPU or CPU.
     model = model.to(device)
+
+    pretraining_metadata = None
+    if model_name == "convlstmfm":
+        pretrain_epochs = int(model_cfg.get("pretrain_epochs", 0))
+        if pretrain_epochs > 0:
+            pretraining_metadata = pretrain_backbone(
+                model,
+                train_loader,
+                epochs=pretrain_epochs,
+                mask_ratio=float(model_cfg.get("pretrain_mask_ratio", 0.2)),
+                learning_rate=float(model_cfg.get("pretrain_learning_rate", 1e-3)),
+                mask_mode=str(model_cfg.get("pretrain_mask_mode", "tokens")),
+            )
+            if bool(model_cfg.get("freeze_backbone_after_pretrain", False)):
+                model.freeze_backbone()
 
     # Mean squared error between predictions and targets.
     criterion = nn.MSELoss()
@@ -543,6 +553,7 @@ def train_model(
 
     training_results = {
         "model_name": model_name,
+        "pretraining": pretraining_metadata,
         "epochs_completed": len(log_rows),
 
         # Best validation result and corresponding training loss.
@@ -650,6 +661,7 @@ def train_one_model(config: dict[str, Any], model_name: str, run_dir: Path) -> N
         print(f"[DEBUG] train data shape: {train.shape}, dtype: {train.dtype}")
         
         # Build model based on model specific needs
+        seed_everything(int(train_cfg.get("seed", 42)))
         print(f"[DEBUG] calling build_model for {model_name} ...")
         model = build_model(
             model_name=model_name,
@@ -746,6 +758,7 @@ def train_one_model(config: dict[str, Any], model_name: str, run_dir: Path) -> N
                     for key, value in training_results.items()
                     if key != "log_frame"
                 },
+                "pretraining": training_results.get("pretraining"),
             },
             checkpoints/ f"{chunk.chunk_id}_{model_name}.pt",
         )

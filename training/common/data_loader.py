@@ -10,6 +10,15 @@ import numpy as np
 import torch
 
 
+def seed_everything(seed: int) -> None:
+    """Seed Python, NumPy, and PyTorch random number generators."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
 def seed_data_loader_worker(worker_id: int) -> None:
     """Seed Python and NumPy from the worker seed assigned by PyTorch."""
     del worker_id

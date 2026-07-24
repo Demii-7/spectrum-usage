@@ -25,7 +25,7 @@ from model import SwinSTB3D  # noqa: E402
 from utils import invert_colormap  # noqa: E402
 from config_support import resolve_deepspred_config  # noqa: E402
 from training.common.config import load_config  # noqa: E402
-from training.common.data_loader import data_loader_kwargs  # noqa: E402
+from training.common.data_loader import data_loader_kwargs, seed_everything  # noqa: E402
 from training.common.runtime import epoch_log_row, timestamp_utc  # noqa: E402
 from training.common.results import prepare_output_dirs  # noqa: E402
 from training.common.data import chunk_specs, load_chunk  # noqa: E402
@@ -98,6 +98,7 @@ def build_frame_dataset(
 def train_one_model(config: dict[str, Any], train_raw: np.ndarray, segments, checkpoints: Path, out: Path, chunk_id: str, normalization=None, frequencies=None):
     runner = build_runner_config(config, train_raw.shape[1])
     dcfg = runner["train"]
+    seed_everything(int(dcfg.get("seed", 42)))
     input_frames = runner["windowing"]["input_frames"]
     output_frames = runner["windowing"]["output_frames"]
     stride = runner["windowing"]["stride"]

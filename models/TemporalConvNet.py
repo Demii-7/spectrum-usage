@@ -24,7 +24,7 @@ class CausalConv1d(nn.Conv1d):
 
 
 class TemporalConvNetForecaster(nn.Module):
-    """Apply one shared local TCN independently to every input series."""
+    """Forecast with either independent-series or joint-feature temporal convolutions."""
 
     def __init__(self, config: dict) -> None:
         super().__init__()
@@ -32,6 +32,9 @@ class TemporalConvNetForecaster(nn.Module):
         self.input_size = int(model_config["input_size"])
         self.input_sequence_length = int(model_config["input_sequence_length"])
         self.prediction_horizon = int(model_config.get("prediction_horizon", 1))
+        self.feature_mode = str(model_config.get("feature_mode", "independent")).lower()
+        if self.feature_mode not in {"independent", "joint"}:
+            raise ValueError("feature_mode must be either 'independent' or 'joint'")
         if self.prediction_horizon != 1:
             raise ValueError("TemporalConvNet predicts one step; use shared autoregressive rollout")
 
@@ -43,13 +46,15 @@ class TemporalConvNetForecaster(nn.Module):
         if kernel_size < 2:
             raise ValueError("kernel_size must be at least 2")
 
-        channels = [1, *hidden_channels]
+        input_channels = 1 if self.feature_mode == "independent" else self.input_size
+        output_channels = 1 if self.feature_mode == "independent" else self.input_size
+        channels = [input_channels, *hidden_channels]
         layers: list[nn.Module] = []
         for index, (in_channels, out_channels) in enumerate(zip(channels, channels[1:])):
             dilation = 2**index
             layers.append(CausalConv1d(in_channels, out_channels, kernel_size, dilation))
             layers.extend((nn.ReLU(), nn.Dropout(dropout)))
-        layers.append(nn.Conv1d(hidden_channels[-1], 1, kernel_size=1))
+        layers.append(nn.Conv1d(hidden_channels[-1], output_channels, kernel_size=1))
         self.network = nn.Sequential(*layers)
 
         if bool(model_config.get("leveled_init", True)):
@@ -73,6 +78,11 @@ class TemporalConvNetForecaster(nn.Module):
             )
 
         batch_size = x.shape[0]
-        series = x.transpose(1, 2).reshape(batch_size * self.input_size, 1, -1)
+        series = x.transpose(1, 2)
+        if self.feature_mode == "independent":
+            series = series.reshape(batch_size * self.input_size, 1, -1)
+            prediction = self.network(series)[:, :, -1]
+            return prediction.reshape(batch_size, 1, self.input_size)
+
         prediction = self.network(series)[:, :, -1]
-        return prediction.reshape(batch_size, 1, self.input_size)
+        return prediction.unsqueeze(1)

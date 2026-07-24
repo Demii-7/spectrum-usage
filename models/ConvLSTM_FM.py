@@ -9,26 +9,27 @@ first pretrained to reconstruct randomly masked timesteps of its own input
 window (Masked Spectrogram Modeling / MSM), then reused -- optionally frozen --
 as the encoder for downstream forecasting.
 
-Full paper spec (including the IQ-capture spectrogram pipeline, token/sentence
-tokenization, and the segmentation downstream task) lives in
-training/ConvLSTM-FM/info.md. This implementation intentionally keeps only what
-maps onto data this repo already has (spectrum maps used by ConvLSTM /
-ResidualConvLSTM): the ConvLSTM backbone, masked-reconstruction pretraining,
-and a one-step forecasting head that can freeze the pretrained backbone.
+    The shared path adapts the method to spectrum maps. Paper-native IQ
+    preprocessing, radio-sentence tokenization, and segmentation support live in
+    training/ConvLSTM-FM/.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
 import torch
 import torch.nn as nn
+from torch.utils.data import DataLoader
 
 from models.ConvLSTM import ConvLSTM, _get_activation
 
 
-def mask_sequence(x: torch.Tensor, mask_ratio: float) -> tuple[torch.Tensor, torch.Tensor]:
+def mask_sequence(
+    x: torch.Tensor,
+    mask_ratio: float,
+    mask_mode: str = "tokens",
+) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Replace a random subset of timesteps with white noise matching each
     sequence's own mean/std, following the paper's "mask ~20% of tokens with
@@ -37,6 +38,14 @@ def mask_sequence(x: torch.Tensor, mask_ratio: float) -> tuple[torch.Tensor, tor
 
     Returns (masked_x, mask) where mask[b, t] is True for a masked timestep.
     """
+    if not 0.0 < mask_ratio <= 1.0:
+        raise ValueError(f"mask_ratio must be in (0, 1], got {mask_ratio}")
+    if mask_mode not in ("tokens", "sequence_elements", "whole_sequence_elements", "timesteps"):
+        raise ValueError(
+            "mask_mode must name whole tokens/sequence elements; "
+            f"got {mask_mode!r}. Pixel masking is not supported."
+        )
+
     b, t, c, h, w = x.shape
     n_masked = max(1, int(round(t * mask_ratio)))
     mask = torch.zeros(b, t, dtype=torch.bool, device=x.device)
@@ -52,20 +61,25 @@ def mask_sequence(x: torch.Tensor, mask_ratio: float) -> tuple[torch.Tensor, tor
     return masked_x, mask
 
 
-def masked_reconstruction_loss(model: "ConvLSTMFMForecaster", x: torch.Tensor, mask_ratio: float) -> torch.Tensor:
+def masked_reconstruction_loss(
+    model: "ConvLSTMFMForecaster",
+    x: torch.Tensor,
+    mask_ratio: float,
+    mask_mode: str = "tokens",
+) -> torch.Tensor:
     """Masked MSE (Eq. 1 of the paper): unmasked timesteps contribute zero loss."""
-    masked_x, mask = mask_sequence(x, mask_ratio)
+    masked_x, mask = mask_sequence(x, mask_ratio, mask_mode)
     recon = model.reconstruct(masked_x)
     mask_weight = mask.view(*mask.shape, 1, 1, 1).float()
     squared_error = (recon - x) ** 2 * mask_weight
-    denominator = mask_weight.sum().clamp_min(1.0)
+    denominator = (mask_weight.sum() * x.shape[2] * x.shape[3] * x.shape[4]).clamp_min(1.0)
     return squared_error.sum() / denominator
 
 
 class ConvLSTMFMForecaster(nn.Module):
     """
     Multi-layer ConvLSTM backbone (the "foundation" encoder) + a lightweight
-    Conv2d head, used in two modes:
+        Conv3d head, used in two modes:
 
     - ``reconstruct(x)``: reconstructs every timestep of the input sequence,
       used for masked self-supervised pretraining (paper Stage A).
@@ -111,9 +125,7 @@ class ConvLSTMFMForecaster(nn.Module):
             return_all_layers=False,
             activation=activation,
         )
-        # Approximates the paper's Conv3D head with a per-timestep Conv2d,
-        # since the backbone already models the time axis recurrently.
-        self.head = nn.Conv2d(hidden[-1], self.input_channels, kernel_size=3, padding=1)
+        self.head = nn.Conv3d(hidden[-1], self.input_channels, kernel_size=3, padding=1)
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
 
         pretrained_backbone = c.get("pretrained_backbone")
@@ -135,8 +147,8 @@ class ConvLSTMFMForecaster(nn.Module):
         layer_outputs, _ = self.encoder(x)
         sequence = layer_outputs[-1]  # (B, T, hidden, H, W) -- full sequence, top layer
         sequence = self.dropout(sequence)
-        flat = sequence.reshape(b * t, sequence.shape[2], h, w)
-        return self.head(flat).reshape(b, t, c_in, h, w)
+        reconstruction = self.head(sequence.permute(0, 2, 1, 3, 4))
+        return reconstruction.permute(0, 2, 1, 3, 4)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """One-step forecast: predict the timestep immediately after the input window."""
@@ -151,54 +163,54 @@ class ConvLSTMFMForecaster(nn.Module):
         _, last_states = self.encoder(x)
         h_last, _ = last_states[-1]  # final hidden state of the top layer, (B, hidden, H, W)
         h_last = self.dropout(h_last)
-        out = self.head(h_last)
+        out = self.head(h_last.unsqueeze(2)).squeeze(2)
         return out.unsqueeze(1)
 
 
 def pretrain_backbone(
     model: ConvLSTMFMForecaster,
-    train_data: np.ndarray,
-    input_sequence_length: int,
+    train_loader: DataLoader,
     epochs: int,
     mask_ratio: float = 0.2,
     learning_rate: float = 1e-3,
-    batch_size: int = 16,
-) -> None:
+    mask_mode: str = "tokens",
+) -> dict[str, Any]:
     """
     Masked-reconstruction (MSM) self-supervised pretraining of the backbone
     (paper Stage A / Algorithm 1), run directly on the same map data used for
     forecasting, before the shared pipeline fine-tunes the model on next-step
-    prediction. Windows are built the same way as the shared forecasting
-    windows, just without needing separate future targets.
+    prediction. The supplied forecasting loader is already segment-safe; its
+    targets are intentionally ignored.
     """
-    from training.common.windowing import to_model_layout
-
-    frames = torch.from_numpy(to_model_layout(train_data)).float()  # (T, C, H, W)
-    n_windows = frames.shape[0] - input_sequence_length + 1
-    if n_windows < 1:
-        raise ValueError(
-            f"Error! Not enough timesteps ({frames.shape[0]}) to build a single "
-            f"pretraining window of length {input_sequence_length}."
-        )
-    windows = torch.stack(
-        [frames[start : start + input_sequence_length] for start in range(n_windows)],
-        dim=0,
-    )  # (N, T, C, H, W)
-
     device = next(model.parameters()).device
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    epoch_losses: list[float] = []
 
     for epoch in range(1, epochs + 1):
-        permutation = torch.randperm(windows.shape[0])
         total_loss = 0.0
-        for start in range(0, windows.shape[0], batch_size):
-            batch = windows[permutation[start : start + batch_size]].to(device)
+        sample_count = 0
+        model.train()
+        for x, _ in train_loader:
+            batch = x.to(device)
             optimizer.zero_grad()
-            loss = masked_reconstruction_loss(model, batch, mask_ratio)
+            loss = masked_reconstruction_loss(model, batch, mask_ratio, mask_mode)
             loss.backward()
             optimizer.step()
             total_loss += loss.item() * batch.shape[0]
+            sample_count += batch.shape[0]
+        epoch_loss = total_loss / max(sample_count, 1)
+        epoch_losses.append(float(epoch_loss))
         print(
             f"[ConvLSTM-FM pretrain] epoch {epoch:03d}/{epochs} "
-            f"masked_recon_loss={total_loss / windows.shape[0]:.6f}"
+            f"masked_recon_loss={epoch_loss:.6f}"
         )
+
+    return {
+        "epochs": int(epochs),
+        "mask_ratio": float(mask_ratio),
+        "mask_mode": mask_mode,
+        "learning_rate": float(learning_rate),
+        "samples": int(len(train_loader.dataset)),
+        "epoch_losses": epoch_losses,
+        "final_loss": epoch_losses[-1] if epoch_losses else None,
+    }

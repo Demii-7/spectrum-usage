@@ -112,6 +112,76 @@ vanillalstm:
     early_stopping_patience: 10         # Number of epochs without improvement before stopping
     seed: 42                            # Random seed for reproducibility
 
+temporalconvnet:
+  evaluation: {}
+  model:
+    input_sequence_length: 60
+    prediction_horizon: 1               # Longer forecasts use shared autoregressive rollout
+    feature_mode: joint                 # Mix frequency bins; use independent for the cited local TCN
+    hidden_channels: [32, 32, 32, 32, 32, 32]
+    kernel_size: 2
+    dropout: 0.1
+    leveled_init: true
+  train:
+    val_fraction: 0.1
+    train_stride: 1
+    val_stride: 1
+    test_stride: 1
+    batch_size: 32
+    epochs: 20
+    learning_rate: 0.001
+    weight_decay: 0.0
+    optimizer: adam
+    gradient_clip_norm: 1.0
+    early_stopping: true
+    early_stopping_patience: 10
+    seed: 42
+
+lstmattn:
+  evaluation: {}
+  model:
+    input_sequence_length: 60
+    prediction_horizon: 60
+    hidden_size: 128
+    attention_size: 128
+    num_layers: 1
+    dropout: 0.1
+  train:
+    val_fraction: 0.1
+    train_stride: 1
+    val_stride: 1
+    test_stride: 1
+    batch_size: 32
+    epochs: 20
+    learning_rate: 0.001
+    weight_decay: 0.0
+    optimizer: adam
+    gradient_clip_norm: 1.0
+    early_stopping: true
+    early_stopping_patience: 10
+    seed: 42
+
+arima:
+  evaluation: {}
+  model:
+    input_sequence_length: 60
+    prediction_horizon: 60
+    p: 1
+    d: 1
+    q: 0                              # Moving-average terms require an external ARIMA solver
+    ridge: 0.000001
+  train:
+    val_fraction: 0.1
+    train_stride: 1
+    val_stride: 1
+    test_stride: 1
+    batch_size: 32
+    epochs: 1
+    learning_rate: 0.001
+    optimizer: adam
+    early_stopping: false
+    seed: 42
+
 convlstm:
     evaluation: {}
     #These parameters are for model definition

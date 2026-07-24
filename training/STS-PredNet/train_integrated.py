@@ -29,7 +29,7 @@ from dataset import (  # noqa: E402
     resolve_branch_config,
 )
 from training.common.config import load_config  # noqa: E402
-from training.common.data_loader import data_loader_kwargs  # noqa: E402
+from training.common.data_loader import data_loader_kwargs, seed_everything  # noqa: E402
 from training.common.runtime import epoch_log_row, timestamp_utc  # noqa: E402
 from training.common.results import prepare_output_dirs  # noqa: E402
 from training.common.data import chunk_specs, load_chunk  # noqa: E402
@@ -96,6 +96,8 @@ def train_one_model(config: dict[str, Any], full_x: np.ndarray,
                     segments, checkpoints: Path, out: Path, chunk_id: str,
                     frequencies=None, normalization=None) -> STSPredNet:
     scfg = config["stsprednet"]
+    train_cfg = scfg.get("train", scfg)
+    seed_everything(int(train_cfg.get("seed", scfg.get("seed", 42))))
     branches = resolve_branch_config(config, len(full_x))
     batch_size = int(scfg["batch_size"])
     epochs = int(scfg["epochs"])

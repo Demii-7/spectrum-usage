@@ -1,0 +1,17 @@
+{
+  "inputs": ["recording_complex64.npy", "precomputed_tokens.pt"],
+  "output": "convlstm_fm_pretrained.pt",
+  "device": "cpu",
+  "epochs": 10,
+  "batch_size": 16,
+  "mask_ratio": 0.2,
+  "learning_rate": 0.001,
+  "preprocessing": {"sample_rate": 15360000.0},
+  "model": {
+    "input_channels": 1,
+    "grid_height": 256,
+    "grid_width": 16,
+    "hidden_channels": [64, 64, 64, 64, 64],
+    "num_layers": 5
+  }
+}

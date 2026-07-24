@@ -17,6 +17,14 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def _minimum_db_span(vmin: float, vmax: float) -> tuple[float, float]:
+    vmin, vmax = float(vmin), float(vmax)
+    if vmax - vmin >= 5.0:
+        return vmin, vmax
+    center = (vmin + vmax) / 2.0
+    return center - 2.5, center + 2.5
+
+
 def resolve_path(value: str | Path) -> Path:
     path = Path(value)
     return path if path.is_absolute() else ROOT / path
@@ -165,8 +173,10 @@ def load_normalization_stats(path: str | Path) -> dict[str, np.ndarray]:
 
 
 def plot_spectrogram(pred_dbm: np.ndarray, target_dbm: np.ndarray, site_name: str, output_path: str | Path) -> None:
-    vmin = float(min(np.min(pred_dbm), np.min(target_dbm)))
-    vmax = float(max(np.max(pred_dbm), np.max(target_dbm)))
+    vmin, vmax = _minimum_db_span(
+        min(np.min(pred_dbm), np.min(target_dbm)),
+        max(np.max(pred_dbm), np.max(target_dbm)),
+    )
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 4), constrained_layout=True)
     ground_truth = axes[0].imshow(target_dbm, aspect="auto", origin="lower", vmin=vmin, vmax=vmax)

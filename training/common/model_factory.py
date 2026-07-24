@@ -40,7 +40,7 @@ import torch.nn as nn
 
 from models.ARIMA import ARIMAForecaster
 from models.ConvLSTM import ConvLSTMForecaster
-from models.ConvLSTM_FM import ConvLSTMFMForecaster, pretrain_backbone
+from models.ConvLSTM_FM import ConvLSTMFMForecaster
 from models.DSwinLSTM_I import DSwinLSTM_IForecaster
 from models.LSTMAttn import LSTMAttnForecaster
 from models.LookbackMean import LookbackMeanForecaster
@@ -237,26 +237,15 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
                 "grid_width": int(train_data.shape[2]),
             },
         }
-        model = ConvLSTMFMForecaster(predictor_config)
-
-        # Optional Stage-A masked-reconstruction self-supervised pretraining,
-        # run once at model-construction time on the same loaded chunk before
-        # the shared trainer fine-tunes the model for next-step prediction.
         pretrain_epochs = int(model_cfg.get("pretrain_epochs", 0))
-        if pretrain_epochs > 0:
-            pretrain_backbone(
-                model,
-                train_data,
-                input_sequence_length=predictor_config["model"]["input_sequence_length"],
-                epochs=pretrain_epochs,
-                mask_ratio=float(model_cfg.get("pretrain_mask_ratio", 0.2)),
-                learning_rate=float(model_cfg.get("pretrain_learning_rate", 1e-3)),
-                batch_size=int(model_cfg.get("pretrain_batch_size", 16)),
+        if pretrain_epochs > 0 and bool(model_cfg.get("freeze_backbone", False)):
+            raise ValueError(
+                "freeze_backbone conflicts with ConvLSTM-FM pretraining; use "
+                "freeze_backbone_after_pretrain instead."
             )
-            if bool(model_cfg.get("freeze_backbone_after_pretrain", model_cfg.get("freeze_backbone", False))):
-                model.freeze_backbone()
-
-        return model
+        if bool(model_cfg.get("freeze_backbone_after_pretrain", False)) and pretrain_epochs <= 0:
+            raise ValueError("freeze_backbone_after_pretrain requires pretrain_epochs > 0")
+        return ConvLSTMFMForecaster(predictor_config)
 
     if model_name == "residualconvlstm":
         if train_data.ndim != 4:
