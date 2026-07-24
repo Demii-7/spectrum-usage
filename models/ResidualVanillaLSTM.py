@@ -24,4 +24,6 @@ class ResidualVanillaLSTMForecaster(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         baseline = self.baseline(x)
         centered = x - baseline
-        return baseline + self.residual(centered)
+        residual = self.residual(centered)
+        baseline = baseline.expand(-1, self.residual.prediction_horizon, -1)
+        return baseline + residual

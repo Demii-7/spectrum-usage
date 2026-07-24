@@ -634,7 +634,7 @@ def evaluate_chunk(
         representation = str(
             config.get("data", {}).get("representation", "")
         ).lower()
-        if model_name == "convlstm" and representation == "4d":
+        if model_name in ("convlstm", "residualconvlstm") and representation == "4d":
             map_cfg = config.get("data", {}).get("map") or {}
             map_dir = resolve_path(
                 map_cfg.get("output_dir", "data/maps")

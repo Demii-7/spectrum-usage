@@ -130,7 +130,7 @@ residualvanillalstm:
   evaluation: {}
   model:
     input_sequence_length: 60
-    prediction_horizon: 1
+    prediction_horizon: 60
     hidden_size: 32
     num_layers: 1
     dropout: 0.0

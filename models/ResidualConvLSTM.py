@@ -26,6 +26,9 @@ class ResidualConvLSTMForecaster(nn.Module):
             nn.init.zeros_(output_layer.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        baseline = self.baseline(x)
-        centered = x - baseline
+        lookback_mean = self.baseline(x)
+        centered = x - lookback_mean
+        baseline = lookback_mean.expand(
+            -1, self.residual.prediction_horizon, -1, -1, -1
+        )
         return baseline + self.residual(centered)
