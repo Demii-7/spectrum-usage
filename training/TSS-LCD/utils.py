@@ -21,6 +21,14 @@ import torch
 import yaml
 
 
+def _minimum_db_span(vmin: float, vmax: float) -> tuple[float, float]:
+    vmin, vmax = float(vmin), float(vmax)
+    if vmax - vmin >= 5.0:
+        return vmin, vmax
+    center = (vmin + vmax) / 2.0
+    return center - 2.5, center + 2.5
+
+
 def load_config(path: str | Path) -> dict[str, Any]:
     """Load a YAML configuration file and return it as a dictionary."""
     with open(path, "r") as f:
@@ -143,8 +151,10 @@ def plot_spectrogram_comparison(
     """
     gt_node = ground_truth[:, node_idx, :].T
     pred_node = prediction[:, node_idx, :].T
-    vmin = min(gt_node.min(), pred_node.min())
-    vmax = max(gt_node.max(), pred_node.max())
+    vmin, vmax = _minimum_db_span(
+        min(gt_node.min(), pred_node.min()),
+        max(gt_node.max(), pred_node.max()),
+    )
     fig, axes = plt.subplots(2, 1, figsize=(12, 6), sharex=True, sharey=True,
                               constrained_layout=True)
     im0 = axes[0].imshow(gt_node, aspect="auto", cmap="viridis", vmin=vmin, vmax=vmax)

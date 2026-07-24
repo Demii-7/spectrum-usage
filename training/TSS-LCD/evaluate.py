@@ -150,7 +150,10 @@ def main():
     pred = np.concatenate(all_preds, axis=0)
     target = np.concatenate(all_targets, axis=0)
 
-    B_actual, T_actual, D_actual = pred.shape
+    B_actual, T_actual = pred.shape[:2]
+    D_actual = int(np.prod(pred.shape[2:]))
+    pred = pred.reshape(B_actual, T_actual, D_actual)
+    target = target.reshape(B_actual, T_actual, D_actual)
 
     # Inverse normalize
     pred_flat = pred.reshape(B_actual * T_actual, D_actual)

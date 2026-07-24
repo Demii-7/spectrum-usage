@@ -12,6 +12,79 @@ import torch
 from torch.utils.data import Dataset
 
 
+BRANCH_NAMES = ("closeness", "period", "trend")
+
+
+def resolve_branch_config(config, available_length=None):
+    """Resolve nested or legacy flat STS temporal settings.
+
+    Enabled branches are never silently removed.  When
+    ``allow_unavailable_branches`` is true, branches without enough history are
+    explicitly removed and reported in ``unavailable_branches``.
+    """
+    source = config.get("branches", config.get("stsprednet", config))
+    source = source.get("branches", source)
+    resolved = {
+        "use_closeness": bool(source.get("use_closeness", True)),
+        "use_period": bool(source.get("use_period", True)),
+        "use_trend": bool(source.get("use_trend", False)),
+        "lc": int(source.get("lc", 1)),
+        "lp": int(source.get("lp", 1)),
+        "lq": int(source.get("lq", 1)),
+        "period_interval": int(source.get("period_interval", source.get("lp_interval", 1))),
+        "trend_interval": int(source.get("trend_interval", source.get("lq_interval", 1))),
+        "prediction_offset": int(source.get("prediction_offset", 1)),
+        "share_branch_weights": bool(source.get("share_branch_weights", False)),
+        "allow_unavailable_branches": bool(source.get("allow_unavailable_branches", False)),
+    }
+    if not any(resolved[f"use_{name}"] for name in BRANCH_NAMES):
+        raise ValueError("STS-PredNet requires at least one enabled temporal branch")
+    for name, length_key in zip(BRANCH_NAMES, ("lc", "lp", "lq")):
+        if resolved[f"use_{name}"] and resolved[length_key] < 1:
+            raise ValueError(f"Enabled {name} branch requires {length_key} >= 1")
+    if resolved["use_period"] and resolved["period_interval"] < 1:
+        raise ValueError("Enabled period branch requires period_interval >= 1")
+    if resolved["use_trend"] and resolved["trend_interval"] < 1:
+        raise ValueError("Enabled trend branch requires trend_interval >= 1")
+
+    unavailable = []
+    if available_length is not None:
+        for name in BRANCH_NAMES:
+            if resolved[f"use_{name}"] and branch_history(resolved, name) >= available_length:
+                unavailable.append(name)
+        if unavailable and not resolved["allow_unavailable_branches"]:
+            raise ValueError(
+                f"Enabled STS branch(es) unavailable for {available_length} rows: "
+                + ", ".join(unavailable)
+            )
+        for name in unavailable:
+            resolved[f"use_{name}"] = False
+        if not any(resolved[f"use_{name}"] for name in BRANCH_NAMES):
+            raise ValueError("No enabled STS-PredNet branch is available")
+    resolved["enabled_branches"] = [name for name in BRANCH_NAMES if resolved[f"use_{name}"]]
+    resolved["unavailable_branches"] = unavailable
+    return resolved
+
+
+def branch_history(branches, name):
+    """Oldest target-relative lag required by one branch."""
+    if name == "closeness":
+        return branches["prediction_offset"] + branches["lc"] - 1
+    if name == "period":
+        return branches["lp"] * branches["period_interval"]
+    if name == "trend":
+        return branches["lq"] * branches["trend_interval"]
+    raise ValueError(f"Unknown STS branch: {name}")
+
+
+def required_history(branches, prediction_offset=None):
+    """Maximum history required by enabled branches only."""
+    b = dict(branches)
+    if prediction_offset is not None:
+        b["prediction_offset"] = int(prediction_offset)
+    return max(branch_history(b, name) for name in BRANCH_NAMES if b[f"use_{name}"])
+
+
 def load_csv(csv_path):
     """Load a CSV file as a float32 numpy array (rows = time steps, cols = features)."""
     return np.loadtxt(csv_path, delimiter=",").astype(np.float32)

@@ -79,6 +79,9 @@ SUPPORTED_MODELS = {
     "temporalconvnet",
     "lstmattn",
     "autoformer_csa",
+    "stsprednet",
+    "tss_lcd",
+    "deepspred",
 }
 
 

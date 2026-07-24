@@ -30,6 +30,7 @@ from training.common.results import append_metric_rows, finalize_results, load_b
 from training.common.data import chunk_specs, load_chunk
 from training.common.metrics import absolute_and_squared_errors_dbm
 from training.common.windowing import make_window_starts
+from train_integrated import config_sections, set_deterministic_seed
 
 
 MODEL_NAME = "tss_lcd"
@@ -42,7 +43,7 @@ def device_for() -> torch.device:
 def build_models(config: dict[str, Any], t_in: int, t_out: int,
                  n_bins: int, device: torch.device,
                  enc, dec, tss_cc, diffusion):
-    tcfg = config["tss_lcd"]
+    tcfg, _ = config_sections(config)
     L = 1
     F = n_bins
 
@@ -52,6 +53,10 @@ def build_models(config: dict[str, Any], t_in: int, t_out: int,
             latent_dim=tcfg["latent_dim"],
             num_blocks=tcfg.get("autoencoder_num_blocks", 3),
             init_channels=tcfg.get("autoencoder_initial_channels", 32),
+            kernel_size=tcfg.get("autoencoder_kernel_size", 3),
+            pool_kernel=tcfg.get("autoencoder_pool_kernel", 2),
+            pool_stride=tcfg.get("autoencoder_pool_stride", 2),
+            activation=tcfg.get("autoencoder_activation", "relu"),
         ).to(device)
     if dec is None:
         dec = LatentSpaceDecoder(
@@ -59,6 +64,8 @@ def build_models(config: dict[str, Any], t_in: int, t_out: int,
             latent_dim=tcfg["latent_dim"],
             num_blocks=tcfg.get("autoencoder_num_blocks", 3),
             init_channels=tcfg.get("autoencoder_initial_channels", 32),
+            kernel_size=tcfg.get("autoencoder_kernel_size", 3),
+            activation=tcfg.get("autoencoder_activation", "relu"),
         ).to(device)
     if tss_cc is None:
         tss_cc = TSSConditionConstructor(
@@ -84,6 +91,10 @@ def build_models(config: dict[str, Any], t_in: int, t_out: int,
             nen_decoder_channels=tcfg.get("nen_decoder_channels", [128, 64]),
             nen_kernel_size=tcfg.get("nen_kernel_size", 3),
             time_embed_dim=tcfg.get("time_embed_dim", 32),
+            condition_proj_dim=tcfg.get("condition_proj_dim"),
+            condition_strategy=tcfg.get("condition_strategy", "concat"),
+            nen_activation=tcfg.get("nen_activation", "relu"),
+            nen_normalization=tcfg.get("nen_normalization", "batchnorm"),
         ).to(device)
     return enc, dec, tss_cc, diffusion
 
@@ -91,7 +102,7 @@ def build_models(config: dict[str, Any], t_in: int, t_out: int,
 def generate_full_predictions(tss_cc, diffusion, dec, device,
                               full_x: np.ndarray, target_origins: np.ndarray,
                               t_in: int, t_out: int,
-                              batch_size: int) -> np.ndarray:
+                              batch_size: int, mask_config: dict | None = None) -> np.ndarray:
     starts = target_origins - t_out + 1 - t_in
     n = len(starts)
     if n == 0:
@@ -100,23 +111,38 @@ def generate_full_predictions(tss_cc, diffusion, dec, device,
     for i in range(0, n, batch_size):
         batch_starts = starts[i:i + batch_size]
         x_batch = np.stack([full_x[s:s + t_in] for s in batch_starts], axis=0)
-        x_t = torch.from_numpy(x_batch).float().to(device)
+        mask_config = mask_config or {}
+        missing_rate = 0.0 if mask_config.get("complete_observation_baseline", False) else float(mask_config.get("missing_rate", 0.0))
+        if missing_rate:
+            if not mask_config.get("zero_pad_missing", True):
+                raise ValueError("TSS-LCD missing observations must use zero padding")
+            from dataset import create_masks
+            x_batch = x_batch * create_masks(
+                x_batch, missing_rate, str(mask_config.get("masking_strategy", "random")),
+                mask_config.get("continuous_mask_length"),
+                bool(mask_config.get("continuous_shared_gap", False)),
+                bool(mask_config.get("continuous_multiple_gaps", False)),
+            )
+        x_t = torch.from_numpy(x_batch).float().unsqueeze(2).to(device)
         with torch.no_grad():
             cond_z = tss_cc(x_t)
             z_sample = diffusion.p_sample_loop(cond_z)
             y_hat = dec(z_sample)
-        all_preds.append(y_hat.cpu().numpy())
+        all_preds.append(y_hat.squeeze(2).cpu().numpy())
     return np.concatenate(all_preds, axis=0).astype(np.float32)
 
 
 def evaluate_chunk(config: dict[str, Any], chunk, bands, out: Path,
-                   ae_checkpoint: Path, tss_checkpoint: Path, diff_checkpoint: Path):
-    tcfg = config["tss_lcd"]
-    t_in = int(config["windowing"]["lookback"])
-    max_horizon = max(int(h) for h in config["windowing"]["horizons"])
+                   checkpoint_path: Path):
+    tcfg, train_cfg = config_sections(config)
+    seed = int(train_cfg.get("seed", config.get("seed", 42)))
+    set_deterministic_seed(seed)
+    t_in = int(config["windowing"].get("lookback", config["windowing"].get("input_sequence_length")))
+    configured_horizons = config["windowing"].get("horizons")
+    max_horizon = max(map(int, configured_horizons)) if configured_horizons else int(config["windowing"]["prediction_horizon"])
     t_out = max_horizon
     batch_size = int(tcfg["batch_size"])
-    horizons = [int(h) for h in config["windowing"]["horizons"]]
+    horizons = [int(h) for h in (configured_horizons or [max_horizon])]
 
     data = load_chunk(config, chunk)
     test_splits = config["data"].get("test_splits", [data.test_split])
@@ -125,17 +151,31 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands, out: Path,
     n_bins = train.shape[1]
     device = device_for()
 
-    # Load component checkpoints
-    ae_ckpt = torch.load(ae_checkpoint, map_location="cpu", weights_only=False)
-    tss_ckpt = torch.load(tss_checkpoint, map_location="cpu", weights_only=False)
-    diff_ckpt = torch.load(diff_checkpoint, map_location="cpu", weights_only=False)
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    if checkpoint.get("model_name") != MODEL_NAME:
+        raise ValueError(f"Checkpoint model_name is not {MODEL_NAME!r}")
+    checkpoint_frequencies = np.asarray(checkpoint.get("frequencies"), dtype=np.float32)
+    if checkpoint_frequencies.shape != np.asarray(data.frequencies).shape or not np.allclose(
+        checkpoint_frequencies, data.frequencies, rtol=0, atol=1e-6
+    ):
+        raise ValueError("Checkpoint frequencies do not match evaluation data")
+    left, right = checkpoint.get("normalization"), data.normalization
+    if (left is None) != (right is None) or (
+        left is not None and any(
+            not np.allclose(np.asarray(left[key]), np.asarray(right[key])) for key in ("mean_dbm", "std_dbm")
+        )
+    ):
+        raise ValueError("Checkpoint normalization does not match evaluation data")
 
-    enc, dec, tss_cc, diffusion = build_models(config, t_in, t_out, n_bins, device, None, None, None, None)
-    if ae_ckpt["state"] is not None:
-        enc.load_state_dict(ae_ckpt["state"]["enc"])
-        dec.load_state_dict(ae_ckpt["state"]["dec"])
-    tss_cc.load_state_dict(tss_ckpt["tss_cc_state_dict"])
-    diffusion.load_state_dict(diff_ckpt["diffusion_state_dict"])
+    checkpoint_config = dict(config)
+    checkpoint_config.pop("model", None)
+    checkpoint_config[MODEL_NAME] = dict(checkpoint["model_config"])
+    enc, dec, tss_cc, diffusion = build_models(checkpoint_config, t_in, t_out, n_bins, device, None, None, None, None)
+    states = checkpoint["component_states"]
+    enc.load_state_dict(states["encoder"])
+    dec.load_state_dict(states["decoder"])
+    tss_cc.load_state_dict(states["tss_condition"])
+    diffusion.load_state_dict(states["diffusion"])
 
     enc.eval()
     dec.eval()
@@ -165,6 +205,7 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands, out: Path,
         y_hat = generate_full_predictions(
             tss_cc, diffusion, dec, device,
             split_x, target_origins, t_in, t_out, batch_size,
+            checkpoint.get("preprocessing", config.get("preprocessing")),
         )
         target = np.stack(
             [split_raw[o - max_horizon + 1:o + 1] for o in target_origins],
@@ -174,6 +215,7 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands, out: Path,
         for horizon in horizons:
             pred_h = y_hat[:, horizon - 1, :]
             target_h = target[:, horizon - 1, :]
+            target_rows = starts + t_in + horizon - 1
             _, abs_err, sq_err = absolute_and_squared_errors_dbm(
                 pred_h, target_h, data.normalization,
             )
@@ -185,7 +227,7 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands, out: Path,
                 split_name=split_name,
                 horizon=horizon,
                 model=MODEL_NAME,
-                target_rows=target_origins + int(split.row_start),
+                target_rows=target_rows + int(split.row_start),
                 history_offset=int(split.row_start),
                 freqs=data.frequencies,
                 abs_err=abs_err,
@@ -199,9 +241,7 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands, out: Path,
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate a trained TSS-LCD checkpoint suite")
     parser.add_argument("--config", type=Path, default=None)
-    parser.add_argument("--ae-checkpoint", type=Path, default=None, help="Autoencoder checkpoint (use {chunk_id})")
-    parser.add_argument("--tss-checkpoint", type=Path, default=None, help="TSS-CC checkpoint (use {chunk_id})")
-    parser.add_argument("--diff-checkpoint", type=Path, default=None, help="Diffusion checkpoint (use {chunk_id})")
+    parser.add_argument("--checkpoint", type=Path, default=None, help="Final checkpoint (use {chunk_id})")
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--name", type=str, default=None)
     return parser.parse_args()
@@ -230,21 +270,15 @@ def main() -> None:
         print(f"Evaluating TSS-LCD for {chunk.chunk_id} ({chunk.start_mhz:g}-{chunk.end_mhz:g} MHz)")
         ckpt_dir = out / "checkpoints"
 
-        def _resolve(flag_val, suffix):
-            if flag_val:
-                return Path(str(flag_val).replace("{chunk_id}", chunk.chunk_id))
-            return ckpt_dir / f"{chunk.chunk_id}_{suffix}"
-
-        ae_path = _resolve(args.ae_checkpoint, "tss_lcd_autoencoder.pt")
-        tss_path = _resolve(args.tss_checkpoint, "tss_lcd_tss.pt")
-        diff_path = _resolve(args.diff_checkpoint, "tss_lcd_diffusion.pt")
-
-        missing = [p for p in [ae_path, tss_path, diff_path] if not p.exists()]
-        if missing:
-            print(f"  Missing checkpoint(s): {[str(m) for m in missing]}, skipping {chunk.chunk_id}")
+        checkpoint_path = (
+            Path(str(args.checkpoint).replace("{chunk_id}", chunk.chunk_id))
+            if args.checkpoint else ckpt_dir / f"{chunk.chunk_id}_tss_lcd.pt"
+        )
+        if not checkpoint_path.exists():
+            print(f"  Missing checkpoint: {checkpoint_path}, skipping {chunk.chunk_id}")
             continue
 
-        a, f, b = evaluate_chunk(config, chunk, bands, out, ae_path, tss_path, diff_path)
+        a, f, b = evaluate_chunk(config, chunk, bands, out, checkpoint_path)
         aggregate_rows.extend(a)
         frequency_rows.extend(f)
         band_rows.extend(b)

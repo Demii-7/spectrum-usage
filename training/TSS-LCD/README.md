@@ -15,6 +15,14 @@ Use the integrated runner for the branch-wide chunk pipeline:
 
 Integrated outputs are written to `training/results/TSS-LCD/` with metrics tables, per-chunk timing logs, `report.txt`, and `checkpoints/`.
 
+The shared runner can call `train_chunk(config, chunk, data, out, checkpoints) -> Path`
+and `evaluate_chunk(config, chunk, bands, out, checkpoint_path) -> (aggregate, frequency, band)`.
+Integrated training retains the paper's three sequential optimization stages but emits one
+final `<chunk>_tss_lcd.pt` checkpoint. The integrated adaptation represents vector chunks as
+one-location tensors `(B,T,1,F)`, uses a pooled latent projection to bridge the paper's
+unspecified condition/latent objective, and zero-pads deterministic configurable input masks.
+Standalone stage scripts and their paper-oriented workflow remain available.
+
 ```bash
 # 1. Activate environment
 python3 -m venv .venv

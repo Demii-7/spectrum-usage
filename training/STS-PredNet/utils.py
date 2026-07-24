@@ -119,13 +119,24 @@ def compute_metrics_per_frequency(pred, target):
 def save_checkpoint(path, model, optimizer, epoch, stats, config, metrics):
     """Save a training checkpoint to disk with model state, optimizer, and metadata."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    branches = config.get("branches", config.get("stsprednet", config))
+    resolved_branches = {
+        key: branches[key] for key in (
+            "use_closeness", "use_period", "use_trend", "lc", "lp", "lq",
+            "period_interval", "trend_interval",
+        ) if key in branches
+    }
     torch.save({
+        "model_name": "stsprednet",
         "epoch": epoch,
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "norm_stats": stats,
         "config": config,
         "metrics": metrics,
+        "resolved_branches": resolved_branches,
+        "frequencies": stats.get("frequencies"),
+        "normalization": stats,
     }, path)
 
 

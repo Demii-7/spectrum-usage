@@ -224,6 +224,12 @@ dswinlstm_i:
 
 
 stsprednet:
+  # The paper uses all three branches. Disable period or trend when the
+  # corresponding daily/weekly history is unavailable.
+  use_closeness: true
+  use_period: false
+  use_trend: false
+  allow_unavailable_branches: false
   lc: 36
   lp: 3
   lq: 4
@@ -242,7 +248,9 @@ stsprednet:
     hidden_dim: 128
     num_layers: 4
     kernel_size: [1, 3]
-    output_activation: tanh
+    # Use tanh only with the paper's [-1, 1] min-max preprocessing. The shared
+    # loader uses z-score values, so its compatible default is unbounded.
+    output_activation: none
     fusion_weight_shape: per_location
     # Output channels for the PredRNN 1x1 output projection.
     #   1        — single-channel CSV mode (default, backward-compatible)
@@ -296,6 +304,40 @@ tss_lcd:
   gradient_clip_norm: 5.0
   early_stopping_patience: 30
   seed: 42
+  preprocessing:
+    missing_rate: 0.25
+    masking_strategy: random
+    zero_pad_missing: true
+
+deepspred:
+  # Grouped dBm rows are an adaptation of the paper's native RGB STFT input.
+  minutes_per_frame: 256
+  input_frames: 2
+  output_frames: 1
+  stride: 1
+  w_pad: 256
+  colormap: jet
+  normalization: minmax
+  model:
+    embed_dim: 96
+    depths: [2, 4, 2]
+    num_heads: [4, 8, 16]
+    decoder_num_heads: [16, 8, 4]
+    patch_size: [2, 4, 4]
+    window_size: [2, 7, 7]
+    mlp_ratio: 4.0
+    qkv_bias: true
+    drop_rate: 0.0
+    attn_drop_rate: 0.0
+    drop_path_rate: 0.1
+  train:
+    batch_size: 1
+    epochs: 20
+    learning_rate: 0.001
+    weight_decay: 0.05
+    early_stopping_epochs: 4
+    seed: 42
+    device: auto
 
 autoformer_csa:
   evaluation: {}

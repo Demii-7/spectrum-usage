@@ -63,6 +63,8 @@ def _make_frames(rgb, H):
 def _pad_w(frames, w_pad):
     """(N, H, W, 3) → (N, H, w_pad, 3) by zero-padding on the right."""
     N, H, W, C = frames.shape
+    if w_pad < W:
+        raise ValueError(f"w_pad ({w_pad}) must be at least frame width ({W})")
     if W == w_pad:
         return frames
     pad = np.zeros((N, H, w_pad - W, C), dtype=np.float32)

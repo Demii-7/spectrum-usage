@@ -58,6 +58,9 @@ branches:
   use_closeness: true
   use_period: true   # feasible with lp=3 (needs 4320 min); paper default lp=7 needs 10080 min (unavailable)
   use_trend: false  # disabled: requires 1 week (10080 min), AERPAW has only 6839 min
+  # If true, explicitly drop enabled branches that cannot fit in the loaded chunk.
+  # The default fails instead of silently changing the requested architecture.
+  allow_unavailable_branches: false
 
   # Sequence lengths for each branch (from paper)
   lc: 36   # closeness: number of recent consecutive time steps

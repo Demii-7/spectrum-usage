@@ -99,6 +99,10 @@ from training.common.model_factory import (
     load_checkpoint_into_model,
     checkpoint_path_for_chunk,
 )
+from training.common.specialized_models import (
+    SPECIALIZED_MODELS,
+    evaluate_specialized_chunk,
+)
 
 from training.common.map_builder import find_site_grid_indices
 
@@ -900,13 +904,24 @@ def evaluate_one_model(
             chunk_aggregate_rows,
             chunk_frequency_rows,
             chunk_band_rows,
-        ) = evaluate_chunk(
-            config=config,
-            model_name=model_name,
-            chunk=chunk,
-            bands=bands,
-            output_directory=output_directory,
-            checkpoint_path=checkpoint_path,
+        ) = (
+            evaluate_specialized_chunk(
+                model_name,
+                config,
+                chunk,
+                bands,
+                output_directory,
+                checkpoint_path,
+            )
+            if model_name in SPECIALIZED_MODELS
+            else evaluate_chunk(
+                config=config,
+                model_name=model_name,
+                chunk=chunk,
+                bands=bands,
+                output_directory=output_directory,
+                checkpoint_path=checkpoint_path,
+            )
         )
 
         aggregate_rows.extend(

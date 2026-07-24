@@ -23,6 +23,7 @@ if str(SCRIPT_DIR) not in sys.path:
 from dataset import SpectrumFrameDataset, _colormap, _make_frames, _normalize, _pad_w  # noqa: E402
 from model import SwinSTB3D  # noqa: E402
 from utils import invert_colormap  # noqa: E402
+from config_support import resolve_deepspred_config  # noqa: E402
 from training.common.config import load_config  # noqa: E402
 from training.common.data_loader import data_loader_kwargs  # noqa: E402
 from training.common.runtime import epoch_log_row, timestamp_utc  # noqa: E402
@@ -34,31 +35,14 @@ MODEL_NAME = "deepspred"
 
 
 def device_for(config: dict[str, Any]) -> torch.device:
-    requested = str(config["deepspred"].get("device", "auto"))
+    requested = str(resolve_deepspred_config(config, 1)["train"]["device"])
     if requested == "auto":
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
     return torch.device(requested)
 
 
 def build_runner_config(config: dict[str, Any], n_bins: int) -> dict[str, Any]:
-    dcfg = config["deepspred"]
-    return {
-        "preprocessing": {
-            "colormap": str(dcfg.get("colormap", "jet")),
-            "normalization": str(dcfg.get("normalization", "minmax")),
-        },
-        "frames": {
-            "minutes_per_frame": int(dcfg.get("minutes_per_frame", 60)),
-            "w_pad": 256,
-            "w_orig": n_bins,
-        },
-        "windowing": {
-            "input_frames": int(dcfg.get("input_frames", 1)),
-            "output_frames": int(dcfg.get("output_frames", 1)),
-            "stride": int(dcfg.get("stride", 1)),
-        },
-        "model": dict(dcfg["model"]),
-    }
+    return resolve_deepspred_config(config, n_bins)
 
 
 def frames_from_raw(raw: np.ndarray, config: dict[str, Any], vmin: float, vmax: float) -> tuple[np.ndarray, np.ndarray]:
@@ -111,9 +95,9 @@ def build_frame_dataset(
     return SpectrumFrameDataset(frames_pad, frames_orig, input_frames, output_frames, indices, ["CC2"] * len(indices))
 
 
-def train_one_model(config: dict[str, Any], train_raw: np.ndarray, segments, checkpoints: Path, out: Path, chunk_id: str):
-    dcfg = config["deepspred"]
+def train_one_model(config: dict[str, Any], train_raw: np.ndarray, segments, checkpoints: Path, out: Path, chunk_id: str, normalization=None, frequencies=None):
     runner = build_runner_config(config, train_raw.shape[1])
+    dcfg = runner["train"]
     input_frames = runner["windowing"]["input_frames"]
     output_frames = runner["windowing"]["output_frames"]
     stride = runner["windowing"]["stride"]
@@ -209,8 +193,19 @@ def train_one_model(config: dict[str, Any], train_raw: np.ndarray, segments, che
     torch.save(
         {
             "model_state_dict": model.state_dict(),
+            "model_name": MODEL_NAME,
             "model_config": runner,
             "normalization_stats": {"vmin": vmin, "vmax": vmax},
+            "normalization": normalization,
+            "frequencies": frequencies,
+            "representation": {
+                "native": "direct_rgb_frames",
+                "evaluation_adaptation": "grouped_dbm_via_inverse_colormap",
+            },
+            "minmax": {"vmin": vmin, "vmax": vmax},
+            "colormap": runner["preprocessing"]["colormap"],
+            "resolved_config": runner,
+            "common_config": config,
             "training_start_time": training_start_time,
             "training_end_time": timestamp_utc(),
             "training_duration_sec": total_time,
@@ -218,6 +213,15 @@ def train_one_model(config: dict[str, Any], train_raw: np.ndarray, segments, che
         checkpoints / f"{chunk_id}_deepspred.pt",
     )
     return model, runner, {"vmin": vmin, "vmax": vmax}
+
+
+def train_chunk(config: dict[str, Any], chunk, data, out: Path, checkpoints: Path):
+    """Train one loaded shared-pipeline chunk and return the trained artifacts."""
+    split = data.splits[data.train_split]
+    return train_one_model(
+        config, split.raw_dbm, split.segments, checkpoints, out, chunk.chunk_id,
+        normalization=data.normalization, frequencies=data.frequencies,
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -243,11 +247,7 @@ def main() -> None:
     for chunk in chunk_specs(config):
         print(f"Training DeepSPred for {chunk.chunk_id} ({chunk.start_mhz:g}-{chunk.end_mhz:g} MHz)")
         data = load_chunk(config, chunk)
-        train_raw = data.splits[data.train_split].raw_dbm
-        train_one_model(
-            config, train_raw, data.splits[data.train_split].segments,
-            out / "checkpoints", out, chunk.chunk_id,
-        )
+        train_chunk(config, chunk, data, out, checkpoints)
 
 
 if __name__ == "__main__":

@@ -184,40 +184,7 @@ class CrossAttention(nn.Module):
 # =====================================================================
 
 class TemporalFE(nn.Module):
-    """Temporal feature extractor — treats each (node, freq) pair as a token.
-
-    Reshapes input from (B, T, L, F) to (B, L*F, T) so each token
-    represents the full time series at one spatial-frequency location,
-    then applies a transformer encoder.
-    """
-
-    def __init__(self, T_in: int, L: int, F: int, hidden_dim: int,
-                 num_heads: int, num_layers: int, ffn_dim: int, dropout: float):
-        super().__init__()
-        self.L, self.F = L, F
-        self.token_dim = T_in
-        self.num_tokens = L * F
-        self.proj = nn.Linear(T_in, hidden_dim)
-        self.pos_enc = PositionalEncoding(hidden_dim, max_len=self.num_tokens)
-        self.encoder = TransformerEncoder(hidden_dim, num_heads, num_layers, ffn_dim, dropout)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        B, T_in, L, F = x.shape
-        # Each (L, F) cell becomes a token with T_in features
-        x = x.permute(0, 2, 3, 1).reshape(B, L * F, T_in)
-        x = self.proj(x)
-        x = self.pos_enc(x)
-        x = self.encoder(x)
-        return x
-
-
-class SpectralFE(nn.Module):
-    """Spectral feature extractor — treats each time step as a token.
-
-    Reshapes input from (B, T, L, F) to (B, T, L*F) so each token
-    represents the full spatial-frequency snapshot at one time step,
-    then applies a transformer encoder.
-    """
+    """Temporal feature extractor with T tokens and L*F features per token."""
 
     def __init__(self, T_in: int, L: int, F: int, hidden_dim: int,
                  num_heads: int, num_layers: int, ffn_dim: int, dropout: float):
@@ -225,81 +192,136 @@ class SpectralFE(nn.Module):
         self.L, self.F = L, F
         self.token_dim = L * F
         self.num_tokens = T_in
-        self.proj = nn.Linear(L * F, hidden_dim)
-        self.pos_enc = PositionalEncoding(hidden_dim, max_len=T_in)
+        self.proj = nn.Linear(self.token_dim, hidden_dim)
+        self.pos_enc = PositionalEncoding(hidden_dim, max_len=self.num_tokens)
         self.encoder = TransformerEncoder(hidden_dim, num_heads, num_layers, ffn_dim, dropout)
+        self.out_proj = nn.Linear(hidden_dim, self.token_dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, T_in, L, F = x.shape
-        # Each time step becomes a token with L*F features
         x = x.reshape(B, T_in, L * F)
         x = self.proj(x)
         x = self.pos_enc(x)
         x = self.encoder(x)
-        return x
+        return self.out_proj(x)
 
 
-class SpatialFE(nn.Module):
-    """Spatial (frequency) feature extractor — treats each frequency bin as a token.
-
-    Reshapes input from (B, T, L, F) to (B, F, T*L) so each token
-    captures the full spatiotemporal pattern at one frequency bin,
-    then applies a transformer encoder.
-    """
+class SpectralFE(nn.Module):
+    """Spectral feature extractor with F tokens and L*T features per token."""
 
     def __init__(self, T_in: int, L: int, F: int, hidden_dim: int,
                  num_heads: int, num_layers: int, ffn_dim: int, dropout: float):
         super().__init__()
         self.T_in, self.L, self.F = T_in, L, F
-        self.token_dim = T_in * L
+        self.token_dim = L * T_in
         self.num_tokens = F
-        self.proj = nn.Linear(T_in * L, hidden_dim)
+        self.proj = nn.Linear(self.token_dim, hidden_dim)
         self.pos_enc = PositionalEncoding(hidden_dim, max_len=F)
         self.encoder = TransformerEncoder(hidden_dim, num_heads, num_layers, ffn_dim, dropout)
+        self.out_proj = nn.Linear(hidden_dim, self.token_dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, T_in, L, F = x.shape
-        # Each frequency bin becomes a token with T_in*L features
-        x = x.permute(0, 3, 1, 2).reshape(B, F, T_in * L)
+        # Keep locations grouped within each frequency token.
+        x = x.permute(0, 3, 2, 1).reshape(B, F, L * T_in)
         x = self.proj(x)
         x = self.pos_enc(x)
         x = self.encoder(x)
-        return x
+        return self.out_proj(x)
+
+
+class SpatialFE(nn.Module):
+    """Spatial feature extractor with L tokens and F*T features per token."""
+
+    def __init__(self, T_in: int, L: int, F: int, hidden_dim: int,
+                 num_heads: int, num_layers: int, ffn_dim: int, dropout: float):
+        super().__init__()
+        self.T_in, self.L, self.F = T_in, L, F
+        self.token_dim = F * T_in
+        self.num_tokens = L
+        self.proj = nn.Linear(self.token_dim, hidden_dim)
+        self.pos_enc = PositionalEncoding(hidden_dim, max_len=L)
+        self.encoder = TransformerEncoder(hidden_dim, num_heads, num_layers, ffn_dim, dropout)
+        self.out_proj = nn.Linear(hidden_dim, self.token_dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, T_in, L, F = x.shape
+        # Frequency-major features make the paper's later (L,F*T)->(F,T*L)
+        # value reshape an exact rearrangement rather than a projection.
+        x = x.permute(0, 2, 3, 1).reshape(B, L, F * T_in)
+        x = self.proj(x)
+        x = self.pos_enc(x)
+        x = self.encoder(x)
+        return self.out_proj(x)
 
 
 class FeatureFusionModule(nn.Module):
-    """Fuses two feature sequences via cross-attention.
+    """Paper FFM: temporal Q, spectral K, reshaped spatial V."""
 
-    One branch (e.g. spectral) acts as query; the other (e.g. temporal +
-    spatial) provides key-values for the cross-attention.
-    """
-
-    def __init__(self, hidden_dim: int, num_heads: int, dropout: float = 0.1):
+    def __init__(self, T_in: int, L: int, F: int, hidden_dim: int,
+                 num_heads: int, dropout: float = 0.1):
         super().__init__()
-        self.cross_attn = CrossAttention(
-            dim_q=hidden_dim, dim_kv=hidden_dim,
-            num_heads=num_heads, dropout=dropout,
+        self.T_in, self.L, self.F = T_in, L, F
+        # The paper uses d=L*F. These adapters retain the configured hidden_dim
+        # API when d differs, while preserving all native branch features.
+        self.q_proj = nn.Linear(L * F, hidden_dim)
+        self.k_proj = nn.Linear(L * T_in, hidden_dim)
+        self.v_proj = nn.Linear(L * T_in, hidden_dim)
+        self.cross_attn = nn.MultiheadAttention(
+            hidden_dim, num_heads, dropout=dropout, batch_first=True,
+        )
+        self.norm1 = nn.LayerNorm(hidden_dim)
+        self.dropout1 = nn.Dropout(dropout)
+        self.ffn = nn.Sequential(
+            nn.Linear(hidden_dim, 2 * hidden_dim),
+            nn.ReLU(),
+            nn.Linear(2 * hidden_dim, hidden_dim),
+        )
+        self.norm2 = nn.LayerNorm(hidden_dim)
+        self.dropout2 = nn.Dropout(dropout)
+
+    def _spatial_value(self, spatial: torch.Tensor) -> torch.Tensor:
+        B = spatial.shape[0]
+        spatial_value = spatial.reshape(B, self.L, self.F, self.T_in)
+        return spatial_value.permute(0, 2, 3, 1).reshape(
+            B, self.F, self.T_in * self.L
         )
 
-    def forward(self, x_q: torch.Tensor, x_kv: torch.Tensor) -> torch.Tensor:
-        return self.cross_attn(x_q, x_kv)
+    def forward(self, temporal: torch.Tensor | None, spectral: torch.Tensor | None,
+                spatial: torch.Tensor | None) -> torch.Tensor:
+        spatial_value = self._spatial_value(spatial) if spatial is not None else None
+        projected_spectral = self.k_proj(spectral) if spectral is not None else None
+        projected_spatial = self.v_proj(spatial_value) if spatial_value is not None else None
+
+        if temporal is not None:
+            q = self.q_proj(temporal)
+        else:
+            source = projected_spectral if projected_spectral is not None else projected_spatial
+            q = F.interpolate(
+                source.transpose(1, 2), size=self.T_in, mode="linear", align_corners=False
+            ).transpose(1, 2)
+        k = projected_spectral if projected_spectral is not None else projected_spatial
+        v = projected_spatial if projected_spatial is not None else projected_spectral
+        if k is None:
+            k = v = q
+        attn_out, _ = self.cross_attn(query=q, key=k, value=v)
+        fused = self.norm1(q + self.dropout1(attn_out))
+        return self.norm2(fused + self.dropout2(self.ffn(fused)))
 
 
 class ConditionToLatentProjection(nn.Module):
     """Projects the fused condition tokens into a latent vector.
 
-    Global average pooling over the token dimension collapses the
-    variable-length sequence to a fixed-size vector, then a linear
-    layer maps to the latent space.
+    The complete fixed-length fused temporal sequence is projected at once,
+    avoiding the information loss of token averaging.
     """
 
-    def __init__(self, hidden_dim: int, latent_dim: int):
+    def __init__(self, hidden_dim: int, latent_dim: int, num_tokens: int = 1):
         super().__init__()
-        self.fc = nn.Linear(hidden_dim, latent_dim)
+        self.fc = nn.Linear(hidden_dim * num_tokens, latent_dim)
 
     def forward(self, H_fusion: torch.Tensor) -> torch.Tensor:
-        pooled = H_fusion.mean(dim=1)
-        z_pred = self.fc(pooled)
+        z_pred = self.fc(H_fusion.flatten(start_dim=1))
         return z_pred
 
 
@@ -349,37 +371,20 @@ class TSSConditionConstructor(nn.Module):
         if use_spatial:
             self.spatial_fe = SpatialFE(T_in, L, F, hidden_dim, num_heads, num_layers, ffn_dim, dropout)
 
-        self.ffm = FeatureFusionModule(hidden_dim, num_heads, dropout)
+        self.ffm = FeatureFusionModule(T_in, L, F, hidden_dim, num_heads, dropout)
 
-        self.to_latent = ConditionToLatentProjection(hidden_dim, latent_dim)
+        self.to_latent = ConditionToLatentProjection(hidden_dim, latent_dim, T_in)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B = x.shape[0]
-        # Reshape flat input (B, T*L*F) into 4D spectrogram
-        x_4d = x.view(B, self.T_in, self.L, self.F)
+        if x.ndim != 4 or tuple(x.shape[1:]) != (self.T_in, self.L, self.F):
+            raise ValueError(f"TSS-CC expected (B,{self.T_in},{self.L},{self.F}), got {tuple(x.shape)}")
+        x_4d = x
         H_temporal = self.temporal_fe(x_4d) if self.use_temporal else None
         H_spectral = self.spectral_fe(x_4d) if self.use_spectral else None
         H_spatial = self.spatial_fe(x_4d) if self.use_spatial else None
 
-        # Determine query and key-value branches: spectral is preferred
-        # as query, fall back to temporal then spatial
-        if self.use_spectral:
-            H_q = H_spectral
-            kv_list = []
-            if H_temporal is not None:
-                kv_list.append(H_temporal)
-            if H_spatial is not None:
-                kv_list.append(H_spatial)
-            H_kv = torch.cat(kv_list, dim=1) if kv_list else H_spectral
-        elif self.use_temporal:
-            H_q = H_temporal
-            kv_list = [H_spatial] if H_spatial is not None else [H_temporal]
-            H_kv = torch.cat(kv_list, dim=1)
-        elif self.use_spatial:
-            H_q = H_spatial
-            H_kv = H_spatial
-
-        H_fusion = self.ffm(H_q, H_kv)
+        H_fusion = self.ffm(H_temporal, H_spectral, H_spatial)
         z_pred = self.to_latent(H_fusion)
         return z_pred
 
@@ -419,7 +424,10 @@ class LatentSpaceEncoder(nn.Module):
         self.fc = nn.Linear(channels[-1], latent_dim)
 
     def forward(self, Y: torch.Tensor) -> torch.Tensor:
-        B, T_out, D = Y.shape
+        if Y.ndim != 4:
+            raise ValueError(f"Latent encoder expected (B,T,L,F), got {tuple(Y.shape)}")
+        B, T_out, L, Freq = Y.shape
+        D = L * Freq
         # Treat (T_out, D) as a 2D map with 1 channel
         x = Y.reshape(B, 1, T_out, D)
         x = self.encoder(x)
@@ -471,7 +479,7 @@ class LatentSpaceDecoder(nn.Module):
         # Resize if output spatial dimensions don't match target
         if H != self.T_out or W != self.L * self.F:
             x = F.interpolate(x, size=(self.T_out, self.L * self.F), mode="bilinear", align_corners=False)
-        Y_hat = x.reshape(B, self.T_out, self.L * self.F)
+        Y_hat = x.reshape(B, self.T_out, self.L, self.F)
         return Y_hat
 
 

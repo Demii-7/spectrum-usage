@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -21,59 +21,30 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from stsprednet import STSPredNet  # noqa: E402
+from dataset import (  # noqa: E402
+    STSPredNetDataset,
+    collate_branch_samples,
+    generate_target_indices,
+    required_history,
+    resolve_branch_config,
+)
 from training.common.config import load_config  # noqa: E402
 from training.common.data_loader import data_loader_kwargs  # noqa: E402
 from training.common.runtime import epoch_log_row, timestamp_utc  # noqa: E402
 from training.common.results import prepare_output_dirs  # noqa: E402
-from training.common.interpolated_map import (  # noqa: E402
-    load_interpolated_map_npz,
-    normalize_map_by_frequency,
-)
 from training.common.data import chunk_specs, load_chunk  # noqa: E402
 from training.common.windowing import filter_target_rows  # noqa: E402
 
 MODEL_NAME = "stsprednet"
 
 
-class STSPredNetDataset(Dataset):
-    def __init__(self, data_3d: np.ndarray, target_indices: np.ndarray,
-                 lc: int, lp: int, period_interval: int):
-        self.data = torch.from_numpy(data_3d).float()
-        self.target_indices = target_indices
-        self.lc = lc
-        self.lp = lp
-        self.period_interval = period_interval
-
-    def __len__(self) -> int:
-        return len(self.target_indices)
-
-    def __getitem__(self, idx: int):
-        target_idx = int(self.target_indices[idx])
-        t = target_idx - 1
-
-        closeness = self.data[t - self.lc + 1 : t + 1]
-        period_list = [self.data[target_idx - p * self.period_interval]
-                       for p in range(self.lp, 0, -1)]
-        period = torch.stack(period_list, dim=0)
-        target = self.data[target_idx]
-        return closeness, period, target
-
-
-def collate_stsprednet(batch):
-    closeness, period, target = zip(*batch)
-    return (
-        torch.stack(closeness, dim=0),
-        torch.stack(period, dim=0),
-        torch.stack(target, dim=0),
-    )
-
-
 def device_for() -> torch.device:
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def build_model_config(config: dict[str, Any], n_bins: int) -> dict[str, Any]:
+def build_model_config(config: dict[str, Any], n_bins: int, branches=None) -> dict[str, Any]:
     scfg = config["stsprednet"]
+    branches = branches or resolve_branch_config(config)
     return {
         "model": {
             "input_channels": scfg["model"]["input_channels"],
@@ -85,17 +56,13 @@ def build_model_config(config: dict[str, Any], n_bins: int) -> dict[str, Any]:
             "output_activation": scfg["model"]["output_activation"],
             "fusion_weight_shape": scfg["model"]["fusion_weight_shape"],
         },
-        "branches": {
-            "use_closeness": True,
-            "use_period": True,
-            "use_trend": False,
-            "share_branch_weights": False,
-        },
+        "branches": branches,
     }
 
 
-def build_map_model_config(config: dict[str, Any], n_freq: int, grid_h: int, grid_w: int) -> dict[str, Any]:
+def build_map_model_config(config: dict[str, Any], n_freq: int, grid_h: int, grid_w: int, branches=None) -> dict[str, Any]:
     scfg = config["stsprednet"]
+    branches = branches or resolve_branch_config(config)
     return {
         "model": {
             "input_channels": n_freq,
@@ -107,59 +74,70 @@ def build_map_model_config(config: dict[str, Any], n_freq: int, grid_h: int, gri
             "output_activation": scfg["model"]["output_activation"],
             "fusion_weight_shape": scfg["model"]["fusion_weight_shape"],
         },
-        "branches": {
-            "use_closeness": True,
-            "use_period": True,
-            "use_trend": False,
-            "share_branch_weights": False,
-        },
+        "branches": branches,
     }
 
 
+def _make_dataset(data, targets, branches):
+    return STSPredNetDataset(
+        data, targets, branches["use_closeness"], branches["use_period"],
+        branches["use_trend"], branches["lc"], branches["lp"], branches["lq"],
+        branches["period_interval"], branches["trend_interval"],
+        branches["prediction_offset"], add_channel_dim=False,
+    )
+
+
+def _model_inputs(batch, device):
+    return tuple(batch.get(name).to(device) if batch.get(name) is not None else None
+                 for name in ("closeness", "period", "trend"))
+
+
 def train_one_model(config: dict[str, Any], full_x: np.ndarray,
-                    segments, checkpoints: Path, out: Path, chunk_id: str) -> STSPredNet:
+                    segments, checkpoints: Path, out: Path, chunk_id: str,
+                    frequencies=None, normalization=None) -> STSPredNet:
     scfg = config["stsprednet"]
-    lc = int(scfg["lc"])
-    lp = int(scfg["lp"])
-    period_interval = int(scfg["period_interval"])
+    branches = resolve_branch_config(config, len(full_x))
     batch_size = int(scfg["batch_size"])
     epochs = int(scfg["epochs"])
     lr = float(scfg["learning_rate"])
     weight_decay = float(scfg["weight_decay"])
     clip_norm = float(scfg["gradient_clip_norm"])
-    patience = int(scfg["patience"])
+    patience = int(scfg.get("patience", scfg.get("early_stopping_patience", 30)))
 
     n_bins = full_x.shape[1]
     data_3d = full_x[:, None, None, :].astype(np.float32)
 
-    period_min = lp * period_interval
-    all_targets = np.arange(period_min, len(full_x))
-    all_targets = filter_target_rows(all_targets, period_min, segments)
+    history = required_history(branches)
+    all_targets = np.asarray(generate_target_indices(
+        len(full_x), branches["prediction_offset"], branches["use_closeness"],
+        branches["use_period"], branches["use_trend"], branches["lc"], branches["lp"],
+        branches["lq"], branches["period_interval"], branches["trend_interval"]), dtype=np.int64)
+    all_targets = filter_target_rows(all_targets, history, segments)
     if len(all_targets) < 100:
         raise ValueError(
             f"Not enough valid targets ({len(all_targets)}) "
-            f"for period history {period_min}."
+            f"for enabled-branch history {history}."
         )
 
     n_val = max(1, int(len(all_targets) * 0.1))
     train_targets = all_targets[:-n_val]
     val_targets = all_targets[-n_val:]
 
-    train_ds = STSPredNetDataset(data_3d, train_targets, lc, lp, period_interval)
-    val_ds = STSPredNetDataset(data_3d, val_targets, lc, lp, period_interval)
+    train_ds = _make_dataset(data_3d, train_targets, branches)
+    val_ds = _make_dataset(data_3d, val_targets, branches)
 
     train_loader = DataLoader(
         train_ds, batch_size=batch_size, shuffle=True,
-        drop_last=True, collate_fn=collate_stsprednet,
+        drop_last=True, collate_fn=collate_branch_samples,
         **data_loader_kwargs(config.get("data_loader")),
     )
     val_loader = DataLoader(
         val_ds, batch_size=batch_size, shuffle=False,
-        collate_fn=collate_stsprednet,
+        collate_fn=collate_branch_samples,
         **data_loader_kwargs(config.get("data_loader")),
     )
 
-    model_config = build_model_config(config, n_bins)
+    model_config = build_model_config(config, n_bins, branches)
     device = device_for()
     model = STSPredNet(model_config).to(device)
     criterion = nn.MSELoss()
@@ -180,12 +158,10 @@ def train_one_model(config: dict[str, Any], full_x: np.ndarray,
         t_epoch = time.perf_counter()
         model.train()
         train_loss = 0.0
-        for closeness, period, target in train_loader:
-            closeness = closeness.to(device)
-            period = period.to(device)
-            target = target.to(device)
+        for batch in train_loader:
+            target = batch["target"].to(device)
             optimizer.zero_grad()
-            pred = model(closeness, period, None)
+            pred = model(*_model_inputs(batch, device))
             loss = criterion(pred, target)
             loss.backward()
             if clip_norm > 0:
@@ -197,11 +173,9 @@ def train_one_model(config: dict[str, Any], full_x: np.ndarray,
         model.eval()
         val_loss = 0.0
         with torch.no_grad():
-            for closeness, period, target in val_loader:
-                closeness = closeness.to(device)
-                period = period.to(device)
-                target = target.to(device)
-                pred = model(closeness, period, None)
+            for batch in val_loader:
+                target = batch["target"].to(device)
+                pred = model(*_model_inputs(batch, device))
                 val_loss += criterion(pred, target).item() * target.size(0)
         val_loss /= max(len(val_loader.dataset), 1)
 
@@ -241,8 +215,12 @@ def train_one_model(config: dict[str, Any], full_x: np.ndarray,
     torch.save(
         {
             "model_state_dict": model.state_dict(),
+            "model_name": MODEL_NAME,
             "model_config": model_config,
             "common_config": config,
+            "resolved_branches": branches,
+            "frequencies": frequencies,
+            "normalization": normalization,
             "training_start_time": training_start_time,
             "training_end_time": timestamp_utc(),
             "training_duration_sec": total_time,
@@ -260,9 +238,7 @@ def train_map_model(
     chunk_id: str,
 ) -> STSPredNet:
     scfg = config["stsprednet"]
-    lc = int(scfg["lc"])
-    lp = int(scfg["lp"])
-    period_interval = int(scfg["period_interval"])
+    branches = resolve_branch_config(config, len(train_x))
     batch_size = int(scfg["batch_size"])
     epochs = int(scfg["epochs"])
     lr = float(scfg["learning_rate"])
@@ -270,30 +246,33 @@ def train_map_model(
     clip_norm = float(scfg["gradient_clip_norm"])
     patience = int(scfg["patience"])
 
-    period_min = lp * period_interval
-    all_targets = np.arange(period_min, len(train_x), dtype=np.int64)
+    history = required_history(branches)
+    all_targets = np.asarray(generate_target_indices(
+        len(train_x), branches["prediction_offset"], branches["use_closeness"],
+        branches["use_period"], branches["use_trend"], branches["lc"], branches["lp"],
+        branches["lq"], branches["period_interval"], branches["trend_interval"]), dtype=np.int64)
     if len(all_targets) < 100:
         raise ValueError(
-            f"Not enough valid map targets ({len(all_targets)}) for period history {period_min}."
+            f"Not enough valid map targets ({len(all_targets)}) for enabled-branch history {history}."
         )
 
     n_val = max(1, int(len(all_targets) * 0.1))
     train_targets = all_targets[:-n_val]
     val_targets = all_targets[-n_val:]
 
-    train_ds = STSPredNetDataset(train_x, train_targets, lc, lp, period_interval)
-    val_ds = STSPredNetDataset(train_x, val_targets, lc, lp, period_interval)
+    train_ds = _make_dataset(train_x, train_targets, branches)
+    val_ds = _make_dataset(train_x, val_targets, branches)
     train_loader = DataLoader(
-        train_ds, batch_size=batch_size, shuffle=True, drop_last=True, collate_fn=collate_stsprednet,
+        train_ds, batch_size=batch_size, shuffle=True, drop_last=True, collate_fn=collate_branch_samples,
         **data_loader_kwargs(config.get("data_loader")),
     )
     val_loader = DataLoader(
-        val_ds, batch_size=batch_size, shuffle=False, collate_fn=collate_stsprednet,
+        val_ds, batch_size=batch_size, shuffle=False, collate_fn=collate_branch_samples,
         **data_loader_kwargs(config.get("data_loader")),
     )
 
     _, n_freq, grid_h, grid_w = train_x.shape
-    model_config = build_map_model_config(config, n_freq, grid_h, grid_w)
+    model_config = build_map_model_config(config, n_freq, grid_h, grid_w, branches)
     device = device_for()
     model = STSPredNet(model_config).to(device)
     criterion = nn.MSELoss()
@@ -310,12 +289,10 @@ def train_map_model(
         t_epoch = time.perf_counter()
         model.train()
         train_loss = 0.0
-        for closeness, period, target in train_loader:
-            closeness = closeness.to(device)
-            period = period.to(device)
-            target = target.to(device)
+        for batch in train_loader:
+            target = batch["target"].to(device)
             optimizer.zero_grad()
-            pred = model(closeness, period, None)
+            pred = model(*_model_inputs(batch, device))
             loss = criterion(pred, target)
             loss.backward()
             if clip_norm > 0:
@@ -327,11 +304,9 @@ def train_map_model(
         model.eval()
         val_loss = 0.0
         with torch.no_grad():
-            for closeness, period, target in val_loader:
-                closeness = closeness.to(device)
-                period = period.to(device)
-                target = target.to(device)
-                pred = model(closeness, period, None)
+            for batch in val_loader:
+                target = batch["target"].to(device)
+                pred = model(*_model_inputs(batch, device))
                 val_loss += criterion(pred, target).item() * target.size(0)
         val_loss /= max(len(val_loader.dataset), 1)
 
@@ -365,8 +340,10 @@ def train_map_model(
     torch.save(
         {
             "model_state_dict": model.state_dict(),
+            "model_name": MODEL_NAME,
             "model_config": model_config,
             "common_config": config,
+            "resolved_branches": branches,
             "training_start_time": training_start_time,
             "training_end_time": timestamp_utc(),
             "training_duration_sec": total_time,
@@ -461,6 +438,7 @@ def main() -> None:
         train_one_model(
             config, train, data.splits[data.train_split].segments,
             checkpoints, out, chunk.chunk_id,
+            frequencies=data.frequencies, normalization=data.normalization,
         )
 
 

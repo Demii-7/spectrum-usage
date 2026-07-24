@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import random
 from datetime import datetime, timezone
 from pathlib import Path
 import sys
@@ -38,13 +39,38 @@ MODEL_NAME = "tss_lcd"
 
 class TSSLCDWindowDataset(Dataset):
     def __init__(self, data: np.ndarray, starts: np.ndarray,
-                 t_in: int, t_out: int):
+                 t_in: int, t_out: int, mask_config: dict | None = None,
+                 seed: int = 42):
         self.X = torch.from_numpy(
             np.stack([data[s:s + t_in] for s in starts], axis=0)
         ).float()
         self.Y = torch.from_numpy(
             np.stack([data[s + t_in:s + t_in + t_out] for s in starts], axis=0)
-        ).float()
+        ).float().unsqueeze(2)
+        self.X = self.X.unsqueeze(2)  # Integrated vector data has one location.
+        mask_config = mask_config or {}
+        missing_rate = 0.0 if mask_config.get("complete_observation_baseline", False) else float(
+            mask_config.get("missing_rate", 0.0)
+        )
+        if not 0.0 <= missing_rate <= 1.0:
+            raise ValueError("missing_rate must be between 0 and 1")
+        if missing_rate and not mask_config.get("zero_pad_missing", True):
+            raise ValueError("TSS-LCD missing observations must use zero padding")
+        from dataset import create_masks
+        rng_state = np.random.get_state()
+        np.random.seed(seed)
+        try:
+            mask = create_masks(
+                self.X.numpy(), missing_rate,
+                str(mask_config.get("masking_strategy", "random")),
+                mask_config.get("continuous_mask_length"),
+                bool(mask_config.get("continuous_shared_gap", False)),
+                bool(mask_config.get("continuous_multiple_gaps", False)),
+            )
+        finally:
+            np.random.set_state(rng_state)
+        self.observation_mask = torch.from_numpy(mask)
+        self.X = self.X * self.observation_mask.float()
 
     def __len__(self) -> int:
         return len(self.X)
@@ -57,9 +83,30 @@ def device_for() -> torch.device:
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+def config_sections(config: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Accept shared nested model/train config and the legacy flat section."""
+    legacy = dict(config.get(MODEL_NAME) or {})
+    flat = {key: value for key, value in legacy.items() if key not in {"model", "train", "training"}}
+    model = dict(flat)
+    model.update(legacy.get("model") or config.get("model") or {})
+    train = dict(flat)
+    train.update(legacy.get("train") or legacy.get("training") or config.get("train") or config.get("training") or {})
+    return model, train
+
+
+def set_deterministic_seed(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
 def build_models(config: dict[str, Any], t_in: int, t_out: int,
                  n_bins: int, device: torch.device):
-    tcfg = config["tss_lcd"]
+    tcfg, _ = config_sections(config)
     L = 1
     F = n_bins
 
@@ -68,12 +115,18 @@ def build_models(config: dict[str, Any], t_in: int, t_out: int,
         latent_dim=tcfg["latent_dim"],
         num_blocks=tcfg.get("autoencoder_num_blocks", 3),
         init_channels=tcfg.get("autoencoder_initial_channels", 32),
+        kernel_size=tcfg.get("autoencoder_kernel_size", 3),
+        pool_kernel=tcfg.get("autoencoder_pool_kernel", 2),
+        pool_stride=tcfg.get("autoencoder_pool_stride", 2),
+        activation=tcfg.get("autoencoder_activation", "relu"),
     ).to(device)
     dec = LatentSpaceDecoder(
         T_out=t_out, L=L, F=F,
         latent_dim=tcfg["latent_dim"],
         num_blocks=tcfg.get("autoencoder_num_blocks", 3),
         init_channels=tcfg.get("autoencoder_initial_channels", 32),
+        kernel_size=tcfg.get("autoencoder_kernel_size", 3),
+        activation=tcfg.get("autoencoder_activation", "relu"),
     ).to(device)
     tss_cc = TSSConditionConstructor(
         T_in=t_in, L=L, F=F,
@@ -97,13 +150,19 @@ def build_models(config: dict[str, Any], t_in: int, t_out: int,
         nen_decoder_channels=tcfg.get("nen_decoder_channels", [128, 64]),
         nen_kernel_size=tcfg.get("nen_kernel_size", 3),
         time_embed_dim=tcfg.get("time_embed_dim", 32),
+        condition_proj_dim=tcfg.get("condition_proj_dim"),
+        condition_strategy=tcfg.get("condition_strategy", "concat"),
+        nen_activation=tcfg.get("nen_activation", "relu"),
+        nen_normalization=tcfg.get("nen_normalization", "batchnorm"),
     ).to(device)
     return enc, dec, tss_cc, diffusion
 
 
 def build_dataloaders(train_matrix: np.ndarray, t_in: int, t_out: int,
                       batch_size: int, val_fraction: float = 0.1,
-                      segments=(), data_loader_config=None):
+                      segments=(), data_loader_config=None,
+                      validation_matrix: np.ndarray | None = None,
+                      validation_segments=(), mask_config=None, seed: int = 42):
     all_starts = make_window_starts(
         len(train_matrix), t_in, t_out, 1, segments
     )
@@ -112,17 +171,26 @@ def build_dataloaders(train_matrix: np.ndarray, t_in: int, t_out: int,
             f"Not enough windows ({len(all_starts)}) "
             f"for t_in={t_in}, t_out={t_out}."
         )
-    val_count = max(1, int(len(all_starts) * val_fraction))
-    train_starts = all_starts[:-val_count]
-    val_starts = all_starts[-val_count:]
+    if validation_matrix is None:
+        val_count = max(1, int(len(all_starts) * val_fraction))
+        train_starts = all_starts[:-val_count]
+        val_matrix = train_matrix
+        val_starts = all_starts[-val_count:]
+    else:
+        train_starts = all_starts
+        val_matrix = validation_matrix
+        val_starts = make_window_starts(len(val_matrix), t_in, t_out, 1, validation_segments)
+        if len(val_starts) == 0:
+            raise ValueError("Explicit validation split contains no TSS-LCD windows")
 
     train_loader = DataLoader(
-        TSSLCDWindowDataset(train_matrix, train_starts, t_in, t_out),
+        TSSLCDWindowDataset(train_matrix, train_starts, t_in, t_out, mask_config, seed),
         batch_size=batch_size, shuffle=True, drop_last=True,
+        generator=torch.Generator().manual_seed(seed),
         **data_loader_kwargs(data_loader_config),
     )
     val_loader = DataLoader(
-        TSSLCDWindowDataset(train_matrix, val_starts, t_in, t_out),
+        TSSLCDWindowDataset(val_matrix, val_starts, t_in, t_out, mask_config, seed + 1),
         batch_size=batch_size, shuffle=False,
         **data_loader_kwargs(data_loader_config),
     )
@@ -144,8 +212,8 @@ def train_autoencoder(enc, dec, train_loader, val_loader,
                       checkpoints: Path, out: Path, chunk_id: str):
     epochs = int(tcfg["autoencoder_epochs"])
     lr = float(tcfg["autoencoder_learning_rate"])
-    clip_norm = float(tcfg.get("gradient_clip_norm", 5.0))
-    patience = int(tcfg.get("patience", 30))
+    clip_norm = float(tcfg.get("gradient_clip_norm", tcfg.get("gradient_clip", 5.0)))
+    patience = int(tcfg.get("patience", tcfg.get("early_stopping_patience", 30)))
 
     params = list(enc.parameters()) + list(dec.parameters())
     optimizer = torch.optim.Adam(
@@ -229,15 +297,6 @@ def train_autoencoder(enc, dec, train_loader, val_loader,
     if best_state is not None:
         enc.load_state_dict(best_state["enc"])
         dec.load_state_dict(best_state["dec"])
-    torch.save(
-        {
-            "state": best_state,
-            "training_start_time": training_start_time,
-            "training_end_time": timestamp_utc(),
-            "training_duration_sec": total_time,
-        },
-        checkpoints / f"{chunk_id}_tss_lcd_autoencoder.pt",
-    )
     return enc, dec
 
 
@@ -246,8 +305,8 @@ def train_tss_condition(enc, tss_cc, train_loader, val_loader,
                         checkpoints: Path, out: Path, chunk_id: str):
     epochs = int(tcfg["tss_epochs"])
     lr = float(tcfg["tss_learning_rate"])
-    clip_norm = float(tcfg.get("gradient_clip_norm", 5.0))
-    patience = int(tcfg.get("patience", 30))
+    clip_norm = float(tcfg.get("gradient_clip_norm", tcfg.get("gradient_clip", 5.0)))
+    patience = int(tcfg.get("patience", tcfg.get("early_stopping_patience", 30)))
 
     optimizer = torch.optim.Adam(
         tss_cc.parameters(), lr=lr,
@@ -328,15 +387,6 @@ def train_tss_condition(enc, tss_cc, train_loader, val_loader,
     pd.DataFrame(log_rows).to_csv(out / f"{chunk_id}_tss_training_log.csv", index=False)
     if best_state is not None:
         tss_cc.load_state_dict(best_state)
-    torch.save(
-        {
-            "tss_cc_state_dict": best_state,
-            "training_start_time": training_start_time,
-            "training_end_time": timestamp_utc(),
-            "training_duration_sec": total_time,
-        },
-        checkpoints / f"{chunk_id}_tss_lcd_tss.pt",
-    )
     return tss_cc
 
 
@@ -345,8 +395,8 @@ def train_diffusion(enc, tss_cc, diffusion, train_loader, val_loader,
                     checkpoints: Path, out: Path, chunk_id: str):
     epochs = int(tcfg["diffusion_epochs"])
     lr = float(tcfg["diffusion_learning_rate"])
-    clip_norm = float(tcfg.get("gradient_clip_norm", 5.0))
-    patience = int(tcfg.get("patience", 30))
+    clip_norm = float(tcfg.get("gradient_clip_norm", tcfg.get("gradient_clip", 5.0)))
+    patience = int(tcfg.get("patience", tcfg.get("early_stopping_patience", 30)))
 
     optimizer = torch.optim.Adam(
         diffusion.parameters(), lr=lr,
@@ -439,14 +489,60 @@ def train_diffusion(enc, tss_cc, diffusion, train_loader, val_loader,
     pd.DataFrame(log_rows).to_csv(out / f"{chunk_id}_diff_training_log.csv", index=False)
     if best_state is not None:
         diffusion.load_state_dict(best_state)
-    torch.save({
-        "diffusion_state_dict": best_state,
-        "tss_cc_state_dict": tss_cc.state_dict(),
-        "training_start_time": training_start_time,
-        "training_end_time": timestamp_utc(),
-        "training_duration_sec": total_time,
-    }, checkpoints / f"{chunk_id}_tss_lcd_diffusion.pt")
     return diffusion
+
+
+def train_chunk(config: dict[str, Any], chunk, data, out: Path, checkpoints: Path) -> Path:
+    """Train all paper stages for one loaded chunk and write one final checkpoint."""
+    model_cfg, train_cfg = config_sections(config)
+    seed = int(train_cfg.get("seed", config.get("seed", 42)))
+    set_deterministic_seed(seed)
+    train_split = data.splits[data.train_split]
+    validation_split = data.splits.get(data.validation_split)
+    t_in = int(config["windowing"].get("lookback", config["windowing"].get("input_sequence_length")))
+    horizons = config["windowing"].get("horizons")
+    t_out = max(map(int, horizons)) if horizons else int(config["windowing"]["prediction_horizon"])
+    batch_size = int(train_cfg.get("batch_size", model_cfg.get("batch_size", 32)))
+    device = device_for()
+    enc, dec, tss_cc, diffusion = build_models(config, t_in, t_out, train_split.model_input.shape[-1], device)
+    train_loader, val_loader = build_dataloaders(
+        train_split.model_input, t_in, t_out, batch_size,
+        val_fraction=float(train_cfg.get("val_fraction", 0.1)), segments=train_split.segments,
+        data_loader_config=config.get("data_loader"),
+        validation_matrix=None if validation_split is None else validation_split.model_input,
+        validation_segments=() if validation_split is None else validation_split.segments,
+        mask_config={
+            **dict(config.get("preprocessing") or {}),
+            **dict((config.get(MODEL_NAME) or {}).get("preprocessing") or {}),
+        }, seed=seed,
+    )
+    enc, dec = train_autoencoder(enc, dec, train_loader, val_loader, train_cfg, device, checkpoints, out, chunk.chunk_id)
+    tss_cc = train_tss_condition(enc, tss_cc, train_loader, val_loader, train_cfg, device, checkpoints, out, chunk.chunk_id)
+    diffusion = train_diffusion(enc, tss_cc, diffusion, train_loader, val_loader, train_cfg, device, checkpoints, out, chunk.chunk_id)
+    path = checkpoints / f"{chunk.chunk_id}_tss_lcd.pt"
+    torch.save({
+        "model_name": MODEL_NAME,
+        "component_states": {
+            "encoder": enc.state_dict(), "decoder": dec.state_dict(),
+            "tss_condition": tss_cc.state_dict(), "diffusion": diffusion.state_dict(),
+        },
+        "model_config": model_cfg,
+        "train_config": train_cfg,
+        "frequencies": np.asarray(data.frequencies, dtype=np.float32),
+        "normalization": data.normalization,
+        "preprocessing": {
+            **dict(config.get("preprocessing") or {}),
+            **dict((config.get(MODEL_NAME) or {}).get("preprocessing") or {}),
+        },
+        "mask_metadata": {
+            **dict(config.get("preprocessing") or {}),
+            **dict((config.get(MODEL_NAME) or {}).get("preprocessing") or {}),
+            "padding_value": 0.0,
+            "seed": seed,
+        },
+        "tensor_layout": "B,T,L,F", "t_in": t_in, "t_out": t_out,
+    }, path)
+    return path
 
 
 def parse_args() -> argparse.Namespace:
@@ -474,34 +570,7 @@ def main() -> None:
               f"({chunk.start_mhz:g}-{chunk.end_mhz:g} MHz)")
         chunk_start = time.perf_counter()
         data = load_chunk(config, chunk)
-        train = data.splits[data.train_split].model_input
-        train_raw = data.splits[data.train_split].raw_dbm
-        n_bins = train.shape[1]
-        t_in = int(config["windowing"]["lookback"])
-        max_horizon = max(int(h) for h in config["windowing"]["horizons"])
-        t_out = max_horizon
-        batch_size = int(config["tss_lcd"]["batch_size"])
-        tcfg = config["tss_lcd"]
-        device = device_for()
-
-        enc, dec, tss_cc, diffusion = build_models(config, t_in, t_out, n_bins, device)
-        train_loader, val_loader = build_dataloaders(
-            train, t_in, t_out, batch_size,
-            segments=data.splits[data.train_split].segments,
-            data_loader_config=config.get("data_loader"),
-        )
-
-        print(f"  {chunk.chunk_id} training autoencoder...")
-        enc, dec = train_autoencoder(enc, dec, train_loader, val_loader,
-                                     tcfg, device, checkpoints, out, chunk.chunk_id)
-
-        print(f"  {chunk.chunk_id} training TSS-CC...")
-        tss_cc = train_tss_condition(enc, tss_cc, train_loader, val_loader,
-                                     tcfg, device, checkpoints, out, chunk.chunk_id)
-
-        print(f"  {chunk.chunk_id} training diffusion...")
-        diffusion = train_diffusion(enc, tss_cc, diffusion, train_loader, val_loader,
-                                    tcfg, device, checkpoints, out, chunk.chunk_id)
+        train_chunk(config, chunk, data, out, checkpoints)
 
         print(f"  {chunk.chunk_id} total done in {time.perf_counter() - chunk_start:.1f}s")
 

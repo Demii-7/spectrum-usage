@@ -60,6 +60,10 @@ from training.common.model_factory import (
     SUPPORTED_MODELS,
     build_model,
 )
+from training.common.specialized_models import (
+    SPECIALIZED_MODELS,
+    train_specialized_chunk,
+)
 
 # Helper for dataloading
 from training.common.windowing import (
@@ -613,6 +617,19 @@ def train_one_model(config: dict[str, Any], model_name: str, run_dir: Path) -> N
             f"Error! Integrated training supports "
             f"{sorted(SUPPORTED_MODELS)}, got {model_name!r}."
         )
+    if model_name in SPECIALIZED_MODELS:
+        out, checkpoints = prepare_output_dirs(run_dir)
+        for chunk in chunk_specs(config):
+            print(
+                f"Training {model_name} for {chunk.chunk_id} "
+                f"({chunk.start_mhz:g}-{chunk.end_mhz:g} MHz)"
+            )
+            data = load_chunk(config, chunk)
+            train_specialized_chunk(
+                model_name, config, chunk, data, out, checkpoints
+            )
+        return
+
     train_cfg = config[model_name]["train"]
     val_fraction = float(train_cfg.get("val_fraction", 0.1))
     out, checkpoints = prepare_output_dirs(run_dir)

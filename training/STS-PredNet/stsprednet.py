@@ -59,6 +59,8 @@ class STSPredNet(nn.Module):
                 self.predrnn_q = PredRNN(**common_kwargs)
 
         n_branches = sum([self.use_closeness, self.use_period, self.use_trend])
+        if n_branches == 0:
+            raise ValueError("STS-PredNet requires at least one enabled temporal branch")
         # Fusion weights: per-location gives a distinct weight per (H,W) cell;
         # per-tensor gives a single scalar for the entire branch output
         if self.fusion_shape == "per_location":
@@ -70,7 +72,7 @@ class STSPredNet(nn.Module):
         self.W_p = nn.Parameter(torch.ones(fusion_shape) / n_branches) if self.use_period else None
         self.W_q = nn.Parameter(torch.ones(fusion_shape) / n_branches) if self.use_trend else None
 
-    def forward(self, closeness_seq, period_seq=None, trend_seq=None):
+    def forward(self, closeness_seq=None, period_seq=None, trend_seq=None):
         """Run the multi-branch prediction.
 
         Args:
@@ -81,21 +83,36 @@ class STSPredNet(nn.Module):
         Returns:
             Fused prediction tensor of shape (B, 1, H, W).
         """
+        inputs = {
+            "closeness": (self.use_closeness, closeness_seq),
+            "period": (self.use_period, period_seq),
+            "trend": (self.use_trend, trend_seq),
+        }
+        missing = [name for name, (enabled, value) in inputs.items() if enabled and value is None]
+        unexpected = [name for name, (enabled, value) in inputs.items() if not enabled and value is not None]
+        if missing:
+            raise ValueError("Missing enabled STS input(s): " + ", ".join(missing))
+        if unexpected:
+            raise ValueError("Input provided for disabled STS branch(es): " + ", ".join(unexpected))
+        for name, (enabled, value) in inputs.items():
+            if enabled and (value.ndim != 5 or value.shape[1] < 1):
+                raise ValueError(f"{name} input must have shape (B, T, C, H, W)")
+
         if self.share_weights:
             branch_out = []
             if self.use_closeness:
                 branch_out.append(self.branch(closeness_seq))
-            if self.use_period and period_seq is not None:
+            if self.use_period:
                 branch_out.append(self.branch(period_seq))
-            if self.use_trend and trend_seq is not None:
+            if self.use_trend:
                 branch_out.append(self.branch(trend_seq))
         else:
             branch_out = []
             if self.use_closeness:
                 branch_out.append(self.predrnn_c(closeness_seq))
-            if self.use_period and period_seq is not None:
+            if self.use_period:
                 branch_out.append(self.predrnn_p(period_seq))
-            if self.use_trend and trend_seq is not None:
+            if self.use_trend:
                 branch_out.append(self.predrnn_q(trend_seq))
 
         # Weighted fusion of branch outputs
@@ -104,10 +121,10 @@ class STSPredNet(nn.Module):
         if self.use_closeness:
             fused = fused + self.W_c * branch_out[idx]
             idx += 1
-        if self.use_period and period_seq is not None:
+        if self.use_period:
             fused = fused + self.W_p * branch_out[idx]
             idx += 1
-        if self.use_trend and trend_seq is not None:
+        if self.use_trend:
             fused = fused + self.W_q * branch_out[idx]
 
         if self.output_activation == "tanh":

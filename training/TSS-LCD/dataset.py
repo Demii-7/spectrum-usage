@@ -239,9 +239,13 @@ class TSSLCDataset(Dataset):
         continuous_shared_gap: bool = False,
         continuous_multiple_gaps: bool = False,
         transform: Callable | None = None,
+        n_locations: int = 1,
     ):
-        self.X = torch.from_numpy(X).float()
-        self.Y = torch.from_numpy(Y).float()
+        if X.shape[-1] % n_locations:
+            raise ValueError("Feature count must be divisible by n_locations")
+        frequency_bins = X.shape[-1] // n_locations
+        self.X = torch.from_numpy(X).float().reshape(*X.shape[:-1], n_locations, frequency_bins)
+        self.Y = torch.from_numpy(Y).float().reshape(*Y.shape[:-1], n_locations, frequency_bins)
         # Disable masking entirely in complete-observation baseline mode
         self.missing_rate = missing_rate if not complete_observation_baseline else 0.0
         self.masking_strategy = masking_strategy
@@ -362,17 +366,17 @@ def get_dataloaders(
     train_dataset = TSSLCDataset(
         X_train, Y_train, missing_rate, masking_strategy,
         zero_pad_missing, complete_obs,
-        cont_mask_len, cont_shared, cont_multi,
+        cont_mask_len, cont_shared, cont_multi, n_locations=L,
     )
     val_dataset = TSSLCDataset(
         X_val, Y_val, missing_rate, masking_strategy,
         zero_pad_missing, complete_obs,
-        cont_mask_len, cont_shared, cont_multi,
+        cont_mask_len, cont_shared, cont_multi, n_locations=L,
     )
     test_dataset = TSSLCDataset(
         X_test, Y_test, missing_rate, masking_strategy,
         zero_pad_missing, complete_obs,
-        cont_mask_len, cont_shared, cont_multi,
+        cont_mask_len, cont_shared, cont_multi, n_locations=L,
     )
 
     batch_size = train_cfg.get("batch_size", 32)

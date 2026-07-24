@@ -131,7 +131,7 @@ def load_checkpoint(path, device):
     return torch.load(path, map_location=device, weights_only=False)
 
 
-def invert_colormap(rgb_np, cmap_name="jet", n_lut=1024):
+def invert_colormap(rgb_np, cmap_name="jet", n_lut=1024, chunk_size=4096):
     """
     Approximate inverse of a matplotlib colormap.
     rgb_np: (..., 3) float32 in [0,1]
@@ -142,7 +142,10 @@ def invert_colormap(rgb_np, cmap_name="jet", n_lut=1024):
     scalars = np.linspace(0, 1, n_lut)
     lut = cmap(scalars)[:, :3].astype(np.float32)          # (n_lut, 3)
     flat = rgb_np.reshape(-1, 3)                             # (N, 3)
-    diffs = flat[:, None, :] - lut[None, :, :]              # (N, n_lut, 3)
-    dists = np.sum(diffs ** 2, axis=-1)                     # (N, n_lut)
-    idx = np.argmin(dists, axis=-1)                         # (N,)
+    idx = np.empty(len(flat), dtype=np.intp)
+    # Bound the temporary distance matrix instead of allocating N x LUT x RGB.
+    for start in range(0, len(flat), chunk_size):
+        values = flat[start:start + chunk_size]
+        dists = np.sum((values[:, None, :] - lut[None, :, :]) ** 2, axis=-1)
+        idx[start:start + len(values)] = np.argmin(dists, axis=-1)
     return scalars[idx].astype(np.float32).reshape(rgb_np.shape[:-1])

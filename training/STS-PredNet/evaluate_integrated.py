@@ -19,16 +19,11 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from stsprednet import STSPredNet
+from dataset import required_history, resolve_branch_config
 from training.common.config import load_config
 from training.common.forecast_export import export_map_forecasts
 from training.common.runtime import timestamp_utc
 from training.common.results import finalize_results, prepare_output_dirs
-from training.common.interpolated_map import (
-    denormalize_map,
-    load_interpolated_map_npz,
-    normalize_map_by_frequency,
-    prediction_start_row,
-)
 from training.common.data import chunk_specs, load_chunk
 from training.common.metrics import absolute_and_squared_errors_dbm
 from training.common.results import append_metric_rows, load_band_definitions
@@ -55,12 +50,7 @@ def build_model_config(config: dict[str, Any], n_bins: int) -> dict[str, Any]:
             "output_activation": scfg["model"]["output_activation"],
             "fusion_weight_shape": scfg["model"]["fusion_weight_shape"],
         },
-        "branches": {
-            "use_closeness": True,
-            "use_period": True,
-            "use_trend": False,
-            "share_branch_weights": False,
-        },
+        "branches": resolve_branch_config(config),
     }
 
 
@@ -77,47 +67,52 @@ def build_map_model_config(config: dict[str, Any], n_freq: int, grid_h: int, gri
             "output_activation": scfg["model"]["output_activation"],
             "fusion_weight_shape": scfg["model"]["fusion_weight_shape"],
         },
-        "branches": {
-            "use_closeness": True,
-            "use_period": True,
-            "use_trend": False,
-            "share_branch_weights": False,
-        },
+        "branches": resolve_branch_config(config),
     }
 
 
 def predict_recursive(model: STSPredNet, device: torch.device,
                       full_x: np.ndarray, target_rows: np.ndarray,
-                      horizon: int, lc: int, lp: int,
-                      period_interval: int) -> np.ndarray:
-    n_bins = full_x.shape[1]
+                      horizon: int, lc: int | None = None, lp: int | None = None,
+                      period_interval: int | None = None, branches=None) -> np.ndarray:
+    branches = branches or {
+        "use_closeness": True, "use_period": True, "use_trend": False,
+        "lc": lc, "lp": lp, "lq": 1, "period_interval": period_interval,
+        "trend_interval": 1, "prediction_offset": 1,
+    }
+    branches = resolve_branch_config(branches)
     preds = []
 
     for target_row in target_rows:
         origin = target_row - horizon
-        running = [full_x[i].copy() for i in range(origin - lc + 1, origin + 1)]
+        generated = {}
 
         for step in range(1, horizon + 1):
             current_target = origin + step
 
-            close = np.stack(running[-lc:], axis=0)
-            close = close[:, None, None, :].astype(np.float32)
-            close_t = torch.from_numpy(close).float().unsqueeze(0)
+            def frame(index):
+                return generated[index] if index in generated else full_x[index]
 
-            period_list = [full_x[current_target - p * period_interval]
-                           for p in range(lp, 0, -1)]
-            period = np.stack(period_list, axis=0)
-            period = period[:, None, None, :].astype(np.float32)
-            period_t = torch.from_numpy(period).float().unsqueeze(0)
+            inputs = []
+            specs = (
+                ("closeness", range(current_target - branches["lc"], current_target)),
+                ("period", [current_target - p * branches["period_interval"] for p in range(branches["lp"], 0, -1)]),
+                ("trend", [current_target - q * branches["trend_interval"] for q in range(branches["lq"], 0, -1)]),
+            )
+            for name, indices in specs:
+                if not branches[f"use_{name}"]:
+                    inputs.append(None)
+                    continue
+                seq = np.stack([frame(i) for i in indices])[:, None, None, :].astype(np.float32)
+                inputs.append(torch.from_numpy(seq).unsqueeze(0).to(device))
 
             with torch.no_grad():
-                pred = model(close_t.to(device), period_t.to(device), None)
+                pred = model(*inputs)
             pred_np = pred.cpu().numpy()[0, 0, 0, :]
+            generated[current_target] = pred_np
 
             if step == horizon:
                 preds.append(pred_np)
-            else:
-                running.append(pred_np)
 
     return np.stack(preds, axis=0).astype(np.float32)
 
@@ -128,30 +123,40 @@ def predict_recursive_map(
     full_x: np.ndarray,
     target_rows: np.ndarray,
     horizon: int,
-    lc: int,
-    lp: int,
-    period_interval: int,
+    lc: int | None = None,
+    lp: int | None = None,
+    period_interval: int | None = None,
+    branches=None,
 ) -> np.ndarray:
+    branches = resolve_branch_config(branches or {
+        "use_closeness": True, "use_period": True, "use_trend": False,
+        "lc": lc, "lp": lp, "lq": 1, "period_interval": period_interval,
+        "trend_interval": 1, "prediction_offset": 1,
+    })
     preds = []
     for target_row in target_rows:
         origin = target_row - horizon
-        running = [full_x[i].copy() for i in range(origin - lc + 1, origin + 1)]
+        generated = {}
         for step in range(1, horizon + 1):
             current_target = origin + step
-            close = np.stack(running[-lc:], axis=0).astype(np.float32)
-            period = np.stack(
-                [full_x[current_target - p * period_interval] for p in range(lp, 0, -1)],
-                axis=0,
-            ).astype(np.float32)
-            close_t = torch.from_numpy(close).float().unsqueeze(0)
-            period_t = torch.from_numpy(period).float().unsqueeze(0)
+            def frame(index):
+                return generated[index] if index in generated else full_x[index]
+            specs = (
+                ("closeness", range(current_target - branches["lc"], current_target)),
+                ("period", [current_target - p * branches["period_interval"] for p in range(branches["lp"], 0, -1)]),
+                ("trend", [current_target - q * branches["trend_interval"] for q in range(branches["lq"], 0, -1)]),
+            )
+            inputs = []
+            for name, indices in specs:
+                seq = None if not branches[f"use_{name}"] else torch.from_numpy(
+                    np.stack([frame(i) for i in indices]).astype(np.float32)).unsqueeze(0).to(device)
+                inputs.append(seq)
             with torch.no_grad():
-                pred = model(close_t.to(device), period_t.to(device), None)
+                pred = model(*inputs)
             pred_np = pred.cpu().numpy()[0].astype(np.float32)
+            generated[current_target] = pred_np
             if step == horizon:
                 preds.append(pred_np)
-            else:
-                running.append(pred_np)
     return np.stack(preds, axis=0).astype(np.float32)
 
 
@@ -174,6 +179,7 @@ def evaluate_map_mode(config: dict[str, Any], out: Path, checkpoint_path: Path) 
     chunk_id = str(data_cfg.get("chunk_id", "powder_map"))
 
     scfg = config["stsprednet"]
+    branches = resolve_branch_config(config, len(test_x))
     _, n_freq, grid_h, grid_w = train_x.shape
     model_config = build_map_model_config(config, n_freq, grid_h, grid_w)
     device = device_for()
@@ -182,9 +188,6 @@ def evaluate_map_mode(config: dict[str, Any], out: Path, checkpoint_path: Path) 
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
 
-    lc = int(scfg["lc"])
-    lp = int(scfg["lp"])
-    period_interval = int(scfg["period_interval"])
     horizons = [int(h) for h in config["windowing"]["horizons"]]
     start_idx = prediction_start_row(config, len(test_x))
 
@@ -201,14 +204,13 @@ def evaluate_map_mode(config: dict[str, Any], out: Path, checkpoint_path: Path) 
     predictions_by_horizon: dict[int, np.ndarray] = {}
     targets_by_horizon: dict[int, np.ndarray] = {}
     target_rows_by_horizon: dict[int, np.ndarray] = {}
-    period_min = lp * period_interval
     for horizon in horizons:
-        min_needed = max(period_min + horizon - 1, horizon + lc - 1)
+        min_needed = required_history(branches, horizon)
         first_target = max(start_idx, min_needed)
         target_rows = np.arange(first_target, len(test_x), dtype=np.int64)
         if len(target_rows) == 0:
             continue
-        pred_norm = predict_recursive_map(model, device, test_x, target_rows, horizon, lc, lp, period_interval)
+        pred_norm = predict_recursive_map(model, device, test_x, target_rows, horizon, branches=branches)
         pred = denormalize_map(pred_norm, norm_stats)
         target = test_raw[target_rows].astype(np.float32)
         predictions_by_horizon[horizon] = pred
@@ -269,10 +271,7 @@ def evaluate_map_mode(config: dict[str, Any], out: Path, checkpoint_path: Path) 
 
 def evaluate_csv_chunk(config: dict[str, Any], chunk, bands, out: Path, checkpoint_path: Path):
     scfg = config["stsprednet"]
-    lc = int(scfg["lc"])
-    lp = int(scfg["lp"])
-    period_interval = int(scfg["period_interval"])
-    min_history_base = int(config["windowing"].get("min_history", 4320))
+    branches = resolve_branch_config(config)
     horizons = [int(h) for h in config["windowing"]["horizons"]]
     data = load_chunk(config, chunk)
     test_splits = config["data"].get("test_splits", [data.test_split])
@@ -290,9 +289,9 @@ def evaluate_csv_chunk(config: dict[str, Any], chunk, bands, out: Path, checkpoi
     frequency_rows: list[dict[str, Any]] = []
     band_rows: list[dict[str, Any]] = []
 
-    period_min_base = lp * period_interval
     for horizon in horizons:
-        min_needed = max(period_min_base + horizon - 1, min_history_base, horizon + lc - 1)
+        branch_history = required_history(branches, horizon)
+        min_needed = branch_history
         for split_name in test_splits:
             split = data.splits[split_name]
             split_x = split.model_input.astype(np.float32)
@@ -304,7 +303,7 @@ def evaluate_csv_chunk(config: dict[str, Any], chunk, bands, out: Path, checkpoi
             )
             target_rows = filter_target_rows(
                 target_rows,
-                history=max(horizon + lc - 1, horizon - 1 + period_min_base),
+                history=branch_history,
                 segments=split.segments,
             )
             if len(target_rows) == 0:
@@ -313,7 +312,7 @@ def evaluate_csv_chunk(config: dict[str, Any], chunk, bands, out: Path, checkpoi
 
             pred = predict_recursive(
                 model, device, split_x, target_rows, horizon,
-                lc, lp, period_interval,
+                branches=branches,
             )
             target = split_raw[target_rows]
             _, abs_err, sq_err = absolute_and_squared_errors_dbm(
