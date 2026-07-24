@@ -1,0 +1,60 @@
+# Autoformer-CSA comparison on the same POWDER split as residual_family_comparison.
+data:
+  representation: 2d
+  reference_site: humanities
+  files:
+    - path: data/powder/guesthouse-nuc1/20260618T0036Z/600_800/power_1mhz_avg_per_minute.csv
+      partition: train
+    - path: data/powder/humanities-nuc1/20260618T0036Z/600_800/power_1mhz_avg_per_minute.csv
+      partition: train
+    - path: data/powder/guesthouse-nuc1/20260628T0436Z/600_800/power_1mhz_avg_per_minute.csv
+      partition: test
+    - path: data/powder/humanities-nuc1/20260628T0436Z/600_800/power_1mhz_avg_per_minute.csv
+      partition: test
+  concat: rows
+  chunks:
+    - id: powder_600_800
+      start_mhz: 600.0
+      end_mhz: 800.0
+
+windowing:
+  lookback: 60
+  horizons: [1, 5, 15, 60]
+
+training:
+  device: auto
+  model_name: autoformer_csa
+
+preprocessing:
+  normalize: true
+  impute: true
+  max_missing_gap: 10
+
+autoformer_csa:
+  seq_len: 60
+  label_len: 30
+  pred_len: 60
+  train_stride: 10
+  val_stride: 10
+  test_stride: 1
+  val_fraction: 0.15
+  batch_size: 32
+  epochs: 20
+  learning_rate: 0.0001
+  optimizer: adam
+  loss: rmse
+  gradient_clip: 5.0
+  early_stopping: true
+  patience: 10
+  seed: 42
+  model:
+    d_model: 64
+    d_ff: 256
+    encoder_layers: 2
+    decoder_layers: 1
+    n_heads: 8
+    moving_avg: 25
+    dropout: 0.05
+    factor: 3
+    csam_kernel_size: 7
+    output_attention: false

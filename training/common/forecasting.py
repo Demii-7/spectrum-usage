@@ -142,17 +142,19 @@ def forecast(
 
     if prediction_horizon == 1:
         if targets is not None:
-            return teacher_forced_rollout(
+            pred = teacher_forced_rollout(
                 model,
                 x,
                 targets,
             )
+            return pred
 
-        return autoregressive_rollout(
+        pred = autoregressive_rollout(
             model,
             x,
             rollout_horizon,
         )
+        return pred
 
     if prediction_horizon == rollout_horizon:
         output = model(x)

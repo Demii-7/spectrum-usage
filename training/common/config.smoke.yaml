@@ -179,6 +179,7 @@ autoformer_csa:
   train_stride: 1
   val_stride: 60
   test_stride: 60
+  val_fraction: 0.1
   batch_size: 4
   epochs: 1
   learning_rate: 0.001
@@ -202,7 +203,6 @@ autoformer_csa:
     embed: timeF
     freq: h
     csam_kernel_size: 7
-    csam_reduction: 16
     output_attention: false
   seed: 42
   device: auto

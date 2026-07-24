@@ -40,6 +40,7 @@ import torch.nn as nn
 
 from models.ARIMA import ARIMAForecaster
 from models.ConvLSTM import ConvLSTMForecaster
+from models.DSwinLSTM_I import DSwinLSTM_IForecaster
 from models.LSTMAttn import LSTMAttnForecaster
 from models.LookbackMean import LookbackMeanForecaster
 from models.LinearAutoregressive import LinearAutoregressiveForecaster
@@ -49,6 +50,10 @@ from models.ResidualVanillaLSTM import ResidualVanillaLSTMForecaster
 from models.TimeRAN import TimeRANForecaster
 from models.TemporalConvNet import TemporalConvNetForecaster
 from models.VanillaLSTM import VanillaLSTMForecaster
+from models.AutoformerCSA import (
+    AutoformerCSAForecaster,
+    DotConfig,
+)
 
 
 
@@ -57,6 +62,7 @@ SUPPORTED_MODELS = {
     "vanillalstm",
     "convlstm",
     "timeran",
+    "dswinlstm_i",
     "lookbackmean1d",
     "lookbackmean2d",
     "lookbackmean4d",
@@ -70,6 +76,7 @@ SUPPORTED_MODELS = {
     "residualconvlstm",
     "temporalconvnet",
     "lstmattn",
+    "autoformer_csa",
 }
 
 
@@ -84,6 +91,7 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
     """
     model_name = str(model_name).lower()
     model_cfg = config[model_name]["model"]
+    print(f"[DEBUG] build_model: model_name={model_name}, train_data.shape={train_data.shape}")
 
     if model_name in ("temporalconvnet", "lstmattn", "arima"):
         if train_data.ndim != 2:
@@ -280,6 +288,117 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
             }
         }
         return ResidualLinearAutoregressiveForecaster(predictor_config)
+
+    if model_name == "dswinlstm_i":
+        if train_data.ndim != 4:
+            raise ValueError(
+                "Error! DSwinLSTM-I expects training map data shaped "
+                f"(time, height, width, channels), got {train_data.shape}"
+            )
+        predictor_config = {
+            "model": {
+                **dict(model_cfg),
+                "input_sequence_length": int(model_cfg["input_sequence_length"]),
+                "prediction_horizon": int(model_cfg["prediction_horizon"]),
+                "map_height": int(train_data.shape[1]),
+                "map_width": int(train_data.shape[2]),
+                "input_channels": int(train_data.shape[3]),
+            },
+        }
+        print(f"[DEBUG] build_model: DSwinLSTM_I map_height={train_data.shape[1]} map_width={train_data.shape[2]} input_channels={train_data.shape[3]}")
+        print(f"[DEBUG] build_model: creating DSwinLSTM_IForecaster ...")
+        model = DSwinLSTM_IForecaster(predictor_config)
+        print(f"[DEBUG] build_model: DSwinLSTM_IForecaster created, param_count={sum(p.numel() for p in model.parameters())}")
+        return model
+
+    if model_name == "autoformer_csa":
+        if train_data.ndim != 2:
+            raise ValueError(
+                "Error! Autoformer-CSA expects training data "
+                "shaped (time, features), "
+                f"got {train_data.shape}"
+            )
+
+        input_sequence_length = int(
+            model_cfg["input_sequence_length"]
+        )
+
+        prediction_horizon = int(
+            model_cfg["prediction_horizon"]
+        )
+
+        label_len = int(
+            model_cfg["label_len"]
+        )
+
+        if label_len > input_sequence_length:
+            raise ValueError(
+                "Error! Autoformer-CSA label_len cannot exceed "
+                "input_sequence_length. "
+                f"Got label_len={label_len} and "
+                f"input_sequence_length="
+                f"{input_sequence_length}."
+            )
+
+        predictor_config = DotConfig(
+            {
+                # Shared-pipeline names translated to
+                # Autoformer implementation names.
+                "seq_len": input_sequence_length,
+                "label_len": label_len,
+                "pred_len": prediction_horizon,
+
+                # Derived from the loaded frequency chunk.
+                "enc_in": int(
+                    train_data.shape[-1]
+                ),
+                "dec_in": int(
+                    train_data.shape[-1]
+                ),
+                "c_out": int(
+                    train_data.shape[-1]
+                ),
+
+                # Architecture configuration.
+                "d_model": int(
+                    model_cfg["d_model"]
+                ),
+                "d_ff": int(
+                    model_cfg["d_ff"]
+                ),
+                "e_layers": int(
+                    model_cfg["encoder_layers"]
+                ),
+                "d_layers": int(
+                    model_cfg["decoder_layers"]
+                ),
+                "n_heads": int(
+                    model_cfg["n_heads"]
+                ),
+                "moving_avg": int(
+                    model_cfg["moving_avg"]
+                ),
+                "dropout": float(
+                    model_cfg["dropout"]
+                ),
+                "factor": int(
+                    model_cfg["factor"]
+                ),
+                "csam_kernel_size": int(
+                    model_cfg["csam_kernel_size"]
+                ),
+                "output_attention": bool(
+                    model_cfg.get(
+                        "output_attention",
+                        False,
+                    )
+                ),
+            }
+        )
+
+        return AutoformerCSAForecaster(
+            predictor_config
+        )
 
     raise ValueError(
         f"Unsupported model: {model_name}"

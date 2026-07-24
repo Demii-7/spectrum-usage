@@ -111,39 +111,47 @@ Best use here:
 - merged 2-site sequence model
 - train on a numeric `(T, 400)` CSV built from humanities + guesthouse on the same timestamps
 
-Config changes from `training/Autoformer-CSA/config.yaml`:
+Use the shared configuration and run `training/Autoformer-CSA/train_integrated.py`.
+The model-specific settings live under `autoformer_csa` in
+`training/common/config.yaml`.
 
 ```yaml
 data:
-  format: csv
-  dataset_path: data/powder_20260618T0036Z_humanities_guesthouse_600_800_numeric.csv
-  n_features: 400
-  n_nodes: 2
-  bins_per_node: 200
-  node_names: [humanities, guesthouse]
-  selected_nodes: [humanities, guesthouse]
-  cc2_only_smoke_test: false
+  representation: 2d
+  files:
+    - path: data/powder_20260618T0036Z_humanities_guesthouse_600_800_numeric.csv
+      partition: train
+    - path: data/powder_20260628T0436Z_humanities_guesthouse_600_800_numeric.csv
+      partition: test
+  concat: rows
+  reference_site: humanities_guesthouse
+  chunks:
+    - id: powder_600_800
+      start_mhz: 600.0
+      end_mhz: 800.0
 
 windowing:
-  seq_len: 60
-  label_len: 30
+  lookback: 96
+  horizons: [1, 5, 15, 60]
+
+preprocessing:
+  normalize: true
+  impute: true
+  max_missing_gap: 5
+
+autoformer_csa:
+  seq_len: 96
+  label_len: 48
   pred_len: 60
-  train_stride: 1
-  val_stride: 60
-  test_stride: 60
-
-split:
-  train_ratio: 0.9
-  val_ratio: 0.1
-  test_ratio: 0.0
-
-model:
-  enc_in: 400
-  dec_in: 400
-  c_out: 400
-
-evaluation:
-  eval_horizons: [1, 5, 15, 60]
+  batch_size: 32
+  epochs: 20
+  learning_rate: 0.0001
+  optimizer: adam
+  loss: rmse
+  model:
+    encoder_layers: 2
+    decoder_layers: 1
+    n_heads: 8
 ```
 
 ### STS-PredNet

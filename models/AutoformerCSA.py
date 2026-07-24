@@ -1,4 +1,4 @@
-"""Autoformer-CSA model implementation.
+"""AutoformerCSA model implementation.
 
 The implementation follows the Autoformer decomposition and auto-correlation
 architecture.  CSAM replaces the feed-forward sublayer in the encoder and
@@ -454,22 +454,120 @@ class AutoformerCSAForecaster(nn.Module):
 
     def __init__(self, config: DotConfig):
         super().__init__()
+
+        self.input_sequence_length = int(
+            config.seq_len
+        )
+
+        self.prediction_horizon = int(
+            config.pred_len
+        )
+
+        self.label_len = int(
+            config.label_len
+        )
+
+        self.input_size = int(
+            config.enc_in
+        )
+
         self.model = AutoformerCSA(config)
-        self.prediction_horizon = config.pred_len
-        self.label_len = config.label_len
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        batch, sequence_length, _ = x.shape
-        decoder_length = self.label_len + self.prediction_horizon
+        if x.ndim != 3:
+            raise ValueError(
+                "Autoformer-CSA expects input shaped "
+                "(batch, lookback, frequencies), "
+                f"got {tuple(x.shape)}."
+            )
+
+        batch, sequence_length, feature_count = x.shape
+
+        if sequence_length != self.input_sequence_length:
+            raise ValueError(
+                "Autoformer-CSA received lookback length "
+                f"{sequence_length}, but was configured for "
+                f"{self.input_sequence_length}."
+            )
+
+        if feature_count != self.input_size:
+            raise ValueError(
+                "Autoformer-CSA received "
+                f"{feature_count} input features, but was "
+                f"configured for {self.input_size}."
+            )
+
+        if self.label_len <= 0:
+            raise ValueError(
+                "Autoformer-CSA label_len must be positive."
+            )
+
+        if self.label_len > sequence_length:
+            raise ValueError(
+                "Autoformer-CSA label_len cannot exceed the "
+                "encoder input sequence length. "
+                f"Got label_len={self.label_len} and "
+                f"sequence_length={sequence_length}."
+            )
+
+        decoder_length = (
+            self.label_len
+            + self.prediction_horizon
+        )
+
         decoder_input = torch.zeros(
             batch,
             decoder_length,
-            x.shape[-1],
+            feature_count,
             device=x.device,
             dtype=x.dtype,
         )
-        decoder_input[:, : self.label_len] = x[:, -self.label_len :]
-        encoder_marks = torch.zeros(batch, sequence_length, 4, device=x.device, dtype=x.dtype)
-        decoder_marks = torch.zeros(batch, decoder_length, 4, device=x.device, dtype=x.dtype)
-        output = self.model(x, encoder_marks, decoder_input, decoder_marks)
-        return output[0] if isinstance(output, tuple) else output
+
+        decoder_input[
+            :,
+            :self.label_len,
+        ] = x[
+            :,
+            -self.label_len:,
+        ]
+
+        encoder_marks = torch.zeros(
+            batch,
+            sequence_length,
+            4,
+            device=x.device,
+            dtype=x.dtype,
+        )
+
+        decoder_marks = torch.zeros(
+            batch,
+            decoder_length,
+            4,
+            device=x.device,
+            dtype=x.dtype,
+        )
+
+        output = self.model(
+            x,
+            encoder_marks,
+            decoder_input,
+            decoder_marks,
+        )
+
+        if isinstance(output, tuple):
+            output = output[0]
+
+        expected_shape = (
+            batch,
+            self.prediction_horizon,
+            feature_count,
+        )
+
+        if tuple(output.shape) != expected_shape:
+            raise RuntimeError(
+                "Autoformer-CSA produced an unexpected output shape. "
+                f"Expected {expected_shape}, "
+                f"got {tuple(output.shape)}."
+            )
+
+        return output

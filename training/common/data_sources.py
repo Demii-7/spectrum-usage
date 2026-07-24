@@ -244,4 +244,8 @@ def find_location(csv_path: Path, locations: dict[str, dict[str, object]]) -> tu
         key = clean_name(parent.name)
         if key in lookup:
             return lookup[key]
+    for segment in csv_path.stem.split("_"):
+        key = clean_name(segment)
+        if key in lookup:
+            return lookup[key]
     raise ValueError(f"Could not match a location to CSV path: {csv_path}")

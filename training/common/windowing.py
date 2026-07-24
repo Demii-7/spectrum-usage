@@ -223,6 +223,7 @@ def build_window_loaders(
 ) -> tuple[DataLoader, DataLoader]:
 
     """Create training and validation DataLoaders."""
+    print(f"[DEBUG] build_window_loaders: data.shape={data.shape}, lookback={lookback}, rollout_horizon={rollout_horizon}, batch_size={batch_size}, val_fraction={val_fraction}")
 
     if not 0.0 < val_fraction < 1.0:
         raise ValueError(
@@ -231,6 +232,7 @@ def build_window_loaders(
     
     # Find Split index
     split_index = int(len(data) * (1.0 - val_fraction))
+    print(f"[DEBUG] build_window_loaders: split_index={split_index}, train_rows={split_index}, val_rows={len(data) - split_index}")
     
     # Split data into train and Validation sets
     train_data = data[:split_index]
@@ -248,6 +250,7 @@ def build_window_loaders(
     )
     
     # Establish valid start positions for train set
+    print(f"[DEBUG] build_window_loaders: computing train window starts ...")
     train_starts = make_window_starts(
         n_timesteps=len(train_data),
         lookback=lookback,
@@ -255,6 +258,7 @@ def build_window_loaders(
         stride=train_stride,
         segments=train_segments,
     )
+    print(f"[DEBUG] build_window_loaders: training windows: {len(train_starts)}")
     # Establish valid start positions for validation set
     val_starts = make_window_starts(
         n_timesteps=len(val_data),
@@ -263,8 +267,10 @@ def build_window_loaders(
         stride=val_stride,
         segments=val_segments,
     )
+    print(f"[DEBUG] build_window_loaders: validation windows: {len(val_starts)}")
     
     # Create window datasets for training and validation
+    print(f"[DEBUG] build_window_loaders: creating WindowDatasets ...")
     train_dataset = WindowDataset(
         data=train_data,
         starts=train_starts,

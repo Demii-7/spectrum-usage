@@ -74,6 +74,7 @@ def train_model(
     segments=(),
 ):
     """ Integrated Training, Validation, and Logging """
+    print(f"[DEBUG] train_model entry: model_name={model_name}, train_data.shape={train_data.shape}")
     
     # Load Shared settings
     model_cfg = config[model_name]["model"]
@@ -116,6 +117,7 @@ def train_model(
     val_stride = int( train_cfg.get("val_stride", 1))
 
     # Build data loaders for training and validation
+    print(f"[DEBUG] building window loaders (train_data.shape={train_data.shape}, batch_size={batch_size}, lookback={lookback}) ...")
     train_loader, val_loader = build_window_loaders(
         data=train_data,
         lookback=lookback,
@@ -127,11 +129,13 @@ def train_model(
         segments=segments,
         data_loader_config=config.get("data_loader"),
     )
+    print(f"[DEBUG] window loaders built: train={len(train_loader.dataset)} windows, val={len(val_loader.dataset) if val_loader else 0} windows")
 
     #--- Build training components ----
     
     # Initialise compute
     device = device_for(config)
+    print(f"[DEBUG] device_for returned: {device} (cuda_available={torch.cuda.is_available()})")
 
     # Move the model to GPU or CPU.
     model = model.to(device)
@@ -214,9 +218,12 @@ def train_model(
     training_start_time = timestamp_utc()
     training_start_counter = time.perf_counter()
     
+    print(f"[DEBUG] entering epoch loop: epochs={epochs}, device={device}")
     #--- Training---
     # Epoch loop
     for epoch in range(1, epochs + 1):
+        if epoch == 1 or epoch % 5 == 0:
+            print(f"[DEBUG] epoch {epoch}/{epochs} starting")
         epoch_start_time = timestamp_utc()
         epoch_start_counter = time.perf_counter()
 
@@ -228,7 +235,9 @@ def train_model(
         train_loss_sum = 0.0
         train_sample_count = 0
 
-        for x, y in train_loader:
+        for batch_idx, (x, y) in enumerate(train_loader):
+            if epoch == 1 and batch_idx == 0:
+                print(f"[DEBUG] first batch: x.shape={x.shape}, y.shape={y.shape}, device={device}")
             # Move this batch to the same device as the model.
             x = x.to(device)
             y = y.to(device)
@@ -238,6 +247,10 @@ def train_model(
                 optimizer.zero_grad()
 
             # Most models use the normal forward call.
+            if epoch == 1 and batch_idx == 0:
+                print(f"[DEBUG] epoch1/batch0: calling forecast() ...")
+                import time as _time_bt
+                _bt0 = _time_bt.perf_counter()
             pred = forecast(
                 model=model,
                 x=x,
@@ -245,6 +258,8 @@ def train_model(
                 rollout_horizon=rollout_horizon,
                 targets=y,
             )
+            if epoch == 1 and batch_idx == 0:
+                print(f"[DEBUG] epoch1/batch0: forecast() done ({_time_bt.perf_counter() - _bt0:.1f}s), pred.shape={pred.shape}")
             
             # Confirm that model output matches the target.
             if pred.shape != y.shape:
@@ -256,10 +271,15 @@ def train_model(
 
             # Measure prediction error.
             loss = criterion(pred, y)
+            if epoch == 1 and batch_idx == 0:
+                print(f"[DEBUG] epoch1/batch0: loss={loss.item():.6f}, calling backward() ...")
+                _bt1 = _time_bt.perf_counter()
 
             # Calculate gradients.
             if optimizer is not None:
                 loss.backward()
+                if epoch == 1 and batch_idx == 0:
+                    print(f"[DEBUG] epoch1/batch0: backward() done ({_time_bt.perf_counter() - _bt1:.1f}s)")
 
                 # Limit very large gradients.
                 if clip_norm > 0:
@@ -270,6 +290,8 @@ def train_model(
 
                 # Update model parameters.
                 optimizer.step()
+                if epoch == 1 and batch_idx == 0:
+                    print(f"[DEBUG] epoch1/batch0: optimizer.step() done")
 
             # Track total training loss.
             batch_samples = x.size(0)
@@ -581,6 +603,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 def train_one_model(config: dict[str, Any], model_name: str, run_dir: Path) -> None:
+    print(f"[DEBUG] train_one_model entry: model={model_name}, run_dir={run_dir}")
     if model_name not in SUPPORTED_MODELS:
         raise ValueError(
             f"Error! Integrated training supports "
@@ -589,6 +612,7 @@ def train_one_model(config: dict[str, Any], model_name: str, run_dir: Path) -> N
     train_cfg = config[model_name]["train"]
     val_fraction = float(train_cfg.get("val_fraction", 0.1))
     out, checkpoints = prepare_output_dirs(run_dir)
+    print(f"[DEBUG] output dirs ready: out={out}, checkpoints={checkpoints}")
         
     # Iterate through each chunk segments
     for chunk in chunk_specs(config):
@@ -597,17 +621,25 @@ def train_one_model(config: dict[str, Any], model_name: str, run_dir: Path) -> N
             f"({chunk.start_mhz:g}-{chunk.end_mhz:g} MHz)"
         )
         
+        print(f"[DEBUG] calling load_chunk for {chunk.chunk_id} ...")
         data = load_chunk(config, chunk, val_fraction = val_fraction)
+        print(f"[DEBUG] load_chunk done: train_split={data.train_split}, test_split={data.test_split}")
         train = data.splits[data.train_split].model_input
+        print(f"[DEBUG] train data shape: {train.shape}, dtype: {train.dtype}")
         
         # Build model based on model specific needs
+        print(f"[DEBUG] calling build_model for {model_name} ...")
         model = build_model(
             model_name=model_name,
             config=config,
             train_data=train,
         )
+        print(f"[DEBUG] build_model done: {type(model).__name__}")
+        device = next(model.parameters()).device
+        print(f"[DEBUG] model parameters on device: {device}")
         
         # Train model
+        print(f"[DEBUG] calling train_model ...")
         model, training_results = train_model(
             model_name=model_name,
             model=model,
@@ -696,9 +728,12 @@ def train_one_model(config: dict[str, Any], model_name: str, run_dir: Path) -> N
 
 
 def main() -> None:
+    print(f"[DEBUG] main() started")
     args = parse_args()
+    print(f"[DEBUG] config={args.config}, name={args.name}, output_dir={args.output_dir}")
     config = load_config(args.config)
     models = model_names(config)
+    print(f"[DEBUG] loaded config, models={models}")
     unsupported = [model for model in models if model not in SUPPORTED_MODELS]
     if unsupported:
         raise ValueError(
@@ -710,11 +745,13 @@ def main() -> None:
     ) + f"_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
     requested_dir = args.output_dir or Path("runs") / (args.name or default_name)
     run_dir = unique_run_dir(requested_dir)
+    print(f"[DEBUG] run_dir={run_dir}")
 
     config_source = args.config or Path(__file__).with_name("config.yaml")
     shutil.copy2(config_source, run_dir / "config.yaml")
     for model_name in models:
         model_run_dir = run_dir if len(models) == 1 else run_dir / model_name
+        print(f"[DEBUG] calling train_one_model for {model_name} ...")
         train_one_model(config, model_name, model_run_dir)
 
     print(f"Training run written to {run_dir}")

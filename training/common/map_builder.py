@@ -58,6 +58,7 @@ def find_site_grid_indices(
 def _map_from_sites(site_data, site_x, site_y, grid):
     height = int(grid.get("height", grid.get("grid_height", 50)))
     width = int(grid.get("width", grid.get("grid_width", 50)))
+    print(f"[DEBUG] _map_from_sites: site_data.shape={site_data.shape}, grid={height}x{width}, n_sites={len(site_x)}")
     if height <= 0 or width <= 0:
         raise ValueError("map grid dimensions must be positive")
     origin_lon = float(np.mean(site_x))
@@ -65,6 +66,7 @@ def _map_from_sites(site_data, site_x, site_y, grid):
     x, y = _local_xy(site_x, site_y, origin_lon, origin_lat)
     width_m = float(grid.get("width_meters", max(np.ptp(x), 1.0)))
     height_m = float(grid.get("height_meters", max(np.ptp(y), 1.0)))
+    print(f"[DEBUG] _map_from_sites: local grid: width_m={width_m:.1f}, height_m={height_m:.1f}, origin=({origin_lon:.4f}, {origin_lat:.4f})")
     grid_x = np.linspace(-width_m / 2.0, width_m / 2.0, width)
     grid_y = np.linspace(-height_m / 2.0, height_m / 2.0, height)
     gx, gy = np.meshgrid(grid_x, grid_y)
@@ -78,11 +80,16 @@ def _map_from_sites(site_data, site_x, site_y, grid):
 
     # Site data arrives as (site, time, frequency); map output is time-first.
     working = np.moveaxis(site_data.astype(np.float64), 0, 1)
+    n_time, n_freq, n_sites = working.shape
+    print(f"[DEBUG] _map_from_sites: working.shape=({n_time}, {n_freq}, {n_sites}) — {n_time * n_freq * height * width * n_sites * 8 / 1e9:.1f} GB per broadcast")
     if grid.get("power_domain", "db") == "linear":
         working = np.power(10.0, working / 10.0)
     valid = np.isfinite(working)
     working = np.moveaxis(working, -1, 1)
     valid = np.moveaxis(valid, -1, 1)
+    print(f"[DEBUG] _map_from_sites: broadcasting IDW over all timesteps ...")
+    import time as _time
+    _t0 = _time.perf_counter()
     weighted = np.where(
         valid[:, :, None, None, :],
         working[:, :, None, None, :] * weights[None, None, :, :, :],
@@ -98,12 +105,16 @@ def _map_from_sites(site_data, site_x, site_y, grid):
         out=np.full_like(denominator, np.nan),
         where=denominator > 0,
     )
+    print(f"[DEBUG] _map_from_sites: IDW done ({_time.perf_counter() - _t0:.1f}s)")
     if grid.get("power_domain", "db") == "linear":
         mapped = 10.0 * np.log10(np.maximum(mapped, 1e-30))
-    return np.moveaxis(mapped, 1, -1).astype(np.float32), gx, gy
+    result = np.moveaxis(mapped, 1, -1).astype(np.float32)
+    print(f"[DEBUG] _map_from_sites: result.shape={result.shape}")
+    return result, gx, gy
 
 
 def _load_cached(path: Path, map_key: str, frequency_bins, frequency_ranges) -> LoadedSource:
+    print(f"[DEBUG] _load_cached: loading from {path} ...")
     with np.load(path, allow_pickle=True) as archive:
         if map_key not in archive or "freqs_mhz" not in archive:
             raise KeyError(f"{path} must contain {map_key!r} and 'freqs_mhz'")
@@ -130,8 +141,10 @@ def _load_cached(path: Path, map_key: str, frequency_bins, frequency_ranges) -> 
             selected |= (frequencies >= start) & (frequencies <= stop)
     if not selected.any():
         raise ValueError("Frequency selection produced no map channels")
+    result_data = data[:, :, :, selected]
+    print(f"[DEBUG] _load_cached: loaded, data.shape={result_data.shape}")
     return LoadedSource(
-        data[:, :, :, selected],
+        result_data,
         frequencies[selected],
         timestamps,
         [path],
@@ -391,14 +404,18 @@ def load_4d(
 
     if locations is None:
         locations = load_locations(locations_path, collection_key)
+    print(f"[DEBUG] load_4d: reading {len(files)} CSV files ...")
     frames = []
     stamps = []
     site_names = []
     site_lons = []
     site_lats = []
-    for path in files:
+    for i, path in enumerate(files):
+        print(f"[DEBUG] load_4d: reading CSV {i+1}/{len(files)}: {path.name}")
         frame, stamp = _read_csv(path)
+        print(f"[DEBUG] load_4d: CSV loaded shape={frame.shape}")
         frame = select_frequencies(frame, frequency_bins, frequency_ranges)
+        print(f"[DEBUG] load_4d: after freq selection shape={frame.shape}")
         if mask_ranges is not None:
             if noise_floor is None:
                 raise ValueError("noise_floor is required when frequency masking is enabled")
@@ -410,6 +427,7 @@ def load_4d(
                 noise_floor,
             )
         name, location = find_location(path, locations)
+        print(f"[DEBUG] load_4d: matched site={name}")
         frames.append(frame)
         stamps.append(stamp.floor("min") if stamp is not None else stamp)
         site_names.append(name)
@@ -424,15 +442,22 @@ def load_4d(
     columns = list(frames[0].columns)
     if any(list(frame.columns) != columns for frame in frames[1:]):
         raise ValueError("Map source CSVs must contain matching frequency columns")
+
+    print(f"[DEBUG] load_4d: aligning frames (n_sites={len(frames)}, n_cols={len(columns)}) ...")
     frames, timestamps = _align_frames(frames, stamps)
+    print(f"[DEBUG] load_4d: aligned, frames[0].shape={frames[0].shape}")
+    print(f"[DEBUG] load_4d: finding common finite start ...")
     start = _common_finite_start(frames)
+    print(f"[DEBUG] load_4d: common_finite_start={start}")
     frames = [frame.iloc[start:].ffill() for frame in frames]
     if timestamps is not None:
         timestamps = timestamps[start:]
     for path, frame in zip(files, frames):
         if not np.isfinite(frame.to_numpy(dtype=np.float64)).all():
             raise ValueError(f"Missing or non-finite values remain after causal 4d imputation: {path}")
+    print(f"[DEBUG] load_4d: stacking site data ...")
     site_data = np.stack([frame.to_numpy(np.float32) for frame in frames])
+    print(f"[DEBUG] load_4d: site_data.shape={site_data.shape}")
 
     site_lons_array = np.asarray(site_lons, dtype=np.float64)
     site_lats_array = np.asarray(site_lats, dtype=np.float64)
@@ -443,12 +468,14 @@ def load_4d(
         site_lons_array = site_lons_array[position_permutation]
         site_lats_array = site_lats_array[position_permutation]
 
+    print(f"[DEBUG] load_4d: calling _map_from_sites (site_data.shape={site_data.shape}, grid={grid}) ...")
     mapped, grid_x, grid_y = _map_from_sites(
         site_data,
         site_lons_array,
         site_lats_array,
         grid,
     )
+    print(f"[DEBUG] load_4d: _map_from_sites done, mapped.shape={mapped.shape}")
     if expected_layout is not None and (
         not np.array_equal(grid_x, expected_layout["grid_x"])
         or not np.array_equal(grid_y, expected_layout["grid_y"])
@@ -469,7 +496,11 @@ def load_4d(
     }
     if timestamps is not None:
         payload["timestamps"] = np.asarray(timestamps.astype(str))
+    print(f"[DEBUG] load_4d: saving {mapped.nbytes / 1e6:.0f} MB cache to {cache_path} ...")
+    import time as _time
+    _t0 = _time.perf_counter()
     np.savez_compressed(cache_path, **payload)
+    print(f"[DEBUG] load_4d: cache saved ({_time.perf_counter() - _t0:.1f}s)")
     return LoadedSource(
         mapped,
         payload["freqs_mhz"],

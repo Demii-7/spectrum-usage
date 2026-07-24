@@ -1,28 +1,32 @@
-# Integrated Pipeline Runbook — VanillaLSTM, ConvLSTM & TimeRAN
-# ==============================================================
-# For every run, update these fields:
-#   1. outputs.root_dir
-#   2. data.chunks
-#   3. data.train_files / data.test_files (sequence) OR
-#      data.train_map_path / data.test_map_path (map)
-#   4. training.model_name
-#   5. data.prediction_start_row
+# Integrated Pipeline Runbook — DSwinLSTM-I, VanillaLSTM, ConvLSTM, TimeRAN & Residual Variants
+# ===========================================================================================
+# For every run, update these fields in training/common/config.yaml:
+#   1. data.representation     — "2d" for sequence CSVs, "4d" for spatial maps
+#   2. data.files              — list of {path, partition} entries
+#   3. data.map                — required for 4d (name, locations)
+#   4. data.chunks             — frequency range
+#   5. training.model_name     — one of the SUPPORTED_MODELS
+#   6. model_name.model.*      — prediction_horizon must match windowing.horizons
+#   7. model_name.train.*      — training hyperparams (batch_size, epochs, lr, ...)
 #
-# Model/train hyperparams stay as-is in config.yaml unless overridden.
-# STS-PredNet: ignore until integrated.
+# Then run:
+#   ./.venv/bin/python training/common/train_integrated.py
+#   ./.venv/bin/python training/common/evaluation_integrated.py
+#
+# Artifacts appear under runs/<name>/ per RUNS.md.
+# =============================================================================
 
 # =============================================================================
 # Run 1 — VanillaLSTM  600_800
 # =============================================================================
 data:
-  loader: powder
-  reference_site: humanities, guesthouse
-  train_files: [data/powder_20260618T0036Z_humanities_600_800.csv, data/powder_20260618T0036Z_guesthouse_600_800.csv]
-  test_files:[data/powder_20260628T0436Z_humanities_600_800.csv, data/powder_20260628T0436Z_guesthouse_600_800.csv]
-  train_map_path:
-  test_map_path:
-  map_key: map_db
-  prediction_start_row:
+  representation: 2d
+  reference_site: guesthouse
+  files:
+    - path: data/powder_20260618T0036Z_humanities_600_800.csv
+      partition: train
+    - path: data/powder_20260628T0436Z_humanities_600_800.csv
+      partition: test
   chunks:
     - id: powder_600_800
       start_mhz: 600.0
@@ -32,39 +36,35 @@ windowing:
   lookback: 60
   horizons: [1, 5, 15, 60]
 
-outputs:
-  root_dir: results/powder/600_800
-
 training:
   device: auto
   model_name: vanillalstm
 
-# Commands:
-#   ./.venv/bin/python training/common/train_integrated.py --config training/common/config.yaml
-#   ./.venv/bin/python training/common/evaluation_integrated.py --config training/common/config.yaml
+vanillalstm:
+  model:
+    input_sequence_length: 60
+    prediction_horizon: 1
+  train:
+    batch_size: 32
+    epochs: 100
+    learning_rate: 0.005
 
 # Check for:
-#   results/powder/600_800/vanillalstm/checkpoints/
-#   results/powder/600_800/vanillalstm/aggregate_metrics.csv
-#   results/powder/600_800/vanillalstm/per_frequency_metrics.csv
-#   results/powder/600_800/vanillalstm/report.txt
+#   runs/powder_600_800_vanillalstm_*/checkpoints/
+#   runs/powder_600_800_vanillalstm_*/aggregate_metrics.csv
+#   runs/powder_600_800_vanillalstm_*/per_frequency_metrics.csv
 
 # =============================================================================
 # Run 2 — VanillaLSTM  2400_2600
 # =============================================================================
 data:
-  loader: powder
-  reference_site: humanities, guesthouse
-  train_files:
-    - data/powder_20260618T0036Z_humanities_2400_2600.csv
-    - data/powder_20260618T0036Z_guesthouse_2400_2600.csv
-  test_files:
-    - data/powder_20260628T0436Z_humanities_2400_2600.csv
-    - data/powder_20260628T0436Z_guesthouse_2400_2600.csv
-  train_map_path:
-  test_map_path:
-  map_key: map_db
-  prediction_start_row:
+  representation: 2d
+  reference_site: guesthouse
+  files:
+    - path: data/powder_20260618T0036Z_humanities_2400_2600.csv
+      partition: train
+    - path: data/powder_20260628T0436Z_humanities_2400_2600.csv
+      partition: test
   chunks:
     - id: powder_2400_2600
       start_mhz: 2400.0
@@ -73,36 +73,41 @@ data:
 windowing:
   lookback: 60
   horizons: [1, 5, 15, 60]
-
-outputs:
-  root_dir: results/powder/2400_2600
 
 training:
   device: auto
   model_name: vanillalstm
 
-# Commands:
-#   ./.venv/bin/python training/common/train_integrated.py --config training/common/config.yaml
-#   ./.venv/bin/python training/common/evaluation_integrated.py --config training/common/config.yaml
+vanillalstm:
+  model:
+    input_sequence_length: 60
+    prediction_horizon: 1
+  train:
+    batch_size: 32
+    epochs: 100
+    learning_rate: 0.005
 
 # Check for:
-#   results/powder/2400_2600/vanillalstm/checkpoints/
-#   results/powder/2400_2600/vanillalstm/aggregate_metrics.csv
-#   results/powder/2400_2600/vanillalstm/per_frequency_metrics.csv
-#   results/powder/2400_2600/vanillalstm/report.txt
+#   runs/powder_2400_2600_vanillalstm_*/checkpoints/
 
 # =============================================================================
-# Run 3 — ConvLSTM  600_800
+# Run 3 — ConvLSTM  600_800  (4d — uses data.map to build from CSVs)
 # =============================================================================
 data:
-  loader: powder
-  reference_site: humanities, guesthouse
-  train_files: []
-  test_files: []
-  train_map_path: data/powder_20260618T0036Z_humanities_guesthouse_600_800.npz
-  test_map_path: data/powder_20260628T0436Z_humanities_guesthouse_600_800.npz
-  map_key: map_db
-  prediction_start_row:
+  representation: 4d
+  reference_site: guesthouse
+  files:
+    - path: data/powder_20260618T0036Z_guesthouse_600_800.csv
+      partition: train
+    - path: data/powder_20260618T0036Z_humanities_600_800.csv
+      partition: train
+    - path: data/powder_20260628T0436Z_guesthouse_600_800.csv
+      partition: test
+    - path: data/powder_20260628T0436Z_humanities_600_800.csv
+      partition: test
+  map:
+    name: powder_600_800
+    locations: data/locations/powder.json
   chunks:
     - id: powder_600_800
       start_mhz: 600.0
@@ -112,35 +117,40 @@ windowing:
   lookback: 60
   horizons: [1, 5, 15, 60]
 
-outputs:
-  root_dir: results/powder/600_800
-
 training:
   device: auto
   model_name: convlstm
 
-# Commands:
-#   ./.venv/bin/python training/common/train_integrated.py --config training/common/config.yaml
-#   ./.venv/bin/python training/common/evaluation_integrated.py --config training/common/config.yaml
+convlstm:
+  model:
+    input_sequence_length: 60
+    prediction_horizon: 1
+  train:
+    batch_size: 32
+    epochs: 30
+    learning_rate: 0.0002
 
 # Check for:
-#   results/powder/600_800/convlstm/checkpoints/
-#   results/powder/600_800/convlstm/aggregate_metrics.csv
-#   results/powder/600_800/convlstm/per_frequency_metrics.csv
-#   results/powder/600_800/convlstm/report.txt
+#   runs/powder_600_800_convlstm_*/checkpoints/
 
 # =============================================================================
-# Run 4 — ConvLSTM  2400_2600
+# Run 4 — ConvLSTM  2400_2600  (4d — uses data.map to build from CSVs)
 # =============================================================================
 data:
-  loader: powder
-  reference_site: humanities, guesthouse
-  train_files: []
-  test_files: []
-  train_map_path: data/powder_20260618T0036Z_humanities_guesthouse_2400_2600.npz
-  test_map_path: data/powder_20260628T0436Z_humanities_guesthouse_2400_2600.npz
-  map_key: map_db
-  prediction_start_row:
+  representation: 4d
+  reference_site: guesthouse
+  files:
+    - path: data/powder_20260618T0036Z_guesthouse_2400_2600.csv
+      partition: train
+    - path: data/powder_20260618T0036Z_humanities_2400_2600.csv
+      partition: train
+    - path: data/powder_20260628T0436Z_guesthouse_2400_2600.csv
+      partition: test
+    - path: data/powder_20260628T0436Z_humanities_2400_2600.csv
+      partition: test
+  map:
+    name: powder_2400_2600
+    locations: data/locations/powder.json
   chunks:
     - id: powder_2400_2600
       start_mhz: 2400.0
@@ -150,35 +160,33 @@ windowing:
   lookback: 60
   horizons: [1, 5, 15, 60]
 
-outputs:
-  root_dir: results/powder/2400_2600
-
 training:
   device: auto
   model_name: convlstm
 
-# Commands:
-#   ./.venv/bin/python training/common/train_integrated.py --config training/common/config.yaml
-#   ./.venv/bin/python training/common/evaluation_integrated.py --config training/common/config.yaml
+convlstm:
+  model:
+    input_sequence_length: 60
+    prediction_horizon: 1
+  train:
+    batch_size: 32
+    epochs: 30
+    learning_rate: 0.0002
 
 # Check for:
-#   results/powder/2400_2600/convlstm/checkpoints/
-#   results/powder/2400_2600/convlstm/aggregate_metrics.csv
-#   results/powder/2400_2600/convlstm/per_frequency_metrics.csv
-#   results/powder/2400_2600/convlstm/report.txt
+#   runs/powder_2400_2600_convlstm_*/checkpoints/
 
 # =============================================================================
-# Run 5 — TimeRAN  600_800  (guesthouse, humanities CSV — same as Run 1)
+# Run 5 — TimeRAN  600_800  (2d — guesthouse CSV only, MOMENT checkpoint required)
 # =============================================================================
 data:
-  loader: powder
-  reference_site: humanities, guesthouse
-  train_files: [data/powder_20260618T0036Z_humanities_600_800.csv, data/powder_20260618T0036Z_guesthouse_600_800.csv]
-  test_files:[data/powder_20260628T0436Z_humanities_600_800.csv, data/powder_20260628T0436Z_guesthouse_600_800.csv]
-  train_map_path:
-  test_map_path:
-  map_key: map_db
-  prediction_start_row:
+  representation: 2d
+  reference_site: guesthouse
+  files:
+    - path: data/powder_20260618T0036Z_humanities_600_800.csv
+      partition: train
+    - path: data/powder_20260628T0436Z_humanities_600_800.csv
+      partition: test
   chunks:
     - id: powder_600_800
       start_mhz: 600.0
@@ -188,43 +196,37 @@ windowing:
   lookback: 60
   horizons: [1, 5, 15, 60]
 
-outputs:
-  root_dir: results/powder/600_800
-
 training:
   device: auto
   model_name: timeran
+
+timeran:
+  model:
+    input_sequence_length: 60
+    prediction_horizon: 1
+  train:
+    batch_size: 1
+    epochs: 50
+    learning_rate: 0.00001
 
 # Prerequisites:
 #   pip install momentfm==0.1.4 gdown
 #   mkdir -p training/TimeRAN/checkpoints/{small,base,large}
 #   gdown <file-id> -O training/TimeRAN/checkpoints/base/TimeRAN_base.pth
-# Commands:
-#   ./.venv/bin/python training/common/train_integrated.py --config training/common/config.yaml
-#   ./.venv/bin/python training/common/evaluation_integrated.py --config training/common/config.yaml
-
 # Check for:
-#   results/powder/600_800/timeran/checkpoints/
-#   results/powder/600_800/timeran/aggregate_metrics.csv
-#   results/powder/600_800/timeran/per_frequency_metrics.csv
-#   results/powder/600_800/timeran/report.txt
+#   runs/powder_600_800_timeran_*/checkpoints/
 
 # =============================================================================
-# Run 6 — TimeRAN  2400_2600  (guesthouse, humanities CSV — same as Run 2)
+# Run 6 — TimeRAN  2400_2600  (2d — same as Run 5 with different freq range)
 # =============================================================================
 data:
-  loader: powder
-  reference_site: humanities, guesthouse
-  train_files:
-    - data/powder_20260618T0036Z_humanities_2400_2600.csv
-    - data/powder_20260618T0036Z_guesthouse_2400_2600.csv
-  test_files:
-    - data/powder_20260628T0436Z_humanities_2400_2600.csv
-    - data/powder_20260628T0436Z_guesthouse_2400_2600.csv
-  train_map_path:
-  test_map_path:
-  map_key: map_db
-  prediction_start_row:
+  representation: 2d
+  reference_site: guesthouse
+  files:
+    - path: data/powder_20260618T0036Z_humanities_2400_2600.csv
+      partition: train
+    - path: data/powder_20260628T0436Z_humanities_2400_2600.csv
+      partition: test
   chunks:
     - id: powder_2400_2600
       start_mhz: 2400.0
@@ -234,19 +236,257 @@ windowing:
   lookback: 60
   horizons: [1, 5, 15, 60]
 
-outputs:
-  root_dir: results/powder/2400_2600
-
 training:
   device: auto
   model_name: timeran
 
-# Commands:
-#   ./.venv/bin/python training/common/train_integrated.py --config training/common/config.yaml
-#   ./.venv/bin/python training/common/evaluation_integrated.py --config training/common/config.yaml
+timeran:
+  model:
+    input_sequence_length: 60
+    prediction_horizon: 1
+  train:
+    batch_size: 1
+    epochs: 50
+    learning_rate: 0.00001
 
 # Check for:
-#   results/powder/2400_2600/timeran/checkpoints/
-#   results/powder/2400_2600/timeran/aggregate_metrics.csv
-#   results/powder/2400_2600/timeran/per_frequency_metrics.csv
-#   results/powder/2400_2600/timeran/report.txt
+#   runs/powder_2400_2600_timeran_*/checkpoints/
+
+# =============================================================================
+# Run 7 — ResidualVanillaLSTM  600_800
+# =============================================================================
+data:
+  representation: 2d
+  reference_site: guesthouse
+  files:
+    - path: data/powder_20260618T0036Z_humanities_600_800.csv
+      partition: train
+    - path: data/powder_20260628T0436Z_humanities_600_800.csv
+      partition: test
+  chunks:
+    - id: powder_600_800
+      start_mhz: 600.0
+      end_mhz: 800.0
+
+windowing:
+  lookback: 60
+  horizons: [1, 5, 15, 60]
+
+training:
+  device: auto
+  model_name: residualvanillalstm
+
+residualvanillalstm:
+  model:
+    input_sequence_length: 60
+    prediction_horizon: 1
+  train:
+    batch_size: 32
+    epochs: 100
+    learning_rate: 0.005
+
+# Check for:
+#   runs/powder_600_800_residualvanillalstm_*/
+
+# =============================================================================
+# Run 8 — ResidualConvLSTM  600_800  (4d)
+# =============================================================================
+data:
+  representation: 4d
+  reference_site: guesthouse
+  files:
+    - path: data/powder_20260618T0036Z_guesthouse_600_800.csv
+      partition: train
+    - path: data/powder_20260618T0036Z_humanities_600_800.csv
+      partition: train
+    - path: data/powder_20260628T0436Z_guesthouse_600_800.csv
+      partition: test
+    - path: data/powder_20260628T0436Z_humanities_600_800.csv
+      partition: test
+  map:
+    name: powder_600_800
+    locations: data/locations/powder.json
+  chunks:
+    - id: powder_600_800
+      start_mhz: 600.0
+      end_mhz: 800.0
+
+windowing:
+  lookback: 60
+  horizons: [1, 5, 15, 60]
+
+training:
+  device: auto
+  model_name: residualconvlstm
+
+residualconvlstm:
+  model:
+    input_sequence_length: 60
+    prediction_horizon: 1
+  train:
+    batch_size: 32
+    epochs: 30
+    learning_rate: 0.0002
+
+# Check for:
+#   runs/powder_600_800_residualconvlstm_*/
+
+# =============================================================================
+# Run 9 — DSwinLSTM-I  600_800  (4d — direct multi-step, prediction_horizon=60)
+# =============================================================================
+data:
+  representation: 4d
+  reference_site: guesthouse
+  files:
+    - path: data/powder_20260618T0036Z_guesthouse_600_800.csv
+      partition: train
+    - path: data/powder_20260618T0036Z_humanities_600_800.csv
+      partition: train
+    - path: data/powder_20260628T0436Z_guesthouse_600_800.csv
+      partition: test
+    - path: data/powder_20260628T0436Z_humanities_600_800.csv
+      partition: test
+  map:
+    name: powder_600_800
+    locations: data/locations/powder.json
+  chunks:
+    - id: powder_600_800
+      start_mhz: 600.0
+      end_mhz: 800.0
+
+windowing:
+  lookback: 60
+  horizons: [1, 5, 15, 60]
+
+training:
+  device: auto
+  model_name: dswinlstm_i
+
+dswinlstm_i:
+  model:
+    input_sequence_length: 60
+    prediction_horizon: 60
+  train:
+    batch_size: 2
+    epochs: 6
+    learning_rate: 0.0001
+
+# Check for:
+#   runs/powder_600_800_dswinlstm_i_*/checkpoints/
+
+# =============================================================================
+# Run 10 — DSwinLSTM-I  2400_2600  (4d — direct multi-step, prediction_horizon=60)
+# =============================================================================
+data:
+  representation: 4d
+  reference_site: guesthouse
+  files:
+    - path: data/powder_20260618T0036Z_guesthouse_2400_2600.csv
+      partition: train
+    - path: data/powder_20260618T0036Z_humanities_2400_2600.csv
+      partition: train
+    - path: data/powder_20260628T0436Z_guesthouse_2400_2600.csv
+      partition: test
+    - path: data/powder_20260628T0436Z_humanities_2400_2600.csv
+      partition: test
+  map:
+    name: powder_2400_2600
+    locations: data/locations/powder.json
+  chunks:
+    - id: powder_2400_2600
+      start_mhz: 2400.0
+      end_mhz: 2600.0
+
+windowing:
+  lookback: 60
+  horizons: [1, 5, 15, 60]
+
+training:
+  device: auto
+  model_name: dswinlstm_i
+
+dswinlstm_i:
+  model:
+    input_sequence_length: 60
+    prediction_horizon: 60
+  train:
+    batch_size: 2
+    epochs: 6
+    learning_rate: 0.0001
+
+# Check for:
+#   runs/powder_2400_2600_dswinlstm_i_*/checkpoints/
+
+# =============================================================================
+# Run 11 — Autoformer-CSA  600_800  (2d — direct multi-step, prediction_horizon=60, input_sequence_length=96)
+# =============================================================================
+data:
+  representation: 2d
+  reference_site: guesthouse
+  files:
+    - path: data/powder_20260618T0036Z_humanities_600_800.csv
+      partition: train
+    - path: data/powder_20260628T0436Z_humanities_600_800.csv
+      partition: test
+  chunks:
+    - id: powder_600_800
+      start_mhz: 600.0
+      end_mhz: 800.0
+
+windowing:
+  lookback: 60
+  horizons: [1, 5, 15, 60]
+
+training:
+  device: auto
+  model_name: autoformer_csa
+
+autoformer_csa:
+  model:
+    input_sequence_length: 96
+    prediction_horizon: 60
+    label_len: 48
+  train:
+    batch_size: 32
+    epochs: 20
+    learning_rate: 0.0001
+
+# Check for:
+#   runs/powder_600_800_autoformer_csa_*/checkpoints/
+
+# =============================================================================
+# Run 12 — Autoformer-CSA  2400_2600  (2d — direct multi-step, prediction_horizon=60, input_sequence_length=96)
+# =============================================================================
+data:
+  representation: 2d
+  reference_site: guesthouse
+  files:
+    - path: data/powder_20260618T0036Z_humanities_2400_2600.csv
+      partition: train
+    - path: data/powder_20260628T0436Z_humanities_2400_2600.csv
+      partition: test
+  chunks:
+    - id: powder_2400_2600
+      start_mhz: 2400.0
+      end_mhz: 2600.0
+
+windowing:
+  lookback: 60
+  horizons: [1, 5, 15, 60]
+
+training:
+  device: auto
+  model_name: autoformer_csa
+
+autoformer_csa:
+  model:
+    input_sequence_length: 96
+    prediction_horizon: 60
+    label_len: 48
+  train:
+    batch_size: 32
+    epochs: 20
+    learning_rate: 0.0001
+
+# Check for:
+#   runs/powder_2400_2600_autoformer_csa_*/checkpoints/

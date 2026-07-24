@@ -242,14 +242,13 @@ def clean_spectrum_data(
 
     time_steps = data.shape[0]
 
-    # Tier 1: Spatial nearest-neighbour filling for partial missing frames
+    # Tier 1: Reject NaN in 4D spatial data
     if data.ndim == 4:
-        frequencies = data.shape[-1]
-        for time_index in range(time_steps):
-            for frequency_index in range(frequencies):
-                spatial_slice = data[time_index, :, :, frequency_index]
-                if np.isnan(spatial_slice).any() and not np.isnan(spatial_slice).all():
-                    data[time_index, :, :, frequency_index] = _fill_nearest_neighbor_2d(spatial_slice)
+        if np.isnan(data).any():
+            raise ValueError(
+                "Error! Spatial map data contains NaN values. "
+                "Imputation is disabled for 4D data."
+            )
 
     # Tier 2: Temporal interpolation for remaining missing values in each flattened feature.
     # Flatten spatial and frequency dimensions into a 2D matrix [Time, Features]
