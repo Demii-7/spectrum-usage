@@ -19,6 +19,7 @@ supports:
 |-------|-------------|---------------------|--------------|
 | Vanilla LSTM | `vanillalstm` | CSV frequency vectors | `(B, T, F)` |
 | ConvLSTM | `convlstm` | Spectrum maps | `(B, T, F, H, W)` |
+| ConvLSTM-FM | `convlstmfm` | Spectrum maps | `(B, T, F, H, W)` |
 | DSwinLSTM-I | `dswinlstm_i` | Spectrum maps | `(B, T, F, H, W)` |
 | Autoformer-CSA | `autoformer_csa` | CSV frequency vectors | `(B, T, F)` |
 | TimeRAN | `timeran` | CSV frequency vectors | `(B, T, F)` |
@@ -277,6 +278,7 @@ points.  The table below notes their specific requirements:
 |-------|-------------|----------|--------|-------|
 | Vanilla LSTM | `vanillalstm` | 1d | `(B,T,F)` | One-step autoregressive |
 | ConvLSTM | `convlstm` | 4d | `(B,T,F,H,W)` | Has validation magnitude guard |
+| ConvLSTM-FM | `convlstmfm` | 4d | `(B,T,F,H,W)` | One-step; optional masked-reconstruction backbone pretraining before fine-tuning (see `training/ConvLSTM-FM/README.md`) |
 | DSwinLSTM-I | `dswinlstm_i` | 4d | `(B,T,F,H,W)` | Multi-step direct; `prediction_horizon == rollout_horizon` |
 | Autoformer-CSA | `autoformer_csa` | 2d | `(B,T,F)` | Multi-step direct; `prediction_horizon == rollout_horizon`; `input_sequence_length` must match `seq_len` |
 | TimeRAN | `timeran` | 1d | `(B,T,F)` | Requires pretrained MOMENT checkpoint download (see "Run TimeRAN" below) |

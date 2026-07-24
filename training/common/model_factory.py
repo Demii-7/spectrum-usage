@@ -40,6 +40,7 @@ import torch.nn as nn
 
 from models.ARIMA import ARIMAForecaster
 from models.ConvLSTM import ConvLSTMForecaster
+from models.ConvLSTM_FM import ConvLSTMFMForecaster, pretrain_backbone
 from models.DSwinLSTM_I import DSwinLSTM_IForecaster
 from models.LSTMAttn import LSTMAttnForecaster
 from models.LookbackMean import LookbackMeanForecaster
@@ -61,6 +62,7 @@ SUPPORTED_MODELS = {
     "arima",
     "vanillalstm",
     "convlstm",
+    "convlstmfm",
     "timeran",
     "dswinlstm_i",
     "lookbackmean1d",
@@ -215,6 +217,43 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
         }
     
         return ConvLSTMForecaster(predictor_config)
+
+    if model_name == "convlstmfm":
+        if train_data.ndim != 4:
+            raise ValueError(
+                "Error! ConvLSTM-FM expects training map data shaped "
+                f"(time, height, width, channels), got {train_data.shape}"
+            )
+        predictor_config = {
+            "model": {
+                **dict(model_cfg),
+                "input_sequence_length": int(model_cfg["input_sequence_length"]),
+                "prediction_horizon": int(model_cfg["prediction_horizon"]),
+                "input_channels": int(train_data.shape[3]),
+                "grid_height": int(train_data.shape[1]),
+                "grid_width": int(train_data.shape[2]),
+            },
+        }
+        model = ConvLSTMFMForecaster(predictor_config)
+
+        # Optional Stage-A masked-reconstruction self-supervised pretraining,
+        # run once at model-construction time on the same loaded chunk before
+        # the shared trainer fine-tunes the model for next-step prediction.
+        pretrain_epochs = int(model_cfg.get("pretrain_epochs", 0))
+        if pretrain_epochs > 0:
+            pretrain_backbone(
+                model,
+                train_data,
+                input_sequence_length=predictor_config["model"]["input_sequence_length"],
+                epochs=pretrain_epochs,
+                mask_ratio=float(model_cfg.get("pretrain_mask_ratio", 0.2)),
+                learning_rate=float(model_cfg.get("pretrain_learning_rate", 1e-3)),
+                batch_size=int(model_cfg.get("pretrain_batch_size", 16)),
+            )
+            if bool(model_cfg.get("freeze_backbone_after_pretrain", model_cfg.get("freeze_backbone", False))):
+                model.freeze_backbone()
+
+        return model
 
     if model_name == "residualconvlstm":
         if train_data.ndim != 4:

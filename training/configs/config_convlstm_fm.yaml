@@ -1,0 +1,107 @@
+# ConvLSTM-FM diagnostic config
+# See training/ConvLSTM-FM/info.md for the source paper spec and
+# training/ConvLSTM-FM/README.md for how this config maps onto it.
+data:
+  representation: 4d
+  reference_site: humanities
+  files:
+    - path: data/powder/guesthouse-nuc1/20260618T0036Z/600_800/power_1mhz_avg_per_minute.csv
+      partition: train
+    - path: data/powder/humanities-nuc1/20260618T0036Z/600_800/power_1mhz_avg_per_minute.csv
+      partition: train
+    - path: data/powder/guesthouse-nuc1/20260628T0436Z/600_800/power_1mhz_avg_per_minute.csv
+      partition: test
+    - path: data/powder/humanities-nuc1/20260628T0436Z/600_800/power_1mhz_avg_per_minute.csv
+      partition: test
+  chunks:
+    - id: powder_600_800
+      start_mhz: 600.0
+      end_mhz: 800.0
+  map:
+    name: powder_600_800
+    locations: data/locations/powder.json
+    collection_key: endpoints
+    output_dir: data/maps
+    grid:
+      height: 10
+      width: 10
+    force_rebuild: false
+    permute: false
+    permute_seed: 42
+
+windowing:
+  lookback: 60
+  horizons: [1, 5, 15, 60]
+
+preprocessing:
+  normalize: true
+  impute: true
+  max_missing_gap: 5
+
+training:
+  device: auto
+  models:
+    - lookbackmean4d
+    - convlstmfm
+
+data_loader:
+  num_workers: 4
+  persistent_workers: true
+  prefetch_factor: 2
+  pin_memory: auto
+
+lookbackmean4d:
+  evaluation: {}
+  model:
+    input_sequence_length: 60
+    prediction_horizon: 1
+  train:
+    val_fraction: 0.15
+    train_stride: 1
+    val_stride: 10
+    test_stride: 1
+    batch_size: 32
+    epochs: 1
+    learning_rate: 0.0
+    weight_decay: 0.0
+    optimizer: adam
+    gradient_clip_norm: 1.0
+    early_stopping: false
+    early_stopping_patience: 10
+    seed: 42
+
+convlstmfm:
+  evaluation: {}
+  model:
+    input_sequence_length: 60
+    prediction_horizon: 1
+    # Paper backbone: 5 ConvLSTM layers, 64 kernels each, 3x3, ReLU.
+    hidden_channels: [64, 64, 64, 64, 64]
+    kernel_size: [[3, 3], [3, 3], [3, 3], [3, 3], [3, 3]]
+    num_layers: 5
+    cell_activation: relu
+    dropout: 0.1
+    # Stage A: masked-reconstruction self-supervised pretraining, run once
+    # before fine-tuning (set pretrain_epochs: 0 to skip and train from scratch).
+    pretrain_epochs: 20
+    pretrain_mask_ratio: 0.2
+    pretrain_learning_rate: 0.001
+    pretrain_batch_size: 16
+    # Stage B: freeze the pretrained backbone and fine-tune only the head.
+    freeze_backbone_after_pretrain: true
+  train:
+    val_fraction: 0.15
+    train_stride: 1
+    val_stride: 10
+    test_stride: 1
+    batch_size: 32
+    epochs: 60
+    learning_rate: 0.0001
+    weight_decay: 0.004
+    optimizer: adam
+    gradient_clip_norm: 5.0
+    early_stopping: true
+    early_stopping_patience: 20
+    seed: 42
+
+evaluation: {}
