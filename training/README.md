@@ -28,7 +28,7 @@ supports:
 | Residual Vanilla LSTM | `residualvanillalstm` | CSV frequency vectors | `(B, T, F)` |
 | Residual ConvLSTM | `residualconvlstm` | Spectrum maps | `(B, T, F, H, W)` |
 | Residual Linear AR | `residuallinearar1d`/`2d`/`4d` | CSV / maps | `(B, T, F)` or `(B, T, F, H, W)` |
-| TCN | `temporalconvnet` | CSV frequency vectors | `(B, T, F)` |
+| TCN | `temporalconvnet` | CSV frequency vectors; joint or independent features | `(B, T, F)` |
 | LSTM-Attention | `lstmattn` | CSV frequency vectors | `(B, T, F)` |
 | ARIMA | `arima` | CSV frequency vectors | `(B, T, F)` |
 
@@ -287,8 +287,8 @@ points.  The table below notes their specific requirements:
 | Residual Vanilla LSTM | `residualvanillalstm` | 1d | `(B,T,F)` | Predicts residuals of lookback mean |
 | Residual ConvLSTM | `residualconvlstm` | 4d | `(B,T,F,H,W)` | Predicts residuals of lookback mean |
 | Residual Linear AR | `residuallinearar1d/2d/4d` | any | varies | Predicts residuals of lookback mean |
-| TCN | `temporalconvnet` | 1d | `(B,T,F)` | Temporal convolutional network |
-| LSTM-Attention | `lstmattn` | 1d | `(B,T,F)` | LSTM with attention |
+| TCN | `temporalconvnet` | 1d/2d | `(B,T,F)` | `feature_mode: independent` applies a shared local TCN per bin; `joint` mixes bins as convolution channels |
+| LSTM-Attention | `lstmattn` | 2d | `(B,T,F)` | Joint multi-bin LSTM with temporal attention |
 | ARIMA | `arima` | 1d | `(B,T,F)` | Classical ARIMA model |
 
 ## Configuration reference

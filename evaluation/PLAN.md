@@ -106,40 +106,45 @@ extensions. None of these additional ARA runs has a matching annotation file.
 | T9--TX? | horticulture-ue-004 | `ara/horticulture-ue-004/20260715T2200Z` | 2026-07-15 22:05:26 | 2026-07-17 18:50:26 | 600--800; 2400--2600 | 1.7145%; 18,400/1/1 min |
 
 
-## Basic dataset
+## Basic test
 
 The evaluation uses POWDER T4 for model fitting and validation, then evaluates the
-selected checkpoint on a later complete interval from T6. Source timestamps are
+selected checkpoint on the full common interval of six reliable receivers from T6.
+Source timestamps are
 floored to UTC minutes. All boundaries are inclusive.
 
 | Split | Trace | Start UTC | End UTC | Minutes | Selection rule |
 |---|---|---|---|---:|---|
-| Training | T4 | 2026-06-28 04:37 | 2026-07-02 02:23 | 5,627 | Common seven-site interval before the final T4 day. |
+| Training | T4 | 2026-06-28 04:37 | 2026-07-02 02:23 | 5,627 | Common six-site interval before the final T4 day. |
 | Validation | T4 | 2026-07-02 02:24 | 2026-07-03 02:23 | 1,440 | Final 24 hours of the common T4 interval. |
-| Test | T6 | 2026-07-03 18:39 | 2026-07-04 14:48 | 1,210 | Longest interval complete at all seven sites and all selected frequency bins. |
+| Test | T6 | 2026-07-03 18:39 | 2026-07-06 09:14 | 3,756 | Full common span of the six selected sites; isolated short gaps (less than 10 minutes) may be interpolated. |
 
-Every split uses `cpg`, `ebc`, `guesthouse`, `humanities`, `madsen`, `moran`, and
-`sagepoint`, and the same 200 bins from 600.5 through 799.5 MHz. T6 has no complete
-24-hour interval for this site-frequency set. The selected test interval is 20
-hours and 10 minutes. Build every test window wholly inside this interval, and do
-not extend it with imputed T6 rows. Use the maximum required history and rollout,
-60 minutes each, to define a common set of eligible window starts for all models
-and horizons.
+Every split uses `cpg`, `ebc`, `humanities`, `madsen`, `moran`, and `sagepoint`,
+and the same 200 bins from 600.5 through 799.5 MHz. Exclude `guesthouse` because
+its T6 receiver suffered long daytime outages. This permits use of the full common
+T6 span, 62 hours and 36 minutes, rather than selecting test times according to
+Guesthouse availability. T6 contains only isolated one-minute gaps for the six
+selected sites. Fill those gaps by temporal linear interpolation within each
+site-frequency series; do not interpolate longer gaps or extrapolate beyond a
+site's observed bounds. Fit no interpolation parameters from validation or test
+data. Build every test window wholly inside this interval. Use the maximum required
+history and rollout, 60 minutes each, to define a common set of eligible window
+starts for all models and horizons.
 
 Representation definitions:
 
-- 1D: Treat each site-frequency pair as an independent scalar time series. Train/evaluate over all 7 × 200 = 1,400 series, with macro-averaged results so every site and frequency contributes equally.
-- 2D: Treat each site as an independent time-frequency matrix with shape T × 200. Use all seven site matrices as separate segments of one dataset; windows must never cross site boundaries.
-- 4D: Use all seven sites jointly to construct each frequency × height × width spatial map. The temporal input has shape T × 200 × H × W. Use one fixed grid and interpolation configuration fitted without test targets.
+- 1D: Treat each site-frequency pair as an independent scalar time series. Train/evaluate over all 6 × 200 = 1,200 series, with macro-averaged results so every site and frequency contributes equally.
+- 2D: Treat each site as an independent time-frequency matrix with shape T × 200. Use all six site matrices as separate segments of one dataset; windows must never cross site boundaries.
+- 4D: Use all six sites jointly to construct each frequency × height × width spatial map on a fixed 10 × 10 geographic grid. The temporal input has shape T × 200 × 10 × 10. Keep the same bounding box, cell centers, receiver coordinates, IDW exponent, and distance handling across T4 and T6; fit the interpolation configuration without test targets.
 
 Models included in the common evaluation:
 
-- 1D: Lookback Mean 1D, Linear AR 1D, Residual Linear AR 1D, Vanilla LSTM, Residual Vanilla LSTM, TimeRAN, TCN, LSTM-Attention, and ARIMA.
-- 2D: Lookback Mean 2D, Linear AR 2D, Residual Linear AR 2D, Autoformer-CSA, TSS-LCD, and DeepSPred.
-- 4D: Lookback Mean 4D, Linear AR 4D, Residual Linear AR 4D, ConvLSTM, ConvLSTM-FM, Residual ConvLSTM, DSwinLSTM-I, STS-PredNet in IDW-map mode, and Autoformer-CSA in spatial-map mode.
+- 1D: Lookback Mean 1D, Linear AR 1D, Residual Linear AR 1D, Vanilla LSTM, Residual Vanilla LSTM, TimeRAN, TCN 1D, LSTM-Attention 1D, and ARIMA.
+- 2D: Lookback Mean 2D, Linear AR 2D, Residual Linear AR 2D, Vanilla LSTM 2D, Residual Vanilla LSTM 2D, Autoformer-CSA, LSTM-Attention 2D, TCN 2D, TSS-LCD, and DeepSPred.
+- 4D: Lookback Mean 4D, Linear AR 4D, Residual Linear AR 4D, ConvLSTM, Residual ConvLSTM, ConvLSTM-FM, DSwinLSTM-I, STS-PredNet, and Autoformer-CSA in spatial-map mode.
 
-The 4D category requires an IDW-interpolated geographic map. RGB channels and a
-site-by-frequency matrix do not qualify as spatial map dimensions.
+(The 4D category requires an IDW-interpolated geographic map. RGB channels and a
+site-by-frequency matrix do not qualify as spatial map dimensions.)
 
 Common comparison rules:
 - Use identical target timestamps, sites, frequency bins, lookback, and horizons.
@@ -148,92 +153,111 @@ Common comparison rules:
 - Use validation for early stopping and model selection, then evaluate the selected checkpoint once on T6.
 
 
-## Common data preparation
+## Test vs input sequence/prediction horizon
 
-1. Build and commit a small manifest generated from object paths, metadata, CSV
-   dimensions, and CSV timestamps. Record one row per testbed, point, run, and
-   band, including first and last minute, expected minute count, observed row
-   count, duplicate timestamps, missing fraction, and longest gap.
-2. Align simultaneous receivers on exact UTC minute bins. Preserve missing values
-   and an observation mask. Interpolate only within training inputs when a model
-   requires dense arrays; never interpolate labels across a train/test boundary.
-3. Use chronological splits. Fit normalization, occupancy thresholds, frequency
-   region definitions, and model-selection criteria on training data only. Retain
-   raw dB values for reported MAE and RMSE.
-4. Evaluate 600--800, 2400--2600, and 3500--3700 MHz as separate 200 MHz tasks.
-   T6 can add 800--1000 and 5725--5925 MHz after resolving its membership.
-5. Report persistence, lookback mean, and a seasonal baseline alongside every
-   learned model. Use horizons of 1, 5, 15, and 60 minutes and a 60-minute lookback
-   for the first controlled comparison.
-6. Report per-frequency and per-region MAE/RMSE, then macro-average regions so
-   quiet bins cannot dominate a full-band average. Publish sample count and missing
-   fraction beside each metric.
+Forecast difficulty and the value of additional input history may depend on the
+temporal correlation structure of each frequency region. Evaluate the following
+selected combinations, where both input and horizon are measured in minutes:
 
-## Evaluations enabled by the traces
+| Input history | 1-minute horizon | 15-minute horizon | 60-minute horizon | 120-minute horizon | 480-minute horizon |
+|---:|:---:|:---:|:---:|:---:|:---:|
+| 10 minutes | Yes | Yes | | | |
+| 60 minutes | Yes | Yes | Yes | Yes | Yes |
+| 120 minutes | Yes | Yes | | Yes | Yes |
+| 480 minutes | Yes | Yes | | | Yes |
+
+This design tests the effect of input length at fixed one- and 15-minute horizons,
+the effect of forecast horizon with a fixed 60-minute input, matched input and
+forecast lengths, and whether a longer history improves a 480-minute forecast.
+Retrain each learned model for every applicable cell.
+
+Use the same forecast origins for every cell. An eligible origin must have the full
+480 minutes of preceding history and 480 minutes of future ground truth within its
+split and segment. The 3,756-minute T6 test interval therefore provides about 2,797
+minute-aligned origins before accounting for inclusive-boundary details. These
+origins overlap and are not independent samples.
+
+Report error at the exact horizon `t+h` for every cell. If a model produces the
+full intermediate trajectory, cumulative error over `t+1` through `t+h` may be
+reported as a secondary rollout metric, but do not use it for the
+horizon-versus-autocorrelation analysis. Include Lookback Mean and persistence
+baselines in every cell. Report results by frequency bin and annotated frequency
+region, and compare model performance with the temporal dependence at the
+corresponding scale.
+
+Estimate the autocorrelation function for every site-frequency series using only
+the training split. Evaluate lags of 1, 5, 10, 15, 30, 60, 120, 240, 480, 720, and
+1,440 minutes. For each annotated frequency region, report the median and
+interquartile range across sites and frequency bins. Also report signal variance
+and the first lag at which the autocorrelation falls below 0.5. Interpret the
+720- and 1,440-minute estimates with caution because T4 contains only a few daily
+cycles.
+
+Estimate uncertainty with blocked resampling rather than treating overlapping
+windows as independent. Use blocks of at least 480 minutes. For stochastic models,
+combine this sampling uncertainty with variation across training seeds.
 
 
-### Temporal forecasting
+## Test relevance of spectral structure
 
-Use T1, T2, T3, T4, and T7 for multi-day forecasting. Train on an initial
-contiguous interval and reserve at least the final 48 hours for testing. Compare
-short horizons with 24-hour and day-of-week seasonal baselines, and stratify errors
-by hour of day, weekday/weekend status, activity level, and manually defined
-frequency region. T6 and T8 support shorter-horizon tests but do not contain enough
-complete days for the same weekly analysis.
+Test whether simultaneous measurements from other frequencies improve prediction
+at a target frequency. Apply these tests to the 2D and 4D models; a 1D model has no
+cross-frequency input to ablate. Mask historical inputs only and retain the original
+targets. Replace a masked input with that site-frequency bin's training-set mean,
+which is zero after training-only normalization. Retrain each learned model under
+each mask rather than applying a new mask only at test time. Keep splits, forecast
+origins, horizons, seeds, architecture, and optimization settings fixed between a
+masked run and its full-band control.
 
-### Spectral context
+The 600--800 MHz behavior annotations define the following non-noise target
+regions. Evaluate every 1 MHz bin centered at 0.5 MHz within each inclusive range:
 
-For each 200 MHz band, compare independent per-bin predictors against models that
-consume the full frequency vector. Evaluate the target bins in fixed regions and
-ablate neighboring-frequency context. T6 supports cross-band tests on five spans at
-the same receivers if the benchmark restricts the comparison to the seven points
-present in the bucket.
+| Region | Range (MHz) | Bins | Behavior |
+|---:|---:|---:|---|
+| 1 | 600.5--607.5 | 8 | Mixed activity |
+| 3 | 622.5--641.5 | 20 | Bursty, short timescale |
+| 4 | 642.5--646.5 | 5 | Mixed activity |
+| 5 | 647.5--655.5 | 9 | Diurnal pattern |
+| 6 | 656.5--675.5 | 20 | Mixed activity |
+| 8 | 691.5--728.5 | 38 | Mixed activity |
+| 9 | 729.5--734.5 | 6 | Mixed activity |
+| 10 | 735.5--740.5 | 6 | Intermittent occupancy |
+| 11 | 741.5--745.5 | 5 | Intermittent occupancy |
+| 12 | 746.5--755.5 | 10 | Bursty, short timescale |
+| 13 | 756.5--768.5 | 13 | Diurnal pattern |
+| 14 | 769.5--776.5 | 8 | Bursty, short timescale |
+| 16 | 789.5--794.5 | 6 | Mixed activity |
 
-### Spatial prediction and receiver holdout
+Do not use the annotated noise-floor regions as prediction targets for these
+ablations: 608.5--621.5 MHz (14 bins), 676.5--690.5 MHz (15 bins),
+777.5--788.5 MHz (12 bins), and 795.5--799.5 MHz (5 bins). The target set therefore
+contains 154 bins.
 
-Use the common interval of T4 and T5, approximately 2026-06-30 19:50 through
-2026-07-03 02:53 UTC, for the densest POWDER evaluation. Hold out one receiver at a
-time, interpolate maps from the remaining receivers, and score predictions at the
-physical held-out receiver. Repeat with distance-based holdouts and with fewer
-input receivers. Use T3 for a three-point replication and T8 for a rural
-three-point replication. Do not score interpolated grid points as if they were
-independent measurements.
+### Other-bin context
 
-### Cross-location and cross-testbed transfer
+For each of the 154 target bins, compare:
 
-Train on AERPAW CC2 and test zero-shot on CC1 and LW1 to separate nearby-campus
-from campus-to-rural transfer. For the common PAWR bands, train on one testbed and
-test on another after fitting normalization on the source only. Report zero-shot
-results first, then fine-tuning curves using fixed target budgets such as 60, 360,
-and 1,440 minutes. Keep a final target interval untouched by adaptation.
+- **Full band:** provide all 200 historical frequency bins.
+- **Target bin only:** provide the historical values of the target bin and mask the
+  other 199 bins with noise floor-like pattern.
 
-### Cross-band transfer
+Score only the target bin. Report the paired change in MAE or RMSE from target-bin
+only to full-band input for every target bin, then summarize it within each of the
+13 regions and across sites. This isolates the value of simultaneous observations
+from other bins, including bins inside and outside the target's annotated region.
 
-Train the same architecture on one 200 MHz span and test or fine-tune on another
-span with the same number of frequency bins. Compare absolute-frequency inputs
-with bin-relative inputs. T2, T3, T4, and T7 provide the common three-band design;
-T6 can test transfer to 800--1000 and 5725--5925 MHz.
+### Other-region context
 
-### Missing-data robustness
+For each of the 13 non-noise target regions, compare:
 
-Measure natural gap distributions first. Evaluate models at those observed gaps
-and under synthetic masks matched by gap length and receiver correlation. Report
-performance against missing fraction and longest input gap. T6 guesthouse and the
-ARA traces provide natural failure cases, but comparisons must use a shared set of
-observable target minutes so a model cannot benefit from easier retained samples.
+- **Full band:** provide all 200 historical frequency bins.
+- **Target region only:** provide every historical bin in the target region and
+  mask all bins outside it with noise-floor like pattern.
 
-### Predictability characterization
+Score only bins in the retained target region. Report macro-averaged error across
+its bins and sites, and the paired change from target-region-only to full-band
+input. This tests whether other annotated regions provide information beyond the
+joint history of bins that belong to the target transmission region.
 
-Compute difference entropy, autocorrelation at 1, 60, and 1,440 minutes, spectral
-occupancy rate, and temporal variance from training intervals. Relate each measure
-to held-out forecast error by frequency region and trace. Use grouped confidence
-intervals or a mixed-effects analysis with trace and receiver as groups; individual
-minute-frequency cells are not independent samples.
 
-### Model reporting
-
-Publish aggregate, per-trace, per-receiver, per-band, and per-horizon tables. Include
-the exact UTC split boundaries, usable target count, missing-data policy,
-normalization scope, model seed, parameter count, training time, and inference
-time. Save predictions with trace, receiver, timestamp, frequency, horizon, target,
-prediction, and observation-mask fields so every reported metric can be rebuilt.
+## Test relevance of spatial structure

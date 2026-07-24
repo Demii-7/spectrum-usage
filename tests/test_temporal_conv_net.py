@@ -44,7 +44,10 @@ def test_joint_temporal_conv_net_uses_other_features() -> None:
             }
         }
     )
-    x = torch.rand(2, 8, 3, requires_grad=True)
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.fill_(0.1)
+    x = torch.ones(2, 8, 3, requires_grad=True)
     target = model(x)[:, :, 0].sum()
     target.backward()
 
