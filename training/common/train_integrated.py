@@ -669,7 +669,10 @@ def train_one_model(config: dict[str, Any], model_name: str, run_dir: Path) -> N
             train_data=train,
         )
         print(f"[DEBUG] build_model done: {type(model).__name__}")
-        device = next(model.parameters()).device
+        # Parameter-free baselines (for example LookbackMean) still use the
+        # shared runtime device during forecasting and need no model parameter
+        # lookup here.
+        device = device_for(config)
         print(f"[DEBUG] model parameters on device: {device}")
         
         # Train model
