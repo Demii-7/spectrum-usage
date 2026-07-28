@@ -192,9 +192,14 @@ def evaluation_parameters(
     horizons = sorted(set(horizons))
     max_horizon = max(horizons)
 
-    lookback = int(
-        model_cfg["input_sequence_length"]
-    )
+    try:
+        lookback = int(
+            model_cfg["input_sequence_length"]
+        )
+    except KeyError:
+        lookback = int(
+            model.input_sequence_length
+        )
 
     prediction_horizon = int(
         model_cfg["prediction_horizon"]
@@ -483,7 +488,14 @@ def evaluate_chunk(
             device = next(model.parameters()).device
         except StopIteration:
             device = torch.device("cpu")
-        
+
+        eval_cfg = config.get(model_name, {}).get("evaluation", {})
+        sampling_seed = eval_cfg.get("sampling_seed", None)
+        if sampling_seed is not None:
+            torch.manual_seed(int(sampling_seed))
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(int(sampling_seed))
+
         with torch.no_grad():
             for batch_start in range(
                 0,
@@ -638,7 +650,7 @@ def evaluate_chunk(
         representation = str(
             config.get("data", {}).get("representation", "")
         ).lower()
-        if model_name in ("convlstm", "residualconvlstm") and representation == "4d":
+        if model_name in ("convlstm", "stsprednet", "dswinlstm_i", "residualconvlstm") and representation == "4d":
             map_cfg = config.get("data", {}).get("map") or {}
             map_dir = resolve_path(
                 map_cfg.get("output_dir", "data/maps")
@@ -759,6 +771,7 @@ def evaluate_chunk(
                     if full_x.ndim == 2
                     else "N,F,H,W"
                 ),
+                "sampling_seed": sampling_seed,
                 "checkpoint_path": str(
                     checkpoint_path
                 ),

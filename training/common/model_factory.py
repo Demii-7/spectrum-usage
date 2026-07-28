@@ -37,7 +37,6 @@ from typing import Any
 import numpy as np
 import torch
 import torch.nn as nn
-
 SUPPORTED_MODELS = {
     "arima",
     "vanillalstm",
@@ -436,6 +435,235 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
         return AutoformerCSAForecaster(
             predictor_config
         )
+
+    if model_name == "tss_lcd":
+        from models.TSSLCD import (
+            DiffusionModel,
+            LatentSpaceDecoder,
+            LatentSpaceEncoder,
+            TSSConditionConstructor,
+            TSSLCDForecaster,
+        )
+
+        if train_data.ndim != 2:
+            raise ValueError(
+                "Error! TSS-LCD expects training "
+                "data shaped (time, frequencies), "
+                f"got {train_data.shape}"
+            )
+
+        input_sequence_length = int(
+            model_cfg["input_sequence_length"]
+        )
+
+        prediction_horizon = int(
+            model_cfg["prediction_horizon"]
+        )
+
+        input_size = int(
+            train_data.shape[-1]
+        )
+
+        spatial_locations = 1
+
+        encoder = LatentSpaceEncoder(
+            T_out=prediction_horizon,
+            L=spatial_locations,
+            F=input_size,
+            latent_dim=int(
+                model_cfg["latent_dim"]
+            ),
+            num_blocks=int(
+                model_cfg.get(
+                    "autoencoder_num_blocks", 3
+                )
+            ),
+            init_channels=int(
+                model_cfg.get(
+                    "autoencoder_initial_channels", 32
+                )
+            ),
+            kernel_size=int(
+                model_cfg.get(
+                    "autoencoder_kernel_size", 3
+                )
+            ),
+            pool_kernel=int(
+                model_cfg.get(
+                    "autoencoder_pool_kernel", 2
+                )
+            ),
+            pool_stride=int(
+                model_cfg.get(
+                    "autoencoder_pool_stride", 2
+                )
+            ),
+            activation=str(
+                model_cfg.get(
+                    "autoencoder_activation", "relu"
+                )
+            ),
+        )
+
+        decoder = LatentSpaceDecoder(
+            T_out=prediction_horizon,
+            L=spatial_locations,
+            F=input_size,
+            latent_dim=int(
+                model_cfg["latent_dim"]
+            ),
+            num_blocks=int(
+                model_cfg.get(
+                    "autoencoder_num_blocks", 3
+                )
+            ),
+            init_channels=int(
+                model_cfg.get(
+                    "autoencoder_initial_channels", 32
+                )
+            ),
+            kernel_size=int(
+                model_cfg.get(
+                    "autoencoder_kernel_size", 3
+                )
+            ),
+            activation=str(
+                model_cfg.get(
+                    "autoencoder_activation", "relu"
+                )
+            ),
+        )
+
+        condition_constructor = TSSConditionConstructor(
+            T_in=input_sequence_length,
+            L=spatial_locations,
+            F=input_size,
+            hidden_dim=int(
+                model_cfg.get("hidden_dim", 256)
+            ),
+            num_heads=int(
+                model_cfg.get("attention_heads", 4)
+            ),
+            num_layers=int(
+                model_cfg.get(
+                    "num_attention_layers", 2
+                )
+            ),
+            ffn_dim=int(
+                model_cfg.get("ffn_dim", 1024)
+            ),
+            dropout=float(
+                model_cfg.get("dropout", 0.1)
+            ),
+            latent_dim=int(
+                model_cfg["latent_dim"]
+            ),
+            use_temporal=bool(
+                model_cfg.get(
+                    "use_temporal_branch", True
+                )
+            ),
+            use_spectral=bool(
+                model_cfg.get(
+                    "use_spectral_branch", True
+                )
+            ),
+            use_spatial=bool(
+                model_cfg.get(
+                    "use_spatial_branch", True
+                )
+            ),
+        )
+
+        diffusion = DiffusionModel(
+            latent_dim=int(
+                model_cfg["latent_dim"]
+            ),
+            n_timestep=int(
+                model_cfg.get(
+                    "diffusion_steps", 1000
+                )
+            ),
+            device=torch.device("cpu"),
+            noise_schedule=str(
+                model_cfg.get(
+                    "noise_schedule", "cosine"
+                )
+            ),
+            nen_encoder_channels=list(
+                model_cfg.get(
+                    "nen_encoder_channels", [64, 128]
+                )
+            ),
+            nen_bottleneck_channels=int(
+                model_cfg.get(
+                    "nen_bottleneck_channels", 256
+                )
+            ),
+            nen_decoder_channels=list(
+                model_cfg.get(
+                    "nen_decoder_channels", [128, 64]
+                )
+            ),
+            nen_kernel_size=int(
+                model_cfg.get("nen_kernel_size", 3)
+            ),
+            time_embed_dim=int(
+                model_cfg.get("time_embed_dim", 32)
+            ),
+            condition_proj_dim=model_cfg.get(
+                "condition_proj_dim"
+            ),
+            condition_strategy=str(
+                model_cfg.get(
+                    "condition_strategy", "concat"
+                )
+            ),
+            nen_activation=str(
+                model_cfg.get(
+                    "nen_activation", "relu"
+                )
+            ),
+            nen_normalization=str(
+                model_cfg.get(
+                    "nen_normalization", "batchnorm"
+                )
+            ),
+        )
+
+        return TSSLCDForecaster(
+            encoder=encoder,
+            decoder=decoder,
+            condition_constructor=condition_constructor,
+            diffusion=diffusion,
+            input_sequence_length=input_sequence_length,
+            prediction_horizon=prediction_horizon,
+            input_size=input_size,
+        )
+
+    if model_name == "stsprednet":
+        from models.STSPredNet import (
+            STSPredNetForecaster,
+        )
+
+        if train_data.ndim != 4:
+            raise ValueError(
+                "STS-PredNet expects map data shaped "
+                "(time, height, width, frequencies), "
+                f"got {train_data.shape}."
+            )
+
+        predictor_config = {
+            "model": {
+                **dict(model_cfg),
+                "map_height": int(train_data.shape[1]),
+                "map_width": int(train_data.shape[2]),
+                "input_channels": int(train_data.shape[3]),
+            },
+            "branches": dict(config["stsprednet"]["branches"]),
+        }
+
+        return STSPredNetForecaster(predictor_config)
 
     raise ValueError(
         f"Unsupported model: {model_name}"
