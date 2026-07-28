@@ -87,6 +87,7 @@ def build_plan(config: dict[str, Any], models: list[str], *, candidates: int = D
                     for name, parameters in historical.items()
                 },
                 "search_algorithm": "BasicVariantGenerator(points_to_evaluate=anchors)",
+                "grace_period": 12 if spec.name == "temporalconvnet" else 5,
             }
             entry["rerank"] = {
                 "selection_methods": ["best", "best-simple", "reference"],
@@ -179,7 +180,10 @@ def _launch(config: dict[str, Any], plan: dict[str, Any], output: Path,
         epochs = int(config[spec.name].get("train", {}).get("epochs", 100))
         # The extra iteration lets a surviving trial attach its completed
         # integrated checkpoint after the final forecasting epoch.
-        scheduler = ASHAConfig(max_t=epochs + 1).build()
+        scheduler = ASHAConfig(
+            max_t=epochs + 1,
+            grace_period=int(entry["search"]["grace_period"]),
+        ).build()
 
         tuner = tune.Tuner(
             tune.with_resources(trainable, spec.resources.as_ray()),

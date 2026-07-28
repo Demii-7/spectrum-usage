@@ -177,13 +177,13 @@ _specs = [
             "train.learning_rate": 1e-3, "train.weight_decay": 1e-4, "train.batch_size": 32,
         }}),
     _tunable("temporalconvnet", "2d", (
-        _bundle(**{"model.hidden_channels": [8] * 6, "model.kernel_size": 2, "model.dropout": 0.0, "model.feature_mode": "joint"}),
-        _bundle(**{"model.hidden_channels": [16] * 6, "model.kernel_size": 2, "model.dropout": 0.1, "model.feature_mode": "joint"}),
-        _bundle(**{"model.hidden_channels": [32, 32, 32, 32, 32, 32], "model.kernel_size": 2, "model.dropout": 0.1, "model.feature_mode": "joint"}),
+        _bundle(**{"model.hidden_channels": [8] * 6, "model.kernel_size": 2, "model.dropout": 0.0, "model.feature_mode": "independent"}),
+        _bundle(**{"model.hidden_channels": [16] * 6, "model.kernel_size": 2, "model.dropout": 0.1, "model.feature_mode": "independent"}),
+        _bundle(**{"model.hidden_channels": [32, 32, 32, 32, 32, 32], "model.kernel_size": 2, "model.dropout": 0.1, "model.feature_mode": "independent"}),
     ), gpu=0.5, optimizer_space=_OPTIMIZER_2D,
         anchor_optimizer={"train.learning_rate": 1e-3, "train.weight_decay": 0.0, "train.batch_size": 128},
         historical={"summary70_new_models": {
-            "architecture": _bundle(**{"model.hidden_channels": [32] * 6, "model.kernel_size": 2, "model.dropout": 0.1, "model.feature_mode": "joint"}),
+            "architecture": _bundle(**{"model.hidden_channels": [32] * 6, "model.kernel_size": 2, "model.dropout": 0.1, "model.feature_mode": "independent"}),
             "train.learning_rate": 1e-3, "train.weight_decay": 0.0, "train.batch_size": 32,
         }}),
     _tunable("lstmattn", "2d", (
