@@ -101,7 +101,17 @@ def train_model(
     )
 
 
-    lookback = int(model_cfg["input_sequence_length"])
+    seed = int(train_cfg.get("seed", 42))
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+    try:
+        lookback = int(model_cfg["input_sequence_length"])
+    except KeyError:
+        lookback = int(model.input_sequence_length)
 
     # Keep model output at one timestep
     prediction_horizon = int(model_cfg["prediction_horizon"])
@@ -831,60 +841,116 @@ def train_one_model(
             ),
         )
         
-        # Directly stream the pre-compiled log_frame to file  to avoid wasting CPU cycles reconstructing the table
-        training_results["log_frame"].to_csv(
-            out / f"{chunk.chunk_id}_training_log.csv",
-            index=False,
-        )
-        
-        summary_lines = [
-            f"Model: {model_name}",
-            f"Chunk: {chunk.chunk_id}",
-            f"Epochs completed: {training_results['epochs_completed']}",
-            "",
-            f"Best epoch: {training_results['best_epoch']}",
-            f"Best validation loss: {training_results['best_val_loss']:.6f}",
-            (
-                "Training loss at best epoch: "
-                f"{training_results['train_loss_at_best_epoch']:.6f}"
-            ),
-            (
-                "Loss gap at best epoch: "
-                f"{training_results['best_epoch_loss_gap']:.6f}"
-            ),
-            "",
-            f"Best training loss: {training_results['best_train_loss']:.6f}",
-            f"Final training loss: {training_results['final_train_loss']:.6f}",
-            f"Final validation loss: {training_results['final_val_loss']:.6f}",
-            (
-                "Average training loss: "
-                f"{training_results['average_train_loss']:.6f}"
-            ),
-            (
-                "Average validation loss: "
-                f"{training_results['average_val_loss']:.6f}"
-            ),
-            "",
-            (
-                "Average epoch time: "
-                f"{training_results['average_epoch_time_sec']:.2f} seconds"
-            ),
-            (
-                "Fastest epoch time: "
-                f"{training_results['fastest_epoch_time_sec']:.2f} seconds"
-            ),
-            (
-                "Slowest epoch time: "
-                f"{training_results['slowest_epoch_time_sec']:.2f} seconds"
-            ),
-            (
-                "Total training time: "
-                f"{training_results['training_duration_sec']:.2f} seconds"
-            ),
-            "",
-            f"Training started: {training_results['training_start_time']}",
-            f"Training ended: {training_results['training_end_time']}",
-        ]
+        # Write training logs
+        if model_name == "tss_lcd":
+            training_results["autoencoder"]["log_frame"].to_csv(
+                out / f"{chunk.chunk_id}_autoencoder_training_log.csv",
+                index=False,
+            )
+            training_results["condition_constructor"]["log_frame"].to_csv(
+                out / f"{chunk.chunk_id}_condition_training_log.csv",
+                index=False,
+            )
+            training_results["diffusion"]["log_frame"].to_csv(
+                out / f"{chunk.chunk_id}_diffusion_training_log.csv",
+                index=False,
+            )
+
+            summary_lines = [
+                f"Model: tss_lcd",
+                f"Chunk: {chunk.chunk_id}",
+                "",
+                "Autoencoder",
+                f"  Best epoch: {training_results['autoencoder']['best_epoch']}",
+                f"  Best val loss: {training_results['autoencoder']['best_val_loss']:.6f}",
+                f"  Epochs completed: {training_results['autoencoder']['epochs_completed']}",
+                "",
+                "Condition Constructor",
+                f"  Best epoch: {training_results['condition_constructor']['best_epoch']}",
+                f"  Best val loss: {training_results['condition_constructor']['best_val_loss']:.6f}",
+                f"  Epochs completed: {training_results['condition_constructor']['epochs_completed']}",
+                "",
+                "Diffusion",
+                f"  Best epoch: {training_results['diffusion']['best_epoch']}",
+                f"  Best val loss: {training_results['diffusion']['best_val_loss']:.6f}",
+                f"  Epochs completed: {training_results['diffusion']['epochs_completed']}",
+            ]
+
+            checkpoint_training_results = {
+                "model_name": "tss_lcd",
+                "autoencoder": {
+                    k: v for k, v in training_results["autoencoder"].items()
+                    if k != "log_frame" and k != "best_checkpoint"
+                },
+                "condition_constructor": {
+                    k: v for k, v in training_results["condition_constructor"].items()
+                    if k != "log_frame"
+                },
+                "diffusion": {
+                    k: v for k, v in training_results["diffusion"].items()
+                    if k != "log_frame"
+                },
+            }
+        else:
+            training_results["log_frame"].to_csv(
+                out / f"{chunk.chunk_id}_training_log.csv",
+                index=False,
+            )
+
+            summary_lines = [
+                f"Model: {model_name}",
+                f"Chunk: {chunk.chunk_id}",
+                f"Epochs completed: {training_results['epochs_completed']}",
+                "",
+                f"Best epoch: {training_results['best_epoch']}",
+                f"Best validation loss: {training_results['best_val_loss']:.6f}",
+                (
+                    "Training loss at best epoch: "
+                    f"{training_results['train_loss_at_best_epoch']:.6f}"
+                ),
+                (
+                    "Loss gap at best epoch: "
+                    f"{training_results['best_epoch_loss_gap']:.6f}"
+                ),
+                "",
+                f"Best training loss: {training_results['best_train_loss']:.6f}",
+                f"Final training loss: {training_results['final_train_loss']:.6f}",
+                f"Final validation loss: {training_results['final_val_loss']:.6f}",
+                (
+                    "Average training loss: "
+                    f"{training_results['average_train_loss']:.6f}"
+                ),
+                (
+                    "Average validation loss: "
+                    f"{training_results['average_val_loss']:.6f}"
+                ),
+                "",
+                (
+                    "Average epoch time: "
+                    f"{training_results['average_epoch_time_sec']:.2f} seconds"
+                ),
+                (
+                    "Fastest epoch time: "
+                    f"{training_results['fastest_epoch_time_sec']:.2f} seconds"
+                ),
+                (
+                    "Slowest epoch time: "
+                    f"{training_results['slowest_epoch_time_sec']:.2f} seconds"
+                ),
+                (
+                    "Total training time: "
+                    f"{training_results['training_duration_sec']:.2f} seconds"
+                ),
+                "",
+                f"Training started: {training_results['training_start_time']}",
+                f"Training ended: {training_results['training_end_time']}",
+            ]
+
+            checkpoint_training_results = {
+                key: value
+                for key, value in training_results.items()
+                if key != "log_frame"
+            }
 
         (
             out / f"{chunk.chunk_id}_training_summary.txt"
@@ -900,11 +966,7 @@ def train_one_model(
                 "model_state_dict": model.state_dict(),
                 "normalization": data.normalization,
                 "frequencies": data.frequencies,
-                "training_results": {
-                    key: value
-                    for key, value in training_results.items()
-                    if key != "log_frame"
-                },
+                "training_results": checkpoint_training_results,
                 "pretraining": training_results.get("pretraining"),
             },
             checkpoints/ f"{chunk.chunk_id}_{model_name}.pt",
