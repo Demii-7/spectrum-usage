@@ -57,7 +57,9 @@ inputs; class IDs and the noise-class ID must be chosen to match that dataset.
   `convlstmfm.model.pretrain_epochs > 0`.
 - **Stage B (fine-tuning):** `forward(x)` predicts the single next timestep
   (the shared one-step forecasting interface used by
-  `training/common/forecasting.py`). Setting
+  `training/common/forecasting.py`). Input windows are ordered oldest to newest;
+  the Conv3D head processes the complete encoded sequence and the final output
+  token, aligned with the newest input, is used for the next-step forecast. Setting
   `freeze_backbone_after_pretrain: true` freezes the pretrained ConvLSTM
   encoder so only the head keeps training, matching the paper's "only the
   final layer is fine-tuned."
@@ -66,6 +68,16 @@ inputs; class IDs and the noise-class ID must be chosen to match that dataset.
 
 ```bash
 python3 training/common/train_integrated.py --config training/configs/config_convlstm_fm.yaml
+```
+
+The paper-comparable same-architecture control skips pretraining and trains the
+entire backbone and head from scratch. Use a distinct run name so its checkpoint
+is not confused with the pretrained model:
+
+```bash
+python3 training/common/train_integrated.py \
+  --config training/configs/config_convlstm_fm_scratch.yaml \
+  --name convlstm_fm_scratch
 ```
 
 Paper-native token pretraining is separate:

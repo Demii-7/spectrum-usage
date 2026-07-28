@@ -96,7 +96,7 @@ def train_model(
     train_cfg = config[model_name]["train"]
     convlstm_guard_threshold = (
         prediction_guard_threshold(train_cfg)
-        if model_name in ("convlstm", "residualconvlstm")
+        if model_name in ("convlstm", "residualconvlstm", "convlstmfm")
         else None
     )
 

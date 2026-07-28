@@ -143,12 +143,14 @@ class ConvLSTMFMForecaster(nn.Module):
         for param in self.encoder.parameters():
             param.requires_grad = False
 
+    def _encode_sequence(self, x: torch.Tensor) -> torch.Tensor:
+        """Return top-layer hidden states in oldest-to-newest order."""
+        layer_outputs, _ = self.encoder(x)
+        return self.dropout(layer_outputs[-1])
+
     def reconstruct(self, x: torch.Tensor) -> torch.Tensor:
         """Reconstruct every input timestep, for masked self-supervised pretraining."""
-        b, t, c_in, h, w = x.shape
-        layer_outputs, _ = self.encoder(x)
-        sequence = layer_outputs[-1]  # (B, T, hidden, H, W) -- full sequence, top layer
-        sequence = self.dropout(sequence)
+        sequence = self._encode_sequence(x)
         reconstruction = self.head(sequence.permute(0, 2, 1, 3, 4))
         return reconstruction.permute(0, 2, 1, 3, 4)
 
@@ -162,11 +164,11 @@ class ConvLSTMFMForecaster(nn.Module):
         if h != self.spatial_h or w != self.spatial_w:
             raise ValueError(f"Error! Input spatial ({h}, {w}) != model spatial ({self.spatial_h}, {self.spatial_w})")
 
-        _, last_states = self.encoder(x)
-        h_last, _ = last_states[-1]  # final hidden state of the top layer, (B, hidden, H, W)
-        h_last = self.dropout(h_last)
-        out = self.head(h_last.unsqueeze(2)).squeeze(2)
-        return out.unsqueeze(1)
+        # WindowDataset and ConvLSTM both preserve chronological order, so the
+        # final Conv3D output is the one aligned with the newest input token.
+        sequence = self._encode_sequence(x)
+        outputs = self.head(sequence.permute(0, 2, 1, 3, 4))
+        return outputs[:, :, -1:].permute(0, 2, 1, 3, 4)
 
 
 def pretrain_backbone(
@@ -187,6 +189,33 @@ def pretrain_backbone(
     targets are intentionally ignored.
     """
     device = next(model.parameters()).device
+    configured_batch_size = int(
+        model.config["model"].get("pretrain_batch_size", train_loader.batch_size)
+    )
+    if configured_batch_size <= 0:
+        raise ValueError("pretrain_batch_size must be greater than zero")
+    if configured_batch_size != train_loader.batch_size:
+        loader_kwargs: dict[str, Any] = {
+            "num_workers": train_loader.num_workers,
+            "collate_fn": train_loader.collate_fn,
+            "pin_memory": train_loader.pin_memory,
+            "drop_last": train_loader.drop_last,
+            "timeout": train_loader.timeout,
+            "worker_init_fn": train_loader.worker_init_fn,
+            "generator": train_loader.generator,
+        }
+        if train_loader.num_workers > 0:
+            loader_kwargs.update({
+                "persistent_workers": train_loader.persistent_workers,
+                "prefetch_factor": train_loader.prefetch_factor,
+                "multiprocessing_context": train_loader.multiprocessing_context,
+            })
+        train_loader = DataLoader(
+            train_loader.dataset,
+            batch_size=configured_batch_size,
+            shuffle=True,
+            **loader_kwargs,
+        )
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     epoch_losses: list[float] = []
 
@@ -229,6 +258,7 @@ def pretrain_backbone(
         "mask_ratio": float(mask_ratio),
         "mask_mode": mask_mode,
         "learning_rate": float(learning_rate),
+        "batch_size": configured_batch_size,
         "samples": int(len(train_loader.dataset)),
         "epoch_losses": epoch_losses,
         "final_loss": epoch_losses[-1] if epoch_losses else None,

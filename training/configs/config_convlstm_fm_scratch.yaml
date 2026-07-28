@@ -1,6 +1,6 @@
-# ConvLSTM-FM diagnostic config
-# See training/ConvLSTM-FM/info.md for the source paper spec and
-# training/ConvLSTM-FM/README.md for how this config maps onto it.
+# ConvLSTM-FM same-architecture scratch control.
+# This uses the forecasting architecture from config_convlstm_fm.yaml without
+# masked-reconstruction pretraining or backbone freezing.
 data:
   representation: 4d
   reference_site: humanities
@@ -75,20 +75,16 @@ convlstmfm:
   model:
     input_sequence_length: 60
     prediction_horizon: 1
-    # Paper backbone: 5 ConvLSTM layers, 64 kernels each, 3x3, ReLU.
     hidden_channels: [64, 64, 64, 64, 64]
     kernel_size: [[3, 3], [3, 3], [3, 3], [3, 3], [3, 3]]
     num_layers: 5
     cell_activation: relu
     dropout: 0.1
-    # Stage A: masked-reconstruction self-supervised pretraining, run once
-    # before fine-tuning (set pretrain_epochs: 0 to skip and train from scratch).
-    pretrain_epochs: 20
+    pretrain_epochs: 0
     pretrain_mask_ratio: 0.2
     pretrain_learning_rate: 0.001
     pretrain_batch_size: 16
-    # Stage B: freeze the pretrained backbone and fine-tune only the head.
-    freeze_backbone_after_pretrain: true
+    freeze_backbone_after_pretrain: false
   train:
     val_fraction: 0.15
     train_stride: 1
