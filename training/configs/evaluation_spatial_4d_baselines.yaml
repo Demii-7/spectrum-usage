@@ -1,0 +1,44 @@
+data:
+  representation: 4d
+  files:
+    - {path: data/powder/cpg-nuc1/20260628T0437Z/600_800/power_1mhz_avg_per_minute.csv, partition: train}
+    - {path: data/powder/ebc-nuc1/20260628T0436Z/600_800/power_1mhz_avg_per_minute.csv, partition: train}
+    - {path: data/powder/humanities-nuc1/20260628T0436Z/600_800/power_1mhz_avg_per_minute.csv, partition: train}
+    - {path: data/powder/madsen-nuc1/20260628T0437Z/600_800/power_1mhz_avg_per_minute.csv, partition: train}
+    - {path: data/powder/moran-nuc1/20260628T0437Z/600_800/power_1mhz_avg_per_minute.csv, partition: train}
+    - {path: data/powder/sagepoint-nuc1/20260628T0437Z/600_800/power_1mhz_avg_per_minute.csv, partition: train}
+    - {path: data/powder/cpg-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv, partition: test}
+    - {path: data/powder/ebc-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv, partition: test}
+    - {path: data/powder/humanities-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv, partition: test}
+    - {path: data/powder/madsen-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv, partition: test}
+    - {path: data/powder/moran-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv, partition: test}
+    - {path: data/powder/sagepoint-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv, partition: test}
+  concat: rows
+  split:
+    ranges:
+      train: {start: "2026-06-28T04:37:00Z", end: "2026-07-02T02:23:00Z"}
+      validation: {start: "2026-07-02T02:24:00Z", end: "2026-07-03T02:23:00Z"}
+      test: {start: "2026-07-03T18:39:00Z", end: "2026-07-06T09:14:00Z"}
+  map:
+    name: plan_powder_600_800
+    locations: data/locations/powder.json
+    collection_key: endpoints
+    output_dir: data/maps
+    grid: {height: 10, width: 10}
+    force_rebuild: false
+    permute: false
+    permute_seed: 42
+  chunks: [{id: powder_600_800_t4t6, start_mhz: 600.0, end_mhz: 800.0}]
+windowing: {lookback: 60, horizons: [1, 15, 60]}
+training: {device: cuda, models: [lookbackmean4d, linearar4d, residuallinearar4d]}
+preprocessing: {normalize: true, impute: true, max_missing_gap: 9}
+data_loader: {num_workers: 4, persistent_workers: true, prefetch_factor: 2, pin_memory: auto}
+lookbackmean4d:
+  model: {input_sequence_length: 60, prediction_horizon: 1}
+  train: {val_fraction: 0.1, train_stride: 1, val_stride: 10, test_stride: 1, batch_size: 16, epochs: 1, learning_rate: 0.0, early_stopping: false, seed: 42}
+linearar4d:
+  model: {input_sequence_length: 60, prediction_horizon: 1, ridge_alpha: 1.0}
+  train: {val_fraction: 0.1, train_stride: 1, val_stride: 10, test_stride: 1, batch_size: 16, epochs: 1, learning_rate: 0.001, weight_decay: 0.0, optimizer: adam, early_stopping: false, seed: 42}
+residuallinearar4d:
+  model: {input_sequence_length: 60, prediction_horizon: 1, ridge_alpha: 1.0}
+  train: {val_fraction: 0.1, train_stride: 1, val_stride: 10, test_stride: 1, batch_size: 16, epochs: 10, learning_rate: 0.001, weight_decay: 0.0, optimizer: adamw, gradient_clip_norm: 1.0, early_stopping: true, early_stopping_patience: 3, seed: 42}

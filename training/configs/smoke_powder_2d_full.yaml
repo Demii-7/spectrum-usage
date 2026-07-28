@@ -58,6 +58,7 @@ linearar2d:
   model:
     input_sequence_length: 60
     prediction_horizon: 1
+    ridge_alpha: 1.0
   train:
     val_fraction: 0.15
     train_stride: 1

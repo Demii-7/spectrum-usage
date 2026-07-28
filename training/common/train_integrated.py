@@ -174,10 +174,23 @@ def train_model(
     learning_rate = float(
         train_cfg.get("learning_rate", 0.001)
     )
+    if model_name in {
+        "linearar1d", "linearar2d", "linearar4d",
+        "residuallinearar1d", "residuallinearar2d", "residuallinearar4d",
+    } and learning_rate <= 0:
+        raise ValueError(f"{model_name} requires train.learning_rate > 0")
 
     weight_decay = float(
         train_cfg.get("weight_decay", 0.0)
     )
+    if model_name in {
+        "linearar1d", "linearar2d", "linearar4d",
+        "residuallinearar1d", "residuallinearar2d", "residuallinearar4d",
+    } and weight_decay != 0:
+        raise ValueError(
+            f"{model_name} uses model.ridge_alpha and requires "
+            "train.weight_decay == 0"
+        )
 
     optimizer_name = str(
         train_cfg.get("optimizer", "adam")
@@ -310,7 +323,11 @@ def train_model(
                 )
 
             # Measure prediction error.
-            loss = criterion(pred, y)
+            data_loss = criterion(pred, y)
+            loss = data_loss
+            ridge_penalty = getattr(model, "ridge_penalty", None)
+            if ridge_penalty is not None:
+                loss = loss + ridge_penalty()
             if epoch == 1 and batch_idx == 0:
                 print(f"[DEBUG] epoch1/batch0: loss={loss.item():.6f}, calling backward() ...")
                 _bt1 = _time_bt.perf_counter()
@@ -337,7 +354,7 @@ def train_model(
             batch_samples = x.size(0)
 
             train_loss_sum += (
-                loss.item() * batch_samples
+                data_loss.item() * batch_samples
             )
 
             train_sample_count += batch_samples

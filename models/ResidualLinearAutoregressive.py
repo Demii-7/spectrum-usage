@@ -27,3 +27,6 @@ class ResidualLinearAutoregressiveForecaster(nn.Module):
         baseline = self.baseline(x)
         deviations = x - baseline
         return baseline + self.residual(deviations)
+
+    def ridge_penalty(self) -> torch.Tensor:
+        return self.residual.ridge_penalty()

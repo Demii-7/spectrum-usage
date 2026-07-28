@@ -160,12 +160,13 @@ def main() -> None:
             if optimizer is not None:
                 optimizer.zero_grad()
             pred = forecast(model, x, 1, rollout_horizon, targets=y)
-            loss = criterion(pred, y)
+            data_loss = criterion(pred, y)
+            loss = data_loss + model.ridge_penalty()
             if has_params:
                 loss.backward()
                 nn.utils.clip_grad_norm_(model.parameters(), float(train_cfg["gradient_clip_norm"]))
                 optimizer.step()
-            train_loss_sum += loss.item() * x.size(0)
+            train_loss_sum += data_loss.item() * x.size(0)
             train_count += x.size(0)
 
         model.eval()

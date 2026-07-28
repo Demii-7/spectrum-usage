@@ -28,6 +28,9 @@ class LinearAutoregressiveForecaster(nn.Module):
         self.input_sequence_length = int(model_config["input_sequence_length"])
         self.prediction_horizon = int(model_config["prediction_horizon"])
         self.input_size = int(model_config["input_size"])
+        self.ridge_alpha = float(model_config.get("ridge_alpha", 0.0))
+        if self.ridge_alpha < 0:
+            raise ValueError("ridge_alpha must be non-negative")
 
         self.weight = nn.Parameter(
             torch.empty(self.input_size, self.input_sequence_length)
@@ -45,3 +48,7 @@ class LinearAutoregressiveForecaster(nn.Module):
         out = torch.mul(x_flat, self.weight.T.unsqueeze(0)).sum(dim=1) + self.bias
 
         return out.reshape(B, self.prediction_horizon, *x.shape[2:])
+
+    def ridge_penalty(self) -> torch.Tensor:
+        """Return L2 regularization for AR weights without penalizing the bias."""
+        return self.ridge_alpha * self.weight.square().sum(dim=1).mean()
