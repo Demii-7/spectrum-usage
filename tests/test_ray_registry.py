@@ -60,6 +60,19 @@ class RayRegistryTests(unittest.TestCase):
             reference = spec.anchor("reference")["architecture"]
             self.assertIn(reference, spec.space["architecture"].choices)
 
+    def test_temporal_conv_net_search_excludes_joint_feature_mode(self):
+        spec = MODEL_REGISTRY["temporalconvnet"]
+        modes = {
+            bundle["model.feature_mode"]
+            for bundle in spec.space["architecture"].choices
+        }
+        self.assertEqual(modes, {"independent"})
+        for parameters in spec.historical.values():
+            self.assertEqual(
+                parameters["architecture"]["model.feature_mode"],
+                "independent",
+            )
+
     def test_linear_ar_hpo_is_cpu_only_and_tunes_ridge_and_learning_rate(self):
         for family in ("linearar", "residuallinearar"):
             for dimension in ("1d", "2d", "4d"):

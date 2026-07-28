@@ -25,6 +25,7 @@ from .trainable import run_integrated_trial
 SEARCH_SEED = 42
 RERANK_SEEDS = (41, 42, 43)
 DEFAULT_CANDIDATE_BUDGET = 12
+DEFAULT_MAX_CONCURRENT_TRIALS = 8
 CAPACITIES = ("tiny", "small", "reference")
 
 
@@ -87,6 +88,7 @@ def build_plan(config: dict[str, Any], models: list[str], *, candidates: int = D
                     for name, parameters in historical.items()
                 },
                 "search_algorithm": "BasicVariantGenerator(points_to_evaluate=anchors)",
+                "max_concurrent_trials": DEFAULT_MAX_CONCURRENT_TRIALS,
                 "grace_period": 12 if spec.name == "temporalconvnet" else 5,
             }
             entry["rerank"] = {
@@ -190,6 +192,7 @@ def _launch(config: dict[str, Any], plan: dict[str, Any], output: Path,
             param_space=space,
             tune_config=tune.TuneConfig(
                 num_samples=int(entry["search"]["candidate_budget"]["total"]),
+                max_concurrent_trials=int(entry["search"]["max_concurrent_trials"]),
                 search_alg=search,
                 scheduler=scheduler,
             ),

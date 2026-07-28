@@ -5,6 +5,7 @@ import unittest
 
 from training.ray.run import (
     DEFAULT_CANDIDATE_BUDGET,
+    DEFAULT_MAX_CONCURRENT_TRIALS,
     RERANK_SEEDS,
     SEARCH_SEED,
     anchor_points,
@@ -38,10 +39,20 @@ class RayPlanAndTrainableTests(unittest.TestCase):
         self.assertEqual(entry["search"]["candidate_budget"]["total"], 12)
         self.assertEqual(entry["search"]["candidate_budget"]["historical"], 1)
         self.assertEqual(entry["search"]["candidate_budget"]["random"], 8)
+        self.assertEqual(entry["search"]["max_concurrent_trials"],
+                         DEFAULT_MAX_CONCURRENT_TRIALS)
+        self.assertEqual(entry["search"]["grace_period"], 5)
         self.assertEqual(len(anchor_points(entry)), 3)
         self.assertEqual({point["capacity"] for point in anchor_points(entry)},
                          {"tiny", "small", "reference"})
         self.assertEqual({point["seed"] for point in anchor_points(entry)}, {42})
+
+    def test_temporal_conv_net_gets_longer_asha_grace_period(self):
+        config = valid_config()
+        config["training"]["model_name"] = "temporalconvnet"
+        config["temporalconvnet"] = {"model": {}, "train": {"epochs": 20}}
+        entry = build_plan(config, ["temporalconvnet"])["models"][0]
+        self.assertEqual(entry["search"]["grace_period"], 12)
 
     def test_rerank_is_separate_and_uses_three_seeds(self):
         entry = build_plan(valid_config(), ["vanillalstm"])["models"][0]
