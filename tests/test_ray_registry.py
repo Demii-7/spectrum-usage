@@ -60,6 +60,19 @@ class RayRegistryTests(unittest.TestCase):
             reference = spec.anchor("reference")["architecture"]
             self.assertIn(reference, spec.space["architecture"].choices)
 
+    def test_linear_ar_hpo_is_cpu_only_and_tunes_ridge_and_learning_rate(self):
+        for family in ("linearar", "residuallinearar"):
+            for dimension in ("1d", "2d", "4d"):
+                spec = MODEL_REGISTRY[f"{family}{dimension}"]
+                self.assertTrue(spec.hpo_executable)
+                self.assertEqual(spec.resources.gpu, 0.0)
+                self.assertIn("train.learning_rate", spec.space)
+                ridge_values = {
+                    bundle["model.ridge_alpha"]
+                    for bundle in spec.space["architecture"].choices
+                }
+                self.assertEqual(ridge_values, {1e-4, 1e-2, 1.0})
+
     def test_historical_presets_are_valid_and_guaranteed_for_known_results(self):
         expected = {
             "vanillalstm", "residualvanillalstm", "temporalconvnet",

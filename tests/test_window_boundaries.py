@@ -28,6 +28,7 @@ def test_frequency_series_segments_prevent_cross_bin_windows(tmp_path):
 
     source = load_csv_sources(paths, concat="rows")
     flattened, segments = _flatten_segments(source.data, source.segments)
+    assert flattened.shape == (12, 1)
     starts = make_window_starts(
         n_timesteps=len(flattened),
         lookback=2,

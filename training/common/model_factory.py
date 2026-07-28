@@ -288,6 +288,11 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
                 "Error! LinearAR1D/2D expects CSV data shaped "
                 f"(time, features), got {train_data.shape}"
             )
+        if model_name == "linearar1d" and train_data.shape[1] != 1:
+            raise ValueError(
+                "Error! LinearAR1D expects exactly one feature, "
+                f"got {train_data.shape[1]}"
+            )
         predictor_config = {
             "model": {
                 **dict(model_cfg),
@@ -312,6 +317,11 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
             raise ValueError(
                 "Error! ResidualLinearAR1D/2D expects CSV data shaped "
                 f"(time, features), got {train_data.shape}"
+            )
+        if model_name == "residuallinearar1d" and train_data.shape[1] != 1:
+            raise ValueError(
+                "Error! ResidualLinearAR1D expects exactly one feature, "
+                f"got {train_data.shape[1]}"
             )
         predictor_config = {
             "model": {

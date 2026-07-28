@@ -72,8 +72,8 @@ def _flatten_segments(
             )
             offset += len(series)
     if not values:
-        return np.empty(0, dtype=np.float32), tuple()
-    return np.concatenate(values).astype(np.float32), tuple(output_segments)
+        return np.empty((0, 1), dtype=np.float32), tuple()
+    return np.concatenate(values).astype(np.float32).reshape(-1, 1), tuple(output_segments)
 
 
 def _partition_files(raw_files: list[dict[str, str]]) -> dict[str, list[Path]]:

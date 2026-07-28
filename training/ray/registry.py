@@ -80,6 +80,22 @@ _OPTIMIZER_MAP = {
     "train.batch_size": choice(1, 2, 4),
 }
 
+_OPTIMIZER_LINEAR = {
+    "train.learning_rate": loguniform(1e-5, 3e-3),
+    "train.batch_size": choice(32, 64, 128),
+}
+
+_OPTIMIZER_LINEAR_MAP = {
+    "train.learning_rate": loguniform(1e-5, 3e-3),
+    "train.batch_size": choice(8, 16, 32),
+}
+
+_LINEAR_RIDGE_BUNDLES = (
+    _bundle(**{"model.ridge_alpha": 1e-4}),
+    _bundle(**{"model.ridge_alpha": 1e-2}),
+    _bundle(**{"model.ridge_alpha": 1.0}),
+)
+
 
 def _tunable(name: str, representation: str, bundles: tuple[dict[str, Any], ...],
               *, gpu: float, optimizer_space: Mapping[str, Domain],
@@ -231,12 +247,27 @@ _specs = [
         anchor_optimizer={"train.learning_rate": 1e-4, "train.weight_decay": 0.0, "train.batch_size": 2}),
 ]
 
-for family in ("lookbackmean", "linearar", "residuallinearar"):
+for family in ("linearar", "residuallinearar"):
     for dimension in ("1d", "2d", "4d"):
-        reason = "Parameter-free reference." if family == "lookbackmean" else (
-            "Reference only; no architecture parameter implemented for HPO."
-        )
-        _specs.append(_reference(f"{family}{dimension}", dimension, reason=reason))
+        _specs.append(_tunable(
+            f"{family}{dimension}",
+            dimension,
+            _LINEAR_RIDGE_BUNDLES,
+            gpu=0.0,
+            optimizer_space=(
+                _OPTIMIZER_LINEAR_MAP if dimension == "4d" else _OPTIMIZER_LINEAR
+            ),
+            anchor_optimizer={
+                "train.learning_rate": 1e-3,
+                "train.batch_size": 64 if dimension != "4d" else 16,
+            },
+        ))
+
+for family in ("lookbackmean",):
+    for dimension in ("1d", "2d", "4d"):
+        _specs.append(_reference(
+            f"{family}{dimension}", dimension, reason="Parameter-free reference."
+        ))
 
 _specs.extend([
     _blocked("stsprednet", "2d_or_4d", "Integrated callback lacks a comparable physical dB validation metric."),
