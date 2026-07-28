@@ -38,26 +38,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from models.ARIMA import ARIMAForecaster
-from models.ConvLSTM import ConvLSTMForecaster
-from models.ConvLSTM_FM import ConvLSTMFMForecaster
-from models.DSwinLSTM_I import DSwinLSTM_IForecaster
-from models.LSTMAttn import LSTMAttnForecaster
-from models.LookbackMean import LookbackMeanForecaster
-from models.LinearAutoregressive import LinearAutoregressiveForecaster
-from models.ResidualLinearAutoregressive import ResidualLinearAutoregressiveForecaster
-from models.ResidualConvLSTM import ResidualConvLSTMForecaster
-from models.ResidualVanillaLSTM import ResidualVanillaLSTMForecaster
-from models.TimeRAN import TimeRANForecaster
-from models.TemporalConvNet import TemporalConvNetForecaster
-from models.VanillaLSTM import VanillaLSTMForecaster
-from models.AutoformerCSA import (
-    AutoformerCSAForecaster,
-    DotConfig,
-)
-
-
-
 SUPPORTED_MODELS = {
     "arima",
     "vanillalstm",
@@ -99,6 +79,10 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
     print(f"[DEBUG] build_model: model_name={model_name}, train_data.shape={train_data.shape}")
 
     if model_name in ("temporalconvnet", "lstmattn", "arima"):
+        from models.ARIMA import ARIMAForecaster
+        from models.LSTMAttn import LSTMAttnForecaster
+        from models.TemporalConvNet import TemporalConvNetForecaster
+
         if train_data.ndim != 2:
             raise ValueError(
                 f"Error! {model_name} expects training data shaped "
@@ -118,6 +102,8 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
         return model_types[model_name](predictor_config)
 
     if model_name == "vanillalstm":
+        from models.VanillaLSTM import VanillaLSTMForecaster
+
         if train_data.ndim != 2:
             raise ValueError(
                 "Error! VanillaLSTM expects training data shaped "
@@ -144,6 +130,8 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
         return VanillaLSTMForecaster(predictor_config)
 
     if model_name == "residualvanillalstm":
+        from models.ResidualVanillaLSTM import ResidualVanillaLSTMForecaster
+
         if train_data.ndim != 2:
             raise ValueError(
                 "Error! ResidualVanillaLSTM expects training data shaped "
@@ -161,6 +149,8 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
         return ResidualVanillaLSTMForecaster(predictor_config)
 
     if model_name == "timeran":
+        from models.TimeRAN import TimeRANForecaster
+
         if train_data.ndim != 2:
             raise ValueError(
                 "Error! TimeRAN expects training data shaped "
@@ -200,6 +190,8 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
         return TimeRANForecaster(predictor_config)
 
     if model_name == "convlstm":
+        from models.ConvLSTM import ConvLSTMForecaster
+
         if train_data.ndim != 4:
             raise ValueError(
                 "Error! ConvLSTM expects training map data shaped "
@@ -222,6 +214,8 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
         return ConvLSTMForecaster(predictor_config)
 
     if model_name == "convlstmfm":
+        from models.ConvLSTM_FM import ConvLSTMFMForecaster
+
         if train_data.ndim != 4:
             raise ValueError(
                 "Error! ConvLSTM-FM expects training map data shaped "
@@ -248,6 +242,8 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
         return ConvLSTMFMForecaster(predictor_config)
 
     if model_name == "residualconvlstm":
+        from models.ResidualConvLSTM import ResidualConvLSTMForecaster
+
         if train_data.ndim != 4:
             raise ValueError(
                 "Error! ResidualConvLSTM expects training map data shaped "
@@ -266,6 +262,8 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
         return ResidualConvLSTMForecaster(predictor_config)
 
     if model_name in ("lookbackmean1d", "lookbackmean2d", "lookbackmean4d"):
+        from models.LookbackMean import LookbackMeanForecaster
+
         if model_name == "lookbackmean4d" and train_data.ndim != 4:
             raise ValueError(
                 "Error! LookbackMean4D expects map data shaped "
@@ -279,6 +277,8 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
         return LookbackMeanForecaster(config[model_name])
 
     if model_name in ("linearar1d", "linearar2d", "linearar4d"):
+        from models.LinearAutoregressive import LinearAutoregressiveForecaster
+
         if model_name == "linearar4d" and train_data.ndim != 4:
             raise ValueError(
                 "Error! LinearAR4D expects map data shaped "
@@ -302,6 +302,8 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
         "residuallinearar2d",
         "residuallinearar4d",
     ):
+        from models.ResidualLinearAutoregressive import ResidualLinearAutoregressiveForecaster
+
         if model_name == "residuallinearar4d" and train_data.ndim != 4:
             raise ValueError(
                 "Error! ResidualLinearAR4D expects map data shaped "
@@ -321,6 +323,8 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
         return ResidualLinearAutoregressiveForecaster(predictor_config)
 
     if model_name == "dswinlstm_i":
+        from models.DSwinLSTM_I import DSwinLSTM_IForecaster
+
         if train_data.ndim != 4:
             raise ValueError(
                 "Error! DSwinLSTM-I expects training map data shaped "
@@ -343,6 +347,8 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
         return model
 
     if model_name == "autoformer_csa":
+        from models.AutoformerCSA import AutoformerCSAForecaster, DotConfig
+
         if train_data.ndim != 2:
             raise ValueError(
                 "Error! Autoformer-CSA expects training data "

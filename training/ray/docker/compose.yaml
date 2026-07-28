@@ -1,0 +1,109 @@
+name: spectrum-ray
+
+services:
+  ray-head:
+    image: ${RAY_IMAGE:-spectrum-ray:2.54.0-local}
+    build:
+      context: ../../..
+      dockerfile: training/ray/docker/Dockerfile.core
+    entrypoint: ["/usr/local/bin/ray-head"]
+    hostname: ray-head
+    environment: &ray-environment
+      AWS_ACCESS_KEY_ID_FILE: /run/secrets/minio_root_user
+      AWS_SECRET_ACCESS_KEY_FILE: /run/secrets/minio_root_password
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_REGION: us-east-1
+      AWS_ENDPOINT_URL: http://minio:9000
+      MINIO_ENDPOINT: http://minio:9000
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_BUCKET: ${MINIO_BUCKET:-spectrum-usage}
+      RAY_ADDRESS: ray-head:6379
+    volumes:
+      - ${RAY_REPO_PATH:-/home/cc/spectrum-usage}:/workspace/spectrum-usage
+    ports:
+      - "8265:8265"
+      - "10001:10001"
+    secrets:
+      - minio_root_user
+      - minio_root_password
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://127.0.0.1:8265/api/version\", timeout=2)' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    networks: [ray]
+
+  ray-worker:
+    image: ${RAY_IMAGE:-spectrum-ray:2.54.0-local}
+    entrypoint: ["/usr/local/bin/ray-worker"]
+    environment:
+      <<: *ray-environment
+      RAY_NUM_GPUS: "1"
+    volumes:
+      - ${RAY_REPO_PATH:-/home/cc/spectrum-usage}:/workspace/spectrum-usage
+    secrets:
+      - minio_root_user
+      - minio_root_password
+    gpus: 1
+    healthcheck:
+      test: ["CMD-SHELL", "ray health-check --address=ray-head:6379"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    depends_on:
+      ray-head:
+        condition: service_healthy
+    networks: [ray]
+
+  minio:
+    image: ${MINIO_IMAGE:-minio/minio:RELEASE.2025-04-22T22-12-26Z}
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER_FILE: /run/secrets/minio_root_user
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio_root_password
+    volumes:
+      - minio-data:/data
+    secrets:
+      - minio_root_user
+      - minio_root_password
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks: [ray]
+
+  minio-init:
+    image: ${MINIO_MC_IMAGE:-minio/mc:RELEASE.2025-04-16T18-13-26Z}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        until mc alias set local http://minio:9000 "$$(cat /run/secrets/minio_root_user)" "$$(cat /run/secrets/minio_root_password)"; do sleep 2; done
+        mc mb --ignore-existing "local/$${MINIO_BUCKET}"
+    environment:
+      MINIO_BUCKET: ${MINIO_BUCKET:-spectrum-usage}
+    secrets:
+      - minio_root_user
+      - minio_root_password
+    depends_on: [minio]
+    networks: [ray]
+
+volumes:
+  minio-data:
+
+secrets:
+  minio_root_user:
+    file: ${RAY_SECRETS_DIR:-./secrets}/minio_root_user
+  minio_root_password:
+    file: ${RAY_SECRETS_DIR:-./secrets}/minio_root_password
+
+networks:
+  ray:

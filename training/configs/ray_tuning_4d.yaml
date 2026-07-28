@@ -1,0 +1,54 @@
+data:
+  representation: 4d
+  files:
+    - {path: data/powder/cpg-nuc1/20260628T0437Z/600_800/power_1mhz_avg_per_minute.csv, partition: train}
+    - {path: data/powder/ebc-nuc1/20260628T0436Z/600_800/power_1mhz_avg_per_minute.csv, partition: train}
+    - {path: data/powder/humanities-nuc1/20260628T0436Z/600_800/power_1mhz_avg_per_minute.csv, partition: train}
+    - {path: data/powder/madsen-nuc1/20260628T0437Z/600_800/power_1mhz_avg_per_minute.csv, partition: train}
+    - {path: data/powder/moran-nuc1/20260628T0437Z/600_800/power_1mhz_avg_per_minute.csv, partition: train}
+    - {path: data/powder/sagepoint-nuc1/20260628T0437Z/600_800/power_1mhz_avg_per_minute.csv, partition: train}
+    - {path: data/powder/cpg-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv, partition: test}
+    - {path: data/powder/ebc-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv, partition: test}
+    - {path: data/powder/humanities-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv, partition: test}
+    - {path: data/powder/madsen-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv, partition: test}
+    - {path: data/powder/moran-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv, partition: test}
+    - {path: data/powder/sagepoint-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv, partition: test}
+  concat: rows
+  split:
+    ranges:
+      train: {start: "2026-06-28T04:37:00Z", end: "2026-07-02T02:23:00Z"}
+      validation: {start: "2026-07-02T02:24:00Z", end: "2026-07-03T02:23:00Z"}
+      test: {start: "2026-07-03T18:39:00Z", end: "2026-07-06T09:14:00Z"}
+  map:
+    name: plan_powder_600_800
+    locations: data/locations/powder.json
+    collection_key: endpoints
+    output_dir: data/maps
+    grid: {height: 10, width: 10}
+    force_rebuild: false
+    permute: false
+    permute_seed: 42
+  chunks: [{id: powder_600_800_t4t6, start_mhz: 600.0, end_mhz: 800.0}]
+
+windowing: {lookback: 60, horizons: [1, 15, 60]}
+training:
+  device: cuda
+  models: [convlstm, residualconvlstm, convlstmfm, dswinlstm_i]
+preprocessing: {normalize: true, impute: true, max_missing_gap: 9}
+data_loader: {num_workers: 0, pin_memory: false}
+
+convlstm:
+  model: {input_sequence_length: 60, prediction_horizon: 1, hidden_channels: [16, 32], kernel_size: [[1, 3], [1, 1]], num_encoder_layers: 2, decoder_hidden_channels: 16, decoder_kernel_size: [1, 1], decoder_lstm_hidden: 64, dropout: 0.2, use_batch_norm: false, fc_hidden_channels: 0, fc_kernel_size: [1, 3], fc_intermediate_activation: relu, cell_activation: tanh, use_channel_projection: false, channel_projection_dim: 16}
+  train: {val_fraction: 0.1, train_stride: 10, val_stride: 10, test_stride: 1, batch_size: 4, epochs: 20, learning_rate: 0.0002, weight_decay: 0.004, optimizer: adam, gradient_clip_norm: 5.0, validation_prediction_magnitude_threshold: 20.0, early_stopping: false, early_stopping_patience: 5, seed: 42}
+
+residualconvlstm:
+  model: {input_sequence_length: 60, prediction_horizon: 1, hidden_channels: [8], kernel_size: [[1, 3]], num_encoder_layers: 1, decoder_hidden_channels: 8, decoder_kernel_size: [1, 1], decoder_lstm_hidden: 32, dropout: 0.1, use_batch_norm: false, fc_hidden_channels: 0, fc_kernel_size: [1, 3], fc_intermediate_activation: relu, cell_activation: tanh, use_channel_projection: false, channel_projection_dim: 16}
+  train: {val_fraction: 0.1, train_stride: 10, val_stride: 10, test_stride: 1, batch_size: 4, epochs: 20, learning_rate: 0.0002, weight_decay: 0.004, optimizer: adam, gradient_clip_norm: 5.0, validation_prediction_magnitude_threshold: 20.0, early_stopping: false, early_stopping_patience: 5, seed: 42}
+
+convlstmfm:
+  model: {input_sequence_length: 60, prediction_horizon: 1, hidden_channels: [16, 16], kernel_size: [[3, 3], [3, 3]], num_layers: 2, cell_activation: relu, dropout: 0.1, pretrain_epochs: 10, pretrain_mask_ratio: 0.2, pretrain_learning_rate: 0.001, pretrain_batch_size: 16, freeze_backbone_after_pretrain: true}
+  train: {val_fraction: 0.1, train_stride: 10, val_stride: 10, test_stride: 1, batch_size: 2, epochs: 20, learning_rate: 0.0001, weight_decay: 0.004, optimizer: adam, gradient_clip_norm: 5.0, early_stopping: false, early_stopping_patience: 5, seed: 42}
+
+dswinlstm_i:
+  model: {input_sequence_length: 60, prediction_horizon: 60, patch_shape: [1, 2], embed_dim: 32, hidden_dims: [32, 64], encoder_units: 2, decoder_units: 2, swin_depths: [1, 1, 1, 1], num_heads: [2, 4, 4, 2], window_size: 4, use_patch_merging: true, use_patch_expanding: true, use_imputation_unit: true, mask_as_input_channel: false, output_activation: tanh, decoder_feedback: pixel_feedback, padding_mode: reflect}
+  train: {val_fraction: 0.1, train_stride: 10, val_stride: 10, test_stride: 60, batch_size: 2, epochs: 10, learning_rate: 0.0001, weight_decay: 0.0, optimizer: adam, gradient_clip_norm: 5.0, early_stopping: false, early_stopping_patience: 6, seed: 42}

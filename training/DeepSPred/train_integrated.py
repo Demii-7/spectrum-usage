@@ -29,6 +29,7 @@ from training.common.data_loader import data_loader_kwargs, seed_everything  # n
 from training.common.runtime import epoch_log_row, timestamp_utc  # noqa: E402
 from training.common.results import prepare_output_dirs  # noqa: E402
 from training.common.data import chunk_specs, load_chunk  # noqa: E402
+from training.common.training_events import TrainingCallback, emit_training_event  # noqa: E402
 
 
 MODEL_NAME = "deepspred"
@@ -95,7 +96,12 @@ def build_frame_dataset(
     return SpectrumFrameDataset(frames_pad, frames_orig, input_frames, output_frames, indices, ["CC2"] * len(indices))
 
 
-def train_one_model(config: dict[str, Any], train_raw: np.ndarray, segments, checkpoints: Path, out: Path, chunk_id: str, normalization=None, frequencies=None):
+def train_one_model(config: dict[str, Any], train_raw: np.ndarray, segments,
+                    checkpoints: Path, out: Path, chunk_id: str,
+                    normalization=None, frequencies=None,
+                    validation_data: np.ndarray | None = None,
+                    validation_segments=(),
+                    callback: TrainingCallback | None = None):
     runner = build_runner_config(config, train_raw.shape[1])
     dcfg = runner["train"]
     seed_everything(int(dcfg.get("seed", 42)))
@@ -103,18 +109,26 @@ def train_one_model(config: dict[str, Any], train_raw: np.ndarray, segments, che
     output_frames = runner["windowing"]["output_frames"]
     stride = runner["windowing"]["stride"]
     minutes_per_frame = runner["frames"]["minutes_per_frame"]
-    split_idx = max(1, int(len(train_raw) * 0.9))
-    train_part = train_raw[:split_idx]
-    val_part = train_raw[split_idx:]
-    if len(val_part) == 0:
-        val_part = train_part[-runner["frames"]["minutes_per_frame"] * 2 :]
+    if validation_data is None:
+        split_idx = max(1, int(len(train_raw) * 0.9))
+        train_part = train_raw[:split_idx]
+        val_part = train_raw[split_idx:]
+        if len(val_part) == 0:
+            val_part = train_part[-runner["frames"]["minutes_per_frame"] * 2 :]
+        train_segments = _frame_segments(segments, 0, split_idx, minutes_per_frame)
+        val_segments = _frame_segments(segments, split_idx, len(train_raw), minutes_per_frame)
+    else:
+        train_part = train_raw
+        val_part = validation_data
+        train_segments = _frame_segments(segments, 0, len(train_raw), minutes_per_frame)
+        val_segments = _frame_segments(
+            validation_segments, 0, len(validation_data), minutes_per_frame
+        )
     vmin = float(train_part.min())
     vmax = float(train_part.max())
 
     train_pad, train_orig = frames_from_raw(train_part, config, vmin, vmax)
     val_pad, val_orig = frames_from_raw(val_part, config, vmin, vmax)
-    train_segments = _frame_segments(segments, 0, split_idx, minutes_per_frame)
-    val_segments = _frame_segments(segments, split_idx, len(train_raw), minutes_per_frame)
     train_ds = build_frame_dataset(
         train_pad, train_orig, input_frames, output_frames, stride, train_segments
     )
@@ -123,6 +137,8 @@ def train_one_model(config: dict[str, Any], train_raw: np.ndarray, segments, che
     )
     if train_ds is None:
         raise ValueError("Not enough frames for DeepSPred training.")
+    if validation_data is not None and val_ds is None:
+        raise ValueError("Explicit validation split contains no DeepSPred windows")
 
     loader_kwargs = data_loader_kwargs(config.get("data_loader"))
     train_loader = DataLoader(train_ds, batch_size=int(dcfg.get("batch_size", 2)), shuffle=True, drop_last=True, **loader_kwargs)
@@ -137,7 +153,8 @@ def train_one_model(config: dict[str, Any], train_raw: np.ndarray, segments, che
     training_start_time = timestamp_utc()
     t_start = time.perf_counter()
 
-    for epoch in range(1, int(dcfg.get("epochs", 6)) + 1):
+    epochs = int(dcfg.get("epochs", 6))
+    for epoch in range(1, epochs + 1):
         epoch_start_time = timestamp_utc()
         epoch_start = time.perf_counter()
         model.train()
@@ -178,12 +195,30 @@ def train_one_model(config: dict[str, Any], train_raw: np.ndarray, segments, che
             )
         )
         print(f"{chunk_id} epoch {epoch:03d} train_loss={train_loss:.6f} val_loss={val_loss:.6f} time={epoch_duration:.1f}s")
-        if val_loss < best_loss:
+        is_best = val_loss < best_loss
+        if is_best:
             best_loss = val_loss
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
             no_improve = 0
         else:
             no_improve += 1
+
+        emit_training_event(
+            callback,
+            model_name=MODEL_NAME,
+            chunk_id=chunk_id,
+            stage="train",
+            epoch=epoch,
+            epochs=epochs,
+            metrics={"train_loss": float(train_loss), "val_loss": float(val_loss)},
+            selection_metric="val_loss",
+            selection_mode="min",
+            duration=epoch_duration,
+            prunable=True,
+            is_best=is_best,
+        )
+
+        if not is_best:
             if no_improve >= int(dcfg.get("early_stopping_epochs", 4)):
                 break
 
@@ -216,12 +251,17 @@ def train_one_model(config: dict[str, Any], train_raw: np.ndarray, segments, che
     return model, runner, {"vmin": vmin, "vmax": vmax}
 
 
-def train_chunk(config: dict[str, Any], chunk, data, out: Path, checkpoints: Path):
+def train_chunk(config: dict[str, Any], chunk, data, out: Path, checkpoints: Path,
+                callback: TrainingCallback | None = None):
     """Train one loaded shared-pipeline chunk and return the trained artifacts."""
     split = data.splits[data.train_split]
+    validation = data.splits.get(data.validation_split)
     return train_one_model(
         config, split.raw_dbm, split.segments, checkpoints, out, chunk.chunk_id,
         normalization=data.normalization, frequencies=data.frequencies,
+        validation_data=None if validation is None else validation.raw_dbm,
+        validation_segments=() if validation is None else validation.segments,
+        callback=callback,
     )
 
 
@@ -247,7 +287,10 @@ def main() -> None:
 
     for chunk in chunk_specs(config):
         print(f"Training DeepSPred for {chunk.chunk_id} ({chunk.start_mhz:g}-{chunk.end_mhz:g} MHz)")
-        data = load_chunk(config, chunk)
+        train_cfg = build_runner_config(config, 1)["train"]
+        data = load_chunk(
+            config, chunk, val_fraction=float(train_cfg.get("val_fraction", 0.1))
+        )
         train_chunk(config, chunk, data, out, checkpoints)
 
 

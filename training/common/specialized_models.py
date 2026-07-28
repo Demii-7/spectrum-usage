@@ -8,6 +8,8 @@ import sys
 from types import ModuleType
 from typing import Any
 
+from training.common.training_events import TrainingCallback
+
 SPECIALIZED_MODELS = {"stsprednet", "tss_lcd", "deepspred"}
 _MODEL_DIRECTORIES = {
     "stsprednet": "STS-PredNet",
@@ -56,14 +58,17 @@ def train_specialized_chunk(
     data,
     output_directory: Path,
     checkpoint_directory: Path,
+    callback: TrainingCallback | None = None,
 ) -> Path:
     module = _load_module(model_name, "train")
     if hasattr(module, "train_chunk"):
         return module.train_chunk(
-            config, chunk, data, output_directory, checkpoint_directory
+            config, chunk, data, output_directory, checkpoint_directory,
+            callback=callback,
         )
 
     split = data.splits[data.train_split]
+    validation = data.splits.get(data.validation_split)
     module.train_one_model(
         config,
         split.model_input,
@@ -73,6 +78,9 @@ def train_specialized_chunk(
         chunk.chunk_id,
         frequencies=data.frequencies,
         normalization=data.normalization,
+        validation_data=None if validation is None else validation.model_input,
+        validation_segments=() if validation is None else validation.segments,
+        callback=callback,
     )
     return checkpoint_directory / f"{chunk.chunk_id}_{model_name}.pt"
 

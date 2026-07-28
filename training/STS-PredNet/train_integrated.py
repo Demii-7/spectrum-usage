@@ -34,6 +34,7 @@ from training.common.runtime import epoch_log_row, timestamp_utc  # noqa: E402
 from training.common.results import prepare_output_dirs  # noqa: E402
 from training.common.data import chunk_specs, load_chunk  # noqa: E402
 from training.common.windowing import filter_target_rows  # noqa: E402
+from training.common.training_events import TrainingCallback, emit_training_event  # noqa: E402
 
 MODEL_NAME = "stsprednet"
 
@@ -94,7 +95,10 @@ def _model_inputs(batch, device):
 
 def train_one_model(config: dict[str, Any], full_x: np.ndarray,
                     segments, checkpoints: Path, out: Path, chunk_id: str,
-                    frequencies=None, normalization=None) -> STSPredNet:
+                    frequencies=None, normalization=None,
+                    validation_data: np.ndarray | None = None,
+                    validation_segments=(),
+                    callback: TrainingCallback | None = None) -> STSPredNet:
     scfg = config["stsprednet"]
     train_cfg = scfg.get("train", scfg)
     seed_everything(int(train_cfg.get("seed", scfg.get("seed", 42))))
@@ -121,12 +125,24 @@ def train_one_model(config: dict[str, Any], full_x: np.ndarray,
             f"for enabled-branch history {history}."
         )
 
-    n_val = max(1, int(len(all_targets) * 0.1))
-    train_targets = all_targets[:-n_val]
-    val_targets = all_targets[-n_val:]
+    if validation_data is None:
+        n_val = max(1, int(len(all_targets) * 0.1))
+        train_targets = all_targets[:-n_val]
+        val_targets = all_targets[-n_val:]
+        val_data_3d = data_3d
+    else:
+        train_targets = all_targets
+        val_data_3d = validation_data[:, None, None, :].astype(np.float32)
+        val_targets = np.asarray(generate_target_indices(
+            len(validation_data), branches["prediction_offset"], branches["use_closeness"],
+            branches["use_period"], branches["use_trend"], branches["lc"], branches["lp"],
+            branches["lq"], branches["period_interval"], branches["trend_interval"]), dtype=np.int64)
+        val_targets = filter_target_rows(val_targets, history, validation_segments)
+        if len(val_targets) == 0:
+            raise ValueError("Explicit validation split contains no STS-PredNet targets")
 
     train_ds = _make_dataset(data_3d, train_targets, branches)
-    val_ds = _make_dataset(data_3d, val_targets, branches)
+    val_ds = _make_dataset(val_data_3d, val_targets, branches)
 
     train_loader = DataLoader(
         train_ds, batch_size=batch_size, shuffle=True,
@@ -199,12 +215,30 @@ def train_one_model(config: dict[str, Any], full_x: np.ndarray,
         )
         print(f"{chunk_id} epoch {epoch:03d}/{epochs} train_loss={train_loss:.6f} val_loss={val_loss:.6f} time={t_epoch:.1f}s avg={avg_time:.1f}s eta={eta:.0f}s")
 
-        if val_loss < best_loss:
+        is_best = val_loss < best_loss
+        if is_best:
             best_loss = val_loss
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
             no_improve = 0
         else:
             no_improve += 1
+
+        emit_training_event(
+            callback,
+            model_name=MODEL_NAME,
+            chunk_id=chunk_id,
+            stage="train",
+            epoch=epoch,
+            epochs=epochs,
+            metrics={"train_loss": float(train_loss), "val_loss": float(val_loss)},
+            selection_metric="val_loss",
+            selection_mode="min",
+            duration=t_epoch,
+            prunable=True,
+            is_best=is_best,
+        )
+
+        if not is_best:
             if no_improve >= patience:
                 print(f"  Early stopping at epoch {epoch}")
                 break
@@ -435,12 +469,19 @@ def main() -> None:
 
     for chunk in chunk_specs(config):
         print(f"Training STS-PredNet for {chunk.chunk_id} ({chunk.start_mhz:g}-{chunk.end_mhz:g} MHz)")
-        data = load_chunk(config, chunk)
+        scfg = config[MODEL_NAME]
+        train_cfg = scfg.get("train") or scfg.get("training") or scfg
+        data = load_chunk(
+            config, chunk, val_fraction=float(train_cfg.get("val_fraction", 0.1))
+        )
         train = data.splits[data.train_split].model_input
+        validation = data.splits.get(data.validation_split)
         train_one_model(
             config, train, data.splits[data.train_split].segments,
             checkpoints, out, chunk.chunk_id,
             frequencies=data.frequencies, normalization=data.normalization,
+            validation_data=None if validation is None else validation.model_input,
+            validation_segments=() if validation is None else validation.segments,
         )
 
 

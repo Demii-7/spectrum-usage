@@ -33,6 +33,7 @@ from training.common.results import prepare_output_dirs  # noqa: E402
 from training.common.data import chunk_specs, load_chunk  # noqa: E402
 from training.common.data_loader import data_loader_kwargs  # noqa: E402
 from training.common.windowing import make_window_starts  # noqa: E402
+from training.common.training_events import TrainingCallback, emit_training_event  # noqa: E402
 
 MODEL_NAME = "tss_lcd"
 
@@ -209,7 +210,10 @@ def make_test_loader(full_x: np.ndarray, test_start: int,
 
 def train_autoencoder(enc, dec, train_loader, val_loader,
                       tcfg: dict, device: torch.device,
-                      checkpoints: Path, out: Path, chunk_id: str):
+                      checkpoints: Path, out: Path, chunk_id: str,
+                      callback: TrainingCallback | None = None,
+                      epoch_offset: int = 0,
+                      total_epochs: int | None = None):
     epochs = int(tcfg["autoencoder_epochs"])
     lr = float(tcfg["autoencoder_learning_rate"])
     clip_norm = float(tcfg.get("gradient_clip_norm", tcfg.get("gradient_clip", 5.0)))
@@ -278,7 +282,8 @@ def train_autoencoder(enc, dec, train_loader, val_loader,
               f"train_loss={train_loss:.6f} val_loss={val_loss:.6f} "
               f"time={t_epoch:.1f}s avg={avg_time:.1f}s eta={eta:.0f}s")
 
-        if val_loss < best_loss:
+        is_best = val_loss < best_loss
+        if is_best:
             best_loss = val_loss
             best_state = {
                 "enc": {k: v.detach().cpu().clone() for k, v in enc.state_dict().items()},
@@ -287,6 +292,25 @@ def train_autoencoder(enc, dec, train_loader, val_loader,
             no_improve = 0
         else:
             no_improve += 1
+
+        emit_training_event(
+            callback,
+            model_name=MODEL_NAME,
+            chunk_id=chunk_id,
+            stage="autoencoder",
+            epoch=epoch_offset + epoch,
+            epochs=total_epochs or epochs,
+            stage_epoch=epoch,
+            stage_epochs=epochs,
+            metrics={"train_loss": float(train_loss), "val_loss": float(val_loss)},
+            selection_metric="val_loss",
+            selection_mode="min",
+            duration=t_epoch,
+            prunable=False,
+            is_best=is_best,
+        )
+
+        if not is_best:
             if no_improve >= patience:
                 print(f"  Early stopping at epoch {epoch}")
                 break
@@ -302,7 +326,10 @@ def train_autoencoder(enc, dec, train_loader, val_loader,
 
 def train_tss_condition(enc, tss_cc, train_loader, val_loader,
                         tcfg: dict, device: torch.device,
-                        checkpoints: Path, out: Path, chunk_id: str):
+                        checkpoints: Path, out: Path, chunk_id: str,
+                        callback: TrainingCallback | None = None,
+                        epoch_offset: int = 0,
+                        total_epochs: int | None = None):
     epochs = int(tcfg["tss_epochs"])
     lr = float(tcfg["tss_learning_rate"])
     clip_norm = float(tcfg.get("gradient_clip_norm", tcfg.get("gradient_clip", 5.0)))
@@ -371,13 +398,33 @@ def train_tss_condition(enc, tss_cc, train_loader, val_loader,
               f"train_loss={train_loss:.6f} val_loss={val_loss:.6f} "
               f"time={t_epoch:.1f}s avg={avg_time:.1f}s eta={eta:.0f}s")
 
-        if val_loss < best_loss:
+        is_best = val_loss < best_loss
+        if is_best:
             best_loss = val_loss
             best_state = {k: v.detach().cpu().clone()
                           for k, v in tss_cc.state_dict().items()}
             no_improve = 0
         else:
             no_improve += 1
+
+        emit_training_event(
+            callback,
+            model_name=MODEL_NAME,
+            chunk_id=chunk_id,
+            stage="tss_condition",
+            epoch=epoch_offset + epoch,
+            epochs=total_epochs or epochs,
+            stage_epoch=epoch,
+            stage_epochs=epochs,
+            metrics={"train_loss": float(train_loss), "val_loss": float(val_loss)},
+            selection_metric="val_loss",
+            selection_mode="min",
+            duration=t_epoch,
+            prunable=False,
+            is_best=is_best,
+        )
+
+        if not is_best:
             if no_improve >= patience:
                 print(f"  Early stopping at epoch {epoch}")
                 break
@@ -392,7 +439,10 @@ def train_tss_condition(enc, tss_cc, train_loader, val_loader,
 
 def train_diffusion(enc, tss_cc, diffusion, train_loader, val_loader,
                     tcfg: dict, device: torch.device,
-                    checkpoints: Path, out: Path, chunk_id: str):
+                    checkpoints: Path, out: Path, chunk_id: str,
+                    callback: TrainingCallback | None = None,
+                    epoch_offset: int = 0,
+                    total_epochs: int | None = None):
     epochs = int(tcfg["diffusion_epochs"])
     lr = float(tcfg["diffusion_learning_rate"])
     clip_norm = float(tcfg.get("gradient_clip_norm", tcfg.get("gradient_clip", 5.0)))
@@ -473,13 +523,33 @@ def train_diffusion(enc, tss_cc, diffusion, train_loader, val_loader,
               f"train_loss={train_loss:.6f} val_loss={val_loss:.6f} "
               f"time={t_epoch:.1f}s avg={avg_time:.1f}s eta={eta:.0f}s")
 
-        if val_loss < best_loss:
+        is_best = val_loss < best_loss
+        if is_best:
             best_loss = val_loss
             best_state = {k: v.detach().cpu().clone()
                           for k, v in diffusion.state_dict().items()}
             no_improve = 0
         else:
             no_improve += 1
+
+        emit_training_event(
+            callback,
+            model_name=MODEL_NAME,
+            chunk_id=chunk_id,
+            stage="diffusion",
+            epoch=epoch_offset + epoch,
+            epochs=total_epochs or epochs,
+            stage_epoch=epoch,
+            stage_epochs=epochs,
+            metrics={"train_loss": float(train_loss), "val_loss": float(val_loss)},
+            selection_metric="val_loss",
+            selection_mode="min",
+            duration=t_epoch,
+            prunable=True,
+            is_best=is_best,
+        )
+
+        if not is_best:
             if no_improve >= patience:
                 print(f"  Early stopping at epoch {epoch}")
                 break
@@ -492,7 +562,8 @@ def train_diffusion(enc, tss_cc, diffusion, train_loader, val_loader,
     return diffusion
 
 
-def train_chunk(config: dict[str, Any], chunk, data, out: Path, checkpoints: Path) -> Path:
+def train_chunk(config: dict[str, Any], chunk, data, out: Path, checkpoints: Path,
+                callback: TrainingCallback | None = None) -> Path:
     """Train all paper stages for one loaded chunk and write one final checkpoint."""
     model_cfg, train_cfg = config_sections(config)
     seed = int(train_cfg.get("seed", config.get("seed", 42)))
@@ -516,9 +587,24 @@ def train_chunk(config: dict[str, Any], chunk, data, out: Path, checkpoints: Pat
             **dict((config.get(MODEL_NAME) or {}).get("preprocessing") or {}),
         }, seed=seed,
     )
-    enc, dec = train_autoencoder(enc, dec, train_loader, val_loader, train_cfg, device, checkpoints, out, chunk.chunk_id)
-    tss_cc = train_tss_condition(enc, tss_cc, train_loader, val_loader, train_cfg, device, checkpoints, out, chunk.chunk_id)
-    diffusion = train_diffusion(enc, tss_cc, diffusion, train_loader, val_loader, train_cfg, device, checkpoints, out, chunk.chunk_id)
+    autoencoder_epochs = int(train_cfg["autoencoder_epochs"])
+    tss_epochs = int(train_cfg["tss_epochs"])
+    diffusion_epochs = int(train_cfg["diffusion_epochs"])
+    total_epochs = autoencoder_epochs + tss_epochs + diffusion_epochs
+    enc, dec = train_autoencoder(
+        enc, dec, train_loader, val_loader, train_cfg, device, checkpoints, out,
+        chunk.chunk_id, callback=callback, total_epochs=total_epochs,
+    )
+    tss_cc = train_tss_condition(
+        enc, tss_cc, train_loader, val_loader, train_cfg, device, checkpoints, out,
+        chunk.chunk_id, callback=callback, epoch_offset=autoencoder_epochs,
+        total_epochs=total_epochs,
+    )
+    diffusion = train_diffusion(
+        enc, tss_cc, diffusion, train_loader, val_loader, train_cfg, device,
+        checkpoints, out, chunk.chunk_id, callback=callback,
+        epoch_offset=autoencoder_epochs + tss_epochs, total_epochs=total_epochs,
+    )
     path = checkpoints / f"{chunk.chunk_id}_tss_lcd.pt"
     torch.save({
         "model_name": MODEL_NAME,
@@ -569,7 +655,10 @@ def main() -> None:
         print(f"Training TSS-LCD for {chunk.chunk_id} "
               f"({chunk.start_mhz:g}-{chunk.end_mhz:g} MHz)")
         chunk_start = time.perf_counter()
-        data = load_chunk(config, chunk)
+        _, train_cfg = config_sections(config)
+        data = load_chunk(
+            config, chunk, val_fraction=float(train_cfg.get("val_fraction", 0.1))
+        )
         train_chunk(config, chunk, data, out, checkpoints)
 
         print(f"  {chunk.chunk_id} total done in {time.perf_counter() - chunk_start:.1f}s")

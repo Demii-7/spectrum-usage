@@ -71,6 +71,9 @@ from training.common.windowing import (
     build_window_loaders,
 )
 from training.common.data_loader import seed_everything
+from training.common.training_events import TrainingCallback, emit_training_event
+from training.common.config import resolve_path
+from training.common.map_builder import find_site_grid_indices
 
 def train_model(
     model_name: str,
@@ -80,6 +83,10 @@ def train_model(
     segments=(),
     val_data: np.ndarray | None = None,
     val_segments=(),
+    callback: TrainingCallback | None = None,
+    chunk_id: str | None = None,
+    normalization: dict[str, Any] | None = None,
+    site_grid_indices: dict[str, tuple[int, int]] | None = None,
 ):
     """ Integrated Training, Validation, and Logging """
     print(f"[DEBUG] train_model entry: model_name={model_name}, train_data.shape={train_data.shape}")
@@ -154,6 +161,8 @@ def train_model(
                 mask_ratio=float(model_cfg.get("pretrain_mask_ratio", 0.2)),
                 learning_rate=float(model_cfg.get("pretrain_learning_rate", 1e-3)),
                 mask_mode=str(model_cfg.get("pretrain_mask_mode", "tokens")),
+                callback=callback,
+                chunk_id=chunk_id,
             )
             if bool(model_cfg.get("freeze_backbone_after_pretrain", False)):
                 model.freeze_backbone()
@@ -223,9 +232,22 @@ def train_model(
         train_cfg.get("early_stopping", True)
     )
 
+    selection_metric = str(train_cfg.get("selection_metric", "val_loss"))
+    if selection_metric not in {"val_loss", "val_mean_horizon_mae_db"}:
+        raise ValueError(
+            "train.selection_metric must be 'val_loss' or "
+            "'val_mean_horizon_mae_db'"
+        )
+
+    std_dbm = None
+    if normalization is not None:
+        std_dbm = torch.as_tensor(
+            normalization["std_dbm"], dtype=torch.float32, device=device
+        )
+
     # Initialize training tracking containers
 
-    best_val_loss = float("inf")
+    best_selection_value = float("inf")
     best_epoch = 0
     best_state = None
 
@@ -340,7 +362,10 @@ def train_model(
         horizon_step_map = {h: h - 1 for h in horizons_cfg}
         val_horizon_sums = {h: 0.0 for h in horizons_cfg}
         val_horizon_counts = {h: 0 for h in horizons_cfg}
+        val_mae_db_sums = {h: 0.0 for h in horizons_cfg}
+        val_mae_db_counts = {h: 0 for h in horizons_cfg}
         max_abs_by_horizon = [0.0] * rollout_horizon
+        max_abs_target = 0.0
 
         _t_val_start = time.perf_counter()
         _t_tf_acc = 0.0
@@ -368,6 +393,7 @@ def train_model(
 
                 loss_ar = criterion(pred_ar, y)
                 if convlstm_guard_threshold is not None:
+                    max_abs_target = max(max_abs_target, float(y.abs().max().item()))
                     batch_maxima = max_abs_prediction_by_horizon(pred_ar)
                     max_abs_by_horizon = [
                         max(current, batch)
@@ -383,10 +409,32 @@ def train_model(
                 step_mse = ((pred_ar - y) ** 2).mean(
                     dim=tuple(range(2, pred_ar.ndim))
                 )
+                abs_error = torch.abs(pred_ar - y)
+                if pred_ar.ndim == 3:
+                    if std_dbm is not None:
+                        abs_error = abs_error * std_dbm.view(1, 1, -1)
+                elif pred_ar.ndim == 5:
+                    if std_dbm is not None:
+                        abs_error = abs_error * std_dbm.view(1, 1, -1, 1, 1)
+                    if site_grid_indices:
+                        abs_error = torch.stack(
+                            [
+                                abs_error[:, :, :, grid_h, grid_w]
+                                for grid_h, grid_w in site_grid_indices.values()
+                            ],
+                            dim=-1,
+                        )
+                else:
+                    raise RuntimeError(
+                        f"Unsupported validation prediction shape {tuple(pred_ar.shape)}"
+                    )
                 for h in horizons_cfg:
                     idx = horizon_step_map[h]
                     val_horizon_sums[h] += step_mse[:, idx].sum().item()
                     val_horizon_counts[h] += batch_samples
+                    horizon_abs_error = abs_error[:, idx]
+                    val_mae_db_sums[h] += horizon_abs_error.sum().item()
+                    val_mae_db_counts[h] += horizon_abs_error.numel()
 
                 # --- Teacher-forced (diagnostic) ---
                 if prediction_horizon == 1:
@@ -418,6 +466,18 @@ def train_model(
             h: val_horizon_sums[h] / max(val_horizon_counts[h], 1)
             for h in horizons_cfg
         }
+        val_horizon_mae_db = {
+            h: val_mae_db_sums[h] / max(val_mae_db_counts[h], 1)
+            for h in horizons_cfg
+        }
+        val_mean_horizon_mae_db = float(
+            np.mean([val_horizon_mae_db[h] for h in horizons_cfg])
+        )
+        current_selection_value = (
+            float(val_loss)
+            if selection_metric == "val_loss"
+            else val_mean_horizon_mae_db
+        )
 
         horizon_str = "  ".join(
             f"t+{h}={val_horizon_losses[h]:.6f}"
@@ -456,20 +516,30 @@ def train_model(
             log_row["val_teacher_loss"] = val_teacher_loss
         for h in horizons_cfg:
             log_row[f"val_loss_t{h}"] = val_horizon_losses[h]
+            log_row[f"val_mae_db_t{h}"] = val_horizon_mae_db[h]
+        log_row["val_mean_horizon_mae_db"] = val_mean_horizon_mae_db
         selection_eligible = True
         guard_status = "not_applicable"
         if convlstm_guard_threshold is not None:
+            effective_guard_threshold = max(
+                convlstm_guard_threshold,
+                max_abs_target,
+            )
             selection_eligible, guard_status = prediction_guard_status(
                 max_abs_by_horizon,
-                convlstm_guard_threshold,
+                effective_guard_threshold,
             )
             log_row.update(prediction_diagnostic_log(max_abs_by_horizon))
+            log_row["validation_prediction_magnitude_threshold_effective"] = (
+                effective_guard_threshold
+            )
             log_row["validation_selection_eligible"] = selection_eligible
             log_row["validation_guard_status"] = guard_status
         log_rows.append(log_row)
 
         diagnostic_str = (
             f"max_abs_pred={max(max_abs_by_horizon):.6g} "
+            f"threshold={effective_guard_threshold:.6g} "
             f"guard={guard_status} "
             if convlstm_guard_threshold is not None
             else ""
@@ -495,8 +565,13 @@ def train_model(
         )
 
         # Best model and early stopping
-        if selection_eligible and np.isfinite(val_loss) and val_loss < best_val_loss:
-            best_val_loss = val_loss
+        is_best = (
+            selection_eligible
+            and np.isfinite(current_selection_value)
+            and current_selection_value < best_selection_value
+        )
+        if is_best:
+            best_selection_value = current_selection_value
             best_epoch = epoch
 
             best_state = {
@@ -510,6 +585,31 @@ def train_model(
         elif selection_eligible:
             epochs_without_improvement += 1
 
+        emit_training_event(
+            callback,
+            model_name=model_name,
+            chunk_id=chunk_id,
+            stage="train",
+            epoch=epoch,
+            epochs=epochs,
+            metrics={
+                "train_loss": float(train_loss),
+                "val_loss": float(val_loss),
+                **{f"val_loss_t{h}": float(val_horizon_losses[h]) for h in horizons_cfg},
+                **{f"val_mae_db_t{h}": float(val_horizon_mae_db[h]) for h in horizons_cfg},
+                "val_mean_horizon_mae_db": val_mean_horizon_mae_db,
+            },
+            selection_metric=selection_metric,
+            selection_mode="min",
+            duration=epoch_duration,
+            prunable=True,
+            is_best=is_best,
+            selection_eligible=selection_eligible,
+            best_epoch=best_epoch,
+            best_value=(best_selection_value if np.isfinite(best_selection_value) else None),
+        )
+
+        if selection_eligible and not is_best:
             if early_stopping and epochs_without_improvement >= patience:
                 print(
                     f"Early stopping at epoch {epoch}. "
@@ -558,7 +658,9 @@ def train_model(
 
         # Best validation result and corresponding training loss.
         "best_epoch": best_epoch,
-        "best_val_loss": float(best_val_loss),
+        "selection_metric": selection_metric,
+        "best_selection_value": float(best_selection_value),
+        "best_val_loss": float(best_epoch_row["val_loss"]),
         "train_loss_at_best_epoch": float(
             best_epoch_row["train_loss"]
         ),
@@ -621,7 +723,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=None) # override run directory
     return parser.parse_args()
 
-def train_one_model(config: dict[str, Any], model_name: str, run_dir: Path) -> None:
+def train_one_model(
+    config: dict[str, Any],
+    model_name: str,
+    run_dir: Path,
+    callback: TrainingCallback | None = None,
+) -> None:
     print(f"[DEBUG] train_one_model entry: model={model_name}, run_dir={run_dir}")
     if model_name not in SUPPORTED_MODELS:
         raise ValueError(
@@ -629,15 +736,23 @@ def train_one_model(config: dict[str, Any], model_name: str, run_dir: Path) -> N
             f"{sorted(SUPPORTED_MODELS)}, got {model_name!r}."
         )
     if model_name in SPECIALIZED_MODELS:
+        model_section = config[model_name]
+        specialized_train_cfg = (
+            model_section.get("train")
+            or model_section.get("training")
+            or model_section
+        )
+        val_fraction = float(specialized_train_cfg.get("val_fraction", 0.1))
         out, checkpoints = prepare_output_dirs(run_dir)
         for chunk in chunk_specs(config):
             print(
                 f"Training {model_name} for {chunk.chunk_id} "
                 f"({chunk.start_mhz:g}-{chunk.end_mhz:g} MHz)"
             )
-            data = load_chunk(config, chunk)
+            data = load_chunk(config, chunk, val_fraction=val_fraction)
             train_specialized_chunk(
-                model_name, config, chunk, data, out, checkpoints
+                model_name, config, chunk, data, out, checkpoints,
+                callback=callback,
             )
         return
 
@@ -685,6 +800,18 @@ def train_one_model(config: dict[str, Any], model_name: str, run_dir: Path) -> N
             segments=data.splits[data.train_split].segments,
             val_data=None if validation is None else validation.model_input,
             val_segments=() if validation is None else validation.segments,
+            callback=callback,
+            chunk_id=chunk.chunk_id,
+            normalization=data.normalization,
+            site_grid_indices=(
+                find_site_grid_indices(
+                    resolve_path(config["data"]["map"].get("output_dir", "data/maps"))
+                    / f"{config['data']['map']['name']}_train.npz",
+                    str(config["data"].get("map_key", "map_db")),
+                )
+                if str(config["data"].get("representation", "")).lower() == "4d"
+                else None
+            ),
         )
         
         # Directly stream the pre-compiled log_frame to file  to avoid wasting CPU cycles reconstructing the table

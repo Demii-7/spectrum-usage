@@ -16,6 +16,7 @@ as the encoder for downstream forecasting.
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import torch
@@ -23,6 +24,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from models.ConvLSTM import ConvLSTM, _get_activation
+from training.common.training_events import TrainingCallback, emit_training_event
 
 
 def mask_sequence(
@@ -174,6 +176,8 @@ def pretrain_backbone(
     mask_ratio: float = 0.2,
     learning_rate: float = 1e-3,
     mask_mode: str = "tokens",
+    callback: TrainingCallback | None = None,
+    chunk_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Masked-reconstruction (MSM) self-supervised pretraining of the backbone
@@ -187,6 +191,7 @@ def pretrain_backbone(
     epoch_losses: list[float] = []
 
     for epoch in range(1, epochs + 1):
+        epoch_start = time.perf_counter()
         total_loss = 0.0
         sample_count = 0
         model.train()
@@ -203,6 +208,20 @@ def pretrain_backbone(
         print(
             f"[ConvLSTM-FM pretrain] epoch {epoch:03d}/{epochs} "
             f"masked_recon_loss={epoch_loss:.6f}"
+        )
+        emit_training_event(
+            callback,
+            model_name="convlstmfm",
+            chunk_id=chunk_id,
+            stage="pretrain",
+            epoch=epoch,
+            epochs=epochs,
+            metrics={"masked_reconstruction_loss": float(epoch_loss)},
+            selection_metric="masked_reconstruction_loss",
+            selection_mode="min",
+            duration=time.perf_counter() - epoch_start,
+            prunable=False,
+            is_best=epoch_loss == min(epoch_losses),
         )
 
     return {

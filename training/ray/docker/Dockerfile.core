@@ -1,0 +1,18 @@
+ARG PYTORCH_BASE_IMAGE=pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
+FROM ${PYTORCH_BASE_IMAGE}
+
+COPY training/ray/requirements/core.txt /tmp/core-requirements.txt
+RUN python -m pip install --no-cache-dir --requirement /tmp/core-requirements.txt \
+    && rm /tmp/core-requirements.txt \
+    && python -c "import ray, torch; assert ray.__version__ == '2.54.0'; assert torch.__version__.startswith('2.5.1')"
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    RAY_USAGE_STATS_ENABLED=0 \
+    RAY_LOG_TO_STDERR=1
+
+WORKDIR /workspace/spectrum-usage
+COPY training/ray/docker/entrypoint-worker.sh /usr/local/bin/ray-worker
+COPY training/ray/docker/entrypoint-head.sh /usr/local/bin/ray-head
+RUN chmod 0755 /usr/local/bin/ray-worker /usr/local/bin/ray-head
+ENTRYPOINT ["/usr/local/bin/ray-worker"]

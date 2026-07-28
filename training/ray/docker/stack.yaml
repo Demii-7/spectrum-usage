@@ -1,0 +1,146 @@
+services:
+  ray-head:
+    image: ${RAY_IMAGE:?set RAY_IMAGE to the local image tag distributed to every node}
+    entrypoint: ["/usr/local/bin/ray-head"]
+    hostname: ray-head
+    environment: &ray-environment
+      AWS_ACCESS_KEY_ID_FILE: /run/secrets/minio_root_user
+      AWS_SECRET_ACCESS_KEY_FILE: /run/secrets/minio_root_password
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_REGION: us-east-1
+      AWS_ENDPOINT_URL: http://minio:9000
+      MINIO_ENDPOINT: http://minio:9000
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_BUCKET: ${MINIO_BUCKET:-spectrum-usage}
+      RAY_ADDRESS: ray-head:6379
+    volumes:
+      - type: bind
+        source: /home/cc/spectrum-usage
+        target: /workspace/spectrum-usage
+    secrets: [minio_root_user, minio_root_password]
+    ports:
+      - target: 8265
+        published: 8265
+        protocol: tcp
+        mode: host
+      - target: 10001
+        published: 10001
+        protocol: tcp
+        mode: host
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://127.0.0.1:8265/api/version\", timeout=2)' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+          - node.labels.ray.head == true
+      restart_policy:
+        condition: on-failure
+    networks: [ray-overlay]
+
+  ray-worker:
+    image: ${RAY_IMAGE:?set RAY_IMAGE to the local image tag distributed to every node}
+    entrypoint: ["/usr/local/bin/ray-worker"]
+    hostname: "{{.Node.Hostname}}"
+    environment:
+      <<: *ray-environment
+      RAY_NUM_GPUS: "1"
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    volumes:
+      - type: bind
+        source: /home/cc/spectrum-usage
+        target: /workspace/spectrum-usage
+    secrets: [minio_root_user, minio_root_password]
+    healthcheck:
+      test: ["CMD-SHELL", "ray health-check --address=ray-head:6379"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    deploy:
+      mode: global
+      placement:
+        constraints:
+          - node.labels.ray.gpu == true
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+    networks: [ray-overlay]
+
+  minio:
+    image: ${MINIO_IMAGE:-minio/minio:RELEASE.2025-04-22T22-12-26Z}
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER_FILE: /run/secrets/minio_root_user
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio_root_password
+    volumes:
+      - minio-data:/data
+    secrets: [minio_root_user, minio_root_password]
+    ports:
+      - target: 9000
+        published: 9000
+        protocol: tcp
+        mode: host
+      - target: 9001
+        published: 9001
+        protocol: tcp
+        mode: host
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+          - node.labels.ray.head == true
+      restart_policy:
+        condition: on-failure
+    networks: [ray-overlay]
+
+  minio-init:
+    image: ${MINIO_MC_IMAGE:-minio/mc:RELEASE.2025-04-16T18-13-26Z}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        until mc alias set local http://minio:9000 "$$(cat /run/secrets/minio_root_user)" "$$(cat /run/secrets/minio_root_password)"; do sleep 2; done
+        mc mb --ignore-existing "local/$${MINIO_BUCKET}"
+    environment:
+      MINIO_BUCKET: ${MINIO_BUCKET:-spectrum-usage}
+    secrets: [minio_root_user, minio_root_password]
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+          - node.labels.ray.head == true
+      restart_policy:
+        condition: none
+    networks: [ray-overlay]
+
+volumes:
+  minio-data:
+    driver: local
+
+secrets:
+  minio_root_user:
+    external: true
+    name: ray_minio_root_user
+  minio_root_password:
+    external: true
+    name: ray_minio_root_password
+
+networks:
+  ray-overlay:
+    driver: overlay
+    attachable: true
+    driver_opts:
+      encrypted: "true"
