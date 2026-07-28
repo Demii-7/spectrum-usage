@@ -24,6 +24,11 @@ def test_tcn_search_is_independent_only_with_twelve_epoch_grace_period():
         for bundle in spec.space["architecture"].choices
     }
     assert modes == {"independent"}
+    assert set(spec.space["train.batch_size"].choices) == {16, 32}
+    assert {
+        spec.anchor(capacity)["train.batch_size"]
+        for capacity in ("tiny", "small", "reference")
+    } == {32}
     assert all(
         parameters["architecture"]["model.feature_mode"] == "independent"
         for parameters in spec.historical.values()

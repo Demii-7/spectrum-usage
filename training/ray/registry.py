@@ -74,6 +74,12 @@ _OPTIMIZER_2D = {
     "train.batch_size": choice(32, 64, 128),
 }
 
+_OPTIMIZER_TCN = {
+    "train.learning_rate": loguniform(3e-4, 3e-3),
+    "train.weight_decay": choice(0.0, 1e-5, 1e-4),
+    "train.batch_size": choice(16, 32),
+}
+
 _OPTIMIZER_MAP = {
     "train.learning_rate": loguniform(3e-5, 5e-4),
     "train.weight_decay": choice(0.0, 1e-4, 1e-3, 4e-3),
@@ -180,8 +186,8 @@ _specs = [
         _bundle(**{"model.hidden_channels": [8] * 6, "model.kernel_size": 2, "model.dropout": 0.0, "model.feature_mode": "independent"}),
         _bundle(**{"model.hidden_channels": [16] * 6, "model.kernel_size": 2, "model.dropout": 0.1, "model.feature_mode": "independent"}),
         _bundle(**{"model.hidden_channels": [32, 32, 32, 32, 32, 32], "model.kernel_size": 2, "model.dropout": 0.1, "model.feature_mode": "independent"}),
-    ), gpu=0.5, optimizer_space=_OPTIMIZER_2D,
-        anchor_optimizer={"train.learning_rate": 1e-3, "train.weight_decay": 0.0, "train.batch_size": 128},
+    ), gpu=0.5, optimizer_space=_OPTIMIZER_TCN,
+        anchor_optimizer={"train.learning_rate": 1e-3, "train.weight_decay": 0.0, "train.batch_size": 32},
         historical={"summary70_new_models": {
             "architecture": _bundle(**{"model.hidden_channels": [32] * 6, "model.kernel_size": 2, "model.dropout": 0.1, "model.feature_mode": "independent"}),
             "train.learning_rate": 1e-3, "train.weight_decay": 0.0, "train.batch_size": 32,
