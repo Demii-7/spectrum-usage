@@ -326,15 +326,15 @@ _specs.append(_tunable("tss_lcd", "2d", (
 _specs.extend([
     _tunable("stsprednet", "4d", (
         _bundle(**{
-            "model.num_layers": 1, "model.hidden_dim": 16,
-            "model.kernel_size": [3, 3],
-        }),
-        _bundle(**{
-            "model.num_layers": 2, "model.hidden_dim": 32,
+            "model.num_layers": 1, "model.hidden_dim": 32,
             "model.kernel_size": [3, 3],
         }),
         _bundle(**{
             "model.num_layers": 2, "model.hidden_dim": 64,
+            "model.kernel_size": [3, 3],
+        }),
+        _bundle(**{
+            "model.num_layers": 2, "model.hidden_dim": 96,
             "model.kernel_size": [3, 3],
         }),
     ), gpu=0.5, cpu=4.0, optimizer_space=_OPTIMIZER_STSPREDNET,
