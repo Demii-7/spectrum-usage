@@ -18,6 +18,15 @@ _DERIVED_KEYS = {
 }
 
 
+def _canonical(value: Any) -> Any:
+    """Normalize Ray-serialized nested bundles for stable equality checks."""
+    if isinstance(value, Mapping):
+        return tuple(sorted((str(key), _canonical(item)) for key, item in value.items()))
+    if isinstance(value, (list, tuple)):
+        return tuple(_canonical(item) for item in value)
+    return value
+
+
 def _set_path(root: dict[str, Any], path: str, value: Any) -> None:
     parts = path.split(".")
     if not parts or any(not part for part in parts):
@@ -37,7 +46,15 @@ def validate_parameters(spec: ModelSpec, parameters: Mapping[str, Any]) -> None:
     unknown = set(parameters) - set(spec.space)
     if unknown:
         raise ConfigurationError(f"Parameters outside {spec.name} search space: {sorted(unknown)}")
-    invalid = [name for name, value in parameters.items() if not spec.space[name].contains(value)]
+    invalid = []
+    for name, value in parameters.items():
+        domain = spec.space[name]
+        if name == "architecture" and isinstance(value, Mapping) and domain.kind == "choice":
+            valid = any(_canonical(value) == _canonical(choice) for choice in domain.choices)
+        else:
+            valid = domain.contains(value)
+        if not valid:
+            invalid.append(name)
     if invalid:
         raise ConfigurationError(f"Values outside bounded search domains: {sorted(invalid)}")
 
