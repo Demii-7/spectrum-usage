@@ -357,8 +357,8 @@ class SwinLSTMCell(nn.Module):
         """
         if hidden_states is None:
             B, L, C = xt.shape
-            hx = torch.zeros(B, L, C, device=xt.device)
-            cx = torch.zeros(B, L, C, device=xt.device)
+            hx = xt.new_zeros(B, L, C)
+            cx = xt.new_zeros(B, L, C)
         else:
             hx, cx = hidden_states
 
@@ -369,7 +369,7 @@ class SwinLSTMCell(nn.Module):
 
         gate = torch.sigmoid(Ft)
         cell = torch.tanh(Ft)
-        cy = gate * cell + cx
+        cy = gate * (cx + cell)
 
         if mask is not None:
             cy = cy + self.mask_proj(mask) + self.mask_bias
@@ -419,8 +419,8 @@ class SwinLSTMCellI(nn.Module):
         """
         if hidden_states is None:
             B, L, C = xt.shape
-            hx = torch.zeros(B, L, C, device=xt.device)
-            cx = torch.zeros(B, L, C, device=xt.device)
+            hx = xt.new_zeros(B, L, C)
+            cx = xt.new_zeros(B, L, C)
         else:
             hx, cx = hidden_states
 
@@ -654,10 +654,24 @@ class DSwinLSTM_IForecaster(nn.Module):
         self.decoder_feedback = model_cfg.get("decoder_feedback", "pixel_feedback")
         self.T_out = model_cfg["prediction_horizon"]
         self.padding_mode = model_cfg.get("padding_mode", "reflect")
-        self.output_activation = model_cfg.get("output_activation", "tanh")
+        self.output_activation = model_cfg.get("output_activation", "none")
+        self.use_imputation_unit = bool(model_cfg.get("use_imputation_unit", True))
+        self.mask_as_input_channel = bool(model_cfg.get("mask_as_input_channel", False))
         self.use_patch_merging = model_cfg.get("use_patch_merging", True)
         self.use_patch_expanding = model_cfg.get("use_patch_expanding", True)
-        self.num_merge_stages = 2 if self.use_patch_merging else 0
+        if self.encoder_units != 2 or self.decoder_units != 2:
+            raise ValueError("DSwinLSTM-I currently requires exactly two encoder and decoder units")
+        if len(self.hidden_dims) != 2 or len(self.swin_depths) != 4 or len(self.num_heads) != 4:
+            raise ValueError("DSwinLSTM-I requires two hidden dimensions and four depth/head entries")
+        if not self.use_patch_merging or not self.use_patch_expanding:
+            raise ValueError("DSwinLSTM-I currently requires patch merging and patch expanding")
+        if self.decoder_feedback != "pixel_feedback":
+            raise ValueError("DSwinLSTM-I currently supports only pixel_feedback decoding")
+        if self.mask_as_input_channel:
+            raise ValueError("DSwinLSTM-I uses its observation mask in the imputation unit, not as an input channel")
+        if self.output_activation not in {"none", "linear", "tanh"}:
+            raise ValueError("DSwinLSTM-I output_activation must be one of: none, linear, tanh")
+        self.num_merge_stages = 1
 
         #Compute padded spatial dimensions compatible with patch/window partitioning
         self.padded_H, self.padded_W = self._compute_padded_shape(self.orig_H, self.orig_W)
@@ -680,7 +694,8 @@ class DSwinLSTM_IForecaster(nn.Module):
         self.expand = PatchExpand(self.stage1_resolution, self.hidden_dims[1], out_dim=self.hidden_dims[0])
 
         #Encoder cells with imputation for processing the input sequence
-        self.enc_cell0 = SwinLSTMCellI(
+        encoder_cell = SwinLSTMCellI if self.use_imputation_unit else SwinLSTMCell
+        self.enc_cell0 = encoder_cell(
             self.hidden_dims[0], 
             self.stage0_resolution, 
             self.num_heads[0], 
@@ -691,7 +706,7 @@ class DSwinLSTM_IForecaster(nn.Module):
             drop_path=self.drop_path_rate,
         )
         
-        self.enc_cell1 = SwinLSTMCellI(
+        self.enc_cell1 = encoder_cell(
             self.hidden_dims[1], 
             self.stage1_resolution, 
             self.num_heads[1], 
@@ -791,17 +806,23 @@ class DSwinLSTM_IForecaster(nn.Module):
         tokens1 = self.merge(tokens0)
         return tokens0, tokens1
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        observation_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         """
         Full forward pass: encode the input sequence then autoregressively decode.
 
-        The encoder compresses the lookback window into a latent state using
-        SwinLSTMCellI cells with an all-observed internal mask. The decoder
-        then generates future frames one step at a time using SwinLSTMCell
-        cells, feeding each prediction back as the next input.
+        The encoder compresses the lookback window into a latent state. When
+        no observation mask is supplied, all values are treated as observed.
+        The decoder generates future frames one step at a time and feeds each
+        prediction back as the next input.
 
         Args:
             x: Input tensor shaped (B, T_in, F, H, W) in channel-first layout.
+            observation_mask: Optional tensor with the same shape as x, where
+                              1 denotes observed and 0 denotes missing.
 
         Returns:
             Predicted frames shaped (B, T_out, F, H, W) in channel-first layout.
@@ -826,12 +847,30 @@ class DSwinLSTM_IForecaster(nn.Module):
                 f"({self.orig_H}, {self.orig_W})"
             )
 
+        if observation_mask is None:
+            observation_mask = torch.ones_like(x)
+        elif observation_mask.shape != x.shape:
+            raise ValueError(
+                "Error! observation_mask must have the same shape as input; "
+                f"got {tuple(observation_mask.shape)} and {tuple(x.shape)}"
+            )
+        else:
+            observation_mask = observation_mask.to(device=x.device, dtype=x.dtype)
+
+        if not torch.isfinite(observation_mask).all():
+            raise ValueError("Error! observation_mask contains non-finite values")
+        if torch.any((observation_mask < 0) | (observation_mask > 1)):
+            raise ValueError("Error! observation_mask values must be between 0 and 1")
+        if not torch.isfinite(x).logical_or(observation_mask == 0).all():
+            raise ValueError("Error! observed DSwinLSTM-I inputs must be finite")
+
+        # Missing entries use a finite placeholder until token-level imputation.
+        x = torch.where(observation_mask > 0, x, torch.zeros_like(x))
+
         #Pad input frames to the model's required spatial dimensions
         x = self._pad_frames(x.view(B * T_in, F_ch, H, W)).view(B, T_in, F_ch, self.padded_H, self.padded_W)
 
-        #Generate internal all-observed mask (all ones) for imputation
-        mask = torch.ones(B, T_in, H, W, F_ch, device=x.device, dtype=x.dtype)
-        mask_cf = mask.permute(0, 1, 4, 2, 3).contiguous()
+        mask_cf = observation_mask
         mask_cf = self._pad_frames(mask_cf.view(B * T_in, F_ch, H, W)).view(B, T_in, F_ch, self.padded_H, self.padded_W)
         mask_ch_last = mask_cf.permute(0, 1, 3, 4, 2).contiguous()
         mask0, mask1 = self._mask_tokens(mask_ch_last)
@@ -841,11 +880,17 @@ class DSwinLSTM_IForecaster(nn.Module):
         enc1_state = None
         last_frame = x[:, -1]
 
-        for t in range(T_in):
+        for t in range(max(T_in - 1, 0)):
             tokens0 = self.patch_embed(x[:, t])
-            tokens0, enc0_state = self.enc_cell0(tokens0, mask0[:, t], enc0_state)
+            if self.use_imputation_unit:
+                tokens0, enc0_state = self.enc_cell0(tokens0, mask0[:, t], enc0_state)
+            else:
+                tokens0, enc0_state = self.enc_cell0(tokens0, enc0_state)
             tokens1 = self.merge(tokens0)
-            tokens1, enc1_state = self.enc_cell1(tokens1, mask1[:, t], enc1_state)
+            if self.use_imputation_unit:
+                tokens1, enc1_state = self.enc_cell1(tokens1, mask1[:, t], enc1_state)
+            else:
+                tokens1, enc1_state = self.enc_cell1(tokens1, enc1_state)
 
         #Decoder: autoregressively generate future frames
         dec1_state = enc1_state

@@ -246,9 +246,9 @@ _specs = [
     ), gpu=0.5, optimizer_space=_OPTIMIZER_MAP,
         anchor_optimizer={"train.learning_rate": 1e-4, "train.weight_decay": 4e-3, "train.batch_size": 2}),
     _tunable("dswinlstm_i", "4d", (
-        _bundle(**{"model.embed_dim": 8, "model.hidden_dims": [8, 16], "model.encoder_units": 1, "model.decoder_units": 1, "model.swin_depths": [1, 1, 1, 1], "model.num_heads": [1, 2, 2, 1], "model.window_size": 2}),
-        _bundle(**{"model.embed_dim": 16, "model.hidden_dims": [16, 32], "model.encoder_units": 1, "model.decoder_units": 1, "model.swin_depths": [1, 1, 1, 1], "model.num_heads": [1, 2, 2, 1], "model.window_size": 2}),
-        _bundle(**{"model.embed_dim": 32, "model.hidden_dims": [32, 64], "model.encoder_units": 2, "model.decoder_units": 2, "model.swin_depths": [1, 1, 1, 1], "model.num_heads": [2, 4, 4, 2], "model.window_size": 4}),
+        _bundle(**{"model.embed_dim": 8, "model.hidden_dims": [8, 16], "model.encoder_units": 2, "model.decoder_units": 2, "model.swin_depths": [1, 1, 1, 1], "model.num_heads": [1, 2, 2, 1], "model.window_size": 2}),
+        _bundle(**{"model.embed_dim": 16, "model.hidden_dims": [16, 32], "model.encoder_units": 2, "model.decoder_units": 2, "model.swin_depths": [1, 2, 2, 1], "model.num_heads": [1, 2, 2, 1], "model.window_size": 2}),
+        _bundle(**{"model.embed_dim": 32, "model.hidden_dims": [32, 64], "model.encoder_units": 2, "model.decoder_units": 2, "model.swin_depths": [1, 2, 2, 1], "model.num_heads": [2, 4, 4, 2], "model.window_size": 2}),
     ), gpu=0.5, optimizer_space=_OPTIMIZER_MAP,
         anchor_optimizer={"train.learning_rate": 1e-4, "train.weight_decay": 0.0, "train.batch_size": 2}),
 ]

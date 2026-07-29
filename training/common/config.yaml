@@ -257,35 +257,36 @@ dswinlstm_i:
   model:
     input_sequence_length: 60            # Number of past sequence / lookback
     prediction_horizon: 60               # Multi-step prediction horizon (direct output)
-    patch_shape: [1, 2]                  # Spatial patch size for patch embedding [height, width]
+    patch_shape: [1, 1]                  # Small-grid adaptation of the paper's spatial patch embedding
     embed_dim: 32                        # Base embedding dimension
     hidden_dims: [32, 64]                # Hidden dimensions for each encoder stage
     encoder_units: 2                     # Number of SwinLSTM encoder units
     decoder_units: 2                     # Number of SwinLSTM decoder units
-    swin_depths: [1, 1, 1, 1]           # Swin Transformer depth per stage
+    swin_depths: [1, 2, 2, 1]           # Swin Transformer depth per stage
     num_heads: [2, 4, 4, 2]             # Attention heads per stage
-    window_size: 4                       # Swin attention window size
+    window_size: 2                       # Reduced from the paper's 4 for the 10x10 map
     use_patch_merging: true              # Downsample between encoder stages via patch merging
     use_patch_expanding: true            # Upsample between decoder stages via patch expanding
     use_imputation_unit: true            # Enable imputation within encoder SwinLSTMCellI
     mask_as_input_channel: false         # Concatenate mask as extra input channel
-    output_activation: tanh              # Final activation: tanh or none
+    output_activation: none              # Shared preprocessing is z-score, so output must be unbounded
     decoder_feedback: pixel_feedback     # Decoder feedback strategy: pixel_feedback
     padding_mode: reflect                # Padding for spatial boundaries: reflect or replicate
+    drop_path_rate: 0.0                  # Avoid recurrent stochastic depth in the shallow adaptation
     
   #These parameters are for training
   train:
-    train_stride: 1                      # Step size between consecutive training windows
-    val_stride: 1                        # Step size between consecutive validation windows
+    train_stride: 5                      # Step size between consecutive training windows
+    val_stride: 10                       # Step size between consecutive validation windows
     test_stride: 60                      # Step size between consecutive test windows (used in evaluation)
     batch_size: 2                        # Number of samples per gradient update
-    epochs: 6                            # Number of full passes over the training data
+    epochs: 50                           # Practical budget for the recurrent Swin architecture
     learning_rate: 0.0001                # Optimizer learning rate
     weight_decay: 0.0                    # L2 weight-decay regularization strength
     optimizer: adam                      # Optimizer: adam, adamw, or sgd
     gradient_clip_norm: 5.0              # Maximum global gradient norm for clipping
     early_stopping: true                 # Stop training when validation loss stops improving
-    early_stopping_patience: 6           # Number of epochs without improvement before stopping
+    early_stopping_patience: 10          # Number of epochs without improvement before stopping
     seed: 42                             # Random seed for reproducibility
 
 

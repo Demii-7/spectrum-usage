@@ -47,7 +47,7 @@ Use the integrated runner in the model directory:
 ./.venv/bin/python training/TSS-LCD/train_integrated.py --config training/common/config.yaml
 ./.venv/bin/python training/VanillaLSTM/train_integrated.py --config training/common/config.yaml
 ./.venv/bin/python training/Autoformer-CSA/train_integrated.py --config training/common/config.yaml
-./.venv/bin/python training/DSwinLSTM-I/train_integrated.py --config training/common/config.yaml
+./.venv/bin/python -m training.common.train_integrated --config <dswinlstm-4d-config.yaml>
 ./.venv/bin/python training/DeepSPred/train_integrated.py --config training/common/config.yaml
 ./.venv/bin/python training/LinearAutoRegressive/train.py --config training/common/config.yaml
 ```
@@ -99,7 +99,6 @@ Use the shared smoke config:
 ./.venv/bin/python training/TSS-LCD/train_integrated.py --config training/common/config.smoke.yaml
 ./.venv/bin/python training/VanillaLSTM/train_integrated.py --config training/common/config.smoke.yaml
 ./.venv/bin/python training/Autoformer-CSA/train_integrated.py --config training/common/config.smoke.yaml
-./.venv/bin/python training/DSwinLSTM-I/train_integrated.py --config training/common/config.smoke.yaml
 ./.venv/bin/python training/DeepSPred/train_integrated.py --config training/common/config.smoke.yaml
 ```
 
@@ -107,7 +106,7 @@ Use the shared smoke config:
 
 - `LinearAutoRegressive`: preserved from `integrate`.
 - `ConvLSTM`, `STS-PredNet`, `TimeRAN`, `TSS-LCD`: integrated runners preserved from `integrate`, model sources updated from `main`.
-- `VanillaLSTM`, `Autoformer-CSA`, `DSwinLSTM-I`, `DeepSPred`: restored from `main` and wrapped with integrated runners.
-- `DSwinLSTM-I`: first integration pass uses CSV chunk data reshaped to a pseudo-map.
+- `VanillaLSTM`, `Autoformer-CSA`, and `DeepSPred`: restored from `main` and wrapped with integrated runners.
+- `DSwinLSTM-I`: uses the canonical model and shared 4D training/evaluation pipeline.
 - `DeepSPred`: first integration pass uses CSV chunk data converted into colormap spectrogram frames.
 - Interpolated-map support remains model-specific and optional.

@@ -532,13 +532,17 @@ is needed.
 
 ### Run DSwinLSTM-I
 
-The integrated DSwinLSTM-I runner uses CSV-based first-pass integration, reshaping each chunk into a pseudo-map before training.
+DSwinLSTM-I uses the shared 4D map pipeline and the canonical implementation in
+`models/DSwinLSTM_I.py`. Current data is pre-imputed, so calls use the model's
+all-observed default mask; learned imputation remains available through the
+model's optional observation-mask argument.
 
 ```bash
-python3 training/DSwinLSTM-I/train_integrated.py
+python3 -m training.common.train_integrated --config <4d-config.yaml>
 ```
 
-Training outputs go to `training/results/DSwinLSTM-I/` by default:
+Set `training.model_name: dswinlstm_i` in the selected configuration. Training
+uses the standard run directory and checkpoint layout.
 
 ```text
 <chunk_id>_training_log.csv
@@ -547,19 +551,11 @@ checkpoints/
 
 #### Evaluate
 
-Loads the checkpoint saved by training, runs inference on the test set, and writes metrics.
+Loads the shared checkpoint, runs inference on the configured test maps, and
+writes the standard metrics and forecast exports.
 
 ```bash
-python3 training/DSwinLSTM-I/evaluate_integrated.py
-```
-
-Evaluation outputs go to `training/results/DSwinLSTM-I/` by default:
-
-```text
-aggregate_metrics.csv
-per_frequency_metrics.csv
-per_band_metrics.csv
-report.txt
+python3 -m training.common.evaluation_integrated --config <4d-config.yaml> --name <run-name>
 ```
 
 ### Run DeepSPred
@@ -1279,7 +1275,7 @@ spectrum-usage/
 │   ├── TimeRAN/                    # TimeRAN entry points
 │   ├── TSS-LCD/                    # TSS-LCD entry points
 │   ├── Autoformer-CSA/             # Autoformer-CSA entry points
-│   ├── DSwinLSTM-I/                # DSwinLSTM-I entry points
+│   ├── DSwinLSTM-I/                # DSwinLSTM-I model notes
 │   ├── DeepSPred/                  # DeepSPred entry points
 │   └── LinearAutoRegressive/       # LinearAutoRegressive entry points
 ├── models/                         # Model architecture definitions

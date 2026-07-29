@@ -366,10 +366,16 @@ dswinlstm_i:
   model:
     input_sequence_length: 60
     prediction_horizon: 60
+    patch_shape: [1, 1]
+    window_size: 2
+    output_activation: none
   train:
     batch_size: 2
-    epochs: 6
+    epochs: 50
     learning_rate: 0.0001
+    train_stride: 5
+    val_stride: 10
+    early_stopping_patience: 10
 
 # Check for:
 #   runs/powder_600_800_dswinlstm_i_*/checkpoints/
@@ -409,10 +415,16 @@ dswinlstm_i:
   model:
     input_sequence_length: 60
     prediction_horizon: 60
+    patch_shape: [1, 1]
+    window_size: 2
+    output_activation: none
   train:
     batch_size: 2
-    epochs: 6
+    epochs: 50
     learning_rate: 0.0001
+    train_stride: 5
+    val_stride: 10
+    early_stopping_patience: 10
 
 # Check for:
 #   runs/powder_2400_2600_dswinlstm_i_*/checkpoints/
