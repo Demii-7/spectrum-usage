@@ -1,13 +1,14 @@
 # Ray Docker and Swarm deployment
 
 Ray `2.54.0` runs from one source-hashed image containing explicit `ray-head`
-and `ray-worker` entrypoints. The three one-H100 hosts are:
+and `ray-worker` entrypoints. The four one-H100 hosts are:
 
 | Address | Swarm hostname | Roles |
 |---|---|---|
 | `192.168.1.201` | current manager hostname | manager, Ray head, MinIO, GPU worker |
 | `192.168.1.120` | `ray-worker-2` | GPU worker |
 | `192.168.1.130` | `ray-worker-1` | GPU worker |
+| `192.168.1.189` | `ray-worker-3` | GPU worker |
 
 Every host must have `/home/cc/spectrum-usage`; Stack bind-mounts it at
 `/workspace/spectrum-usage`. The global worker service places exactly one task

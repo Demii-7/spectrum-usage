@@ -35,7 +35,7 @@ if docker image inspect "$IMAGE" >/dev/null 2>&1; then
 else
   docker build --file "$RAY_REPO_PATH/training/ray/docker/Dockerfile.core" --tag "$IMAGE" "$RAY_REPO_PATH"
 fi
-for ip in 192.168.1.120 192.168.1.130; do
+for ip in 192.168.1.120 192.168.1.130 192.168.1.189; do
   docker image save "$IMAGE" | ssh "${RAY_SSH_OPTIONS[@]}" "$RAY_SSH_USER@$ip" docker image load >/dev/null
   run_on_host "$ip" "docker image inspect '$IMAGE' >/dev/null"
   printf 'Loaded %s on %s.\n' "$IMAGE" "$ip"

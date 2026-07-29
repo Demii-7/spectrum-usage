@@ -16,7 +16,7 @@ while (($#)); do
 done
 
 printf 'Manager/head/MinIO/GPU worker: %s\n' "$RAY_HEAD_IP"
-printf '%s\n' 'Workers: ray-worker-2=192.168.1.120, ray-worker-1=192.168.1.130'
+printf '%s\n' 'Workers: ray-worker-2=192.168.1.120, ray-worker-1=192.168.1.130, ray-worker-3=192.168.1.189'
 printf '%s\n' 'Plan: initialize Swarm, join both workers over SSH, label all three GPU nodes, pin head/MinIO to the manager, and create MinIO secrets interactively.'
 if [[ "$APPLY" != true ]]; then
   printf '%s\n' 'DRY RUN: pass --apply to execute.'

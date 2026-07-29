@@ -10,7 +10,7 @@ if (($#)); then
   APPLY=true
 fi
 
-printf '%s\n' 'Plan: verify all H100s are idle and no containers are running, then restart Docker on all three hosts.'
+printf '%s\n' 'Plan: verify all H100s are idle and no containers are running, then restart Docker on all four hosts.'
 if [[ "$APPLY" != true ]]; then
   printf '%s\n' 'DRY RUN: pass --apply to perform the coordinated restart.'
   exit 0

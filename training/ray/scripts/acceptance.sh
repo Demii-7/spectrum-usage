@@ -16,7 +16,7 @@ while (($#)); do
 done
 
 printf 'Jobs API: %s\n' "$ADDRESS"
-printf '%s\n' 'Acceptance: discover all three host GPU UUIDs, then submit cluster_probe with hostname/UUID, fractional GPU, model import, and MinIO cross-worker checks.'
+printf '%s\n' 'Acceptance: discover all four host GPU UUIDs, then submit cluster_probe with hostname/UUID, fractional GPU, model import, and MinIO cross-worker checks.'
 if [[ "$RUN" != true ]]; then
   printf '%s\n' 'DRY RUN: pass --run to check the Jobs API and submit the acceptance probe.'
   exit 0
@@ -28,10 +28,12 @@ manager_hostname="$(hostname -s)"
 head_uuid="$(gpu_uuid_on_host 192.168.1.201)"
 worker_2_uuid="$(gpu_uuid_on_host 192.168.1.120)"
 worker_1_uuid="$(gpu_uuid_on_host 192.168.1.130)"
+worker_3_uuid="$(gpu_uuid_on_host 192.168.1.189)"
 probe_command=(python -m training.ray.cluster_probe --address auto
   --expected-gpu-node "$manager_hostname=$head_uuid"
   --expected-gpu-node "ray-worker-2=$worker_2_uuid"
   --expected-gpu-node "ray-worker-1=$worker_1_uuid"
+  --expected-gpu-node "ray-worker-3=$worker_3_uuid"
   --fractional-gpu-check 0.25
   --check-model-imports
   --check-minio-cross-worker)

@@ -5,8 +5,8 @@ RAY_HEAD_IP="${RAY_HEAD_HOST:-192.168.1.201}"
 RAY_GPU_IDLE_THRESHOLD="${RAY_GPU_IDLE_THRESHOLD:-5}"
 RAY_SSH_OPTIONS=(-o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new)
 RAY_SSH_USER="${RAY_SSH_USER:-cc}"
-RAY_NODE_IPS=("192.168.1.201" "192.168.1.120" "192.168.1.130")
-RAY_NODE_NAMES=("" "ray-worker-2" "ray-worker-1")
+RAY_NODE_IPS=("192.168.1.201" "192.168.1.120" "192.168.1.130" "192.168.1.189")
+RAY_NODE_NAMES=("" "ray-worker-2" "ray-worker-1" "ray-worker-3")
 
 run_on_host() {
   local ip="$1" command="$2"

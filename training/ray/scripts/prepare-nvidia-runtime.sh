@@ -15,7 +15,7 @@ while (($#)); do
   shift
 done
 
-printf '%s\n' 'Plan: run nvidia-ctk runtime configure --runtime=docker --set-as-default on all three hosts.'
+printf '%s\n' 'Plan: run nvidia-ctk runtime configure --runtime=docker --set-as-default on all four hosts.'
 printf '%s\n' 'Docker will NOT be restarted. An operator must separately schedule and perform any required restart.'
 if [[ "$APPLY" != true ]]; then
   printf '%s\n' 'DRY RUN: pass --apply to configure daemon.json.'
