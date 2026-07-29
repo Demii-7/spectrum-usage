@@ -51,7 +51,7 @@ training/ray/scripts/build-distribute-image.sh --apply
 # Export the RAY_IMAGE value printed by the script.
 ```
 
-Deployment verifies that all three local image IDs are identical and uses
+Deployment verifies that all four local image IDs are identical and uses
 `docker stack deploy --resolve-image never`. Public pinned MinIO images still
 come from their normal public registry.
 
