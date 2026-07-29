@@ -6,6 +6,7 @@ import sys
 
 import numpy as np
 import torch
+from torch.utils.data import DataLoader, TensorDataset
 
 
 HERE = Path(__file__).resolve().parent
@@ -134,3 +135,23 @@ def test_conditioner_preserves_branch_ablation_api() -> None:
             use_temporal=enabled[0], use_spectral=enabled[1], use_spatial=enabled[2],
         )
         assert conditioner(x).shape == (1, 5)
+
+
+def test_validation_forecast_metrics_are_physical_db() -> None:
+    class Diffusion:
+        def ddim_sample_loop(self, cond_z, steps, generator):
+            return torch.zeros(2, 2, 1, 1)
+
+    loader = DataLoader(
+        TensorDataset(torch.zeros(2, 3, 1, 1), torch.ones(2, 2, 1, 1)),
+        batch_size=2,
+    )
+    metrics = train.validation_forecast_metrics(
+        torch.nn.Identity(), torch.nn.Identity(), Diffusion(), loader, [1, 2],
+        {"mean_dbm": np.array([[-100.0]], dtype=np.float32),
+         "std_dbm": np.array([[2.0]], dtype=np.float32)},
+        torch.device("cpu"), sampler_steps=2, sampler_seed=7,
+    )
+    assert metrics["val_mae_db_t1"] == 2.0
+    assert metrics["val_mae_db_t2"] == 2.0
+    assert metrics["val_mean_horizon_mae_db"] == 2.0

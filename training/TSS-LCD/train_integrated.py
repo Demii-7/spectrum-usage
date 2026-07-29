@@ -34,6 +34,7 @@ from training.common.data import chunk_specs, load_chunk  # noqa: E402
 from training.common.data_loader import data_loader_kwargs  # noqa: E402
 from training.common.windowing import make_window_starts  # noqa: E402
 from training.common.training_events import TrainingCallback, emit_training_event  # noqa: E402
+from training.common.metrics import denormalize  # noqa: E402
 
 MODEL_NAME = "tss_lcd"
 
@@ -206,6 +207,34 @@ def make_test_loader(full_x: np.ndarray, test_start: int,
     ds = TSSLCDWindowDataset(full_x, starts, t_in, t_out)
     loader = DataLoader(ds, batch_size=batch_size, shuffle=False)
     return loader, starts + t_in + t_out - 1, ds.Y.numpy()
+
+
+def validation_forecast_metrics(dec, tss_cc, diffusion, val_loader, horizons: list[int],
+                                normalization: dict[str, Any] | None, device: torch.device,
+                                sampler_steps: int, sampler_seed: int) -> dict[str, float]:
+    """Evaluate decoded validation forecasts in physical dB for Ray selection."""
+    sums = {horizon: 0.0 for horizon in horizons}
+    counts = {horizon: 0 for horizon in horizons}
+    generator = torch.Generator(device=device).manual_seed(sampler_seed)
+    with torch.no_grad():
+        for x, y in val_loader:
+            x = x.to(device)
+            cond_z = tss_cc(x)
+            y_hat = dec(diffusion.ddim_sample_loop(cond_z, sampler_steps, generator))
+            pred = denormalize(y_hat.squeeze(2).cpu().numpy(), normalization)
+            target = denormalize(y.squeeze(2).numpy(), normalization)
+            for horizon in horizons:
+                error = np.abs(pred[:, horizon - 1] - target[:, horizon - 1])
+                sums[horizon] += float(error.sum())
+                counts[horizon] += int(error.size)
+    per_horizon = {
+        horizon: sums[horizon] / max(counts[horizon], 1)
+        for horizon in horizons
+    }
+    return {
+        **{f"val_mae_db_t{horizon}": float(per_horizon[horizon]) for horizon in horizons},
+        "val_mean_horizon_mae_db": float(np.mean(list(per_horizon.values()))),
+    }
 
 
 def train_autoencoder(enc, dec, train_loader, val_loader,
@@ -437,12 +466,14 @@ def train_tss_condition(enc, tss_cc, train_loader, val_loader,
     return tss_cc
 
 
-def train_diffusion(enc, tss_cc, diffusion, train_loader, val_loader,
+def train_diffusion(enc, dec, tss_cc, diffusion, train_loader, val_loader,
                     tcfg: dict, device: torch.device,
                     checkpoints: Path, out: Path, chunk_id: str,
                     callback: TrainingCallback | None = None,
                     epoch_offset: int = 0,
-                    total_epochs: int | None = None):
+                    total_epochs: int | None = None, horizons: list[int] | None = None,
+                    normalization: dict[str, Any] | None = None, sampler_steps: int = 50,
+                    sampler_seed: int = 42):
     epochs = int(tcfg["diffusion_epochs"])
     lr = float(tcfg["diffusion_learning_rate"])
     clip_norm = float(tcfg.get("gradient_clip_norm", tcfg.get("gradient_clip", 5.0)))
@@ -454,8 +485,10 @@ def train_diffusion(enc, tss_cc, diffusion, train_loader, val_loader,
     )
     criterion = nn.MSELoss()
     enc.eval()
+    dec.eval()
     tss_cc.eval()
     n_timestep = diffusion.n_timestep
+    horizons = horizons or [1]
 
     best_loss = float("inf")
     best_state = None
@@ -503,29 +536,36 @@ def train_diffusion(enc, tss_cc, diffusion, train_loader, val_loader,
                 noise_pred = diffusion(z_t, cond_z, t)
                 val_loss += criterion(noise_pred, noise).item() * y.size(0)
         val_loss /= max(len(val_loader.dataset), 1)
+        forecast_metrics = validation_forecast_metrics(
+            dec=dec, tss_cc=tss_cc, diffusion=diffusion, val_loader=val_loader,
+            horizons=horizons, normalization=normalization, device=device,
+            sampler_steps=sampler_steps, sampler_seed=sampler_seed,
+        )
 
         t_epoch = time.perf_counter() - t_epoch
-        log_rows.append(
-            epoch_log_row(
-                epoch=epoch,
-                train_loss=train_loss,
-                val_loss=val_loss,
-                epoch_start_time=epoch_start_time,
-                epoch_end_time=timestamp_utc(),
-                epoch_duration_sec=t_epoch,
-                learning_rate=float(optimizer.param_groups[0]["lr"]),
-            )
+        log_row = epoch_log_row(
+            epoch=epoch,
+            train_loss=train_loss,
+            val_loss=val_loss,
+            epoch_start_time=epoch_start_time,
+            epoch_end_time=timestamp_utc(),
+            epoch_duration_sec=t_epoch,
+            learning_rate=float(optimizer.param_groups[0]["lr"]),
         )
+        log_row.update(forecast_metrics)
+        log_rows.append(log_row)
         epoch_times.append(t_epoch)
         avg_time = sum(epoch_times) / len(epoch_times)
         eta = avg_time * (epochs - epoch)
         print(f"{chunk_id} diff epoch {epoch:03d}/{epochs} "
               f"train_loss={train_loss:.6f} val_loss={val_loss:.6f} "
+              f"val_mae_db={forecast_metrics['val_mean_horizon_mae_db']:.4f} "
               f"time={t_epoch:.1f}s avg={avg_time:.1f}s eta={eta:.0f}s")
 
-        is_best = val_loss < best_loss
+        selection_value = forecast_metrics["val_mean_horizon_mae_db"]
+        is_best = np.isfinite(selection_value) and selection_value < best_loss
         if is_best:
-            best_loss = val_loss
+            best_loss = selection_value
             best_state = {k: v.detach().cpu().clone()
                           for k, v in diffusion.state_dict().items()}
             no_improve = 0
@@ -541,8 +581,8 @@ def train_diffusion(enc, tss_cc, diffusion, train_loader, val_loader,
             epochs=total_epochs or epochs,
             stage_epoch=epoch,
             stage_epochs=epochs,
-            metrics={"train_loss": float(train_loss), "val_loss": float(val_loss)},
-            selection_metric="val_loss",
+            metrics={"train_loss": float(train_loss), "val_loss": float(val_loss), **forecast_metrics},
+            selection_metric="val_mean_horizon_mae_db",
             selection_mode="min",
             duration=t_epoch,
             prunable=True,
@@ -601,9 +641,13 @@ def train_chunk(config: dict[str, Any], chunk, data, out: Path, checkpoints: Pat
         total_epochs=total_epochs,
     )
     diffusion = train_diffusion(
-        enc, tss_cc, diffusion, train_loader, val_loader, train_cfg, device,
+        enc, dec, tss_cc, diffusion, train_loader, val_loader, train_cfg, device,
         checkpoints, out, chunk.chunk_id, callback=callback,
         epoch_offset=autoencoder_epochs + tss_epochs, total_epochs=total_epochs,
+        horizons=[int(horizon) for horizon in (horizons or [t_out])],
+        normalization=data.normalization,
+        sampler_steps=int(model_cfg.get("evaluation_sampler_steps", 50)),
+        sampler_seed=seed + int(model_cfg.get("evaluation_sampler_seed_offset", 10_000)),
     )
     path = checkpoints / f"{chunk.chunk_id}_tss_lcd.pt"
     torch.save({
@@ -627,6 +671,10 @@ def train_chunk(config: dict[str, Any], chunk, data, out: Path, checkpoints: Pat
             "seed": seed,
         },
         "tensor_layout": "B,T,L,F", "t_in": t_in, "t_out": t_out,
+        "evaluation_sampler": {
+            "name": "ddim", "steps": int(model_cfg.get("evaluation_sampler_steps", 50)),
+            "seed": seed + int(model_cfg.get("evaluation_sampler_seed_offset", 10_000)),
+        },
     }, path)
     return path
 

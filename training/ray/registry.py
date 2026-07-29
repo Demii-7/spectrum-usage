@@ -96,6 +96,20 @@ _OPTIMIZER_LINEAR_MAP = {
     "train.batch_size": choice(8, 16, 32),
 }
 
+_OPTIMIZER_TSS_LCD = {
+    "train.autoencoder_learning_rate": loguniform(3e-5, 3e-4),
+    "train.tss_learning_rate": loguniform(3e-5, 3e-4),
+    "train.diffusion_learning_rate": loguniform(3e-5, 3e-4),
+    "train.weight_decay": choice(0.0, 1e-5, 1e-4),
+    "train.batch_size": choice(8, 16, 32),
+}
+
+_OPTIMIZER_STSPREDNET = {
+    "learning_rate": loguniform(5e-5, 5e-4),
+    "weight_decay": choice(0.0, 1e-4, 1e-3),
+    "batch_size": choice(1, 2, 4),
+}
+
 _LINEAR_RIDGE_BUNDLES = (
     _bundle(**{"model.ridge_alpha": 1e-4}),
     _bundle(**{"model.ridge_alpha": 1e-2}),
@@ -275,9 +289,58 @@ for family in ("lookbackmean",):
             f"{family}{dimension}", dimension, reason="Parameter-free reference."
         ))
 
+_specs.append(_tunable("tss_lcd", "2d", (
+    _bundle(**{
+        "model.latent_dim": 16, "model.hidden_dim": 64,
+        "model.attention_heads": 2, "model.num_attention_layers": 1,
+        "model.ffn_dim": 128, "model.autoencoder_num_blocks": 2,
+        "model.autoencoder_initial_channels": 16,
+        "model.nen_encoder_channels": [32, 64],
+        "model.nen_bottleneck_channels": 128, "model.nen_decoder_channels": [64, 32],
+    }),
+    _bundle(**{
+        "model.latent_dim": 32, "model.hidden_dim": 128,
+        "model.attention_heads": 4, "model.num_attention_layers": 2,
+        "model.ffn_dim": 512, "model.autoencoder_num_blocks": 3,
+        "model.autoencoder_initial_channels": 32,
+        "model.nen_encoder_channels": [64, 128],
+        "model.nen_bottleneck_channels": 256, "model.nen_decoder_channels": [128, 64],
+    }),
+    _bundle(**{
+        "model.latent_dim": 48, "model.hidden_dim": 192,
+        "model.attention_heads": 4, "model.num_attention_layers": 2,
+        "model.ffn_dim": 768, "model.autoencoder_num_blocks": 3,
+        "model.autoencoder_initial_channels": 48,
+        "model.nen_encoder_channels": [96, 192],
+        "model.nen_bottleneck_channels": 384, "model.nen_decoder_channels": [192, 96],
+    }),
+), gpu=0.5, cpu=4.0, optimizer_space=_OPTIMIZER_TSS_LCD,
+    anchor_optimizer={
+        "train.autoencoder_learning_rate": 1e-4,
+        "train.tss_learning_rate": 1e-4,
+        "train.diffusion_learning_rate": 1e-4,
+        "train.weight_decay": 0.0,
+        "train.batch_size": 16,
+    }))
+
 _specs.extend([
-    _blocked("stsprednet", "2d_or_4d", "Integrated callback lacks a comparable physical dB validation metric."),
-    _blocked("tss_lcd", "2d_or_4d", "Multi-stage objective lacks a comparable physical forecasting dB metric."),
+    _tunable("stsprednet", "4d", (
+        _bundle(**{
+            "model.num_layers": 1, "model.hidden_dim": 16,
+            "model.kernel_size": [3, 3],
+        }),
+        _bundle(**{
+            "model.num_layers": 2, "model.hidden_dim": 32,
+            "model.kernel_size": [3, 3],
+        }),
+        _bundle(**{
+            "model.num_layers": 2, "model.hidden_dim": 64,
+            "model.kernel_size": [3, 3],
+        }),
+    ), gpu=1.0, cpu=4.0, optimizer_space=_OPTIMIZER_STSPREDNET,
+        anchor_optimizer={
+            "learning_rate": 2e-4, "weight_decay": 0.0, "batch_size": 2,
+        }),
     ModelSpec(
         "deepspred", "not_publication_ready", "blocked_exact_minute", "spectrogram",
         _freeze_anchors({}, {}, {}), MappingProxyType({}), Resources(4.0, 1.0),

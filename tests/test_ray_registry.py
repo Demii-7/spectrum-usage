@@ -42,7 +42,7 @@ class RayRegistryTests(unittest.TestCase):
             self.assertEqual(MODEL_REGISTRY[name].resources.gpu, 0.5)
         for name in ("convlstm", "residualconvlstm", "convlstmfm", "dswinlstm_i",
                      "stsprednet", "tss_lcd", "deepspred"):
-            expected = 0.5 if name in {"convlstm", "residualconvlstm", "convlstmfm", "dswinlstm_i"} else 1.0
+            expected = 0.5 if name in {"convlstm", "residualconvlstm", "convlstmfm", "dswinlstm_i", "tss_lcd"} else 1.0
             self.assertEqual(MODEL_REGISTRY[name].resources.gpu, expected)
         for name, spec in MODEL_REGISTRY.items():
             if name.startswith(("lookbackmean", "linearar", "residuallinearar")) or name == "arima":
@@ -102,10 +102,17 @@ class RayRegistryTests(unittest.TestCase):
                 for key, value in parameters.items():
                     self.assertTrue(spec.space[key].contains(value), f"{name}: {key}={value}")
 
-    def test_specialized_physical_metric_status_is_explicit(self):
-        for name in ("stsprednet", "tss_lcd"):
-            self.assertEqual(MODEL_REGISTRY[name].status, "not_publication_ready")
-            self.assertIn("physical", MODEL_REGISTRY[name].reason)
+    def test_tss_lcd_uses_the_common_physical_objective(self):
+        spec = MODEL_REGISTRY["tss_lcd"]
+        self.assertTrue(spec.hpo_executable)
+        self.assertEqual(spec.representation, "2d")
+        self.assertEqual(spec.objective, "val_mean_horizon_mae_db")
+
+    def test_stsprednet_tunes_with_its_within_model_fallback_metric(self):
+        spec = MODEL_REGISTRY["stsprednet"]
+        self.assertTrue(spec.hpo_executable)
+        self.assertEqual(spec.representation, "4d")
+        self.assertEqual(spec.fallback_objective, "val_loss")
 
 
 if __name__ == "__main__":

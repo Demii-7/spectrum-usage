@@ -100,14 +100,16 @@ def build_models(config: dict[str, Any], t_in: int, t_out: int,
 
 
 def generate_full_predictions(tss_cc, diffusion, dec, device,
-                              full_x: np.ndarray, target_origins: np.ndarray,
-                              t_in: int, t_out: int,
-                              batch_size: int, mask_config: dict | None = None) -> np.ndarray:
+                               full_x: np.ndarray, target_origins: np.ndarray,
+                               t_in: int, t_out: int,
+                               batch_size: int, mask_config: dict | None = None,
+                               sampler_steps: int = 50, sampler_seed: int = 42) -> np.ndarray:
     starts = target_origins - t_out + 1 - t_in
     n = len(starts)
     if n == 0:
         return np.empty((0, t_out, full_x.shape[1]))
     all_preds = []
+    generator = torch.Generator(device=device).manual_seed(sampler_seed)
     for i in range(0, n, batch_size):
         batch_starts = starts[i:i + batch_size]
         x_batch = np.stack([full_x[s:s + t_in] for s in batch_starts], axis=0)
@@ -126,7 +128,7 @@ def generate_full_predictions(tss_cc, diffusion, dec, device,
         x_t = torch.from_numpy(x_batch).float().unsqueeze(2).to(device)
         with torch.no_grad():
             cond_z = tss_cc(x_t)
-            z_sample = diffusion.p_sample_loop(cond_z)
+            z_sample = diffusion.ddim_sample_loop(cond_z, sampler_steps, generator)
             y_hat = dec(z_sample)
         all_preds.append(y_hat.squeeze(2).cpu().numpy())
     return np.concatenate(all_preds, axis=0).astype(np.float32)
@@ -134,17 +136,17 @@ def generate_full_predictions(tss_cc, diffusion, dec, device,
 
 def evaluate_chunk(config: dict[str, Any], chunk, bands, out: Path,
                    checkpoint_path: Path):
-    tcfg, train_cfg = config_sections(config)
+    model_cfg, train_cfg = config_sections(config)
     seed = int(train_cfg.get("seed", config.get("seed", 42)))
     set_deterministic_seed(seed)
     t_in = int(config["windowing"].get("lookback", config["windowing"].get("input_sequence_length")))
     configured_horizons = config["windowing"].get("horizons")
     max_horizon = max(map(int, configured_horizons)) if configured_horizons else int(config["windowing"]["prediction_horizon"])
     t_out = max_horizon
-    batch_size = int(tcfg["batch_size"])
+    batch_size = int(train_cfg.get("batch_size", model_cfg.get("batch_size", 32)))
     horizons = [int(h) for h in (configured_horizons or [max_horizon])]
 
-    data = load_chunk(config, chunk)
+    data = load_chunk(config, chunk, val_fraction=float(train_cfg.get("val_fraction", 0.1)))
     test_splits = config["data"].get("test_splits", [data.test_split])
     train = data.splits[data.train_split].model_input
     train_raw = data.splits[data.train_split].raw_dbm
@@ -181,6 +183,13 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands, out: Path,
     dec.eval()
     tss_cc.eval()
     diffusion.eval()
+    sampler = checkpoint.get("evaluation_sampler", {
+        "name": "ddim",
+        "steps": int(model_cfg.get("evaluation_sampler_steps", 50)),
+        "seed": seed + int(model_cfg.get("evaluation_sampler_seed_offset", 10_000)),
+    })
+    if sampler.get("name") != "ddim":
+        raise ValueError(f"Unsupported TSS-LCD evaluation sampler: {sampler.get('name')!r}")
 
     aggregate_rows: list[dict[str, Any]] = []
     frequency_rows: list[dict[str, Any]] = []
@@ -194,7 +203,7 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands, out: Path,
             n_timesteps=len(split_x),
             lookback=t_in,
             rollout_horizon=max_horizon,
-            stride=1,
+            stride=int(train_cfg.get("test_stride", 1)),
             segments=split.segments,
         )
         if len(starts) == 0:
@@ -206,6 +215,7 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands, out: Path,
             tss_cc, diffusion, dec, device,
             split_x, target_origins, t_in, t_out, batch_size,
             checkpoint.get("preprocessing", config.get("preprocessing")),
+            sampler_steps=int(sampler["steps"]), sampler_seed=int(sampler["seed"]),
         )
         target = np.stack(
             [split_raw[o - max_horizon + 1:o + 1] for o in target_origins],

@@ -752,7 +752,8 @@ class DiffusionModel(nn.Module):
             raise ValueError(f"Unknown condition_strategy: {self.condition_strategy}")
         return self.noise_net(inp)
 
-    def p_sample(self, zt: torch.Tensor, cond_z: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+    def p_sample(self, zt: torch.Tensor, cond_z: torch.Tensor, t: torch.Tensor,
+                 generator: torch.Generator | None = None) -> torch.Tensor:
         """Single reverse denoising step using the analytic DDPM posterior.
 
         Computes the mean (A_t * z_t - B_t * ε_θ) and adds stochastic
@@ -771,16 +772,42 @@ class DiffusionModel(nn.Module):
         A_t = (1 / sqrt_alpha_t) * (sqrt_alpha_bar_tm1 * beta_t / denom) + (sqrt_alpha_t * (1 - alpha_bar_tm1) / denom)
         B_t = (torch.sqrt(1 - alpha_bar_t) / sqrt_alpha_t) * (sqrt_alpha_bar_tm1 * beta_t / denom)
         sigma_t = torch.sqrt((1 - alpha_bar_tm1) / (1 - alpha_bar_t) * beta_t)
-        noise = torch.randn_like(zt)
+        noise = torch.randn(zt.shape, device=zt.device, dtype=zt.dtype, generator=generator)
         mask = (t > 0).float().view(-1, 1)
         return A_t * zt - B_t * e_pred + mask * sigma_t * noise
 
     @torch.no_grad()
-    def p_sample_loop(self, cond_z: torch.Tensor) -> torch.Tensor:
+    def p_sample_loop(self, cond_z: torch.Tensor,
+                      generator: torch.Generator | None = None) -> torch.Tensor:
         """Full reverse denoising chain: z_T → z_0 conditioned on cond_z."""
         B = cond_z.size(0)
-        z = torch.randn(B, self.latent_dim, device=self.device)
+        z = torch.randn(B, self.latent_dim, device=cond_z.device, dtype=cond_z.dtype,
+                        generator=generator)
         for step in reversed(range(self.n_timestep)):
-            t = torch.full((B,), step, device=self.device, dtype=torch.long)
-            z = self.p_sample(z, cond_z, t)
+            t = torch.full((B,), step, device=cond_z.device, dtype=torch.long)
+            z = self.p_sample(z, cond_z, t, generator=generator)
+        return z
+
+    @torch.no_grad()
+    def ddim_sample_loop(self, cond_z: torch.Tensor, steps: int,
+                         generator: torch.Generator | None = None) -> torch.Tensor:
+        """Deterministic DDIM sampling over an evenly spaced subset of timesteps."""
+        if not 1 <= steps <= self.n_timestep:
+            raise ValueError(f"DDIM steps must be in [1, {self.n_timestep}], got {steps}")
+        device = cond_z.device
+        z = torch.randn(cond_z.size(0), self.latent_dim, device=device, dtype=cond_z.dtype,
+                        generator=generator)
+        schedule = np.linspace(0, self.n_timestep - 1, steps, dtype=np.int64)[::-1]
+        for index, step in enumerate(schedule):
+            t = torch.full((cond_z.size(0),), int(step), device=device, dtype=torch.long)
+            alpha_bar = self.alpha_cumprod[t].view(-1, 1)
+            eps = self.forward(z, cond_z, t)
+            z0 = (z - torch.sqrt(1 - alpha_bar) * eps) / torch.sqrt(alpha_bar)
+            previous = int(schedule[index + 1]) if index + 1 < len(schedule) else -1
+            alpha_bar_previous = (
+                self.alpha_cumprod[previous]
+                if previous >= 0
+                else torch.ones((), device=device, dtype=z.dtype)
+            )
+            z = torch.sqrt(alpha_bar_previous) * z0 + torch.sqrt(1 - alpha_bar_previous) * eps
         return z

@@ -89,7 +89,11 @@ def build_plan(config: dict[str, Any], models: list[str], *, candidates: int = D
                 },
                 "search_algorithm": "BasicVariantGenerator(points_to_evaluate=anchors)",
                 "max_concurrent_trials": DEFAULT_MAX_CONCURRENT_TRIALS,
-                "grace_period": 12 if spec.name == "temporalconvnet" else 5,
+                "grace_period": (
+                    12 if spec.name == "temporalconvnet"
+                    else 1 if spec.name == "stsprednet"
+                    else 5
+                ),
             }
             entry["rerank"] = {
                 "selection_methods": ["best", "best-simple", "reference"],
@@ -179,7 +183,14 @@ def _launch(config: dict[str, Any], plan: dict[str, Any], output: Path,
             trial_directory = Path(tune.get_context().get_trial_dir())
             run_integrated_trial(config, model, values, seed, trial_directory)
 
-        epochs = int(config[spec.name].get("train", {}).get("epochs", 100))
+        train_config = config[spec.name].get("train", {})
+        epochs = int(
+            config[spec.name].get("epochs", 100)
+            if spec.name == "stsprednet"
+            else train_config.get("diffusion_epochs", 100)
+            if spec.name == "tss_lcd"
+            else train_config.get("epochs", 100)
+        )
         # The extra iteration lets a surviving trial attach its completed
         # integrated checkpoint after the final forecasting epoch.
         scheduler = ASHAConfig(

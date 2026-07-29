@@ -1,0 +1,65 @@
+data:
+  representation: 2d
+  files:
+    - {path: data/powder/cpg-nuc1/20260628T0437Z/600_800/power_1mhz_avg_per_minute.csv, partition: train}
+    - {path: data/powder/ebc-nuc1/20260628T0436Z/600_800/power_1mhz_avg_per_minute.csv, partition: train}
+    - {path: data/powder/humanities-nuc1/20260628T0436Z/600_800/power_1mhz_avg_per_minute.csv, partition: train}
+    - {path: data/powder/madsen-nuc1/20260628T0437Z/600_800/power_1mhz_avg_per_minute.csv, partition: train}
+    - {path: data/powder/moran-nuc1/20260628T0437Z/600_800/power_1mhz_avg_per_minute.csv, partition: train}
+    - {path: data/powder/sagepoint-nuc1/20260628T0437Z/600_800/power_1mhz_avg_per_minute.csv, partition: train}
+    - {path: data/powder/cpg-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv, partition: test}
+    - {path: data/powder/ebc-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv, partition: test}
+    - {path: data/powder/humanities-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv, partition: test}
+    - {path: data/powder/madsen-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv, partition: test}
+    - {path: data/powder/moran-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv, partition: test}
+    - {path: data/powder/sagepoint-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv, partition: test}
+  concat: rows
+  split:
+    ranges:
+      train: {start: "2026-06-28T04:37:00Z", end: "2026-07-02T02:23:00Z"}
+      validation: {start: "2026-07-02T02:24:00Z", end: "2026-07-03T02:23:00Z"}
+      test: {start: "2026-07-03T18:39:00Z", end: "2026-07-06T09:14:00Z"}
+  chunks: [{id: powder_600_800_t4t6, start_mhz: 600.0, end_mhz: 800.0}]
+
+windowing: {lookback: 60, horizons: [1, 15, 60]}
+training: {device: cuda, models: [tss_lcd]}
+preprocessing: {normalize: true, impute: true, max_missing_gap: 9}
+data_loader: {num_workers: 0, pin_memory: false}
+
+tss_lcd:
+  model:
+    latent_dim: 32
+    hidden_dim: 128
+    attention_heads: 4
+    ffn_dim: 512
+    num_attention_layers: 2
+    dropout: 0.1
+    autoencoder_num_blocks: 3
+    autoencoder_initial_channels: 32
+    diffusion_steps: 1000
+    noise_schedule: cosine
+    nen_encoder_channels: [64, 128]
+    nen_bottleneck_channels: 256
+    nen_decoder_channels: [128, 64]
+    nen_kernel_size: 3
+    time_embed_dim: 32
+    evaluation_sampler_steps: 50
+    evaluation_sampler_seed_offset: 10000
+  train:
+    batch_size: 16
+    autoencoder_epochs: 20
+    autoencoder_learning_rate: 0.0001
+    tss_epochs: 20
+    tss_learning_rate: 0.0001
+    diffusion_epochs: 20
+    diffusion_learning_rate: 0.0001
+    weight_decay: 0.0
+    gradient_clip_norm: 5.0
+    early_stopping_patience: 5
+    val_fraction: 0.1
+    test_stride: 1
+    seed: 42
+  preprocessing:
+    missing_rate: 0.25
+    masking_strategy: random
+    zero_pad_missing: true

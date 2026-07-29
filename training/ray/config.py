@@ -93,10 +93,10 @@ def inject_parameters(config: Mapping[str, Any], model_name: str, parameters: Ma
                 _set_path(model_section, str(architecture_path), architecture_value)
         else:
             _set_path(model_section, path, value)
-    # Specialized models keep training keys at their root; regular models use train.seed.
-    seed_path = "seed" if model_name in {"stsprednet", "tss_lcd"} else "train.seed"
+    # TSS-LCD's Ray config is nested; STS-PredNet remains a flat specialized config.
+    seed_path = "seed" if model_name == "stsprednet" else "train.seed"
     _set_path(model_section, seed_path, int(seed))
-    if model_name not in {"stsprednet", "tss_lcd"}:
+    if model_name != "stsprednet":
         _set_path(model_section, "train.selection_metric", spec.objective)
         _set_path(model_section, "train.early_stopping", False)
     result.setdefault("training", {})["models"] = [model_name]

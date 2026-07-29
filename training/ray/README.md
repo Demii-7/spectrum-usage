@@ -25,8 +25,9 @@ within 1% of the winner, and the exact reference configuration with seeds 41,
 
 The preferred objective is `val_mean_horizon_mae_db`. If a forecasting trainer
 does not emit it, the adapter uses `val_loss` and writes an explicit
-non-comparability warning to the trial result manifest. STS-PredNet and TSS-LCD
-are not publication-ready for cross-model tuning until they emit comparable
+non-comparability warning to the trial result manifest. TSS-LCD reports this
+metric during its diffusion stage using a deterministic 50-step DDIM validation
+protocol. STS-PredNet is not publication-ready until it emits comparable
 physical dB metrics. DeepSPred is blocked because frame output cannot currently
 support exact-minute horizon evaluation.
 
