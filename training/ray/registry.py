@@ -337,7 +337,7 @@ _specs.extend([
             "model.num_layers": 2, "model.hidden_dim": 64,
             "model.kernel_size": [3, 3],
         }),
-    ), gpu=1.0, cpu=4.0, optimizer_space=_OPTIMIZER_STSPREDNET,
+    ), gpu=0.5, cpu=4.0, optimizer_space=_OPTIMIZER_STSPREDNET,
         anchor_optimizer={
             "learning_rate": 2e-4, "weight_decay": 0.0, "batch_size": 2,
         }),

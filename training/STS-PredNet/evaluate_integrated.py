@@ -28,6 +28,7 @@ from training.common.data import chunk_specs, load_chunk
 from training.common.metrics import absolute_and_squared_errors_dbm
 from training.common.results import append_metric_rows, load_band_definitions
 from training.common.windowing import filter_target_rows
+from train_integrated import to_sts_layout
 
 
 MODEL_NAME = "stsprednet"
@@ -35,6 +36,17 @@ MODEL_NAME = "stsprednet"
 
 def device_for() -> torch.device:
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def rollout_required_history(branches, horizon: int) -> int:
+    """History needed at the first recursive step for an exact-horizon target."""
+    return required_history(branches) + int(horizon) - 1
+
+
+def validation_fraction(config: dict[str, Any]) -> float:
+    section = config["stsprednet"]
+    train = section.get("train") or section.get("training") or section
+    return float(train.get("val_fraction", 0.1))
 
 
 def build_model_config(config: dict[str, Any], n_bins: int) -> dict[str, Any]:
@@ -273,7 +285,7 @@ def evaluate_csv_chunk(config: dict[str, Any], chunk, bands, out: Path, checkpoi
     scfg = config["stsprednet"]
     branches = resolve_branch_config(config)
     horizons = [int(h) for h in config["windowing"]["horizons"]]
-    data = load_chunk(config, chunk)
+    data = load_chunk(config, chunk, val_fraction=validation_fraction(config))
     test_splits = config["data"].get("test_splits", [data.test_split])
     train = data.splits[data.train_split].model_input
     train_raw = data.splits[data.train_split].raw_dbm
@@ -332,6 +344,101 @@ def evaluate_csv_chunk(config: dict[str, Any], chunk, bands, out: Path, checkpoi
                 abs_err=abs_err,
                 sq_err=sq_err,
                 bands=bands,
+            )
+
+    return aggregate_rows, frequency_rows, band_rows
+
+
+def evaluate_chunk(config: dict[str, Any], chunk, bands, out: Path, checkpoint_path: Path):
+    """Evaluate common-pipeline vector or map splits with STS branch sampling."""
+    branches = resolve_branch_config(config)
+    horizons = [int(h) for h in config["windowing"]["horizons"]]
+    data = load_chunk(config, chunk, val_fraction=validation_fraction(config))
+    train = data.splits[data.train_split].model_input
+
+    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    model_config = ckpt.get("model_config")
+    if model_config is None:
+        model_config = (
+            build_map_model_config(config, train.shape[-1], train.shape[1], train.shape[2])
+            if train.ndim == 4
+            else build_model_config(config, train.shape[1])
+        )
+    device = device_for()
+    model = STSPredNet(model_config).to(device)
+    model.load_state_dict(ckpt["model_state_dict"])
+    model.eval()
+
+    aggregate_rows: list[dict[str, Any]] = []
+    frequency_rows: list[dict[str, Any]] = []
+    band_rows: list[dict[str, Any]] = []
+    test_splits = config["data"].get("test_splits", [data.test_split])
+
+    for split_name in test_splits:
+        split = data.splits[split_name]
+        split_x = to_sts_layout(split.model_input)
+        raw_model_layout = to_sts_layout(split.raw_dbm)
+        predictions_by_horizon: dict[int, np.ndarray] = {}
+        targets_by_horizon: dict[int, np.ndarray] = {}
+        target_rows_by_horizon: dict[int, np.ndarray] = {}
+
+        for horizon in horizons:
+            history = rollout_required_history(branches, horizon)
+            target_rows = np.arange(history, len(split_x), dtype=np.int64)
+            target_rows = filter_target_rows(target_rows, history, split.segments)
+            if len(target_rows) == 0:
+                print(f"  No valid target rows for {chunk.chunk_id} {split_name} h={horizon}")
+                continue
+
+            pred_norm = predict_recursive_map(
+                model, device, split_x, target_rows, horizon, branches=branches,
+            )
+            target_raw = raw_model_layout[target_rows]
+            pred_frequency_last = np.moveaxis(pred_norm, 1, -1)
+            target_frequency_last = np.moveaxis(target_raw, 1, -1)
+            pred_dbm_frequency_last, abs_err, sq_err = absolute_and_squared_errors_dbm(
+                pred_frequency_last, target_frequency_last, data.normalization,
+            )
+            abs_err = np.mean(abs_err, axis=(1, 2))
+            sq_err = np.mean(sq_err, axis=(1, 2))
+            global_rows = target_rows + int(split.row_start)
+            append_metric_rows(
+                aggregate_rows, frequency_rows, band_rows,
+                chunk_id=chunk.chunk_id,
+                start_mhz=chunk.start_mhz,
+                end_mhz=chunk.end_mhz,
+                split_name=split_name,
+                horizon=horizon,
+                model=MODEL_NAME,
+                target_rows=global_rows,
+                history_offset=int(split.row_start),
+                freqs=data.frequencies,
+                abs_err=abs_err,
+                sq_err=sq_err,
+                bands=bands,
+                feature_labels=data.feature_labels,
+            )
+            predictions_by_horizon[horizon] = np.moveaxis(
+                pred_dbm_frequency_last, -1, 1,
+            )
+            targets_by_horizon[horizon] = target_raw
+            target_rows_by_horizon[horizon] = target_rows
+
+        if predictions_by_horizon and split_x.ndim == 4:
+            export_map_forecasts(
+                out,
+                chunk_id=chunk.chunk_id,
+                model_name=MODEL_NAME,
+                predictions_by_horizon=predictions_by_horizon,
+                targets_by_horizon=targets_by_horizon,
+                target_rows_by_horizon=target_rows_by_horizon,
+                metadata={
+                    "model": "STS-PredNet",
+                    "split": split_name,
+                    "checkpoint": str(checkpoint_path),
+                    "branches": branches,
+                    "normalization": data.normalization,
+                },
             )
 
     return aggregate_rows, frequency_rows, band_rows

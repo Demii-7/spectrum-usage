@@ -42,7 +42,7 @@ class RayRegistryTests(unittest.TestCase):
             self.assertEqual(MODEL_REGISTRY[name].resources.gpu, 0.5)
         for name in ("convlstm", "residualconvlstm", "convlstmfm", "dswinlstm_i",
                      "stsprednet", "tss_lcd", "deepspred"):
-            expected = 0.5 if name in {"convlstm", "residualconvlstm", "convlstmfm", "dswinlstm_i", "tss_lcd"} else 1.0
+            expected = 0.5 if name in {"convlstm", "residualconvlstm", "convlstmfm", "dswinlstm_i", "tss_lcd", "stsprednet"} else 1.0
             self.assertEqual(MODEL_REGISTRY[name].resources.gpu, expected)
         for name, spec in MODEL_REGISTRY.items():
             if name.startswith(("lookbackmean", "linearar", "residuallinearar")) or name == "arima":

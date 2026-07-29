@@ -93,6 +93,36 @@ def _model_inputs(batch, device):
                  for name in ("closeness", "period", "trend"))
 
 
+def to_sts_layout(data: np.ndarray) -> np.ndarray:
+    """Convert common frequency-last maps to STS frequency-first maps."""
+    if data.ndim == 2:
+        return data[:, None, None, :].astype(np.float32)
+    if data.ndim == 4:
+        return np.moveaxis(data, -1, 1).astype(np.float32)
+    raise ValueError(f"STS-PredNet expects 2D spectra or 4D maps, got {data.shape}")
+
+
+def validation_with_training_context(
+    train_data: np.ndarray,
+    validation_data: np.ndarray,
+    validation_segments,
+    history: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Prefix validation with train history while keeping targets in validation."""
+    if len(train_data) < history:
+        raise ValueError(
+            f"Training split has {len(train_data)} rows but validation needs "
+            f"{history} rows of historical context."
+        )
+    combined = np.concatenate((train_data[-history:], validation_data), axis=0)
+    # Validation is already a single isolated split. After prefixing it with
+    # train context, every row after the prefix is a validation target; applying
+    # the original split segments again can discard all targets when their
+    # coordinates are interpreted as local rather than global.
+    targets = np.arange(history, len(combined), dtype=np.int64)
+    return combined, targets
+
+
 def train_one_model(config: dict[str, Any], full_x: np.ndarray,
                     segments, checkpoints: Path, out: Path, chunk_id: str,
                     frequencies=None, normalization=None,
@@ -110,8 +140,7 @@ def train_one_model(config: dict[str, Any], full_x: np.ndarray,
     clip_norm = float(scfg["gradient_clip_norm"])
     patience = int(scfg.get("patience", scfg.get("early_stopping_patience", 30)))
 
-    n_bins = full_x.shape[1]
-    data_3d = full_x[:, None, None, :].astype(np.float32)
+    data_3d = to_sts_layout(full_x)
 
     history = required_history(branches)
     all_targets = np.asarray(generate_target_indices(
@@ -132,12 +161,10 @@ def train_one_model(config: dict[str, Any], full_x: np.ndarray,
         val_data_3d = data_3d
     else:
         train_targets = all_targets
-        val_data_3d = validation_data[:, None, None, :].astype(np.float32)
-        val_targets = np.asarray(generate_target_indices(
-            len(validation_data), branches["prediction_offset"], branches["use_closeness"],
-            branches["use_period"], branches["use_trend"], branches["lc"], branches["lp"],
-            branches["lq"], branches["period_interval"], branches["trend_interval"]), dtype=np.int64)
-        val_targets = filter_target_rows(val_targets, history, validation_segments)
+        validation_with_context, val_targets = validation_with_training_context(
+            full_x, validation_data, validation_segments, history,
+        )
+        val_data_3d = to_sts_layout(validation_with_context)
         if len(val_targets) == 0:
             raise ValueError("Explicit validation split contains no STS-PredNet targets")
 
@@ -155,7 +182,12 @@ def train_one_model(config: dict[str, Any], full_x: np.ndarray,
         **data_loader_kwargs(config.get("data_loader")),
     )
 
-    model_config = build_model_config(config, n_bins, branches)
+    if full_x.ndim == 4:
+        model_config = build_map_model_config(
+            config, full_x.shape[-1], full_x.shape[1], full_x.shape[2], branches,
+        )
+    else:
+        model_config = build_model_config(config, full_x.shape[1], branches)
     device = device_for()
     model = STSPredNet(model_config).to(device)
     criterion = nn.MSELoss()
@@ -264,6 +296,33 @@ def train_one_model(config: dict[str, Any], full_x: np.ndarray,
         checkpoints / f"{chunk_id}_stsprednet.pt",
     )
     return model
+
+
+def train_chunk(
+    config: dict[str, Any],
+    chunk,
+    data,
+    output_directory: Path,
+    checkpoint_directory: Path,
+    callback: TrainingCallback | None = None,
+) -> Path:
+    """Train from common-pipeline data while retaining STS branch sampling."""
+    train = data.splits[data.train_split]
+    validation = data.splits.get(data.validation_split)
+    train_one_model(
+        config,
+        train.model_input,
+        train.segments,
+        checkpoint_directory,
+        output_directory,
+        chunk.chunk_id,
+        frequencies=data.frequencies,
+        normalization=data.normalization,
+        validation_data=None if validation is None else validation.model_input,
+        validation_segments=() if validation is None else validation.segments,
+        callback=callback,
+    )
+    return checkpoint_directory / f"{chunk.chunk_id}_stsprednet.pt"
 
 
 def train_map_model(
