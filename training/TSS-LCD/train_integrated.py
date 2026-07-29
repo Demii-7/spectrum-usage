@@ -27,6 +27,7 @@ from model import (  # noqa: E402
     TSSConditionConstructor,
     DiffusionModel,
 )
+from dataset import create_masks  # noqa: E402
 from training.common.config import load_config  # noqa: E402
 from training.common.runtime import epoch_log_row, timestamp_utc  # noqa: E402
 from training.common.results import prepare_output_dirs  # noqa: E402
@@ -58,7 +59,6 @@ class TSSLCDWindowDataset(Dataset):
             raise ValueError("missing_rate must be between 0 and 1")
         if missing_rate and not mask_config.get("zero_pad_missing", True):
             raise ValueError("TSS-LCD missing observations must use zero padding")
-        from dataset import create_masks
         rng_state = np.random.get_state()
         np.random.seed(seed)
         try:

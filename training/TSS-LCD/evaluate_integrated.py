@@ -24,6 +24,7 @@ from model import (
     TSSConditionConstructor,
     DiffusionModel,
 )
+from dataset import create_masks
 from training.common.config import load_config
 from training.common.runtime import timestamp_utc
 from training.common.results import append_metric_rows, finalize_results, load_band_definitions, prepare_output_dirs
@@ -118,7 +119,6 @@ def generate_full_predictions(tss_cc, diffusion, dec, device,
         if missing_rate:
             if not mask_config.get("zero_pad_missing", True):
                 raise ValueError("TSS-LCD missing observations must use zero padding")
-            from dataset import create_masks
             x_batch = x_batch * create_masks(
                 x_batch, missing_rate, str(mask_config.get("masking_strategy", "random")),
                 mask_config.get("continuous_mask_length"),
