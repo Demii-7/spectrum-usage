@@ -156,6 +156,7 @@ def main() -> None:
     config_path = Path(sys.argv[1])
     checkpoint_path = Path(sys.argv[2])
     output_path = Path(sys.argv[3])
+    target_lp = int(sys.argv[4]) if len(sys.argv) > 4 else None
     config = load_config(config_path)
     chunk = chunk_specs(config)[0]
     data = load_chunk(config, chunk, val_fraction=0.1)
@@ -185,6 +186,9 @@ def main() -> None:
     sts_lags = list(range(1, branches["lc"] + 1)) + [
         i * branches["period_interval"] for i in range(1, branches["lp"] + 1)
     ]
+    target_lags = list(range(1, branches["lc"] + 1)) + [
+        i * branches["period_interval"] for i in range(1, target_lp + 1)
+    ] if target_lp is not None else sts_lags
     sts_recent_lags = set(range(1, branches["lc"] + 1))
     horizons = (1, 15, 60)
 
@@ -193,7 +197,7 @@ def main() -> None:
     validation_data_full = np.concatenate((train_norm, validation_norm))
     validation_history = {t: x for t, x in zip(validation_times_full, validation_data_full)}
     validation_history_raw = {t: x for t, x in zip(validation_times_full, np.concatenate((train_map_cwh, validation_map_cwh)))}
-    valid = shared_valid(validation_times, validation_history, 60, sts_lags, sts_recent_lags)
+    valid = shared_valid(validation_times, validation_history, 60, target_lags, sts_recent_lags)
     report_preflight("STS-PredNet", "T4_validation", 60, validation_times, valid)
     for horizon in horizons:
         pred = sts_predict(model, device, validation_history, valid, horizon, branches)
@@ -207,7 +211,7 @@ def main() -> None:
     train_data_raw_full = np.concatenate((train_map_cwh, validation_map_cwh))
     t4t6_lookup = {t: x for t, x in zip(np.concatenate((train_times_full, test_times)), np.concatenate((train_data_full, test_norm)))}
     t4t6_lookup_raw = {t: x for t, x in zip(np.concatenate((train_times_full, test_times)), np.concatenate((train_data_raw_full, test_map_cwh)))}
-    valid = shared_valid(list(test_times), t4t6_lookup, 60, sts_lags, sts_recent_lags, set(test_times))
+    valid = shared_valid(list(test_times), t4t6_lookup, 60, target_lags, sts_recent_lags, set(test_times))
     report_preflight("STS-PredNet", "T4_context_T6", 60, test_times, valid)
     for horizon in horizons:
         pred = sts_predict(model, device, t4t6_lookup, valid, horizon, branches)
@@ -219,7 +223,7 @@ def main() -> None:
     # --- T6 only (no T4 context) ---
     t6_lookup = {t: x for t, x in zip(test_times, test_norm)}
     t6_lookup_raw = {t: x for t, x in zip(test_times, test_map_cwh)}
-    valid = shared_valid(list(test_times), t6_lookup, 60, sts_lags, sts_recent_lags)
+    valid = shared_valid(list(test_times), t6_lookup, 60, target_lags, sts_recent_lags)
     report_preflight("STS-PredNet", "T6_only", 60, test_times, valid)
     for horizon in horizons:
         pred = sts_predict(model, device, t6_lookup, valid, horizon, branches)
