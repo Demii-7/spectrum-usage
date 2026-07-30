@@ -34,7 +34,7 @@ data:
 windowing: {lookback: 60, horizons: [1, 15, 60, 120, 480]}
 training: {device: cuda, model_name: stsprednet}
 preprocessing: {normalize: true, impute: true, max_missing_gap: 9}
-data_loader: {num_workers: 4, persistent_workers: true, prefetch_factor: 2, pin_memory: auto}
+data_loader: {num_workers: 0, pin_memory: false}
 
 stsprednet:
   branches:

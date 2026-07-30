@@ -173,7 +173,9 @@ def main() -> None:
         mae, rmse = score(pred, target, mean, std)
         results.append({"model": "STS-PredNet", "split": "T4_context_T6", "horizon": horizon, "n_targets": len(valid), "mae_db": mae, "rmse_db": rmse})
 
-    ar_checkpoint = train_variant(config, data, chunk, "recent_daily", list(range(60, 0, -1)) + [2880, 1440], output_path.parent / "checkpoints")
+    checkpoint_dir = output_path.parent / "checkpoints"
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    ar_checkpoint = train_variant(config, data, chunk, "recent_daily", list(range(60, 0, -1)) + [2880, 1440], checkpoint_dir)
     saved = torch.load(ar_checkpoint, map_location="cpu", weights_only=False)
     ar = LagMatchedLinearAR(tuple(saved["feature_shape"]), len(saved["lags"])).to(device)
     ar.load_state_dict(saved["model_state_dict"])
