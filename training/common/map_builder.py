@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import hashlib
+import os
 from pathlib import Path
 import json
+import pickle
+import tempfile
+import zipfile
 
 import numpy as np
 
@@ -368,7 +373,6 @@ def load_4d(
 ) -> LoadedSource:
     if not map_name:
         raise ValueError("data.map.name is required for 4d loading")
-    cache_path = map_dir / f"{map_name}.npz"
     locations = None
     if files and locations_path is not None:
         locations = load_locations(locations_path, collection_key)
@@ -377,6 +381,10 @@ def load_4d(
         files, grid, permute, permute_seed, frequency_bins, frequency_ranges,
         selected_sites, excluded_sites, outage_threshold, timestamp_ranges,
     )
+    request_key = hashlib.sha256(
+        json.dumps(request_metadata, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()[:16]
+    cache_path = map_dir / f"{map_name}-{request_key}.npz"
     requested_layout = None
     if files and locations_path is not None:
         requested_names = []
@@ -417,7 +425,7 @@ def load_4d(
                 ):
                     raise ValueError("grid coordinates differ from the training map")
             source = _load_cached(cache_path, map_key, frequency_bins, frequency_ranges)
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        except (EOFError, KeyError, OSError, pickle.UnpicklingError, TypeError, ValueError, json.JSONDecodeError, zipfile.BadZipFile) as exc:
             cache_error = str(exc)
             source = None
         if source is not None:
@@ -561,7 +569,16 @@ def load_4d(
     print(f"[DEBUG] load_4d: saving {mapped.nbytes / 1e6:.0f} MB cache to {cache_path} ...")
     import time as _time
     _t0 = _time.perf_counter()
-    np.savez_compressed(cache_path, **payload)
+    fd, temporary_name = tempfile.mkstemp(dir=map_dir, suffix=".npz")
+    os.close(fd)
+    temporary_path = Path(temporary_name)
+    try:
+        np.savez_compressed(temporary_path, **payload)
+        with temporary_path.open("rb") as stream:
+            os.fsync(stream.fileno())
+        os.replace(temporary_path, cache_path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
     print(f"[DEBUG] load_4d: cache saved ({_time.perf_counter() - _t0:.1f}s)")
     return LoadedSource(
         mapped,

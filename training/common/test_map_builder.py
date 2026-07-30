@@ -48,6 +48,27 @@ def test_incompatible_cache_rebuilds_from_available_csvs(tmp_path):
     assert not np.array_equal(first.data, rebuilt.data)
 
 
+def test_corrupt_cache_rebuilds_from_available_csvs(tmp_path):
+    files, locations = _sources(tmp_path)
+    first = _load(tmp_path, files, locations)
+    first.files[0].write_bytes(b"not an npz archive")
+
+    rebuilt = _load(tmp_path, files, locations)
+
+    assert rebuilt.files[0] == first.files[0]
+    with np.load(rebuilt.files[0], allow_pickle=True) as archive:
+        assert "map_db" in archive
+
+
+def test_distinct_requests_use_distinct_cache_paths(tmp_path):
+    files, locations = _sources(tmp_path)
+
+    first = _load(tmp_path, files, locations, frequency_bins=[100.0])
+    second = _load(tmp_path, files, locations, frequency_bins=[101.0])
+
+    assert first.files[0] != second.files[0]
+
+
 @pytest.mark.parametrize(
     "names, coordinates, match",
     [
@@ -59,8 +80,8 @@ def test_incompatible_cache_rebuilds_from_available_csvs(tmp_path):
 )
 def test_test_map_rejects_site_layout_changes(tmp_path, names, coordinates, match):
     train_files, train_locations = _sources(tmp_path / "train")
-    _load(tmp_path, train_files, train_locations, name="train")
-    layout = load_map_layout(tmp_path / "maps" / "train.npz")
+    train = _load(tmp_path, train_files, train_locations, name="train")
+    layout = load_map_layout(train.files[0])
     test_files, test_locations = _sources(tmp_path / "test", names, coordinates)
 
     with pytest.raises(ValueError, match=match):
@@ -69,10 +90,11 @@ def test_test_map_rejects_site_layout_changes(tmp_path, names, coordinates, matc
 
 def test_cache_validates_permutation_and_grid_settings(tmp_path):
     files, locations = _sources(tmp_path)
-    _load(tmp_path, files, locations)
+    first = _load(tmp_path, files, locations)
 
-    _load(tmp_path, files, locations, permute=True, permute_seed=7)
-    with np.load(tmp_path / "maps" / "sample.npz", allow_pickle=True) as archive:
+    permuted = _load(tmp_path, files, locations, permute=True, permute_seed=7)
+    assert first.files[0] != permuted.files[0]
+    with np.load(permuted.files[0], allow_pickle=True) as archive:
         metadata = json.loads(str(archive["metadata"].item()))
     assert metadata["permute"] is True
     assert metadata["permute_seed"] == 7
@@ -169,7 +191,7 @@ def test_common_timestamp_rows_stay_aligned_after_trim_and_fill(tmp_path):
     ])
     assert source.timestamps.tolist() == expected.tolist()
     assert len(source.data) == 3
-    with np.load(tmp_path / "maps" / "sample.npz", allow_pickle=True) as archive:
+    with np.load(source.files[0], allow_pickle=True) as archive:
         metadata = json.loads(str(archive["metadata"].item()))
     assert metadata["timeline_semantics"] == "aligned-common-start-causal-ffill-v1"
     assert metadata["timeline_start"].startswith("2024-01-01 00:01:00")

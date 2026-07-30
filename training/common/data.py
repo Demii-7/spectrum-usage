@@ -313,8 +313,9 @@ def load_chunk(
     print(f"[DEBUG] load_chunk: train data shape={train_source.data.shape}")
     training_layout = None
     if representation == "4d":
-        map_cfg = data_cfg.get("map") or {}
-        map_path = resolve_path(map_cfg.get("output_dir", "data/maps")) / f"{map_cfg['name']}_train.npz"
+        if not train_source.files:
+            raise RuntimeError("4d training map did not provide a cache path")
+        map_path = train_source.files[0]
         print(f"[DEBUG] load_chunk: loading training layout from {map_path}")
         training_layout = load_map_layout(map_path)
         print(f"[DEBUG] load_chunk: training layout loaded")
