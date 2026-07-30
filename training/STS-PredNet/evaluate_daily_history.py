@@ -22,9 +22,6 @@ from stsprednet import STSPredNet
 from train_integrated import to_sts_layout
 from training.common.config import load_config
 from training.common.data import chunk_specs, load_chunk
-from training.common.metrics import absolute_and_squared_errors_dbm
-
-
 def load_npz(path: str) -> tuple[np.ndarray, np.ndarray]:
     archive = np.load(path, allow_pickle=True)
     timestamps = np.asarray(archive["timestamps"]).astype("datetime64[m]")
@@ -42,15 +39,25 @@ def score(pred: np.ndarray, target: np.ndarray, mean, std) -> tuple[float, float
     return float(np.mean(np.abs(err))), float(np.sqrt(np.mean(err * err)))
 
 
+def history_or_generated(generated: dict, history: dict, timestamp: np.datetime64) -> np.ndarray:
+    """Use an origin's recursive prediction only when it has already been generated."""
+    if timestamp in generated:
+        return generated[timestamp]
+    return history[timestamp]
+
+
 def sts_predict(model, device, history: dict, origins: list[np.datetime64], horizon: int, branches):
     origin = np.asarray(origins) - np.timedelta64(horizon, "m")
-    generated = {}
+    generated = [{} for _ in origins]
     for step in range(1, horizon + 1):
         current = origin + np.timedelta64(step, "m")
         close = np.stack([
-            np.stack([generated.get(t, history[t]) for t in current - np.timedelta64(i, "m")])
-            for i in range(branches["lc"], 0, -1)
-        ], axis=1)
+            np.stack([
+                history_or_generated(generated[index], history, current[index] - np.timedelta64(i, "m"))
+                for i in range(branches["lc"], 0, -1)
+            ])
+            for index in range(len(origins))
+        ], axis=0)
         period = np.stack([
             np.stack([history[t] for t in current - np.timedelta64(i * branches["period_interval"], "m")])
             for i in range(branches["lp"], 0, -1)
@@ -60,25 +67,28 @@ def sts_predict(model, device, history: dict, origins: list[np.datetime64], hori
                 torch.from_numpy(close).to(device),
                 torch.from_numpy(period).to(device), None,
             ).cpu().numpy()
-        for t, value in zip(current, pred):
-            generated[t] = value
-    return np.stack([generated[t] for t in origins])
+        for index, (timestamp, value) in enumerate(zip(current, pred)):
+            generated[index][timestamp] = value
+    return np.stack([generated[index][timestamp] for index, timestamp in enumerate(origins)])
 
 
 def ar_predict(model, device, history: dict, origins: list[np.datetime64], horizon: int, lags: list[int]):
     origin = np.asarray(origins) - np.timedelta64(horizon, "m")
-    generated = {}
+    generated = [{} for _ in origins]
     for step in range(1, horizon + 1):
         current = origin + np.timedelta64(step, "m")
         frames = np.stack([
-            np.stack([generated.get(t, history[t]) for t in current - np.timedelta64(lag, "m")])
-            for lag in lags
-        ], axis=1)
+            np.stack([
+                history_or_generated(generated[index], history, current[index] - np.timedelta64(lag, "m"))
+                for lag in lags
+            ])
+            for index in range(len(origins))
+        ], axis=0)
         with torch.no_grad():
             pred = model(torch.from_numpy(frames).to(device)).cpu().numpy()
-        for t, value in zip(current, pred):
-            generated[t] = value
-    return np.stack([generated[t] for t in origins])
+        for index, (timestamp, value) in enumerate(zip(current, pred)):
+            generated[index][timestamp] = value
+    return np.stack([generated[index][timestamp] for index, timestamp in enumerate(origins)])
 
 
 def evaluate_model(model, predictor, device, data, timestamps, target_times, horizons, branches, mean, std, label, out):
@@ -104,18 +114,21 @@ def evaluate_model(model, predictor, device, data, timestamps, target_times, hor
     out.extend(rows)
 
 
-def valid_origins(target_times, lookup, horizons, branches, closeness_times=None):
+def valid_origins(target_times, lookup, horizon, lags, recent_lags, recent_times=None):
+    """Select targets whose observed inputs cover every recursive rollout step."""
     valid = []
     for target in target_times:
         ok = True
-        for horizon in horizons:
-            origin = target - np.timedelta64(horizon, "m")
-            for step in range(1, horizon + 1):
-                current = origin + np.timedelta64(step, "m")
-                if closeness_times is not None and any(current - np.timedelta64(i, "m") not in closeness_times for i in range(1, branches["lc"] + 1)):
-                    ok = False
-                    break
-                if any(current - np.timedelta64(i * branches["period_interval"], "m") not in lookup for i in range(1, branches["lp"] + 1)):
+        origin = target - np.timedelta64(horizon, "m")
+        for step in range(1, horizon + 1):
+            current = origin + np.timedelta64(step, "m")
+            for lag in lags:
+                # Short lags produced earlier in this same rollout are predictions,
+                # rather than required observed frames.
+                if lag < step:
+                    continue
+                timestamp = current - np.timedelta64(lag, "m")
+                if timestamp not in lookup or (recent_times is not None and lag in recent_lags and timestamp not in recent_times):
                     ok = False
                     break
             if not ok:
@@ -123,6 +136,15 @@ def valid_origins(target_times, lookup, horizons, branches, closeness_times=None
         if ok:
             valid.append(target)
     return valid
+
+
+def report_preflight(label: str, split: str, horizon: int, targets, valid) -> None:
+    print(f"{label} {split} horizon={horizon}: {len(valid)}/{len(targets)} targets have complete recursive history")
+
+
+def write_results(path: Path, results: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
 
 
 def main() -> None:
@@ -155,8 +177,13 @@ def main() -> None:
     validation_data_full = np.concatenate((train_norm, validation_norm))
     validation_targets = validation_times
     validation_history = {t: x for t, x in zip(validation_times_full, validation_data_full)}
+    sts_lags = list(range(1, branches["lc"] + 1)) + [
+        i * branches["period_interval"] for i in range(1, branches["lp"] + 1)
+    ]
+    sts_recent_lags = set(range(1, branches["lc"] + 1))
     for horizon in (1, 15, 60):
-        valid = valid_origins(validation_targets, validation_history, [horizon], branches)
+        valid = valid_origins(validation_targets, validation_history, horizon, sts_lags, sts_recent_lags)
+        report_preflight("STS-PredNet", "T4_validation", horizon, validation_targets, valid)
         pred = sts_predict(model, device, validation_history, valid, horizon, branches)
         target = np.stack([validation_history[t] for t in valid])
         mae, rmse = score(pred, target, mean, std)
@@ -167,11 +194,13 @@ def main() -> None:
     for horizon in (1, 15, 60):
         target_times = list(test_times)
         lookup = {t: x for t, x in zip(np.concatenate((train_times_full, test_times)), np.concatenate((train_data_full, test_norm)))}
-        valid = valid_origins(target_times, lookup, [horizon], branches, set(test_times))
+        valid = valid_origins(target_times, lookup, horizon, sts_lags, sts_recent_lags, set(test_times))
+        report_preflight("STS-PredNet", "T4_context_T6", horizon, target_times, valid)
         pred = sts_predict(model, device, lookup, valid, horizon, branches)
         target = np.stack([lookup[t] for t in valid])
         mae, rmse = score(pred, target, mean, std)
         results.append({"model": "STS-PredNet", "split": "T4_context_T6", "horizon": horizon, "n_targets": len(valid), "mae_db": mae, "rmse_db": rmse})
+    write_results(output_path, results)
 
     checkpoint_dir = output_path.parent / "checkpoints"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -187,12 +216,14 @@ def main() -> None:
             all_times, all_values = np.concatenate((train_times_full, test_times)), np.concatenate((train_data_full, test_norm))
         lookup = {t: x for t, x in zip(all_times, all_values)}
         for horizon in (1, 15, 60):
-            valid = valid_origins(times, lookup, [horizon], branches)
+            recent_times = set(test_times) if split_name == "T4_context_T6" else None
+            valid = valid_origins(times, lookup, horizon, saved["lags"], sts_recent_lags, recent_times)
+            report_preflight("Daily-history Linear AR", split_name, horizon, times, valid)
             pred = ar_predict(ar, device, lookup, valid, horizon, saved["lags"])
             target = np.stack([lookup[t] for t in valid])
             mae, rmse = score(pred, target, mean, std)
             results.append({"model": "Daily-history Linear AR", "split": split_name, "horizon": horizon, "n_targets": len(valid), "mae_db": mae, "rmse_db": rmse})
-    output_path.write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
+            write_results(output_path, results)
 
 
 if __name__ == "__main__":

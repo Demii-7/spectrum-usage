@@ -22,6 +22,12 @@ from train_integrated import to_sts_layout, validation_with_training_context  # 
 from evaluate_integrated import rollout_required_history  # noqa: E402
 from linear_ar_baseline import LagMatchedLinearAR, predict_recursive  # noqa: E402
 
+_spec = importlib.util.spec_from_file_location(
+    "evaluate_daily_history", STS / "evaluate_daily_history.py",
+)
+_daily_evaluation = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_daily_evaluation)
+
 
 def branches(enabled):
     return {
@@ -120,3 +126,40 @@ def test_lag_matched_ar_recursion_uses_generated_recent_frames():
         device=torch.device("cpu"),
     )
     assert prediction[:, 0, 0, 0].tolist() == [5.0]
+
+
+def test_daily_evaluator_keeps_recursive_state_per_origin():
+    model = LagMatchedLinearAR((1, 1, 1), n_lags=2)
+    with torch.no_grad():
+        model.weight.zero_()
+        model.weight[1].fill_(1.0)
+        model.bias.zero_()
+    start = np.datetime64("2026-07-03T00:00")
+    history = {
+        start + np.timedelta64(index, "m"): np.full((1, 1, 1), index, dtype=np.float32)
+        for index in range(12)
+    }
+    prediction = _daily_evaluation.ar_predict(
+        model, torch.device("cpu"), history, [start + np.timedelta64(8, "m"), start + np.timedelta64(9, "m")],
+        horizon=3, lags=[2, 1],
+    )
+    assert prediction[:, 0, 0, 0].tolist() == [5.0, 6.0]
+
+
+def test_daily_evaluator_preflight_requires_observed_recent_t6_context():
+    target = np.datetime64("2026-07-03T18:00")
+    history = {
+        target + np.timedelta64(index, "m"): np.zeros((1, 1, 1), dtype=np.float32)
+        for index in range(-3000, 1)
+    }
+    recent_times = {target + np.timedelta64(index, "m") for index in range(-119, 1)}
+    valid = _daily_evaluation.valid_origins(
+        [target], history, horizon=60, lags=[60, 2, 1, 2880, 1440],
+        recent_lags={1, 2, 60}, recent_times=recent_times,
+    )
+    assert valid == [target]
+    recent_times.remove(target - np.timedelta64(119, "m"))
+    assert not _daily_evaluation.valid_origins(
+        [target], history, horizon=60, lags=[60, 2, 1, 2880, 1440],
+        recent_lags={1, 2, 60}, recent_times=recent_times,
+    )
