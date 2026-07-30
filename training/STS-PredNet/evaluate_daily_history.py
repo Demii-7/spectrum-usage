@@ -160,6 +160,9 @@ def main() -> None:
     train_map, train_times = load_npz("data/maps/plan_powder_600_800_train.npz")
     validation_map, validation_times = load_npz("data/maps/plan_powder_600_800_validation.npz")
     test_map, test_times = load_npz("data/maps/plan_powder_600_800_test.npz")
+    train_map_cwh = np.moveaxis(train_map, -1, 1)
+    validation_map_cwh = np.moveaxis(validation_map, -1, 1)
+    test_map_cwh = np.moveaxis(test_map, -1, 1)
     mean = data.normalization["mean_dbm"]
     std = data.normalization["std_dbm"]
     branches = resolve_branch_config(config)
@@ -175,7 +178,7 @@ def main() -> None:
 
     validation_times_full = np.concatenate((train_times, validation_times))
     validation_data_full = np.concatenate((train_norm, validation_norm))
-    validation_history_raw = {t: x for t, x in zip(validation_times_full, np.concatenate((train_map, validation_map)))}
+    validation_history_raw = {t: x for t, x in zip(validation_times_full, np.concatenate((train_map_cwh, validation_map_cwh)))}
 
     results = []
     validation_targets = validation_times
@@ -194,11 +197,11 @@ def main() -> None:
 
     train_times_full = np.concatenate((train_times, validation_times))
     train_data_full = np.concatenate((train_norm, validation_norm))
-    train_data_raw_full = np.concatenate((train_map, validation_map))
+    train_data_raw_full = np.concatenate((train_map_cwh, validation_map_cwh))
     for horizon in (1, 15, 60):
         target_times = list(test_times)
         lookup = {t: x for t, x in zip(np.concatenate((train_times_full, test_times)), np.concatenate((train_data_full, test_norm)))}
-        lookup_raw = {t: x for t, x in zip(np.concatenate((train_times_full, test_times)), np.concatenate((train_data_raw_full, test_map)))}
+        lookup_raw = {t: x for t, x in zip(np.concatenate((train_times_full, test_times)), np.concatenate((train_data_raw_full, test_map_cwh)))}
         valid = valid_origins(target_times, lookup, horizon, sts_lags, sts_recent_lags, set(test_times))
         report_preflight("STS-PredNet", "T4_context_T6", horizon, target_times, valid)
         pred = sts_predict(model, device, lookup, valid, horizon, branches)
@@ -214,14 +217,14 @@ def main() -> None:
     ar = LagMatchedLinearAR(tuple(saved["feature_shape"]), len(saved["lags"])).to(device)
     ar.load_state_dict(saved["model_state_dict"])
     ar.eval()
-    ar_raw_values = (("T4_validation", validation_times, train_map, validation_map), ("T4_context_T6", test_times, train_map, validation_map))
+    ar_raw_values = (("T4_validation", validation_times, train_map_cwh, validation_map_cwh), ("T4_context_T6", test_times, train_map_cwh, validation_map_cwh))
     for split_name, times, norm_values in (("T4_validation", validation_times, validation_norm), ("T4_context_T6", test_times, test_norm)):
         if split_name == "T4_validation":
             all_times, all_values = validation_times_full, validation_data_full
             all_times_raw, all_values_raw = validation_times_full, train_data_raw_full
         else:
             all_times, all_values = np.concatenate((train_times_full, test_times)), np.concatenate((train_data_full, test_norm))
-            all_times_raw, all_values_raw = np.concatenate((train_times_full, test_times)), np.concatenate((train_data_raw_full, test_map))
+            all_times_raw, all_values_raw = np.concatenate((train_times_full, test_times)), np.concatenate((train_data_raw_full, test_map_cwh))
         lookup = {t: x for t, x in zip(all_times, all_values)}
         lookup_raw = {t: x for t, x in zip(all_times_raw, all_values_raw)}
         for horizon in (1, 15, 60):
