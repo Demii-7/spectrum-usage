@@ -38,6 +38,17 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = Path(__file__).with_name("config.yaml")
 
 
+def _validate_frequency_ranges(value: object, name: str) -> None:
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"{name} must be a non-empty list")
+    for item in value:
+        if not isinstance(item, list) or len(item) != 2:
+            raise ValueError(f"{name} entries must be [start, end]")
+        start, end = (float(part) for part in item)
+        if start > end:
+            raise ValueError(f"{name} start must not exceed end")
+
+
 def resolve_path(value: str | Path) -> Path:
     """Add root to path"""
     
@@ -150,14 +161,37 @@ def validate_config(config: dict[str, Any]) -> None:
                 raise ValueError("4d map generation requires data.map.locations")
         mask_config = data.get("mask") or {}
         if mask_config:
-            if representation == "1d":
+            if representation not in {"2d", "4d"}:
                 raise ValueError("data.mask is supported only for 2d and 4d")
             if data.get("frequency_bins") or data.get("frequency_ranges"):
                 raise ValueError("data.mask cannot be combined with frequency selection")
-            if not mask_config.get("frequency_ranges"):
-                raise ValueError("data.mask.frequency_ranges is required")
-            if "noise_floor" not in mask_config:
-                raise ValueError("data.mask.noise_floor is required")
+            _validate_frequency_ranges(
+                mask_config.get("frequency_ranges"), "data.mask.frequency_ranges"
+            )
+            replacement = str(mask_config.get("replacement", "constant")).lower()
+            if replacement == "constant":
+                if "noise_floor" not in mask_config:
+                    raise ValueError("constant data.mask requires noise_floor")
+                float(mask_config["noise_floor"])
+            elif replacement == "low_tail_gaussian":
+                if representation != "2d":
+                    raise ValueError("low_tail_gaussian data.mask is currently supported only for 2d")
+                quantile = float(mask_config.get("low_tail_quantile", 0.05))
+                if not 0.0 < quantile < 0.5:
+                    raise ValueError("data.mask.low_tail_quantile must be between 0 and 0.5")
+                if mask_config.get("calibration_frequency_ranges") is not None:
+                    _validate_frequency_ranges(
+                        mask_config["calibration_frequency_ranges"],
+                        "data.mask.calibration_frequency_ranges",
+                    )
+            else:
+                raise ValueError(f"Unsupported data.mask.replacement: {replacement!r}")
+        if data.get("loss_frequency_ranges") is not None:
+            if representation != "2d":
+                raise ValueError("data.loss_frequency_ranges is currently supported only for 2d")
+            _validate_frequency_ranges(
+                data["loss_frequency_ranges"], "data.loss_frequency_ranges"
+            )
 
     max_missing_gap = int(config["preprocessing"].get("max_missing_gap", 0))
     if max_missing_gap < 0:

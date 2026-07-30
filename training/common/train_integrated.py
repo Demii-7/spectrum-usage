@@ -44,7 +44,7 @@ from training.common.runtime import device_for, epoch_log_row, timestamp_utc
 from training.common.results import prepare_output_dirs
 
 # Helper utilities that identify tracking specs and load raw .npz or .csv multi-frequency grid arrays into memory.
-from training.common.data import chunk_specs, load_chunk
+from training.common.data import chunk_specs, frequency_range_mask, load_chunk
 
 #Helper for Model forecasting
 from training.common.forecasting import forecast
@@ -87,6 +87,7 @@ def train_model(
     chunk_id: str | None = None,
     normalization: dict[str, Any] | None = None,
     site_grid_indices: dict[str, tuple[int, int]] | None = None,
+    frequencies: list[float] | None = None,
 ):
     """ Integrated Training, Validation, and Logging """
     print(f"[DEBUG] train_model entry: model_name={model_name}, train_data.shape={train_data.shape}")
@@ -159,6 +160,21 @@ def train_model(
 
     # Move the model to GPU or CPU.
     model = model.to(device)
+    loss_frequency_indices = None
+    loss_ranges = config.get("data", {}).get("loss_frequency_ranges")
+    if loss_ranges is not None:
+        if train_data.ndim != 2 or frequencies is None:
+            raise ValueError("Target-region loss requires 2D data frequencies")
+        selected = frequency_range_mask(np.asarray(frequencies), loss_ranges)
+        loss_frequency_indices = torch.as_tensor(
+            np.flatnonzero(selected), dtype=torch.long, device=device
+        )
+
+    def scored(values: torch.Tensor) -> torch.Tensor:
+        return (
+            values.index_select(2, loss_frequency_indices)
+            if loss_frequency_indices is not None else values
+        )
 
     pretraining_metadata = None
     if model_name == "convlstmfm":
@@ -333,7 +349,7 @@ def train_model(
                 )
 
             # Measure prediction error.
-            data_loss = criterion(pred, y)
+            data_loss = criterion(scored(pred), scored(y))
             loss = data_loss
             ridge_penalty = getattr(model, "ridge_penalty", None)
             if ridge_penalty is not None:
@@ -418,7 +434,9 @@ def train_model(
                         f"Target shape:     {tuple(y.shape)}"
                     )
 
-                loss_ar = criterion(pred_ar, y)
+                scored_pred_ar = scored(pred_ar)
+                scored_y = scored(y)
+                loss_ar = criterion(scored_pred_ar, scored_y)
                 if convlstm_guard_threshold is not None:
                     max_abs_target = max(max_abs_target, float(y.abs().max().item()))
                     batch_maxima = max_abs_prediction_by_horizon(pred_ar)
@@ -433,13 +451,17 @@ def train_model(
                 val_sample_count += batch_samples
 
                 # Per-horizon breakdown
-                step_mse = ((pred_ar - y) ** 2).mean(
+                step_mse = ((scored_pred_ar - scored_y) ** 2).mean(
                     dim=tuple(range(2, pred_ar.ndim))
                 )
-                abs_error = torch.abs(pred_ar - y)
+                abs_error = torch.abs(scored_pred_ar - scored_y)
                 if pred_ar.ndim == 3:
                     if std_dbm is not None:
-                        abs_error = abs_error * std_dbm.view(1, 1, -1)
+                        scored_std = (
+                            std_dbm.index_select(0, loss_frequency_indices)
+                            if loss_frequency_indices is not None else std_dbm
+                        )
+                        abs_error = abs_error * scored_std.view(1, 1, -1)
                 elif pred_ar.ndim == 5:
                     if std_dbm is not None:
                         abs_error = abs_error * std_dbm.view(1, 1, -1, 1, 1)
@@ -473,7 +495,7 @@ def train_model(
                         rollout_horizon=rollout_horizon,
                         targets=y,
                     )
-                    loss_tf = criterion(pred_tf, y)
+                    loss_tf = criterion(scored(pred_tf), scored_y)
                     val_teacher_sum += loss_tf.item() * batch_samples
                     val_teacher_count += batch_samples
                     _t_tf_acc += time.perf_counter() - _t_tf
@@ -830,6 +852,7 @@ def train_one_model(
             callback=callback,
             chunk_id=chunk.chunk_id,
             normalization=data.normalization,
+            frequencies=data.frequencies,
             site_grid_indices=(
                 find_site_grid_indices(
                     resolve_path(config["data"]["map"].get("output_dir", "data/maps"))

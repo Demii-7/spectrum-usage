@@ -28,6 +28,60 @@ class ChunkSpec:
     end_mhz: float
 
 
+def frequency_range_mask(
+    frequencies: np.ndarray,
+    frequency_ranges: list[list[float]],
+) -> np.ndarray:
+    """Return bins contained in any inclusive frequency range."""
+    frequencies = np.asarray(frequencies, dtype=np.float32)
+    keep = np.zeros(len(frequencies), dtype=bool)
+    for start, stop in frequency_ranges:
+        keep |= (frequencies >= float(start)) & (frequencies <= float(stop))
+    if not keep.any():
+        raise ValueError("Frequency ranges do not include any available channels")
+    return keep
+
+
+def apply_2d_spectral_mask(
+    data: np.ndarray,
+    frequencies: np.ndarray,
+    mask_config: dict[str, Any],
+    *,
+    training_data: np.ndarray,
+    split_seed_offset: int,
+) -> np.ndarray:
+    """Replace non-target 2D inputs using training-derived noise."""
+    keep = frequency_range_mask(frequencies, mask_config["frequency_ranges"])
+    result = np.asarray(data, dtype=np.float32).copy()
+    replacement = str(mask_config.get("replacement", "constant")).lower()
+    if replacement == "constant":
+        result[:, ~keep] = float(mask_config["noise_floor"])
+        return result
+
+    if replacement != "low_tail_gaussian":
+        raise ValueError(f"Unsupported spectral mask replacement: {replacement!r}")
+    calibration_ranges = mask_config.get("calibration_frequency_ranges")
+    calibration_mask = (
+        frequency_range_mask(frequencies, calibration_ranges)
+        if calibration_ranges else np.ones(len(frequencies), dtype=bool)
+    )
+    samples = np.asarray(training_data[:, calibration_mask], dtype=np.float64).reshape(-1)
+    quantile = float(mask_config.get("low_tail_quantile", 0.05))
+    center = float(np.quantile(samples, quantile))
+    tail_limit = np.quantile(samples, min(0.25, max(quantile * 4, quantile)))
+    lower_tail = samples[samples <= tail_limit]
+    median = float(np.median(lower_tail))
+    noise_std = float(1.4826 * np.median(np.abs(lower_tail - median)))
+    noise_std = max(noise_std, float(mask_config.get("minimum_noise_std_db", 0.05)))
+    rng = np.random.default_rng(int(mask_config.get("seed", 42)) + split_seed_offset)
+    result[:, ~keep] = rng.normal(
+        center,
+        noise_std,
+        size=(len(result), int(np.count_nonzero(~keep))),
+    ).astype(np.float32)
+    return result
+
+
 def chunk_specs(config: dict[str, Any]) -> list[ChunkSpec]:
     return [
         ChunkSpec(str(chunk["id"]), float(chunk["start_mhz"]), float(chunk["end_mhz"]))
@@ -210,7 +264,7 @@ def load_chunk(
     preprocessing = config.get("preprocessing", {})
     impute = bool(preprocessing.get("impute", False))
     max_missing_gap = int(preprocessing.get("max_missing_gap", 0))
-    noise_floor = float(mask_cfg["noise_floor"]) if mask_cfg else None
+    noise_floor = float(mask_cfg["noise_floor"]) if mask_cfg and "noise_floor" in mask_cfg else None
     concat = str(data_cfg.get("concat", "rows"))
     raw_ranges = (data_cfg.get("split") or {}).get("ranges")
     timestamp_ranges = None
@@ -248,10 +302,12 @@ def load_chunk(
     print(f"[DEBUG] load_chunk: prepare_4d_partitions done, selected_sites={selected_sites}")
 
     print(f"[DEBUG] load_chunk: loading train partition ...")
+    source_mask_ranges = mask_ranges if representation == "4d" else None
+    source_noise_floor = noise_floor if representation == "4d" else None
     train_source = _load_partition(
         partitions["train"], "train", representation, data_cfg,
         frequency_bins, frequency_ranges, concat, impute, max_missing_gap,
-        mask_ranges, noise_floor, None, selected_sites, excluded_sites, outage_threshold,
+        source_mask_ranges, source_noise_floor, None, selected_sites, excluded_sites, outage_threshold,
         None if timestamp_ranges is None else timestamp_ranges["train"],
     )
     print(f"[DEBUG] load_chunk: train data shape={train_source.data.shape}")
@@ -267,14 +323,14 @@ def load_chunk(
         validation_source = _load_partition(
             partitions["validation"], "validation", representation, data_cfg,
             frequency_bins, frequency_ranges, concat, impute, max_missing_gap,
-            mask_ranges, noise_floor, training_layout, selected_sites, excluded_sites,
+            source_mask_ranges, source_noise_floor, training_layout, selected_sites, excluded_sites,
             outage_threshold, timestamp_ranges["validation"],
         )
     print(f"[DEBUG] load_chunk: loading test partition ...")
     test_source = _load_partition(
         partitions["test"], "test", representation, data_cfg,
         frequency_bins, frequency_ranges, concat, impute, max_missing_gap,
-        mask_ranges, noise_floor, training_layout, selected_sites, excluded_sites, outage_threshold,
+        source_mask_ranges, source_noise_floor, training_layout, selected_sites, excluded_sites, outage_threshold,
         None if timestamp_ranges is None else timestamp_ranges["test"],
     )
     print(f"[DEBUG] load_chunk: test data shape={test_source.data.shape}")
@@ -324,22 +380,40 @@ def load_chunk(
     train_data = train_source.data
     validation_data = None if validation_source is None else validation_source.data
     test_data = test_source.data
+    train_input = train_data
+    validation_input = validation_data
+    test_input = test_data
+    if mask_cfg and representation == "2d":
+        training_fit_data = train_data[:fit_end]
+        train_input = apply_2d_spectral_mask(
+            train_data, train_source.frequencies, mask_cfg,
+            training_data=training_fit_data, split_seed_offset=0,
+        )
+        if validation_data is not None:
+            validation_input = apply_2d_spectral_mask(
+                validation_data, validation_source.frequencies, mask_cfg,
+                training_data=training_fit_data, split_seed_offset=1,
+            )
+        test_input = apply_2d_spectral_mask(
+            test_data, test_source.frequencies, mask_cfg,
+            training_data=training_fit_data, split_seed_offset=2,
+        )
     normalization = None
-    train_model = train_data
-    validation_model = validation_data
-    test_model = test_data
+    train_model = train_input
+    validation_model = validation_input
+    test_model = test_input
     if bool(preprocessing.get("normalize", True)):
         print(f"[DEBUG] load_chunk: fitting per-frequency normalization on first {fit_end} rows ...")
         mean, std = fit_per_frequency_normalization(
-            train_data[:fit_end], allow_zero_variance=bool(mask_cfg)
+            train_input[:fit_end], allow_zero_variance=bool(mask_cfg)
         )
         print(f"[DEBUG] load_chunk: normalization stats: mean.shape={mean.shape}, std.shape={std.shape}")
-        train_model = apply_per_frequency_normalization(train_data, mean, std).astype(np.float32)
-        if validation_data is not None:
+        train_model = apply_per_frequency_normalization(train_input, mean, std).astype(np.float32)
+        if validation_input is not None:
             validation_model = apply_per_frequency_normalization(
-                validation_data, mean, std
+                validation_input, mean, std
             ).astype(np.float32)
-        test_model = apply_per_frequency_normalization(test_data, mean, std).astype(np.float32)
+        test_model = apply_per_frequency_normalization(test_input, mean, std).astype(np.float32)
         print(f"[DEBUG] load_chunk: normalization applied, train_model.shape={train_model.shape}")
         normalization = {
             "mean_dbm": mean,
