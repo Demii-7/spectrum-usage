@@ -20,7 +20,7 @@ from dataset import (  # noqa: E402
 from stsprednet import STSPredNet  # noqa: E402
 from train_integrated import to_sts_layout, validation_with_training_context  # noqa: E402
 from evaluate_integrated import rollout_required_history  # noqa: E402
-from linear_ar_baseline import LagMatchedLinearAR, predict_recursive  # noqa: E402
+from linear_ar_baseline import LagMatchedLinearAR, lag_sets, predict_recursive  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location(
     "evaluate_daily_history", STS / "evaluate_daily_history.py",
@@ -126,6 +126,16 @@ def test_lag_matched_ar_recursion_uses_generated_recent_frames():
         device=torch.device("cpu"),
     )
     assert prediction[:, 0, 0, 0].tolist() == [5.0]
+
+
+@pytest.mark.parametrize(("lp", "daily_lags"), [(1, [1440]), (2, [2880, 1440])])
+def test_lag_matched_ar_uses_configured_daily_history(lp, daily_lags):
+    config = {"stsprednet": {"branches": {
+        "use_closeness": True, "use_period": True, "use_trend": False,
+        "lc": 60, "lp": lp, "lq": 1, "period_interval": 1440,
+        "trend_interval": 10080,
+    }}}
+    assert lag_sets(config)["recent_daily"] == list(range(60, 0, -1)) + daily_lags
 
 
 def test_daily_evaluator_keeps_recursive_state_per_origin():

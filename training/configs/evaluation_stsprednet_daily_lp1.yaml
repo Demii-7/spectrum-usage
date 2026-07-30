@@ -1,0 +1,78 @@
+data:
+  representation: 4d
+  files:
+    - {path: data/powder/cpg-nuc1/20260628T0437Z/600_800/power_1mhz_avg_per_minute.csv, partition: train}
+    - {path: data/powder/ebc-nuc1/20260628T0436Z/600_800/power_1mhz_avg_per_minute.csv, partition: train}
+    - {path: data/powder/humanities-nuc1/20260628T0436Z/600_800/power_1mhz_avg_per_minute.csv, partition: train}
+    - {path: data/powder/madsen-nuc1/20260628T0437Z/600_800/power_1mhz_avg_per_minute.csv, partition: train}
+    - {path: data/powder/moran-nuc1/20260628T0437Z/600_800/power_1mhz_avg_per_minute.csv, partition: train}
+    - {path: data/powder/sagepoint-nuc1/20260628T0437Z/600_800/power_1mhz_avg_per_minute.csv, partition: train}
+    - {path: data/powder/cpg-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv, partition: test}
+    - {path: data/powder/ebc-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv, partition: test}
+    - {path: data/powder/humanities-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv, partition: test}
+    - {path: data/powder/madsen-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv, partition: test}
+    - {path: data/powder/moran-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv, partition: test}
+    - {path: data/powder/sagepoint-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv, partition: test}
+  concat: rows
+  split:
+    ranges:
+      train: {start: "2026-06-28T04:37:00Z", end: "2026-07-02T02:23:00Z"}
+      validation: {start: "2026-07-02T02:24:00Z", end: "2026-07-03T02:23:00Z"}
+      test: {start: "2026-07-03T18:39:00Z", end: "2026-07-06T09:14:00Z"}
+  map:
+    name: plan_powder_600_800
+    locations: data/locations/powder.json
+    collection_key: endpoints
+    output_dir: data/maps
+    grid: {height: 10, width: 10}
+    force_rebuild: false
+    permute: false
+    permute_seed: 42
+  chunks: [{id: powder_600_800_t4t6, start_mhz: 600.0, end_mhz: 800.0}]
+
+# One daily period frame at t-1,440 minutes.
+windowing: {lookback: 60, horizons: [1, 15, 60, 120, 480]}
+training: {device: cuda, model_name: stsprednet}
+preprocessing: {normalize: true, impute: true, max_missing_gap: 9}
+data_loader: {num_workers: 0, pin_memory: false}
+
+stsprednet:
+  branches:
+    use_closeness: true
+    use_period: true
+    use_trend: false
+    allow_unavailable_branches: false
+    lc: 60
+    lp: 1
+    lq: 1
+    prediction_offset: 1
+    period_interval: 1440
+    trend_interval: 10080
+    share_branch_weights: false
+  model:
+    input_channels: 200
+    map_height: 10
+    map_width: 10
+    num_layers: 2
+    hidden_dim: 64
+    kernel_size: [3, 3]
+    fusion_weight_shape: per_location
+    output_activation: linear
+  batch_size: 2
+  epochs: 10
+  learning_rate: 0.0002
+  weight_decay: 0.0
+  gradient_clip_norm: 5.0
+  patience: 4
+  seed: 42
+  train: {val_fraction: 0.1, seed: 42}
+
+stsprednet_linear_ar:
+  variants: [recent, recent_daily]
+  batch_size: 8
+  epochs: 20
+  learning_rate: 0.001
+  ridge_alpha: 1.0
+  early_stopping: true
+  early_stopping_patience: 5
+  seed: 42

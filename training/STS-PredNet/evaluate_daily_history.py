@@ -17,7 +17,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from dataset import resolve_branch_config
-from linear_ar_baseline import LagMatchedLinearAR, train_variant
+from linear_ar_baseline import LagMatchedLinearAR, lag_sets, train_variant
 from stsprednet import STSPredNet
 from train_integrated import to_sts_layout
 from training.common.config import load_config
@@ -231,7 +231,8 @@ def main() -> None:
     # --- Linear AR ---
     checkpoint_dir = output_path.parent / "checkpoints"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    ar_checkpoint = train_variant(config, data, chunk, "recent_daily", list(range(60, 0, -1)) + [2880, 1440], checkpoint_dir)
+    ar_lags = lag_sets(config)["recent_daily"]
+    ar_checkpoint = train_variant(config, data, chunk, "recent_daily", ar_lags, checkpoint_dir)
     saved = torch.load(ar_checkpoint, map_location="cpu", weights_only=False)
     ar = LagMatchedLinearAR(tuple(saved["feature_shape"]), len(saved["lags"])).to(device)
     ar.load_state_dict(saved["model_state_dict"])
