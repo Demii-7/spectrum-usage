@@ -446,6 +446,17 @@ def load_chunk(
         test_model, _ = _flatten_segments(
             test_model.reshape(-1, len(test_source.frequencies)), test_source.segments
         )
+        if normalization is not None:
+            n_freq = len(train_source.frequencies)
+            per_freq_mean = mean.reshape(1, -1).astype(np.float32)
+            per_freq_std = std.reshape(1, -1).astype(np.float32)
+            normalization = {
+                "mean_dbm": per_freq_mean,
+                "std_dbm": per_freq_std,
+                "site": normalization["site"],
+                "source_split": normalization["source_split"],
+                "frequency_axis": normalization["frequency_axis"],
+            }
 
     print(f"[DEBUG] load_chunk: building LoadedSpectrumData ...")
     reference_site = str(data_cfg.get("reference_site", representation))
