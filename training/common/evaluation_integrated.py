@@ -339,6 +339,49 @@ def calculate_errors_and_export_arrays(
     )
 
 
+def _flattened_1d_frequency_indices(
+    segments: tuple[Any, ...],
+    rows: np.ndarray,
+) -> np.ndarray:
+    """Map flattened 1D rows back to their original frequency index."""
+    rows = np.asarray(rows, dtype=np.int64)
+    indices = np.full(rows.shape, -1, dtype=np.int64)
+    for segment in segments:
+        label = str(segment.label)
+        token = label.rsplit("frequency_", 1)[-1]
+        if not token.isdigit():
+            raise ValueError(
+                "Flattened 1D segment is missing a frequency index: "
+                f"{segment.label!r}"
+            )
+        selected = (rows >= segment.start) & (rows < segment.end)
+        indices[selected] = int(token)
+    if np.any(indices < 0):
+        raise ValueError("Some flattened 1D evaluation rows are outside their segments")
+    return indices
+
+
+def _flattened_1d_normalization(
+    normalization: dict[str, Any] | None,
+    segments: tuple[Any, ...],
+    rows: np.ndarray,
+) -> tuple[dict[str, Any] | None, np.ndarray]:
+    """Select per-frequency normalization for flattened 1D samples."""
+    frequency_indices = _flattened_1d_frequency_indices(segments, rows)
+    if normalization is None:
+        return None, frequency_indices
+
+    mean = np.asarray(normalization["mean_dbm"]).reshape(-1)
+    std = np.asarray(normalization["std_dbm"]).reshape(-1)
+    if np.any(frequency_indices >= len(mean)):
+        raise ValueError("Flattened 1D segment frequency exceeds normalization statistics")
+    return {
+        **normalization,
+        "mean_dbm": mean[frequency_indices].reshape(-1, 1),
+        "std_dbm": std[frequency_indices].reshape(-1, 1),
+    }, frequency_indices
+
+
 def _per_site_map_errors(
     prediction_dbm: np.ndarray,
     target_dbm: np.ndarray,
@@ -569,6 +612,19 @@ def evaluate_chunk(
                 local_target_rows,
             )
 
+            flattened_1d = (
+                str(config.get("data", {}).get("representation", "")).lower() == "1d"
+                and len(data.frequencies) > 1
+            )
+            row_normalization = data.normalization
+            frequency_indices = None
+            if flattened_1d:
+                row_normalization, frequency_indices = _flattened_1d_normalization(
+                    data.normalization,
+                    split.segments,
+                    local_target_rows,
+                )
+
             (
                 prediction_dbm,
                 target_dbm_export,
@@ -577,7 +633,7 @@ def evaluate_chunk(
             ) = calculate_errors_and_export_arrays(
                 prediction_normalized=prediction_normalized,
                 target_raw_model_layout=target_raw,
-                normalization=data.normalization,
+                normalization=row_normalization,
             )
 
             if (
@@ -615,6 +671,7 @@ def evaluate_chunk(
                 sq_err=squared_error,
                 bands=bands,
                 feature_labels=data.feature_labels,
+                frequency_indices=frequency_indices,
             )
 
             predictions_by_horizon[

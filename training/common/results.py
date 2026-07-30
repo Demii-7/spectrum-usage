@@ -88,6 +88,7 @@ def append_metric_rows(
     sq_err: np.ndarray,
     bands: pd.DataFrame,
     feature_labels: list[str] | None = None,
+    frequency_indices: np.ndarray | None = None,
 ) -> None:
     aggregate_rows.append(
         {
@@ -112,6 +113,13 @@ def append_metric_rows(
             if feature_labels is not None and idx < len(feature_labels)
             else split_site(split_name)
         )
+        selected = (
+            np.ones(len(abs_err), dtype=bool)
+            if frequency_indices is None
+            else np.asarray(frequency_indices) == idx
+        )
+        if not np.any(selected):
+            continue
         frequency_rows.append(
             {
                 "chunk_id": chunk_id,
@@ -120,8 +128,8 @@ def append_metric_rows(
                 "split": split_name,
                 "horizon": int(horizon),
                 "model": model,
-                "mae_db": float(np.mean(abs_err[:, idx])),
-                "rmse_db": float(np.sqrt(np.mean(sq_err[:, idx]))),
+                "mae_db": float(np.mean(abs_err[selected, 0 if frequency_indices is not None else idx])),
+                "rmse_db": float(np.sqrt(np.mean(sq_err[selected, 0 if frequency_indices is not None else idx]))),
             }
         )
 
@@ -130,6 +138,13 @@ def append_metric_rows(
     chunk_bands = bands[bands["chunk_id"] == chunk_id].copy()
     for _, band in chunk_bands.iterrows():
         indices = band_indices(band, freqs)
+        if frequency_indices is None:
+            band_abs_err = abs_err[:, indices]
+            band_sq_err = sq_err[:, indices]
+        else:
+            selected = np.isin(np.asarray(frequency_indices), indices)
+            band_abs_err = abs_err[selected, 0:1]
+            band_sq_err = sq_err[selected, 0:1]
         band_rows.append(
             {
                 "chunk_id": chunk_id,
@@ -141,8 +156,8 @@ def append_metric_rows(
                 "split": split_name,
                 "horizon": int(horizon),
                 "model": model,
-                "mae_db": float(np.mean(abs_err[:, indices])),
-                "rmse_db": float(np.sqrt(np.mean(sq_err[:, indices]))),
+                "mae_db": float(np.mean(band_abs_err)),
+                "rmse_db": float(np.sqrt(np.mean(band_sq_err))),
             }
         )
 
