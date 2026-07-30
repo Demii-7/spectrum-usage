@@ -219,8 +219,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--cpus-per-task", type=float, default=2.0)
     parser.add_argument("--gpus-per-task", type=float, default=0.5)
     args = parser.parse_args(argv)
-    if not 0.0 < args.gpus_per_task <= 0.5:
-        parser.error("--gpus-per-task must be greater than zero and at most 0.5")
+    if not 0.0 <= args.gpus_per_task <= 0.5:
+        parser.error("--gpus-per-task must be at least zero and at most 0.5")
     args.storage_path = args.storage_path or f"s3://{args.bucket}/{args.prefix.strip('/')}"
     return args
 
