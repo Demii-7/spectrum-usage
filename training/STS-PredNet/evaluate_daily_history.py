@@ -172,9 +172,12 @@ def main() -> None:
     train_norm = norm_map(train_map, mean, std)
     validation_norm = norm_map(validation_map, mean, std)
     test_norm = norm_map(test_map, mean, std)
-    results = []
+
     validation_times_full = np.concatenate((train_times, validation_times))
     validation_data_full = np.concatenate((train_norm, validation_norm))
+    validation_history_raw = {t: x for t, x in zip(validation_times_full, np.concatenate((train_map, validation_map)))}
+
+    results = []
     validation_targets = validation_times
     validation_history = {t: x for t, x in zip(validation_times_full, validation_data_full)}
     sts_lags = list(range(1, branches["lc"] + 1)) + [
@@ -185,19 +188,21 @@ def main() -> None:
         valid = valid_origins(validation_targets, validation_history, horizon, sts_lags, sts_recent_lags)
         report_preflight("STS-PredNet", "T4_validation", horizon, validation_targets, valid)
         pred = sts_predict(model, device, validation_history, valid, horizon, branches)
-        target = np.stack([validation_history[t] for t in valid])
+        target = np.stack([validation_history_raw[t] for t in valid])
         mae, rmse = score(pred, target, mean, std)
         results.append({"model": "STS-PredNet", "split": "T4_validation", "horizon": horizon, "n_targets": len(valid), "mae_db": mae, "rmse_db": rmse})
 
     train_times_full = np.concatenate((train_times, validation_times))
     train_data_full = np.concatenate((train_norm, validation_norm))
+    train_data_raw_full = np.concatenate((train_map, validation_map))
     for horizon in (1, 15, 60):
         target_times = list(test_times)
         lookup = {t: x for t, x in zip(np.concatenate((train_times_full, test_times)), np.concatenate((train_data_full, test_norm)))}
+        lookup_raw = {t: x for t, x in zip(np.concatenate((train_times_full, test_times)), np.concatenate((train_data_raw_full, test_map)))}
         valid = valid_origins(target_times, lookup, horizon, sts_lags, sts_recent_lags, set(test_times))
         report_preflight("STS-PredNet", "T4_context_T6", horizon, target_times, valid)
         pred = sts_predict(model, device, lookup, valid, horizon, branches)
-        target = np.stack([lookup[t] for t in valid])
+        target = np.stack([lookup_raw[t] for t in valid])
         mae, rmse = score(pred, target, mean, std)
         results.append({"model": "STS-PredNet", "split": "T4_context_T6", "horizon": horizon, "n_targets": len(valid), "mae_db": mae, "rmse_db": rmse})
     write_results(output_path, results)
@@ -209,18 +214,22 @@ def main() -> None:
     ar = LagMatchedLinearAR(tuple(saved["feature_shape"]), len(saved["lags"])).to(device)
     ar.load_state_dict(saved["model_state_dict"])
     ar.eval()
-    for split_name, times, values in (("T4_validation", validation_times, validation_norm), ("T4_context_T6", test_times, test_norm)):
+    ar_raw_values = (("T4_validation", validation_times, train_map, validation_map), ("T4_context_T6", test_times, train_map, validation_map))
+    for split_name, times, norm_values in (("T4_validation", validation_times, validation_norm), ("T4_context_T6", test_times, test_norm)):
         if split_name == "T4_validation":
             all_times, all_values = validation_times_full, validation_data_full
+            all_times_raw, all_values_raw = validation_times_full, train_data_raw_full
         else:
             all_times, all_values = np.concatenate((train_times_full, test_times)), np.concatenate((train_data_full, test_norm))
+            all_times_raw, all_values_raw = np.concatenate((train_times_full, test_times)), np.concatenate((train_data_raw_full, test_map))
         lookup = {t: x for t, x in zip(all_times, all_values)}
+        lookup_raw = {t: x for t, x in zip(all_times_raw, all_values_raw)}
         for horizon in (1, 15, 60):
             recent_times = set(test_times) if split_name == "T4_context_T6" else None
             valid = valid_origins(times, lookup, horizon, saved["lags"], sts_recent_lags, recent_times)
             report_preflight("Daily-history Linear AR", split_name, horizon, times, valid)
             pred = ar_predict(ar, device, lookup, valid, horizon, saved["lags"])
-            target = np.stack([lookup[t] for t in valid])
+            target = np.stack([lookup_raw[t] for t in valid])
             mae, rmse = score(pred, target, mean, std)
             results.append({"model": "Daily-history Linear AR", "split": split_name, "horizon": horizon, "n_targets": len(valid), "mae_db": mae, "rmse_db": rmse})
             write_results(output_path, results)
