@@ -77,7 +77,7 @@ _OPTIMIZER_2D = {
 _OPTIMIZER_TCN = {
     "train.learning_rate": loguniform(3e-4, 3e-3),
     "train.weight_decay": choice(0.0, 1e-5, 1e-4),
-    "train.batch_size": choice(16, 32),
+    "train.batch_size": choice(32, 64, 128),
 }
 
 _OPTIMIZER_MAP = {
@@ -186,7 +186,13 @@ _specs = [
             "architecture": _bundle(**{"model.hidden_size": 128, "model.num_layers": 1, "model.dropout": 0.1}),
             "train.learning_rate": 1e-3, "train.weight_decay": 0.0, "train.batch_size": 32,
         }}),
-    _tunable("residualvanillalstm", "2d", (
+    _tunable("vanillalstm1d", "1d", (
+        _bundle(**{"model.hidden_size": 8, "model.num_layers": 1, "model.dropout": 0.0}),
+        _bundle(**{"model.hidden_size": 32, "model.num_layers": 1, "model.dropout": 0.0}),
+        _bundle(**{"model.hidden_size": 128, "model.num_layers": 1, "model.dropout": 0.0}),
+    ), gpu=0.5, optimizer_space=_OPTIMIZER_2D,
+        anchor_optimizer={"train.learning_rate": 1e-3, "train.weight_decay": 1e-4, "train.batch_size": 128}),
+    _tunable("residualvanillalstm", "1d", (
         _bundle(**{"model.hidden_size": 8, "model.num_layers": 1, "model.dropout": 0.0}),
         _bundle(**{"model.hidden_size": 16, "model.num_layers": 1, "model.dropout": 0.0}),
         _bundle(**{"model.hidden_size": 64, "model.num_layers": 1, "model.dropout": 0.0}),

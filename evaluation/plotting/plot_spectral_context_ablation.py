@@ -146,7 +146,7 @@ def main() -> int:
     vmin, vmax = ensure_minimum_db_span(*np.percentile(finite, [1, 99]))
     extent = extent_for(window_times, frequencies)
     cmap = plt.get_cmap("viridis").copy()
-    figure, axes = plt.subplots(1, 2, figsize=(4.0, 1.75), sharex=True, sharey=True, constrained_layout=True)
+    figure, axes = plt.subplots(1, 2, figsize=(4.0, 1.0), sharex=True, sharey=True, constrained_layout=True)
     image = None
     for axis, data, title in zip(
         axes,

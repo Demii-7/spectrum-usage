@@ -79,6 +79,26 @@ The deterministic LookbackMean baseline is evaluated once and has no SEM.
 | LSTMAttn | 2.32362 +/- 0.05040 | 2.03621 +/- 0.01520 | 2.30754 +/- 0.06426 | 2.62712 +/- 0.08897 | 5 |
 | VanillaLSTM | 2.39836 +/- 0.02952 | 2.04462 +/- 0.03027 | 2.37451 +/- 0.04403 | 2.77596 +/- 0.03945 | 5 |
 
+### 4D Test MAE
+
+| Model | Mean test dB MAE | t+1 dB MAE | t+15 dB MAE | t+60 dB MAE | n |
+|---|---:|---:|---:|---:|---:|
+| ResidualLinearAR4D | 0.62183 +/- 0.00044 | 0.55162 +/- 0.00015 | 0.60675 +/- 0.00035 | 0.70713 +/- 0.00085 | 5 |
+| LinearAR4D | 0.63975 +/- 0.00164 | 0.56360 +/- 0.00159 | 0.61926 +/- 0.00137 | 0.73639 +/- 0.00265 | 5 |
+| ResidualConvLSTM | 0.65053 +/- n/a | 0.60021 +/- n/a | 0.62773 +/- n/a | 0.72365 +/- n/a | 2 * |
+| ConvLSTM | 0.97493 +/- 0.00739 | 0.89763 +/- 0.00498 | 0.96353 +/- 0.00525 | 1.06365 +/- 0.01752 | 5 |
+| DSwinLSTM-I |  |  |  |  | 0 |
+| ConvLSTM-FM |  |  |  |  | 0 |
+
+### 4D Test RMSE
+
+| Model | Mean test dB RMSE | t+1 dB RMSE | t+15 dB RMSE | t+60 dB RMSE | n |
+|---|---:|---:|---:|---:|---:|
+| ResidualLinearAR4D | 1.28748 +/- 0.00027 | 1.18320 +/- 0.00016 | 1.26299 +/- 0.00026 | 1.41624 +/- 0.00054 | 5 |
+| LinearAR4D | 1.29424 +/- 0.00108 | 1.19061 +/- 0.00133 | 1.26620 +/- 0.00064 | 1.42592 +/- 0.00176 | 5 |
+| ResidualConvLSTM | 1.32270 +/- n/a | 1.24306 +/- n/a | 1.28848 +/- n/a | 1.43655 +/- n/a | 2 * |
+| ConvLSTM | 1.76990 +/- 0.00586 | 1.63836 +/- 0.00678 | 1.77457 +/- 0.00499 | 1.89678 +/- 0.01764 | 5 |
+
 ## 4D Models
 
 | Model | Previous historical val loss | Current val loss | Mean validation dB MAE | t+1 dB MAE | t+15 dB MAE | t+60 dB MAE | n |
@@ -86,18 +106,18 @@ The deterministic LookbackMean baseline is evaluated once and has no SEM.
 | ResidualLinearAR4D | 0.266781 | 0.267402 +/- 0.000214 | 0.93042 +/- 0.00020 | 0.84933 +/- 0.00020 | 0.91790 +/- 0.00019 | 1.02402 +/- 0.00045 | 5 |
 | LinearAR4D | 1.057217 | 0.260147 +/- 0.000669 | 0.93776 +/- 0.00128 | 0.86253 +/- 0.00187 | 0.92292 +/- 0.00114 | 1.02784 +/- 0.00139 | 5 |
 | LookbackMean4D | 0.175999 | 0.272255 (provisional) | 0.96284 +/- n/a | 0.90874 +/- n/a | 0.94025 +/- n/a | 1.03954 +/- n/a | 1 |
-| ResidualConvLSTM | 0.265573 | 0.272255 | 0.96308 +/- n/a | 0.90890 +/- n/a | 0.94044 +/- n/a | 1.03990 +/- n/a | 0 |
+| ResidualConvLSTM | 0.265573 | 0.272255 | 0.96308* +/- n/a | 0.90890* +/- n/a | 0.94044* +/- n/a | 1.03990* +/- n/a | 2 * |
 | ConvLSTM | 0.552738 | 0.298986 | 1.24080 +/- 0.00323 | 1.19769 +/- 0.00495 | 1.24422 +/- 0.00315 | 1.28048 +/- 0.00876 | 5 |
-| DSwinLSTM-I |  | 0.306376* (provisional) | 1.29718* +/- n/a | 1.35917* +/- n/a | 1.26958* +/- n/a | 1.26278* +/- n/a | 0 |
+| DSwinLSTM-I |  | 0.295602 | 1.20062 +/- n/a | 1.25006 +/- n/a | 1.17404 +/- n/a | 1.17776 +/- n/a | 0 |
 | ConvLSTM-FM |  | 1.025627 (provisional; 1 error) | 2.47286 +/- n/a | 1.60842 +/- n/a | 2.92097 +/- n/a | 2.88918 +/- n/a | 0 |
 
 The deterministic LookbackMean baselines are reported once and therefore have
 no seed-based SEM. Rows with `*` are incomplete (not all five seeds finished).
-The latest DSwinLSTM-I search remains active; its best reported trial is
-provisional and has not produced a completed checkpoint yet. Earlier DSwinLSTM-I
-searches failed during architecture-domain validation and are not carried
-forward. ConvLSTM-FM completed with one trial error and several divergent
-trials; its listed value is the best completed trial.
+ResidualConvLSTM seeds 42--44 failed: seed 42 hit the evaluation-directory
+bug and seeds 43--44 failed on a corrupt map cache (`BadZipFile`); a targeted
+retry is pending. The DSwinLSTM-I replication has not been submitted; its value
+is the best HPO trial (50 epochs). ConvLSTM-FM completed with one trial error
+and several divergent trials; its listed value is the best completed trial.
 
 The previous TemporalConvNet search used joint-frequency models and is
 excluded. Its replacement search uses only the independent-series model family.

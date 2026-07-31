@@ -36,7 +36,7 @@ def candidate_budget(total: int = DEFAULT_CANDIDATE_BUDGET) -> dict[str, int]:
 
 
 def build_plan(config: dict[str, Any], models: list[str], *, candidates: int = DEFAULT_CANDIDATE_BUDGET,
-               validate: bool = True) -> dict[str, Any]:
+               validate: bool = True, fixed_batch_size: int | None = None) -> dict[str, Any]:
     budget = candidate_budget(candidates)
     entries = []
     for requested_name in models:
@@ -63,6 +63,8 @@ def build_plan(config: dict[str, Any], models: list[str], *, candidates: int = D
             historical = {
                 name: dict(parameters)
                 for name, parameters in spec.historical.items()
+                if fixed_batch_size is None
+                or parameters.get("train.batch_size") == fixed_batch_size
             }
             guaranteed = len(CAPACITIES) + len(historical)
             if candidates < guaranteed:
@@ -156,7 +158,7 @@ def build_rerank_candidates(model_name: str,
 
 
 def _launch(config: dict[str, Any], plan: dict[str, Any], output: Path,
-            storage_path: str | None) -> None:
+            storage_path: str | None, fixed_batch_size: int | None = None) -> None:
     require_ray()
     from ray import tune
     from ray.tune import RunConfig
@@ -165,7 +167,12 @@ def _launch(config: dict[str, Any], plan: dict[str, Any], output: Path,
     for entry in plan["models"]:
         spec = get_model_spec(entry["model"], require_hpo=True)
         space = materialize_space(spec.space)
+        if fixed_batch_size is not None:
+            space["train.batch_size"] = tune.choice([fixed_batch_size])
         points, architectures = ray_anchor_points(entry)
+        if fixed_batch_size is not None:
+            for point in points:
+                point["train.batch_size"] = fixed_batch_size
         # Ray 2.54 cannot merge a dictionary preset into a categorical domain.
         # Tokens preserve coupled bundles while keeping guaranteed anchors valid.
         space["architecture"] = tune.choice(list(architectures))
@@ -226,13 +233,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--minio-bucket")
     parser.add_argument("--minio-prefix", default="spectrum-usage/ray")
     parser.add_argument("--minio-endpoint")
+    parser.add_argument("--fixed-batch-size", type=int,
+                        help="Restrict HPO to one training batch size")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     config = yaml.safe_load(args.config.read_text(encoding="utf-8"))
-    plan = build_plan(config, args.models, candidates=args.candidates, validate=not args.dry_run)
+    plan = build_plan(config, args.models, candidates=args.candidates,
+                      validate=not args.dry_run, fixed_batch_size=args.fixed_batch_size)
     if args.dry_run:
         print(json.dumps(plan, indent=2, sort_keys=True))
         return
@@ -245,7 +255,7 @@ def main(argv: list[str] | None = None) -> None:
         minio = MinIOConfig(args.minio_bucket, args.minio_prefix, args.minio_endpoint)
         os.environ.update(minio.environment())
         storage_path = minio.storage_path
-    _launch(config, plan, args.output_dir, storage_path)
+    _launch(config, plan, args.output_dir, storage_path, args.fixed_batch_size)
 
 
 if __name__ == "__main__":

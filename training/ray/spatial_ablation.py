@@ -24,23 +24,27 @@ CONDITIONS = (
 )
 
 
-def unique_permutation_seeds(count: int, receiver_count: int = 6) -> list[int]:
+def unique_permutation_seeds(
+    count: int,
+    receiver_count: int = 6,
+    offset: int = 0,
+) -> list[int]:
     from math import factorial
 
     from training.common.spatial_ablation_eval import _permutation
 
-    if count < 0 or count > factorial(receiver_count) - 1:
+    if offset < 0 or count < 0 or offset + count > factorial(receiver_count) - 1:
         raise ValueError("permutation count exceeds the number of non-identity assignments")
     seeds = []
     assignments = set()
     candidate = 10_000
-    while len(seeds) < count:
+    while len(seeds) < offset + count:
         assignment = tuple(int(value) for value in _permutation(receiver_count, candidate))
         if assignment not in assignments:
             assignments.add(assignment)
             seeds.append(candidate)
         candidate += 1
-    return seeds
+    return seeds[offset:]
 
 
 def campaign_cells(
@@ -48,13 +52,17 @@ def campaign_cells(
     seeds: Sequence[int],
     conditions: Sequence[str],
     permutation_count: int,
+    permutation_offset: int = 0,
 ) -> list[dict[str, Any]]:
     if permutation_count < 0:
         raise ValueError("permutation_count must be non-negative")
     unknown = set(conditions) - set(CONDITIONS)
     if unknown:
         raise ValueError(f"Unknown conditions: {sorted(unknown)}")
-    permutation_seeds = unique_permutation_seeds(permutation_count)
+    permutation_seeds = unique_permutation_seeds(
+        permutation_count,
+        offset=permutation_offset,
+    )
     cells = []
     for model in models:
         for seed in seeds:
@@ -158,7 +166,13 @@ def launch(args: argparse.Namespace) -> None:
     args.checkpoint_archive = args.checkpoint_archive.resolve()
     args.output_dir = args.output_dir.resolve()
     os.environ.update(MinIOConfig(args.bucket, args.prefix, args.endpoint).environment())
-    cells = campaign_cells(args.models, args.seeds, args.conditions, args.permutations)
+    cells = campaign_cells(
+        args.models,
+        args.seeds,
+        args.conditions,
+        args.permutations,
+        args.permutation_offset,
+    )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     plan = {
         "evaluation_only": True,
@@ -166,6 +180,7 @@ def launch(args: argparse.Namespace) -> None:
         "seeds": args.seeds,
         "conditions": args.conditions,
         "permutations": args.permutations,
+        "permutation_offset": args.permutation_offset,
         "permutation_origin_stride": args.permutation_origin_stride,
         "new_receiver_origin_stride": args.new_receiver_origin_stride,
         "trial_count": len(cells),
@@ -174,15 +189,22 @@ def launch(args: argparse.Namespace) -> None:
         json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     resources = {"cpu": args.cpus_per_task, "gpu": args.gpus_per_task}
-    tuner = tune.Tuner(
-        tune.with_resources(_trainable(args), resources),
-        param_space={"cell": tune.grid_search(cells)},
-        tune_config=tune.TuneConfig(max_concurrent_trials=args.max_concurrent),
-        run_config=RunConfig(
-            name=f"spatial-ablation-eval-{args.models[0]}",
-            storage_path=args.storage_path,
-        ),
-    )
+    trainable = tune.with_resources(_trainable(args), resources)
+    run_name = f"spatial-ablation-eval-{args.models[0]}"
+    if args.resume:
+        tuner = tune.Tuner.restore(
+            f"{args.storage_path.rstrip('/')}/{run_name}",
+            trainable=trainable,
+            resume_unfinished=True,
+            restart_errored=True,
+        )
+    else:
+        tuner = tune.Tuner(
+            trainable,
+            param_space={"cell": tune.grid_search(cells)},
+            tune_config=tune.TuneConfig(max_concurrent_trials=args.max_concurrent),
+            run_config=RunConfig(name=run_name, storage_path=args.storage_path),
+        )
     results = tuner.fit()
     failed = [result.path for result in results if result.error is not None]
     if failed:
@@ -198,6 +220,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--seeds", type=int, nargs="+", default=list(DEFAULT_SEEDS))
     parser.add_argument("--conditions", nargs="+", choices=CONDITIONS, default=list(CONDITIONS))
     parser.add_argument("--permutations", type=int, default=100)
+    parser.add_argument("--permutation-offset", type=int, default=0)
     parser.add_argument("--permutation-origin-stride", type=int, default=10)
     parser.add_argument("--new-receiver-origin-stride", type=int, default=1)
     parser.add_argument("--origin-limit", type=int)
@@ -208,6 +231,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--prefix", required=True)
     parser.add_argument("--endpoint", default="http://minio:9000")
     parser.add_argument("--storage-path")
+    parser.add_argument("--resume", action="store_true")
     parser.add_argument("--max-concurrent", type=int, default=8)
     parser.add_argument("--cpus-per-task", type=float, default=2.0)
     parser.add_argument("--gpus-per-task", type=float, default=0.5)

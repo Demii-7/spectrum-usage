@@ -244,7 +244,12 @@ def infer_frozen_model(
     outputs = []
     with torch.no_grad():
         for start in range(0, len(maps), batch_size):
-            batch = torch.from_numpy(maps[start:start + batch_size]).permute(0, 1, 4, 2, 3).to(torch_device)
+            batch = (
+                torch.from_numpy(maps[start:start + batch_size])
+                .permute(0, 1, 4, 2, 3)
+                .contiguous()
+                .to(torch_device)
+            )
             predicted = forecast(model, batch, prediction_horizon, rollout)
             outputs.append(predicted[:, horizon - 1].permute(0, 1, 3, 4, 2).cpu().numpy())
     return np.concatenate(outputs).astype(np.float32)

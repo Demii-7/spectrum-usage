@@ -144,6 +144,8 @@ def launch(args: argparse.Namespace) -> None:
     os.environ.update(MinIOConfig(args.bucket, args.prefix, args.endpoint).environment())
     filesystem = _s3_filesystem(args.endpoint)
     config = yaml.safe_load(args.config.read_text(encoding="utf-8"))
+    if args.epochs is not None:
+        config[args.model]["train"]["epochs"] = args.epochs
     parameters, source_checkpoint, source_metrics = resolve_winner(args.search_path, args.model, filesystem)
     trainable = _campaign_trainable(config, args.model, parameters, source_checkpoint, source_metrics)
     campaign = {
@@ -180,6 +182,7 @@ def parse_args(argv=None):
     parser.add_argument("--max-concurrent", type=int, default=5)
     parser.add_argument("--storage-path", default=None)
     parser.add_argument("--seeds", nargs="+", type=int, default=list(SEEDS))
+    parser.add_argument("--epochs", type=int, default=None)
     return parser.parse_args(argv)
 
 

@@ -1,0 +1,50 @@
+locations: data/locations/powder.json
+collection_key: endpoints
+regions: evaluation/analysis/plan_regions_600_800.csv
+baseline_receivers: [cpg, ebc, humanities, madsen, moran, "sage point"]
+added_receivers: ["law 73", web]
+guesthouse_receiver: "guest house"
+grid: {height: 10, width: 10, power: 2.0}
+lookback: 60
+horizons: [1, 15, 60]
+max_missing_gap: 9
+
+geometry_timing:
+  start: "2026-07-03T18:39:00Z"
+  end: "2026-07-06T09:14:00Z"
+geometry_files:
+  cpg: data/powder/cpg-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv
+  ebc: data/powder/ebc-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv
+  humanities: data/powder/humanities-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv
+  madsen: data/powder/madsen-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv
+  moran: data/powder/moran-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv
+  sage point: data/powder/sagepoint-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv
+
+# These receivers were absent from model training. This interval overlaps the
+# checkpoint-selection period and is not an independent temporal test.
+new_receiver_timing:
+  start: "2026-07-02T02:24:00Z"
+  end: "2026-07-03T02:23:00Z"
+new_receiver_files:
+  cpg: data/powder/cpg-nuc1/20260628T0437Z/600_800/power_1mhz_avg_per_minute.csv
+  ebc: data/powder/ebc-nuc1/20260628T0436Z/600_800/power_1mhz_avg_per_minute.csv
+  humanities: data/powder/humanities-nuc1/20260628T0436Z/600_800/power_1mhz_avg_per_minute.csv
+  madsen: data/powder/madsen-nuc1/20260628T0437Z/600_800/power_1mhz_avg_per_minute.csv
+  moran: data/powder/moran-nuc1/20260628T0437Z/600_800/power_1mhz_avg_per_minute.csv
+  sage point: data/powder/sagepoint-nuc1/20260628T0437Z/600_800/power_1mhz_avg_per_minute.csv
+  law 73: data/powder/law73-nuc1/20260630T1949Z/600_800/power_1mhz_avg_per_minute.csv
+  web: data/powder/web-nuc1/20260630T1949Z/600_800/power_1mhz_avg_per_minute.csv
+
+# Guesthouse was excluded from training and has three long valid T6 runs. The
+# evaluator rejects windows that cross its overheating-related outages.
+guesthouse_timing:
+  start: "2026-07-03T18:39:00Z"
+  end: "2026-07-06T09:14:00Z"
+guesthouse_files:
+  cpg: data/powder/cpg-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv
+  ebc: data/powder/ebc-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv
+  humanities: data/powder/humanities-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv
+  madsen: data/powder/madsen-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv
+  moran: data/powder/moran-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv
+  sage point: data/powder/sagepoint-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv
+  guest house: data/powder/guesthouse-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv
