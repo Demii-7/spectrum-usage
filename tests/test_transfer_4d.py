@@ -31,6 +31,13 @@ def test_manifest_defines_exactly_48_seed_42_cells():
     assert {cell["model"] for cell in cells} == set(TRANSFER_MODELS)
 
 
+def test_residual_convlstm_uses_available_checkpoint_seed():
+    manifest = load_transfer_manifest(DEFAULT_MANIFEST)
+    entry = manifest["checkpoints"]["residualconvlstm"]
+    assert entry["source"] == "archive"
+    assert entry["checkpoint_seed"] == 41
+
+
 def test_task_semantics_and_intervals_are_explicit():
     tasks = {task.task_id: task for task in transfer_tasks()}
     point = tasks["new-point-powder-600-800"]

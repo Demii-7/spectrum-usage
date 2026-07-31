@@ -70,6 +70,7 @@ def _trainable(args: argparse.Namespace, manifest: dict[str, Any], config: dict[
             batch_size=args.batch_size,
             origin_stride=args.origin_stride,
             origin_limit=args.origin_limit,
+            checkpoint_seed=(checkpoint_entry or {}).get("checkpoint_seed"),
         )
         tune.report(
             result,

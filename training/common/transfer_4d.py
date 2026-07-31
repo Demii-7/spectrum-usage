@@ -485,6 +485,7 @@ def evaluate_transfer_task(
     checkpoint_path: Path | None, normalization_checkpoint_path: Path | None,
     output_directory: Path, seed: int = SEED, device: str = "cpu",
     batch_size: int | None = None, origin_stride: int = 1, origin_limit: int | None = None,
+    checkpoint_seed: int | None = None,
 ) -> dict[str, Any]:
     """Evaluate one frozen model/task cell and persist all transfer artifacts."""
     started = time.perf_counter()
@@ -558,6 +559,8 @@ def evaluate_transfer_task(
         map_receiver_names=task.input_receivers,
     )
     common = {"task_id": task.task_id, "model": model_name, "seed": seed}
+    if checkpoint_seed is not None:
+        common["checkpoint_seed"] = int(checkpoint_seed)
     for row in map_rows + receiver_rows:
         row.update(common)
     for row in receiver_rows:
@@ -601,6 +604,8 @@ def evaluate_transfer_task(
     elapsed = time.perf_counter() - started
     result: dict[str, Any] = {"task_id": task.task_id, "model": model_name, "seed": seed,
                               "completed": True, "elapsed_seconds": elapsed}
+    if checkpoint_seed is not None:
+        result["checkpoint_seed"] = int(checkpoint_seed)
     for horizon_index, horizon in enumerate(HORIZONS):
         physical_error = predicted_receivers[:, horizon_index] - raw_receivers[:, horizon_index]
         grid_error = predicted_maps[:, horizon_index] - target_maps[:, horizon_index]
@@ -619,6 +624,7 @@ def evaluate_transfer_task(
         "grid": {"height": 10, "width": 10, "idw_power": 2.0,
                  "origin_longitude": grid.origin_longitude, "origin_latitude": grid.origin_latitude},
         "checkpoint": str(checkpoint_path) if checkpoint_path else None,
+        "checkpoint_seed": checkpoint_seed,
         "normalization_source": "frozen_checkpoint_by_bin_position",
         "normalization_fitted_on_target": False,
         "checkpoint_frequency_range_mhz": [600.5, 799.5],

@@ -8,9 +8,9 @@ checkpoints:
     source: archive
     member: checkpoints/4d/convlstm/seed-42/powder_600_800_t4t6_convlstm.pt
   residualconvlstm:
-    source: s3
-    bucket: spectrum-usage
-    key: ray/production-20260729-replicate-v2/residualconvlstm-retry-v1/residualconvlstm-replicate/trainable_79f9e_00000_0_seed=42_2026-07-30_13-49-25/checkpoint_000000/checkpoints/powder_600_800_t4t6_residualconvlstm.pt
+    source: archive
+    member: checkpoints/4d/residualconvlstm/seed-41/powder_600_800_t4t6_residualconvlstm.pt
+    checkpoint_seed: 41
   linearar4d:
     source: archive
     member: checkpoints/4d/linearar4d/seed-42/powder_600_800_t4t6_linearar4d.pt
