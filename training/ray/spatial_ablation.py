@@ -179,7 +179,7 @@ def launch(args: argparse.Namespace) -> None:
         param_space={"cell": tune.grid_search(cells)},
         tune_config=tune.TuneConfig(max_concurrent_trials=args.max_concurrent),
         run_config=RunConfig(
-            name="spatial-ablation-eval",
+            name=f"spatial-ablation-eval-{args.models[0]}",
             storage_path=args.storage_path,
         ),
     )
