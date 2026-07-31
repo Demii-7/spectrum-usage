@@ -136,33 +136,6 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
         }
         return VanillaLSTMForecaster(predictor_config)
 
-    if model_name == "vanillalstm1d":
-        from models.VanillaLSTM import VanillaLSTMForecaster
-
-        if train_data.ndim != 2:
-            raise ValueError(
-                "Error! VanillaLSTM1D expects training data shaped "
-                f"(time, features), got {train_data.shape}"
-            )
-
-        model_cfg = config[model_name]["model"]
-
-        predictor_config = {
-            "model": {
-                "input_sequence_length": int(model_cfg["input_sequence_length"]),
-                "prediction_horizon": int(model_cfg["prediction_horizon"]),
-
-                "input_size": int(train_data.shape[-1]),
-                "hidden_size": int(model_cfg.get("hidden_size", 128)),
-                "num_layers": int(model_cfg.get("num_layers", 1)),
-
-                "dropout": float(model_cfg.get("dropout", 0.0)),
-                "output_strategy": str(model_cfg.get("output_strategy", "final_hidden")),
-                "bidirectional": bool(model_cfg.get("bidirectional", False)),
-            },
-        }
-        return VanillaLSTMForecaster(predictor_config)
-
     if model_name == "residualvanillalstm":
         from models.ResidualVanillaLSTM import ResidualVanillaLSTMForecaster
 
