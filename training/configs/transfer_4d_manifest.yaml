@@ -1,0 +1,142 @@
+schema_version: 1
+seed: 42
+config: training/configs/transfer_4d_models.yaml
+models: [convlstm, residualconvlstm, linearar4d, residuallinearar4d, dswinlstm_i, lookbackmean4d]
+normalization_checkpoint: convlstm
+checkpoints:
+  convlstm:
+    source: archive
+    member: checkpoints/4d/convlstm/seed-42/powder_600_800_t4t6_convlstm.pt
+  residualconvlstm:
+    source: s3
+    bucket: spectrum-usage
+    key: ray/production-20260729-replicate-v2/residualconvlstm-retry-v1/residualconvlstm-replicate/trainable_79f9e_00000_0_seed=42_2026-07-30_13-49-25/checkpoint_000000/checkpoints/powder_600_800_t4t6_residualconvlstm.pt
+  linearar4d:
+    source: archive
+    member: checkpoints/4d/linearar4d/seed-42/powder_600_800_t4t6_linearar4d.pt
+  residuallinearar4d:
+    source: archive
+    member: checkpoints/4d/residuallinearar4d/seed-42/powder_600_800_t4t6_residuallinearar4d.pt
+  dswinlstm_i:
+    source: archive
+    member: checkpoints/4d/dswinlstm_i/seed-42/powder_600_800_t4t6_dswinlstm_i.pt
+  lookbackmean4d: null
+
+tasks:
+  reference-powder-600-800:
+    evaluation: reference
+    platform: powder
+    band: [600, 800]
+    locations: data/locations/powder.json
+    collection_key: endpoints
+    geometry_receivers: [cpg, ebc, humanities, madsen, moran, sagepoint]
+    input_receivers: [cpg, ebc, humanities, madsen, moran, sagepoint]
+    score_receivers: [cpg, ebc, humanities, madsen, moran, sagepoint]
+    raw_interval: ["2026-07-03T18:39:00Z", "2026-07-05T20:39:00Z"]
+    score_interval: ["2026-07-03T19:39:00Z", "2026-07-05T19:39:00Z"]
+    regions: evaluation/analysis/plan_regions_600_800.csv
+    files:
+      cpg: data/powder/cpg-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv
+      ebc: data/powder/ebc-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv
+      humanities: data/powder/humanities-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv
+      madsen: data/powder/madsen-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv
+      moran: data/powder/moran-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv
+      sagepoint: data/powder/sagepoint-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv
+
+  new-point-powder-600-800:
+    evaluation: new_point
+    platform: powder
+    band: [600, 800]
+    option: 2
+    temporal_overlap: true
+    locations: data/locations/powder.json
+    collection_key: endpoints
+    geometry_receivers: [cpg, ebc, humanities, madsen, moran, sagepoint]
+    input_receivers: [cpg, ebc, humanities, madsen, moran, sagepoint, guesthouse]
+    score_receivers: [guesthouse]
+    raw_interval: ["2026-06-28T04:37:00Z", "2026-07-03T02:54:00Z"]
+    score_interval: ["2026-06-28T04:37:00Z", "2026-07-03T02:54:00Z"]
+    regions: evaluation/analysis/plan_regions_600_800.csv
+    files:
+      cpg: data/powder/cpg-nuc1/20260628T0437Z/600_800/power_1mhz_avg_per_minute.csv
+      ebc: data/powder/ebc-nuc1/20260628T0436Z/600_800/power_1mhz_avg_per_minute.csv
+      humanities: data/powder/humanities-nuc1/20260628T0436Z/600_800/power_1mhz_avg_per_minute.csv
+      madsen: data/powder/madsen-nuc1/20260628T0437Z/600_800/power_1mhz_avg_per_minute.csv
+      moran: data/powder/moran-nuc1/20260628T0437Z/600_800/power_1mhz_avg_per_minute.csv
+      sagepoint: data/powder/sagepoint-nuc1/20260628T0437Z/600_800/power_1mhz_avg_per_minute.csv
+      guesthouse: data/powder/guesthouse-nuc1/20260628T0436Z/600_800/power_1mhz_avg_per_minute.csv
+
+  new-bands-powder-800-1000: &powder_new_band_800
+    evaluation: new_band
+    platform: powder
+    band: [800, 1000]
+    locations: data/locations/powder.json
+    collection_key: endpoints
+    geometry_receivers: [cpg, ebc, humanities, madsen, moran, sagepoint]
+    input_receivers: [cpg, ebc, humanities, madsen, moran, sagepoint]
+    score_receivers: [cpg, ebc, humanities, madsen, moran, sagepoint]
+    raw_interval: ["2026-07-03T18:39:00Z", "2026-07-05T20:39:00Z"]
+    score_interval: ["2026-07-03T19:39:00Z", "2026-07-05T19:39:00Z"]
+    files:
+      cpg: data/powder/cpg-nuc1/20260703T1839Z/800_1000/power_1mhz_avg_per_minute.csv
+      ebc: data/powder/ebc-nuc1/20260703T1839Z/800_1000/power_1mhz_avg_per_minute.csv
+      humanities: data/powder/humanities-nuc1/20260703T1839Z/800_1000/power_1mhz_avg_per_minute.csv
+      madsen: data/powder/madsen-nuc1/20260703T1839Z/800_1000/power_1mhz_avg_per_minute.csv
+      moran: data/powder/moran-nuc1/20260703T1839Z/800_1000/power_1mhz_avg_per_minute.csv
+      sagepoint: data/powder/sagepoint-nuc1/20260703T1839Z/800_1000/power_1mhz_avg_per_minute.csv
+
+  new-bands-powder-2400-2600:
+    <<: *powder_new_band_800
+    band: [2400, 2600]
+    files:
+      cpg: data/powder/cpg-nuc1/20260703T1839Z/2400_2600/power_1mhz_avg_per_minute.csv
+      ebc: data/powder/ebc-nuc1/20260703T1839Z/2400_2600/power_1mhz_avg_per_minute.csv
+      humanities: data/powder/humanities-nuc1/20260703T1839Z/2400_2600/power_1mhz_avg_per_minute.csv
+      madsen: data/powder/madsen-nuc1/20260703T1839Z/2400_2600/power_1mhz_avg_per_minute.csv
+      moran: data/powder/moran-nuc1/20260703T1839Z/2400_2600/power_1mhz_avg_per_minute.csv
+      sagepoint: data/powder/sagepoint-nuc1/20260703T1839Z/2400_2600/power_1mhz_avg_per_minute.csv
+
+  new-bands-powder-3500-3700:
+    <<: *powder_new_band_800
+    band: [3500, 3700]
+    files:
+      cpg: data/powder/cpg-nuc1/20260703T1839Z/3500_3700/power_1mhz_avg_per_minute.csv
+      ebc: data/powder/ebc-nuc1/20260703T1839Z/3500_3700/power_1mhz_avg_per_minute.csv
+      humanities: data/powder/humanities-nuc1/20260703T1839Z/3500_3700/power_1mhz_avg_per_minute.csv
+      madsen: data/powder/madsen-nuc1/20260703T1839Z/3500_3700/power_1mhz_avg_per_minute.csv
+      moran: data/powder/moran-nuc1/20260703T1839Z/3500_3700/power_1mhz_avg_per_minute.csv
+      sagepoint: data/powder/sagepoint-nuc1/20260703T1839Z/3500_3700/power_1mhz_avg_per_minute.csv
+
+  new-bands-powder-5725-5925:
+    <<: *powder_new_band_800
+    band: [5725, 5925]
+    files:
+      cpg: data/powder/cpg-nuc1/20260703T1839Z/5725_5925/power_1mhz_avg_per_minute.csv
+      ebc: data/powder/ebc-nuc1/20260703T1839Z/5725_5925/power_1mhz_avg_per_minute.csv
+      humanities: data/powder/humanities-nuc1/20260703T1839Z/5725_5925/power_1mhz_avg_per_minute.csv
+      madsen: data/powder/madsen-nuc1/20260703T1839Z/5725_5925/power_1mhz_avg_per_minute.csv
+      moran: data/powder/moran-nuc1/20260703T1839Z/5725_5925/power_1mhz_avg_per_minute.csv
+      sagepoint: data/powder/sagepoint-nuc1/20260703T1839Z/5725_5925/power_1mhz_avg_per_minute.csv
+
+  new-site-ara-600-800: &ara_600
+    evaluation: new_site
+    platform: ara
+    band: [600, 800]
+    locations: data/locations/ara.json
+    collection_key: sites
+    geometry_receivers: [ames, horticulture]
+    input_receivers: [ames, horticulture]
+    score_receivers: [ames, horticulture]
+    coordinate_names: {ames: ames-ue-000, horticulture: horticulture-ue-004}
+    raw_interval: ["2026-07-02T19:20:00Z", "2026-07-06T14:01:00Z"]
+    score_interval: ["2026-07-02T19:20:00Z", "2026-07-06T14:01:00Z"]
+    files:
+      ames: data/ara/ames-ue-000/20260702T1920Z/600_800/power_1mhz_avg_per_minute.csv
+      horticulture: data/ara/horticulture-ue-004/20260702T1920Z/600_800/power_1mhz_avg_per_minute.csv
+
+  new-site-ara-2400-2600:
+    <<: *ara_600
+    band: [2400, 2600]
+    files:
+      ames: data/ara/ames-ue-000/20260702T1920Z/2400_2600/power_1mhz_avg_per_minute.csv
+      horticulture: data/ara/horticulture-ue-004/20260702T1920Z/2400_2600/power_1mhz_avg_per_minute.csv
