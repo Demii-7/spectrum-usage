@@ -146,12 +146,12 @@ def main() -> int:
     vmin, vmax = ensure_minimum_db_span(*np.percentile(finite, [1, 99]))
     extent = extent_for(window_times, frequencies)
     cmap = plt.get_cmap("viridis").copy()
-    figure, axes = plt.subplots(1, 2, figsize=(12, 4.3), sharex=True, sharey=True, constrained_layout=True)
+    figure, axes = plt.subplots(1, 2, figsize=(4.0, 1.75), sharex=True, sharey=True, constrained_layout=True)
     image = None
     for axis, data, title in zip(
         axes,
         (full_context, masked_context),
-        ("Full context", f"Masked context outside {args.region}"),
+        ("Full context", "Region only (other regions masked)"),
     ):
         image = axis.imshow(
             data.T,
@@ -163,13 +163,12 @@ def main() -> int:
             vmin=vmin,
             vmax=vmax,
         )
-        axis.axhspan(start_mhz, end_mhz, facecolor="none", edgecolor="white", linewidth=1.5, linestyle="--")
-        axis.set_title(title, fontsize=11, fontweight="bold")
-        axis.set_xlabel("UTC time")
-        axis.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=4, maxticks=7))
-        axis.xaxis.set_major_formatter(mdates.ConciseDateFormatter(axis.xaxis.get_major_locator(), tz=window_times.tz))
-        axis.tick_params(top=True, right=True, length=3)
-    axes[0].set_ylabel("Frequency (MHz)")
+        axis.set_title(title, fontsize=5.5, fontweight="bold", pad=2)
+        axis.set_xlabel("UTC time", fontsize=5)
+        axis.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=3, maxticks=4))
+        axis.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M", tz=window_times.tz))
+        axis.tick_params(top=True, right=True, length=2, labelsize=4)
+    axes[0].set_ylabel("Frequency (MHz)", fontsize=5)
     axes[1].text(
         0.02,
         0.97,
@@ -177,12 +176,12 @@ def main() -> int:
         transform=axes[1].transAxes,
         va="top",
         color="white",
-        fontsize=9,
-        bbox={"facecolor": "black", "alpha": 0.55, "pad": 3, "edgecolor": "none"},
+        fontsize=4,
+        bbox={"facecolor": "black", "alpha": 0.55, "pad": 2, "edgecolor": "none"},
     )
-    figure.suptitle("Spectral ablation input: full context vs region-only context", fontsize=14, fontweight="bold")
     colorbar = figure.colorbar(image, ax=axes, pad=0.02, shrink=0.92)
-    colorbar.set_label("Power (dB)")
+    colorbar.set_label("Power (dB)", fontsize=5)
+    colorbar.ax.tick_params(labelsize=4)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(args.output, dpi=args.dpi, bbox_inches="tight")
     plt.close(figure)
