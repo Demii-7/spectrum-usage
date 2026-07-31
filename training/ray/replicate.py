@@ -148,7 +148,7 @@ def launch(args: argparse.Namespace) -> None:
     trainable = _campaign_trainable(config, args.model, parameters, source_checkpoint, source_metrics)
     campaign = {
         "model": args.model,
-        "seeds": list(SEEDS),
+        "seeds": list(args.seeds),
         "parameters": parameters,
         "source_search_path": args.search_path,
         "source_objective": source_metrics.get("objective"),
@@ -158,7 +158,7 @@ def launch(args: argparse.Namespace) -> None:
     (output / "campaign_plan.json").write_text(json.dumps(campaign, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     tuner = tune.Tuner(
         tune.with_resources(trainable, get_model_spec(args.model).resources.as_ray()),
-        param_space={"seed": tune.grid_search(list(SEEDS))},
+        param_space={"seed": tune.grid_search(list(args.seeds))},
         tune_config=tune.TuneConfig(max_concurrent_trials=args.max_concurrent),
         run_config=RunConfig(name=f"{args.model}-replicate", storage_path=args.storage_path),
     )
@@ -179,6 +179,7 @@ def parse_args(argv=None):
     parser.add_argument("--endpoint", default="http://minio:9000")
     parser.add_argument("--max-concurrent", type=int, default=5)
     parser.add_argument("--storage-path", default=None)
+    parser.add_argument("--seeds", nargs="+", type=int, default=list(SEEDS))
     return parser.parse_args(argv)
 
 
