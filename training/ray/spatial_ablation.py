@@ -174,15 +174,22 @@ def launch(args: argparse.Namespace) -> None:
         json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     resources = {"cpu": args.cpus_per_task, "gpu": args.gpus_per_task}
-    tuner = tune.Tuner(
-        tune.with_resources(_trainable(args), resources),
-        param_space={"cell": tune.grid_search(cells)},
-        tune_config=tune.TuneConfig(max_concurrent_trials=args.max_concurrent),
-        run_config=RunConfig(
-            name=f"spatial-ablation-eval-{args.models[0]}",
-            storage_path=args.storage_path,
-        ),
-    )
+    trainable = tune.with_resources(_trainable(args), resources)
+    run_name = f"spatial-ablation-eval-{args.models[0]}"
+    if args.resume:
+        tuner = tune.Tuner.restore(
+            f"{args.storage_path.rstrip('/')}/{run_name}",
+            trainable=trainable,
+            resume_unfinished=True,
+            restart_errored=True,
+        )
+    else:
+        tuner = tune.Tuner(
+            trainable,
+            param_space={"cell": tune.grid_search(cells)},
+            tune_config=tune.TuneConfig(max_concurrent_trials=args.max_concurrent),
+            run_config=RunConfig(name=run_name, storage_path=args.storage_path),
+        )
     results = tuner.fit()
     failed = [result.path for result in results if result.error is not None]
     if failed:
@@ -208,6 +215,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--prefix", required=True)
     parser.add_argument("--endpoint", default="http://minio:9000")
     parser.add_argument("--storage-path")
+    parser.add_argument("--resume", action="store_true")
     parser.add_argument("--max-concurrent", type=int, default=8)
     parser.add_argument("--cpus-per-task", type=float, default=2.0)
     parser.add_argument("--gpus-per-task", type=float, default=0.5)
