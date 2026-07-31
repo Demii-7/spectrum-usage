@@ -1,0 +1,89 @@
+data:
+  representation: 2d
+windowing:
+  lookback: 60
+  horizons: [1, 15, 60]
+training:
+  device: auto
+preprocessing:
+  normalize: true
+  impute: true
+  max_missing_gap: 10
+
+autoformer_csa:
+  model:
+    input_sequence_length: 60
+    prediction_horizon: 60
+    label_len: 30
+    d_model: 64
+    d_ff: 256
+    encoder_layers: 2
+    decoder_layers: 1
+    n_heads: 8
+    moving_avg: 25
+    dropout: 0.05
+    factor: 3
+    csam_kernel_size: 7
+    output_attention: false
+  train: {batch_size: 32, test_stride: 1, val_fraction: 0.15}
+  evaluation: {batch_size: 32, test_stride: 1, sampling_seed: 42}
+
+linearar2d:
+  model: {input_sequence_length: 60, prediction_horizon: 1, ridge_alpha: 0.01}
+  train: {batch_size: 256, test_stride: 1, val_fraction: 0.15}
+  evaluation: {batch_size: 256, test_stride: 1, sampling_seed: 42}
+
+lstmattn:
+  model:
+    input_sequence_length: 60
+    prediction_horizon: 1
+    hidden_size: 128
+    attention_size: 128
+    num_layers: 1
+    dropout: 0.1
+  train: {batch_size: 32, test_stride: 1, val_fraction: 0.15}
+  evaluation: {batch_size: 32, test_stride: 1, sampling_seed: 42}
+
+residuallinearar2d:
+  model: {input_sequence_length: 60, prediction_horizon: 1, ridge_alpha: 0.0001}
+  train: {batch_size: 256, test_stride: 1, val_fraction: 0.15}
+  evaluation: {batch_size: 256, test_stride: 1, sampling_seed: 42}
+
+residualvanillalstm:
+  model:
+    input_sequence_length: 60
+    prediction_horizon: 1
+    hidden_size: 8
+    num_layers: 1
+    dropout: 0.0
+    output_strategy: final_hidden
+  train: {batch_size: 64, test_stride: 1, val_fraction: 0.15}
+  evaluation: {batch_size: 64, test_stride: 1, sampling_seed: 42}
+
+temporalconvnet:
+  model:
+    input_sequence_length: 60
+    prediction_horizon: 1
+    hidden_channels: [8, 8, 8, 8, 8, 8]
+    kernel_size: 2
+    dropout: 0.0
+    feature_mode: independent
+  train: {batch_size: 64, test_stride: 1, val_fraction: 0.15}
+  evaluation: {batch_size: 64, test_stride: 1, sampling_seed: 42}
+
+vanillalstm:
+  model:
+    input_sequence_length: 60
+    prediction_horizon: 1
+    hidden_size: 128
+    num_layers: 1
+    dropout: 0.1
+    output_strategy: final_hidden
+    bidirectional: false
+  train: {batch_size: 64, test_stride: 1, val_fraction: 0.15}
+  evaluation: {batch_size: 64, test_stride: 1, sampling_seed: 42}
+
+lookbackmean2d:
+  model: {input_sequence_length: 60, prediction_horizon: 1}
+  train: {batch_size: 256, test_stride: 1, val_fraction: 0.15}
+  evaluation: {batch_size: 256, test_stride: 1, sampling_seed: 42}

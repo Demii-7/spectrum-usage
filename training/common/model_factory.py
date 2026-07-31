@@ -47,6 +47,7 @@ SUPPORTED_MODELS = {
     "lookbackmean1d",
     "lookbackmean2d",
     "lookbackmean4d",
+    "vanillalstm1d",
     "linearar1d",
     "linearar2d",
     "linearar4d",
@@ -100,13 +101,19 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
         }
         return model_types[model_name](predictor_config)
 
-    if model_name == "vanillalstm":
+    if model_name in ("vanillalstm", "vanillalstm1d"):
         from models.VanillaLSTM import VanillaLSTMForecaster
 
         if train_data.ndim != 2:
             raise ValueError(
                 "Error! VanillaLSTM expects training data shaped "
                 f"(time, features), got {train_data.shape}"
+            )
+
+        if model_name == "vanillalstm1d" and train_data.shape[1] != 1:
+            raise ValueError(
+                "Error! VanillaLSTM1D expects exactly one scalar feature, "
+                f"got {train_data.shape[1]}"
             )
     
         model_cfg = config[model_name]["model"]

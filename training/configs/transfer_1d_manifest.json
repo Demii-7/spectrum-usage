@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "config": "training/configs/transfer_1d.yaml",
+  "models": {
+    "vanillalstm1d": "checkpoints/1d/vanillalstm1d/seed-42/powder_600_800_vanillalstm1d.pt",
+    "residualvanillalstm": "checkpoints/1d/residualvanillalstm/seed-42/powder_600_800_residualvanillalstm.pt",
+    "linearar1d": "checkpoints/1d/linearar1d/seed-42/powder_600_800_linearar1d.pt",
+    "residuallinearar1d": "checkpoints/1d/residuallinearar1d/seed-42/powder_600_800_residuallinearar1d.pt"
+  },
+  "tasks": {
+    "reference-powder-600-800": {"files": ["data/powder/cpg-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv", "data/powder/ebc-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv", "data/powder/humanities-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv", "data/powder/madsen-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv", "data/powder/moran-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv", "data/powder/sagepoint-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv"]},
+    "new-point-powder-600-800": {"files": ["data/powder/guesthouse-nuc1/20260618T0036Z/600_800/power_1mhz_avg_per_minute.csv"]},
+    "new-bands-powder-800-1000": {"files": ["data/powder/cpg-nuc1/20260703T1839Z/800_1000/power_1mhz_avg_per_minute.csv", "data/powder/ebc-nuc1/20260703T1839Z/800_1000/power_1mhz_avg_per_minute.csv", "data/powder/humanities-nuc1/20260703T1839Z/800_1000/power_1mhz_avg_per_minute.csv", "data/powder/madsen-nuc1/20260703T1839Z/800_1000/power_1mhz_avg_per_minute.csv", "data/powder/moran-nuc1/20260703T1839Z/800_1000/power_1mhz_avg_per_minute.csv", "data/powder/sagepoint-nuc1/20260703T1839Z/800_1000/power_1mhz_avg_per_minute.csv"]},
+    "new-bands-powder-2400-2600": {"files": ["data/powder/cpg-nuc1/20260703T1839Z/2400_2600/power_1mhz_avg_per_minute.csv", "data/powder/ebc-nuc1/20260703T1839Z/2400_2600/power_1mhz_avg_per_minute.csv", "data/powder/humanities-nuc1/20260703T1839Z/2400_2600/power_1mhz_avg_per_minute.csv", "data/powder/madsen-nuc1/20260703T1839Z/2400_2600/power_1mhz_avg_per_minute.csv", "data/powder/moran-nuc1/20260703T1839Z/2400_2600/power_1mhz_avg_per_minute.csv", "data/powder/sagepoint-nuc1/20260703T1839Z/2400_2600/power_1mhz_avg_per_minute.csv"]},
+    "new-bands-powder-3500-3700": {"files": ["data/powder/cpg-nuc1/20260703T1839Z/3500_3700/power_1mhz_avg_per_minute.csv", "data/powder/ebc-nuc1/20260703T1839Z/3500_3700/power_1mhz_avg_per_minute.csv", "data/powder/humanities-nuc1/20260703T1839Z/3500_3700/power_1mhz_avg_per_minute.csv", "data/powder/madsen-nuc1/20260703T1839Z/3500_3700/power_1mhz_avg_per_minute.csv", "data/powder/moran-nuc1/20260703T1839Z/3500_3700/power_1mhz_avg_per_minute.csv", "data/powder/sagepoint-nuc1/20260703T1839Z/3500_3700/power_1mhz_avg_per_minute.csv"]},
+    "new-bands-powder-5725-5925": {"files": ["data/powder/cpg-nuc1/20260703T1839Z/5725_5925/power_1mhz_avg_per_minute.csv", "data/powder/ebc-nuc1/20260703T1839Z/5725_5925/power_1mhz_avg_per_minute.csv", "data/powder/humanities-nuc1/20260703T1839Z/5725_5925/power_1mhz_avg_per_minute.csv", "data/powder/madsen-nuc1/20260703T1839Z/5725_5925/power_1mhz_avg_per_minute.csv", "data/powder/moran-nuc1/20260703T1839Z/5725_5925/power_1mhz_avg_per_minute.csv", "data/powder/sagepoint-nuc1/20260703T1839Z/5725_5925/power_1mhz_avg_per_minute.csv"]},
+    "new-site-cosmos-600-800": {"files": ["data/cosmos/sdr2-md1/20260619T1816Z/600_800/power_1mhz_avg_per_minute.csv", "data/cosmos/sdr2-s1-lg1/20260619T1815Z/600_800/power_1mhz_avg_per_minute.csv"]},
+    "new-site-new-band-cosmos-2400-2600": {"files": ["data/cosmos/sdr2-md1/20260619T1816Z/2400_2600/power_1mhz_avg_per_minute.csv", "data/cosmos/sdr2-s1-lg1/20260619T1815Z/2400_2600/power_1mhz_avg_per_minute.csv"]},
+    "new-site-ara-600-800": {"files": ["data/ara/ames-ue-000/20260702T1920Z/600_800/power_1mhz_avg_per_minute.csv", "data/ara/horticulture-ue-004/20260702T1920Z/600_800/power_1mhz_avg_per_minute.csv"]},
+    "new-site-new-band-ara-2400-2600": {"files": ["data/ara/ames-ue-000/20260702T1920Z/2400_2600/power_1mhz_avg_per_minute.csv", "data/ara/horticulture-ue-004/20260702T1920Z/2400_2600/power_1mhz_avg_per_minute.csv"]},
+    "new-site-aerpaw-600-800": {"files": ["data/aerpaw/CC1/20220208T1750Z/87_6020/power_1mhz_avg_per_minute.csv", "data/aerpaw/CC2/20220208T1748Z/87_6020/power_1mhz_avg_per_minute.csv", "data/aerpaw/LW1/20220208T1757Z/87_6020/power_1mhz_avg_per_minute.csv"]},
+    "new-site-new-band-aerpaw-2400-2600": {"files": ["data/aerpaw/CC1/20220208T1750Z/87_6020/power_1mhz_avg_per_minute.csv", "data/aerpaw/CC2/20220208T1748Z/87_6020/power_1mhz_avg_per_minute.csv", "data/aerpaw/LW1/20220208T1757Z/87_6020/power_1mhz_avg_per_minute.csv"]}
+  }
+}
