@@ -194,7 +194,7 @@ def plot(stats: pd.DataFrame, baselines: dict[tuple[str, str], float],
                 labels, rotation=0, ha="center", fontsize=7
             )
             for tick_label in tick_labels:
-                tick_label.set_linespacing(0.95)
+                tick_label.set_linespacing(0.9)
                 tick_label.set_multialignment("right")
             ax.set_ylabel(metric_label)
             ax.set_ylim(0, ymax)
@@ -279,7 +279,7 @@ def plot_combined_horizons(
                 fontsize=4,
             )
             for tick_label in tick_labels:
-                tick_label.set_linespacing(0.95)
+                tick_label.set_linespacing(0.9)
                 tick_label.set_multialignment("right")
             ax.set_ylim(0, ymax)
             if col_idx == 0:

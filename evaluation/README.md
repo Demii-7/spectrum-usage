@@ -157,7 +157,7 @@ uhd_usrp_probe
 Optionally, you can explore the spectrum to visually identify interesting bands. Use
 
 ```bash
-/usr/local/lib/uhd/examples/rx_ascii_art_dft \
+/usr/lib/uhd/examples/rx_ascii_art_dft \
   --ref-lvl -60  --dyn-rng 40 \
   --step 10000000 --freq 600e6 \
   --num-bins 1024 --rate 31.25e6 \
@@ -190,6 +190,7 @@ screen -dmS collect-spectrum \
    --output-dir powder/$RUN_ID   --save-raw   --overwrite
 ```
 
+
 **Optional: Sync to Chameleon Object Storage**. To avoid filling the disk on the POWDER resource, we are periodically syncing the data to the Chameleon object storage service. 
 A `spectrum` bucket should have been created at CHI@TACC, and S3 credentials should have been generated. Then,
 
@@ -205,6 +206,15 @@ Also run
 ```bash
 python3 -m pip install fsspec s3fs
 ```
+
+Test the connection to object store with
+
+```bash
+python3 verify_object_storage.py \
+  --env-file .env \
+  --bucket spectrum
+```
+
 
 Now you can 
 
@@ -279,7 +289,7 @@ Inside the SSH session, install prerequisites:
 
 ```bash
 apt update
-apt -y  install python3-numpy python3-scipy uhd-host python3-uhd libuhd-dev screen rsync
+apt -y  install python3-numpy python3-scipy uhd-host python3-uhd libuhd-dev screen rsync nano python3-pip
 python3 /lib/uhd/utils/uhd_images_downloader.py --types b2xx
 ```
 
@@ -310,7 +320,6 @@ cd spectrum-usage/evaluation
 
 and now you can start the spectrum monitoring job:
 
-
 ```bash
 export RUN_ID=$(date -u +%Y%m%dT%H%MZ)
 export NODE=$(hostname -s)
@@ -325,9 +334,45 @@ screen -dmS collect-spectrum \
    --output-dir ara/$RUN_ID   --save-raw   --overwrite
 ```
 
-**Note**: Currently, the network restrictions on ARA prevent you from sending data
-to the Chameleon object store directly from ARA. To save data, you will have to retrieve the 
-data from the ARA resource to another device, and then sync to the object store from there.
+**Optional: Sync to Chameleon Object Storage**. To avoid filling the disk on the ARA resource, we are periodically syncing the data to the Chameleon object storage service. 
+A `spectrum` bucket should have been created at CHI@TACC, and S3 credentials should have been generated. Then,
+
+```bash
+cp .env.example .env
+nano .env
+```
+
+fill in the credentials, and save. 
+
+Also run 
+
+```bash
+python3 -m pip install fsspec s3fs 
+```
+
+Test the connection to object store with
+
+```bash
+python3 verify_object_storage.py \
+  --env-file .env \
+  --bucket spectrum
+```
+
+
+Now you can 
+
+```bash
+screen -dmS spectrum-sync \
+  python3 sync_object_storage.py \
+    ara/$RUN_ID \
+    s3://spectrum/ara/$NODE/$RUN_ID \
+    --env-file .env \
+    --tool fsspec \
+    --interval-seconds 300 \
+    --prune-age-seconds 3600
+```
+
+to start syncing data to Chameleon (and pruning it locally).
 
 ### COSMOS
 

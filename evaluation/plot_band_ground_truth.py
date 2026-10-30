@@ -11,6 +11,8 @@ import numpy as np
 import pandas as pd
 from scipy.signal import savgol_filter
 
+from plotting.spectrogram_colormap import ensure_minimum_db_span
+
 
 def smooth_like_tss_lcd(data, window_length=51, polyorder=2):
     n_time = data.shape[0]
@@ -166,7 +168,7 @@ def plot(input_ref, output_path, time_steps, from_end, smooth):
     )
 
     finite = power[np.isfinite(power)]
-    vmin, vmax = np.percentile(finite, [1, 99])
+    vmin, vmax = ensure_minimum_db_span(*np.percentile(finite, [1, 99]))
 
     fig, ax = plt.subplots(figsize=(5.2, 1.8))
     im = ax.imshow(

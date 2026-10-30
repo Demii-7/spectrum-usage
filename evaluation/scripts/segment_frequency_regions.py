@@ -7,6 +7,7 @@ import argparse
 from dataclasses import dataclass
 import math
 from pathlib import Path
+import re
 
 import numpy as np
 import pandas as pd
@@ -16,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_INPUT = ROOT / "results" / "statistical_analysis" / "frequency_bin_features.csv"
 DEFAULT_OUTPUT_DIR = ROOT / "results" / "statistical_analysis"
 GROUP_COLUMNS = ["dataset", "node", "run_id", "band"]
+SHARED_BOUNDARY_DATASETS = {"ara", "cosmos", "powder"}
 
 DEFAULT_SEGMENT_FEATURES = [
     "p50_power_dbm",
@@ -115,6 +117,24 @@ def contiguous_chunks(group: pd.DataFrame) -> list[pd.DataFrame]:
     return [ordered.iloc[start:end].reset_index(drop=True) for start, end in zip(starts, ends)]
 
 
+def site_id(row: pd.Series) -> str:
+    dataset = str(row["dataset"])
+    node = str(row["node"])
+    if dataset == "ara":
+        return re.sub(r"-ue-\d+$", "", node)
+    if dataset in {"cosmos", "powder"}:
+        return dataset
+    return node
+
+
+def boundary_collection_id(row: pd.Series) -> str:
+    dataset = str(row["dataset"])
+    run_id = str(row["run_id"])
+    if dataset in {"cosmos", "powder"} and re.match(r"^\d{8}T\d{4}Z$", run_id):
+        return run_id[:8]
+    return run_id
+
+
 def mean_or_nan(series: pd.Series) -> float:
     values = pd.to_numeric(series, errors="coerce")
     return float(values.mean()) if values.notna().any() else math.nan
@@ -129,12 +149,8 @@ def classify_segment(row: dict[str, object], thresholds: dict[str, float]) -> st
     std = float(row.get("std_power_db", math.nan))
     short_std = float(row.get("short_timescale_std_db", math.nan))
     occupancy = float(row.get("occupancy_rate", math.nan))
-    autocorr = float(row.get("autocorr_lag_1440", math.nan))
-    daily_range = float(row.get("daily_profile_range_db", math.nan))
     mean_power = float(row.get("mean_power_dbm", math.nan))
 
-    if autocorr >= thresholds["diurnal_autocorr"] and daily_range >= thresholds["diurnal_daily_range_db"]:
-        return "diurnal_pattern"
     if mean_power <= thresholds["mean_power_median_dbm"] and std <= thresholds["low_std_db"] and occupancy <= 0.05:
         return "noise_floor"
     if occupancy >= 0.95 and std <= thresholds["low_std_db"]:
@@ -144,6 +160,12 @@ def classify_segment(row: dict[str, object], thresholds: dict[str, float]) -> st
     if std >= thresholds["high_std_db"] or 0.05 < occupancy < 0.95:
         return "intermittent_occupancy"
     return "mixed_activity"
+
+
+def has_diurnal_pattern(row: dict[str, object], thresholds: dict[str, float]) -> bool:
+    autocorr = float(row.get("autocorr_lag_1440", math.nan))
+    daily_range = float(row.get("daily_profile_range_db", math.nan))
+    return autocorr >= thresholds["diurnal_autocorr"] and daily_range >= thresholds["diurnal_daily_range_db"]
 
 
 def group_thresholds(group: pd.DataFrame) -> dict[str, float]:
@@ -212,6 +234,7 @@ def summarize_segment(
     if "long_gap_flag" in rows.columns:
         out["long_gap_flag"] = bool(rows["long_gap_flag"].astype(bool).any())
     out["task_regime"] = classify_segment(out, thresholds)
+    out["diurnal_pattern"] = has_diurnal_pattern(out, thresholds)
     return out
 
 
@@ -234,6 +257,46 @@ def segment_group(group: pd.DataFrame, features: list[str], args: argparse.Names
     return rows
 
 
+def boundary_segments(group: pd.DataFrame, features: list[str], args: argparse.Namespace) -> list[tuple[int, Segment, pd.DataFrame]]:
+    feature_columns = [col for col in features if col in group.columns and group[col].notna().any()]
+    if not feature_columns:
+        raise ValueError("no requested segmentation features exist in input table")
+
+    aggregated = (
+        group.groupby("frequency_mhz", as_index=False)[feature_columns]
+        .mean(numeric_only=True)
+        .sort_values("frequency_mhz")
+        .reset_index(drop=True)
+    )
+    segments = []
+    for chunk_id, chunk in enumerate(contiguous_chunks(aggregated), start=1):
+        available_features = [col for col in feature_columns if chunk[col].notna().any()]
+        matrix = robust_standardize(chunk[available_features].to_numpy(dtype=np.float64))
+        for segment in binary_segments(matrix, args.min_bins, args.penalty, args.max_segments):
+            segments.append((chunk_id, segment, chunk))
+    return segments
+
+
+def segment_shared_boundary_group(group: pd.DataFrame, features: list[str], args: argparse.Namespace) -> list[dict[str, object]]:
+    rows = []
+    boundaries = boundary_segments(group, features, args)
+    for _, node_group in group.groupby(GROUP_COLUMNS, sort=True):
+        node_group = node_group.sort_values("frequency_mhz").reset_index(drop=True)
+        group_keys = {col: node_group[col].iloc[0] for col in GROUP_COLUMNS}
+        thresholds = group_thresholds(node_group)
+        segment_id = 1
+        for chunk_id, segment, boundary_chunk in boundaries:
+            boundary_rows = boundary_chunk.iloc[segment.start : segment.end]
+            start_mhz = float(boundary_rows["frequency_mhz"].iloc[0])
+            end_mhz = float(boundary_rows["frequency_mhz"].iloc[-1])
+            segment_rows = node_group[(node_group["frequency_mhz"] >= start_mhz) & (node_group["frequency_mhz"] <= end_mhz)]
+            if segment_rows.empty:
+                continue
+            rows.append(summarize_segment(group_keys, chunk_id, segment_id, segment_rows, thresholds, args))
+            segment_id += 1
+    return rows
+
+
 def write_summary(segments: pd.DataFrame, output_dir: Path) -> None:
     lines = ["# Frequency Segmentation Summary", ""]
     lines.append(f"Segments: `{len(segments)}`")
@@ -243,6 +306,8 @@ def write_summary(segments: pd.DataFrame, output_dir: Path) -> None:
     lines.append("|---|---:|")
     for regime, count in segments["task_regime"].value_counts().sort_index().items():
         lines.append(f"| {regime} | {count} |")
+    lines.append("")
+    lines.append(f"Diurnal-pattern segments: `{int(segments['diurnal_pattern'].sum())}`")
     lines.append("")
     lines.append("## Segment Counts by Dataset")
     lines.append("| Dataset | Segments |")
@@ -278,10 +343,24 @@ def main() -> int:
             data = data[data[col].isin(set(values))]
     if data.empty:
         raise SystemExit("ERROR: no matching rows in input feature table")
+    data = data.copy()
+    data["site"] = data.apply(site_id, axis=1)
+    data["boundary_collection"] = data.apply(boundary_collection_id, axis=1)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     all_segments = []
-    for keys, group in data.groupby(GROUP_COLUMNS, sort=True):
+    shared = data[data["dataset"].isin(SHARED_BOUNDARY_DATASETS)]
+    independent = data[~data["dataset"].isin(SHARED_BOUNDARY_DATASETS)]
+
+    for keys, group in shared.groupby(["dataset", "site", "boundary_collection", "band"], sort=True):
+        group_segments = segment_shared_boundary_group(group, features, args)
+        all_segments.extend(group_segments)
+        label = "/".join(str(value) for value in keys)
+        node_count = group["node"].nunique()
+        boundary_count = len(boundary_segments(group, features, args))
+        print(f"segmented shared {label}: nodes={node_count}, boundaries={boundary_count}, segments={len(group_segments)}")
+
+    for keys, group in independent.groupby(GROUP_COLUMNS, sort=True):
         group_segments = segment_group(group, features, args)
         all_segments.extend(group_segments)
         label = "/".join(str(value) for value in keys)
