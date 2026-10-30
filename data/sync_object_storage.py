@@ -3,9 +3,12 @@
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import hashlib
+import json
 import os
+import shutil
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 def load_env_file(path):
@@ -57,7 +60,7 @@ def list_processed_objects(fs, bucket, prefix):
                     entries[item["Key"]] = item
             for common_prefix in response.get("CommonPrefixes", []):
                 child_prefix = common_prefix["Prefix"]
-                if not child_prefix.rstrip("/").endswith("/raw"):
+                if child_prefix.rstrip("/").split("/")[-1] != "raw":
                     pending.append(child_prefix)
             if not response.get("IsTruncated"):
                 break
@@ -67,7 +70,13 @@ def list_processed_objects(fs, bucket, prefix):
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--bucket", default=os.environ.get("S3_BUCKET", "spectrum"))
+    parser.add_argument("--bucket", help="Defaults to S3_BUCKET, or SPECTRUM_S3_BUCKET with --spectrum-storage")
+    parser.add_argument("--all-sites", action="store_true", help="Sync processed CSVs across the entire bucket")
+    parser.add_argument("--spectrum-storage", action="store_true", help="Use SPECTRUM_* credentials and endpoint instead of the default AWS/MinIO configuration")
+    parser.add_argument("--inventory-out", type=Path, help="Save the selected object metadata as JSON")
+    parser.add_argument("--inventory-in", type=Path, help="Use a saved inventory instead of listing the bucket")
+    parser.add_argument("--checksums-out", type=Path, help="Verify sizes and save local SHA-256 checksums after syncing")
+    parser.add_argument("--summary-only", action="store_true", help="Suppress per-file download messages")
     parser.add_argument(
         "--site",
         default=os.environ.get("S3_SITE", os.environ.get("S3_PREFIX", "powder")),
@@ -98,10 +107,43 @@ def parse_args():
     return parser.parse_args()
 
 
+def storage_settings(args):
+    if not args.spectrum_storage:
+        return args.bucket or os.environ.get("S3_BUCKET", "spectrum"), os.environ.get("S3_ENDPOINT_URL", ""), {}
+
+    def credential(name):
+        if os.environ.get(name):
+            return os.environ[name]
+        return Path(os.environ[f"{name}_FILE"]).read_text().strip()
+
+    return (
+        args.bucket or os.environ.get("SPECTRUM_S3_BUCKET", "spectrum"),
+        os.environ["SPECTRUM_S3_ENDPOINT_URL"],
+        {"key": credential("SPECTRUM_AWS_ACCESS_KEY_ID"),
+         "secret": credential("SPECTRUM_AWS_SECRET_ACCESS_KEY")},
+    )
+
+
+def validate_key(key):
+    path = PurePosixPath(key)
+    if path.is_absolute() or ".." in path.parts or "raw" in path.parts or not key.endswith("power_1mhz_avg_per_minute.csv"):
+        raise ValueError(f"Invalid processed-data key: {key}")
+
+
+def write_json(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".part")
+    temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+    temporary.replace(path)
+
+
 def main():
     args = parse_args()
     if args.workers <= 0 or args.parts <= 0:
         print("ERROR: --workers and --parts must be positive", file=sys.stderr)
+        return 2
+    if args.all_sites and args.nodes:
+        print("ERROR: --all-sites cannot be combined with --node", file=sys.stderr)
         return 2
     try:
         load_env_file(args.env_file)
@@ -112,25 +154,38 @@ def main():
             print("Install dependencies with: pip install fsspec s3fs", file=sys.stderr)
         return 2
 
-    endpoint_url = os.environ.get("S3_ENDPOINT_URL", "")
-    site_prefix = args.site.strip("/") + "/"
+    site_prefix = "" if args.all_sites else args.site.strip("/") + "/"
     listing_prefixes = [
         f"{site_prefix}{node.strip('/')}/"
         for node in args.nodes
     ] if args.nodes else [site_prefix]
     try:
-        fs = fsspec.filesystem("s3", **fs_kwargs(endpoint_url))
-        entries = {}
-        for listing_prefix in listing_prefixes:
-            entries.update(list_processed_objects(fs, args.bucket, listing_prefix))
+        bucket, endpoint_url, credentials = storage_settings(args)
+        fs = fsspec.filesystem("s3", **fs_kwargs(endpoint_url), **credentials)
+        if args.inventory_in:
+            inventory = json.loads(args.inventory_in.read_text())
+            if inventory["bucket"] != bucket or inventory["endpoint"] != endpoint_url:
+                raise ValueError("Inventory bucket/endpoint does not match selected storage")
+            entries = inventory["objects"]
+        else:
+            entries = {}
+            for listing_prefix in listing_prefixes:
+                entries.update(list_processed_objects(fs, bucket, listing_prefix))
+            entries = {key: {"Size": value["Size"], "ETag": value.get("ETag"),
+                             "LastModified": value["LastModified"].timestamp()}
+                       for key, value in entries.items()}
+        for key in entries:
+            validate_key(key)
+        if not entries:
+            raise ValueError("No processed power CSVs found for the selected dataset")
+        if args.inventory_out:
+            write_json(args.inventory_out, {"bucket": bucket, "endpoint": endpoint_url, "objects": entries})
     except Exception as exc:
         print(f"ERROR: object storage listing failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
 
     downloads = []
     for key, info in sorted(entries.items()):
-        if not key.endswith("power_1mhz_avg_per_minute.csv"):
-            continue
         local_path = args.output_dir / key
         remote_size = info.get("Size")
         remote_mtime = info.get("LastModified")
@@ -141,19 +196,37 @@ def main():
             continue
         downloads.append((key, local_path, remote_mtime))
 
+    site_sizes = {}
+    for key, info in entries.items():
+        site = key.split("/", 1)[0]
+        summary = site_sizes.setdefault(site, {"files": 0, "bytes": 0})
+        summary["files"] += 1
+        summary["bytes"] += info["Size"]
+    print(json.dumps({"bucket": bucket, "sites": site_sizes, "files": len(entries),
+                      "bytes": sum(info["Size"] for info in entries.values()),
+                      "files_to_update": len(downloads)}, sort_keys=True))
     if args.dry_run:
         for key, local_path, _ in downloads:
-            print(f"would download s3://{args.bucket}/{key} -> {local_path}")
+            if not args.summary_only:
+                print(f"would download s3://{bucket}/{key} -> {local_path}")
         print(f"{len(downloads)} file(s) would be updated")
         return 0
+
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    required_bytes = sum(entries[key]["Size"] for key, _, _ in downloads)
+    free_bytes = shutil.disk_usage(args.output_dir).free
+    if required_bytes + 5 * 1024**3 > free_bytes:
+        print(f"ERROR: downloads need {required_bytes} bytes plus 5 GiB free reserve; available={free_bytes}", file=sys.stderr)
+        return 1
 
     def download_one(item):
         key, local_path, remote_mtime = item
         local_path.parent.mkdir(parents=True, exist_ok=True)
         temporary_path = local_path.with_name(local_path.name + ".part")
-        print(f"downloading s3://{args.bucket}/{key} -> {local_path}")
+        if not args.summary_only:
+            print(f"downloading s3://{bucket}/{key} -> {local_path}")
         fs.get(
-            f"{args.bucket}/{key}",
+            f"{bucket}/{key}",
             str(temporary_path),
             max_concurrency=args.parts,
             chunksize=64 * 1024 * 1024,
@@ -175,6 +248,17 @@ def main():
         print(f"{failures} download(s) failed", file=sys.stderr)
         return 1
     print(f"{len(downloads)} file(s) updated")
+    if args.checksums_out:
+        checksums = {}
+        for key, info in sorted(entries.items()):
+            path = args.output_dir / key
+            if path.stat().st_size != info["Size"]:
+                raise ValueError(f"Size mismatch: {key}")
+            with path.open("rb") as stream:
+                digest = hashlib.file_digest(stream, "sha256").hexdigest()
+            checksums[key] = {"size": info["Size"], "sha256": digest}
+        write_json(args.checksums_out, {"bucket": bucket, "objects": checksums})
+        print(f"Verified sizes and SHA-256 checksums for {len(checksums)} files")
     return 0
 
 

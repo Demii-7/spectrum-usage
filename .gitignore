@@ -13,6 +13,7 @@ data/powder/*
 data/ara/*
 data/cosmos/*
 data/aerpaw/*
+data/.spectrum-sync/
 !data/*/.gitkeep
 # Model checkpoints: keep the directory and manifest, not the weights.
 checkpoints/*

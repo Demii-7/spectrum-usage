@@ -6,10 +6,12 @@ On October 30, 2026, we deployed stack `spectrum` on these hosts:
 |---|---|---|---|
 | Manager, head, GPU worker, MinIO | `cc@129.114.27.86` | `192.168.1.43` | `ray-worker-1` |
 | GPU worker | `cc@129.114.26.81` | `192.168.1.49` | `ray-worker-2` |
+| GPU worker | `cc@129.114.25.96` | `192.168.1.136` | `ray-worker-3` |
 
-Each host contributes one H100 and 48 CPUs. Ray reports three logical nodes:
-the CPU-free head container and two GPU worker containers. We copied the local
-`training/` and `models/` source snapshot to `/home/cc/spectrum-usage` on both
+Each host contributes one H100 and 48 CPUs, for 3 GPUs and 144 CPUs total.
+Ray reports four logical nodes: the CPU-free head container and three GPU
+worker containers. We copied the local
+`training/` and `models/` source snapshot to `/home/cc/spectrum-usage` on all three
 hosts. Containers mount that directory at `/workspace/spectrum-usage`.
 
 The image `spectrum-ray:2.54.0-chameleon` contains Ray 2.54.0 and PyTorch
@@ -39,6 +41,16 @@ We passed that probe through the Jobs API as `chameleon-acceptance-1`.
 It checked GPU UUIDs, CUDA, model imports, eight fractional GPU tasks, a
 MinIO write/read/delete across workers, and a spectrum object read on each
 worker. Both workers read 4096 bytes with the same SHA-256 checksum.
+
+After adding `ray-worker-3`, we passed `chameleon-acceptance-3-workers` with
+all three expected GPU UUIDs, twelve fractional GPU tasks, model imports,
+and matching spectrum reads on all three workers. The head stores the log at
+`/home/cc/chameleon-acceptance-3-workers.log`.
+
+Hosts use copied source snapshots from the local `integrate` checkout.
+They do not track the branch with Git. Pushes to `integrate` require an explicit
+source sync to update running hosts. The add-worker script copies the manager's
+current snapshot to each new host.
 
 ## Data and outputs
 
@@ -100,3 +112,35 @@ Add each new private address and hostname to `chameleon-nodes.sh` for the
 inventory-based inspection scripts. Run the acceptance command above after
 joining nodes and confirm that `gpu_worker_count` matches the host count.
 The manager and its MinIO volume stay in place.
+
+## Sync processed data
+
+Run the cluster wrapper from your workstation:
+
+```bash
+bash training/ray/scripts/sync-cluster-data.sh --dry-run
+bash training/ray/scripts/sync-cluster-data.sh
+# Select a subset instead of the default, which covers all sites:
+bash training/ray/scripts/sync-cluster-data.sh --site powder
+```
+
+The wrapper uses `RAY_NODE_SSH_HOSTS` in `chameleon-nodes.sh` to reach each
+host. It copies and runs the existing `data/sync_object_storage.py` inside each
+GPU worker container. That script reads the source-store secrets with
+`--spectrum-storage`, leaving the worker's default MinIO environment intact.
+
+The first host lists processed `power_1mhz_avg_per_minute.csv` objects and
+skips `raw/` subtrees. The wrapper shares that inventory with the other hosts,
+downloads the selected files on each host, and compares full-file SHA-256
+checksums across all hosts. Each download uses a temporary `.part` file before
+replacing its destination. Repeat runs skip files with matching size and
+last-modified timestamp. Ray containers see the data through their existing
+repository bind mount; a data sync does not require a Ray restart.
+
+On October 30, 2026, we synced 206 files (3,772,142,226 bytes per host):
+3 AERPAW, 93 ARA, 6 COSMOS, and 104 POWDER files. All three hosts returned
+matching checksums. Files reside at `/home/cc/spectrum-usage/data/<object-key>`
+on the host and `/workspace/spectrum-usage/data/<object-key>` in containers.
+Each host keeps the inventory and checksums under `data/.spectrum-sync/`.
+The source bucket can receive new data between runs; rerun the wrapper to
+refresh the inventory and download updates.
