@@ -37,7 +37,8 @@ elif [[ "$manager_state" != active ]]; then
 fi
 
 worker_token="$(docker swarm join-token -q worker)"
-for index in 1 2; do
+for index in "${!RAY_NODE_IPS[@]}"; do
+  [[ "$index" == 0 ]] && continue
   ip="${RAY_NODE_IPS[$index]}"
   expected_name="${RAY_NODE_NAMES[$index]}"
   verify_host_identity "$ip" "$expected_name" >/dev/null
@@ -54,8 +55,11 @@ unset worker_token
 
 manager_node="$(docker node inspect self --format '{{.Description.Hostname}}')"
 docker node update --label-add ray.head=true --label-add ray.gpu=true "$manager_node"
-docker node update --label-add ray.gpu=true ray-worker-2
-docker node update --label-add ray.gpu=true ray-worker-1
+for index in "${!RAY_NODE_IPS[@]}"; do
+  [[ "$index" == 0 ]] && continue
+  node_name="$(verify_host_identity "${RAY_NODE_IPS[$index]}" "${RAY_NODE_NAMES[$index]}")"
+  docker node update --label-add ray.gpu=true "$node_name"
+done
 
 create_secret() {
   local secret_name="$1" prompt="$2" value

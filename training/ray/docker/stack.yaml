@@ -12,12 +12,16 @@ services:
       MINIO_ENDPOINT: http://minio:9000
       S3_ENDPOINT_URL: http://minio:9000
       S3_BUCKET: ${MINIO_BUCKET:-spectrum-usage}
+      SPECTRUM_AWS_ACCESS_KEY_ID_FILE: /run/secrets/spectrum_access_key
+      SPECTRUM_AWS_SECRET_ACCESS_KEY_FILE: /run/secrets/spectrum_secret_key
+      SPECTRUM_S3_ENDPOINT_URL: ${SPECTRUM_S3_ENDPOINT_URL:-https://chi.tacc.chameleoncloud.org:7480}
+      SPECTRUM_S3_BUCKET: ${SPECTRUM_S3_BUCKET:-spectrum}
       RAY_ADDRESS: ray-head:6379
     volumes:
       - type: bind
         source: /home/cc/spectrum-usage
         target: /workspace/spectrum-usage
-    secrets: [minio_root_user, minio_root_password]
+    secrets: [minio_root_user, minio_root_password, spectrum_access_key, spectrum_secret_key]
     ports:
       - target: 8265
         published: 8265
@@ -56,7 +60,7 @@ services:
       - type: bind
         source: /home/cc/spectrum-usage
         target: /workspace/spectrum-usage
-    secrets: [minio_root_user, minio_root_password]
+    secrets: [minio_root_user, minio_root_password, spectrum_access_key, spectrum_secret_key]
     healthcheck:
       test: ["CMD-SHELL", "ray health-check --address=ray-head:6379"]
       interval: 15s
@@ -131,6 +135,12 @@ volumes:
     driver: local
 
 secrets:
+  spectrum_access_key:
+    external: true
+    name: ray_spectrum_access_key
+  spectrum_secret_key:
+    external: true
+    name: ray_spectrum_secret_key
   minio_root_user:
     external: true
     name: ray_minio_root_user

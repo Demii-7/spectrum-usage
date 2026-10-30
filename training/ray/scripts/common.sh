@@ -7,6 +7,8 @@ RAY_SSH_OPTIONS=(-o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=
 RAY_SSH_USER="${RAY_SSH_USER:-cc}"
 RAY_NODE_IPS=("192.168.1.201" "192.168.1.120" "192.168.1.130" "192.168.1.189")
 RAY_NODE_NAMES=("" "ray-worker-2" "ray-worker-1" "ray-worker-3")
+# Optional shell inventory defines the head, node address/name arrays, and SSH user.
+if [[ -n "${RAY_INVENTORY:-}" ]]; then source "$RAY_INVENTORY"; fi
 
 run_on_host() {
   local ip="$1" command="$2"
@@ -115,6 +117,7 @@ ray_source_hash() {
     "$RAY_REPO_PATH/training/ray/docker/Dockerfile.core" \
     "$RAY_REPO_PATH/training/ray/docker/entrypoint-head.sh" \
     "$RAY_REPO_PATH/training/ray/docker/entrypoint-worker.sh" \
+    "$RAY_REPO_PATH/training/ray/docker/load-storage-env.sh" \
     "$RAY_REPO_PATH/training/ray/requirements/core.txt" \
     | sha256sum | cut -c1-12
 }

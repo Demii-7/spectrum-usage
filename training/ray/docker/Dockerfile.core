@@ -14,5 +14,6 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /workspace/spectrum-usage
 COPY training/ray/docker/entrypoint-worker.sh /usr/local/bin/ray-worker
 COPY training/ray/docker/entrypoint-head.sh /usr/local/bin/ray-head
+COPY training/ray/docker/load-storage-env.sh /usr/local/bin/load-storage-env.sh
 RUN chmod 0755 /usr/local/bin/ray-worker /usr/local/bin/ray-head
 ENTRYPOINT ["/usr/local/bin/ray-worker"]

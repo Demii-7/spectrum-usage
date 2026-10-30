@@ -5,12 +5,7 @@ if [[ $# -gt 0 ]]; then
   exec "$@"
 fi
 
-if [[ -r "${AWS_ACCESS_KEY_ID_FILE:-}" ]]; then
-  export AWS_ACCESS_KEY_ID="$(<"$AWS_ACCESS_KEY_ID_FILE")"
-fi
-if [[ -r "${AWS_SECRET_ACCESS_KEY_FILE:-}" ]]; then
-  export AWS_SECRET_ACCESS_KEY="$(<"$AWS_SECRET_ACCESS_KEY_FILE")"
-fi
+source /usr/local/bin/load-storage-env.sh
 
 exec ray start \
   --head \
