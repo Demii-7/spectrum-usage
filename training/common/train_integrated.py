@@ -48,6 +48,9 @@ from training.common.data import chunk_specs, frequency_range_mask, load_chunk
 
 #Helper for Model forecasting
 from training.common.forecasting import forecast
+from training.common.run_costs import (
+    INFERENCE_BATCH, collect_run_costs, reset_peak_memory, write_run_costs,
+)
 from training.common.validation_diagnostics import (
     max_abs_prediction_by_horizon,
     prediction_diagnostic_log,
@@ -295,6 +298,8 @@ def train_model(
     log_rows: list[dict[str, Any]] = []
 
     training_start_time = timestamp_utc()
+    example_x = None
+    reset_peak_memory()
     training_start_counter = time.perf_counter()
     
     print(f"[DEBUG] entering epoch loop: epochs={epochs}, device={device}")
@@ -317,6 +322,8 @@ def train_model(
         for batch_idx, (x, y) in enumerate(train_loader):
             if epoch == 1 and batch_idx == 0:
                 print(f"[DEBUG] first batch: x.shape={x.shape}, y.shape={y.shape}, device={device}")
+            if example_x is None:
+                example_x = x[:INFERENCE_BATCH].detach().cpu()
             # Move this batch to the same device as the model.
             x = x.to(device)
             y = y.to(device)
@@ -699,6 +706,10 @@ def train_model(
     ].iloc[0]
 
     training_end_time = timestamp_utc()
+    costs = collect_run_costs(
+        model, example_x, prediction_horizon, rollout_horizon, device,
+        model_config=dict(model_cfg), train_config=dict(train_cfg),
+    )
 
     training_results = {
         "model_name": model_name,
@@ -757,6 +768,8 @@ def train_model(
         "training_duration_sec": total_training_time,
 
         # Complete per-epoch records.
+        "costs": costs,
+
         "log_frame": log_frame,
     }
     
@@ -864,6 +877,13 @@ def train_one_model(
             ),
         )
         
+        write_run_costs(out, chunk.chunk_id, {
+            **training_results.get("costs", {}),
+            "cost_epochs_completed": training_results.get("epochs_completed"),
+            "cost_training_duration_sec": training_results.get("training_duration_sec"),
+            "cost_average_epoch_time_sec": training_results.get("average_epoch_time_sec"),
+        })
+
         # Write training logs
         if model_name == "tss_lcd":
             training_results["autoencoder"]["log_frame"].to_csv(

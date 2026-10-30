@@ -28,6 +28,7 @@ class TuneReporter:
         self.best_metrics: dict[str, Any] | None = None
         self.report_count = 0
         self.used_fallback = False
+        self.run_costs: dict[str, Any] = {}
 
     def _ray_report(self, metrics: Mapping[str, Any], checkpoint: Any = None) -> None:
         if self._report is not None:
@@ -85,6 +86,7 @@ class TuneReporter:
         if self.last_metrics is None or self.best_metrics is None:
             raise RuntimeError("Integrated training completed without a prunable forecasting event")
         selected_metrics = dict(self.best_metrics)
+        selected_metrics.update(self.run_costs)
         selected_metrics.update({
             "completed": True,
             "selected_training_iteration": int(self.best_metrics["training_iteration"]),
@@ -103,7 +105,8 @@ class TuneReporter:
 
     @property
     def selected_metrics(self) -> dict[str, Any] | None:
-        return self.best_metrics or self.last_metrics
+        metrics = self.best_metrics or self.last_metrics
+        return {**metrics, **self.run_costs} if metrics is not None else None
 
     @property
     def warnings(self) -> list[str]:
@@ -159,6 +162,9 @@ def run_integrated_trial(
     checkpoints = sorted((run_directory / "checkpoints").glob("*.pt"))
     if not checkpoints:
         raise RuntimeError("Integrated training produced no .pt checkpoint")
+    from training.common.run_costs import read_run_costs
+
+    adapter.run_costs = read_run_costs(run_directory)
     adapter.complete(checkpoint_factory(run_directory))
     result = {
         "candidate_id": candidate_id(model_name, parameters),
@@ -171,6 +177,7 @@ def run_integrated_trial(
         "event_log": str(event_log),
         "prunable_epochs_reported": adapter.report_count,
         "checkpoints": [str(path) for path in checkpoints],
+        "run_costs": adapter.run_costs,
         "checkpoint_format": "integrated:model_state_dict+normalization+frequencies+training_results",
     }
     (trial_directory / "result_manifest.json").write_text(
