@@ -15,6 +15,27 @@ SPEC.loader.exec_module(sync)
 
 
 class SyncObjectStorageTests(unittest.TestCase):
+    def test_checkpoint_listing_is_paginated_and_confined_to_checkpoint_prefix(self):
+        calls = []
+
+        def call_s3(operation, **request):
+            calls.append(request.copy())
+            self.assertEqual(request["Prefix"], "checkpoints/")
+            if "ContinuationToken" not in request:
+                return {"Contents": [{"Key": "checkpoints/"},
+                                     {"Key": "checkpoints/1d/model/seed-42/weights.pt"}],
+                        "IsTruncated": True, "NextContinuationToken": "next"}
+            return {"Contents": [{"Key": "checkpoints/MANIFEST.tsv"}]}
+
+        entries = sync.list_checkpoint_objects(SimpleNamespace(call_s3=call_s3), "spectrum")
+        self.assertEqual(set(entries), {"checkpoints/1d/model/seed-42/weights.pt", "checkpoints/MANIFEST.tsv"})
+        self.assertEqual(calls[1]["ContinuationToken"], "next")
+        for key in entries:
+            sync.validate_key(key, checkpoints=True)
+        for key in ("powder/weights.pt", "checkpoints/../../weights.pt", "/checkpoints/weights.pt"):
+            with self.assertRaises(ValueError):
+                sync.validate_key(key, checkpoints=True)
+
     def test_paginated_all_sites_listing_skips_raw_subtrees(self):
         calls = []
 

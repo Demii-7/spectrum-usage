@@ -7,9 +7,20 @@ LOCAL_REPO="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 source "${RAY_INVENTORY:-$SCRIPT_DIR/../docker/chameleon-nodes.sh}"
 : "${RAY_REPO_PATH:=/home/cc/spectrum-usage}"
 DRY_RUN=false
-if [[ "${1:-}" == --dry-run ]]; then DRY_RUN=true; shift; fi
+CHECKPOINTS=false
+while (($#)); do
+  case "$1" in
+    --dry-run) DRY_RUN=true; shift ;;
+    --checkpoints) CHECKPOINTS=true; shift ;;
+    *) break ;;
+  esac
+done
 SELECTION=("$@")
-if ((${#SELECTION[@]} == 0)); then SELECTION=(--all-sites); fi
+if [[ "$CHECKPOINTS" == true ]]; then
+  SELECTION=(--checkpoints "${SELECTION[@]}")
+elif ((${#SELECTION[@]} == 0)); then
+  SELECTION=(--all-sites)
+fi
 HOSTS=("${RAY_NODE_SSH_HOSTS[@]}")
 ((${#HOSTS[@]} > 0)) || { printf 'No SSH hosts in inventory\n' >&2; exit 2; }
 TMP="$(mktemp -d)"
@@ -29,6 +40,10 @@ CONTAINER_REPO=/workspace/spectrum-usage
 SYNC_SCRIPT="$CONTAINER_REPO/data/sync_object_storage.py"
 INVENTORY="$CONTAINER_REPO/data/.spectrum-sync/inventory.json"
 CHECKSUMS="$CONTAINER_REPO/data/.spectrum-sync/checksums.json"
+if [[ "$CHECKPOINTS" == true ]]; then
+  INVENTORY="$CONTAINER_REPO/data/.spectrum-sync/checkpoint-inventory.json"
+  CHECKSUMS="$CONTAINER_REPO/data/.spectrum-sync/checkpoint-checksums.json"
+fi
 for host in "${HOSTS[@]}"; do
   rsync -az -e 'ssh -o BatchMode=yes -o ConnectTimeout=15' \
     --relative "$LOCAL_REPO/./data/sync_object_storage.py" "$RAY_SSH_USER@$host:$RAY_REPO_PATH/"
@@ -46,6 +61,7 @@ done
 PIDS=()
 for host in "${HOSTS[@]}"; do
   OPTIONS=(--spectrum-storage --inventory-in "$INVENTORY" --summary-only)
+  if [[ "$CHECKPOINTS" == true ]]; then OPTIONS+=(--checkpoints); fi
   if [[ "$DRY_RUN" == true ]]; then OPTIONS+=(--dry-run); else OPTIONS+=(--checksums-out "$CHECKSUMS"); fi
   worker_exec "$host" python "$SYNC_SCRIPT" "${OPTIONS[@]}" > "$TMP/$host.log" 2>&1 &
   PIDS+=("$!")
@@ -73,6 +89,6 @@ expected = json.loads((root / f"{hosts[0]}.json").read_text())
 for host in hosts[1:]:
     actual = json.loads((root / f"{host}.json").read_text())
     if actual != expected:
-        raise SystemExit(f"ERROR: processed data checksums differ on {host}")
+        raise SystemExit(f"ERROR: synced object checksums differ on {host}")
 print(f"Matching SHA-256 checksums for {len(expected['objects'])} files across {len(hosts)} hosts")
 PY

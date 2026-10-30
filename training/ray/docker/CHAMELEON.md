@@ -144,3 +144,25 @@ on the host and `/workspace/spectrum-usage/data/<object-key>` in containers.
 Each host keeps the inventory and checksums under `data/.spectrum-sync/`.
 The source bucket can receive new data between runs; rerun the wrapper to
 refresh the inventory and download updates.
+
+## Sync checkpoints
+
+Use the same script with checkpoint mode:
+
+```bash
+bash training/ray/scripts/sync-cluster-data.sh --checkpoints --dry-run
+bash training/ray/scripts/sync-cluster-data.sh --checkpoints
+```
+
+The wrapper downloads `s3://spectrum/checkpoints/` to the repository root on
+each host. It preserves paths such as
+`checkpoints/1d/linearar1d/seed-40/powder_600_800_linearar1d.pt` and includes
+`checkpoints/MANIFEST.tsv`. Containers read them under
+`/workspace/spectrum-usage/checkpoints/`.
+
+On October 30, 2026, we synced 67 model checkpoint files and the manifest,
+173,142,276 bytes per host. All three hosts returned matching SHA-256
+checksums. Checkpoint mode keeps its inventory and checksums separate from
+the processed-data records, in `data/.spectrum-sync/checkpoint-inventory.json`
+and `data/.spectrum-sync/checkpoint-checksums.json`. Run both sync modes when
+preparing a new worker for training or evaluation.

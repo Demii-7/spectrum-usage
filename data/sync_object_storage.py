@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synchronize power CSV files from S3-compatible object storage into data/."""
+"""Synchronize processed power CSVs or checkpoints from S3-compatible storage."""
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -71,7 +71,9 @@ def list_processed_objects(fs, bucket, prefix):
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bucket", help="Defaults to S3_BUCKET, or SPECTRUM_S3_BUCKET with --spectrum-storage")
-    parser.add_argument("--all-sites", action="store_true", help="Sync processed CSVs across the entire bucket")
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--all-sites", action="store_true", help="Sync processed CSVs across the entire bucket")
+    selection.add_argument("--checkpoints", action="store_true", help="Sync checkpoints/ into the repository instead of processed CSVs into data/")
     parser.add_argument("--spectrum-storage", action="store_true", help="Use SPECTRUM_* credentials and endpoint instead of the default AWS/MinIO configuration")
     parser.add_argument("--inventory-out", type=Path, help="Save the selected object metadata as JSON")
     parser.add_argument("--inventory-in", type=Path, help="Use a saved inventory instead of listing the bucket")
@@ -89,7 +91,7 @@ def parse_args():
         default=[],
         help="Node within --site to sync. Repeat for multiple nodes; defaults to all nodes.",
     )
-    parser.add_argument("--output-dir", type=Path, default=Path(__file__).resolve().parent)
+    parser.add_argument("--output-dir", type=Path, help="Destination root; defaults to data/ for CSVs or the repository root for checkpoints")
     parser.add_argument("--env-file", type=Path, default=Path(__file__).resolve().parent / ".env")
     parser.add_argument("--dry-run", action="store_true", help="List downloads without downloading")
     parser.add_argument(
@@ -124,10 +126,28 @@ def storage_settings(args):
     )
 
 
-def validate_key(key):
+def validate_key(key, checkpoints=False):
     path = PurePosixPath(key)
-    if path.is_absolute() or ".." in path.parts or "raw" in path.parts or not key.endswith("power_1mhz_avg_per_minute.csv"):
+    if path.is_absolute() or ".." in path.parts:
+        raise ValueError(f"Invalid object key: {key}")
+    if checkpoints:
+        if not key.startswith("checkpoints/") or key.endswith("/"):
+            raise ValueError(f"Invalid checkpoint key: {key}")
+    elif "raw" in path.parts or not key.endswith("power_1mhz_avg_per_minute.csv"):
         raise ValueError(f"Invalid processed-data key: {key}")
+
+
+def list_checkpoint_objects(fs, bucket):
+    entries = {}
+    request = {"Bucket": bucket, "Prefix": "checkpoints/"}
+    while True:
+        response = fs.call_s3("list_objects_v2", **request)
+        for item in response.get("Contents", []):
+            if not item["Key"].endswith("/"):
+                entries[item["Key"]] = item
+        if not response.get("IsTruncated"):
+            return entries
+        request["ContinuationToken"] = response["NextContinuationToken"]
 
 
 def write_json(path, value):
@@ -139,11 +159,16 @@ def write_json(path, value):
 
 def main():
     args = parse_args()
+    kind = "checkpoints" if args.checkpoints else "processed-data"
+    if args.output_dir is None:
+        args.output_dir = Path(__file__).resolve().parent
+        if args.checkpoints:
+            args.output_dir = args.output_dir.parent
     if args.workers <= 0 or args.parts <= 0:
         print("ERROR: --workers and --parts must be positive", file=sys.stderr)
         return 2
-    if args.all_sites and args.nodes:
-        print("ERROR: --all-sites cannot be combined with --node", file=sys.stderr)
+    if (args.all_sites or args.checkpoints) and args.nodes:
+        print("ERROR: --all-sites/--checkpoints cannot be combined with --node", file=sys.stderr)
         return 2
     try:
         load_env_file(args.env_file)
@@ -166,20 +191,25 @@ def main():
             inventory = json.loads(args.inventory_in.read_text())
             if inventory["bucket"] != bucket or inventory["endpoint"] != endpoint_url:
                 raise ValueError("Inventory bucket/endpoint does not match selected storage")
+            if inventory.get("kind", "processed-data") != kind:
+                raise ValueError("Inventory kind does not match selected sync mode")
             entries = inventory["objects"]
         else:
-            entries = {}
-            for listing_prefix in listing_prefixes:
-                entries.update(list_processed_objects(fs, bucket, listing_prefix))
+            if args.checkpoints:
+                entries = list_checkpoint_objects(fs, bucket)
+            else:
+                entries = {}
+                for listing_prefix in listing_prefixes:
+                    entries.update(list_processed_objects(fs, bucket, listing_prefix))
             entries = {key: {"Size": value["Size"], "ETag": value.get("ETag"),
                              "LastModified": value["LastModified"].timestamp()}
                        for key, value in entries.items()}
         for key in entries:
-            validate_key(key)
+            validate_key(key, checkpoints=args.checkpoints)
         if not entries:
-            raise ValueError("No processed power CSVs found for the selected dataset")
+            raise ValueError(f"No {kind} objects found")
         if args.inventory_out:
-            write_json(args.inventory_out, {"bucket": bucket, "endpoint": endpoint_url, "objects": entries})
+            write_json(args.inventory_out, {"bucket": bucket, "endpoint": endpoint_url, "kind": kind, "objects": entries})
     except Exception as exc:
         print(f"ERROR: object storage listing failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
