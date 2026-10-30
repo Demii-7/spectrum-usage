@@ -1,5 +1,8 @@
 # Ray Docker and Swarm deployment
 
+For the October 2026 two-host cluster and expansion procedure, see
+[CHAMELEON.md](CHAMELEON.md). The addresses below describe the earlier cluster.
+
 Ray `2.54.0` runs from one source-hashed image containing explicit `ray-head`
 and `ray-worker` entrypoints. The four one-H100 hosts are:
 

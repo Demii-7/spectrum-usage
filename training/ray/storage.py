@@ -7,6 +7,26 @@ import os
 from typing import Mapping
 
 
+def spectrum_s3_client():
+    """Client for the source data bucket, independent of Ray's MinIO store."""
+    import boto3
+    from pathlib import Path
+
+    def credential(name: str) -> str:
+        value = os.environ.get(name)
+        if value:
+            return value
+        return Path(os.environ[f"{name}_FILE"]).read_text().strip()
+
+    return boto3.client(
+        "s3",
+        endpoint_url=os.environ["SPECTRUM_S3_ENDPOINT_URL"],
+        aws_access_key_id=credential("SPECTRUM_AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=credential("SPECTRUM_AWS_SECRET_ACCESS_KEY"),
+        region_name=os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
+    )
+
+
 @dataclass(frozen=True)
 class MinIOConfig:
     bucket: str

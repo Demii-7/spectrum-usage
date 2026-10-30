@@ -67,6 +67,25 @@ def _minio_round_trip(action: str, key: str, payload: bytes | None = None) -> st
     raise ValueError(action)
 
 
+def _spectrum_read() -> dict[str, Any]:
+    from .storage import spectrum_s3_client
+
+    client = spectrum_s3_client()
+    bucket = os.environ.get("SPECTRUM_S3_BUCKET", "spectrum")
+    listing = client.list_objects_v2(Bucket=bucket, MaxKeys=10)
+    objects = [item for item in listing.get("Contents", []) if item["Size"] > 0]
+    if not objects:
+        raise RuntimeError(f"No nonempty objects found in spectrum bucket {bucket}")
+    key = objects[0]["Key"]
+    response = client.get_object(Bucket=bucket, Key=key, Range="bytes=0-4095")
+    with response["Body"] as body:
+        payload = body.read()
+    if not payload:
+        raise RuntimeError("Spectrum object read returned no data")
+    return {"hostname": socket.gethostname(), "bucket": bucket, "key": key,
+            "bytes_read": len(payload), "sha256": hashlib.sha256(payload).hexdigest()}
+
+
 def probe(
     address: str = "auto",
     *,
@@ -74,6 +93,7 @@ def probe(
     fractional_gpu: float | None = None,
     check_model_imports: bool = False,
     check_minio: bool = False,
+    check_spectrum: bool = False,
 ) -> dict[str, Any]:
     ray = require_ray()
     ray.init(address=address, ignore_reinit_error=True)
@@ -147,6 +167,13 @@ def probe(
             raise RuntimeError(f"MinIO checksum mismatch: wrote {written}, read {read}")
         minio_result = {"key": key, "sha256": written, "cross_worker": True}
 
+    spectrum_results = []
+    if check_spectrum:
+        remote_read = ray.remote(_spectrum_read)
+        for node in gpu_nodes:
+            strategy = NodeAffinitySchedulingStrategy(node_id=node["NodeID"], soft=False)
+            spectrum_results.append(ray.get(remote_read.options(scheduling_strategy=strategy).remote()))
+
     return {
         "cluster_resources": ray.cluster_resources(),
         "available_resources": ray.available_resources(),
@@ -155,6 +182,7 @@ def probe(
         "gpu_workers": snapshots,
         "fractional_gpu_tasks": fractional_results,
         "minio": minio_result,
+        "spectrum_reads": spectrum_results,
     }
 
 
@@ -165,6 +193,7 @@ def main() -> None:
     parser.add_argument("--fractional-gpu-check", type=float)
     parser.add_argument("--check-model-imports", action="store_true")
     parser.add_argument("--check-minio-cross-worker", action="store_true")
+    parser.add_argument("--check-spectrum-read", action="store_true")
     args = parser.parse_args()
     expected = {}
     for item in args.expected_gpu_node:
@@ -178,6 +207,7 @@ def main() -> None:
         fractional_gpu=args.fractional_gpu_check,
         check_model_imports=args.check_model_imports,
         check_minio=args.check_minio_cross_worker,
+        check_spectrum=args.check_spectrum_read,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
 
