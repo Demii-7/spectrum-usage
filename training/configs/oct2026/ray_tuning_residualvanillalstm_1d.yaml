@@ -1,0 +1,83 @@
+data:
+  representation: 1d
+  files:
+  - path: data/powder/humanities-nuc1/20261015T1434Z/600_800/power_1mhz_avg_per_minute.csv
+    partition: train
+  - path: data/powder/madsen-nuc1/20261015T1434Z/600_800/power_1mhz_avg_per_minute.csv
+    partition: train
+  - path: data/powder/moran-nuc1/20261015T1434Z/600_800/power_1mhz_avg_per_minute.csv
+    partition: train
+  - path: data/powder/sagepoint-nuc1/20261015T1434Z/600_800/power_1mhz_avg_per_minute.csv
+    partition: train
+  - path: data/powder/humanities-nuc1/20261025T1355Z/600_800/power_1mhz_avg_per_minute.csv
+    partition: validation
+  - path: data/powder/madsen-nuc1/20261025T1355Z/600_800/power_1mhz_avg_per_minute.csv
+    partition: validation
+  - path: data/powder/moran-nuc1/20261025T1355Z/600_800/power_1mhz_avg_per_minute.csv
+    partition: validation
+  - path: data/powder/sagepoint-nuc1/20261025T1355Z/600_800/power_1mhz_avg_per_minute.csv
+    partition: validation
+  - path: data/powder/humanities-nuc1/20261025T1355Z/600_800/power_1mhz_avg_per_minute.csv
+    partition: test
+  - path: data/powder/madsen-nuc1/20261025T1355Z/600_800/power_1mhz_avg_per_minute.csv
+    partition: test
+  - path: data/powder/moran-nuc1/20261025T1355Z/600_800/power_1mhz_avg_per_minute.csv
+    partition: test
+  - path: data/powder/sagepoint-nuc1/20261025T1355Z/600_800/power_1mhz_avg_per_minute.csv
+    partition: test
+  concat: rows
+  split:
+    ranges:
+      train:
+        start: '2026-10-15T14:34:00Z'
+        end: '2026-10-22T13:13:00Z'
+      validation:
+        start: '2026-10-25T13:55:00Z'
+        end: '2026-10-27T13:55:00Z'
+      test:
+        start: '2026-10-27T20:00:00Z'
+        end: '2026-10-30T18:00:00Z'
+  chunks:
+  - id: powder_600_800
+    start_mhz: 600
+    end_mhz: 800
+windowing:
+  lookback: 60
+  horizons:
+  - 1
+  - 15
+  - 60
+training:
+  device: cuda
+  models:
+  - residualvanillalstm
+preprocessing:
+  normalize: true
+  impute: true
+  max_missing_gap: 9
+data_loader:
+  num_workers: 0
+  pin_memory: false
+residualvanillalstm:
+  model:
+    input_sequence_length: 60
+    prediction_horizon: 1
+    hidden_size: 64
+    num_layers: 1
+    dropout: 0.0
+    output_strategy: final_hidden
+    bidirectional: false
+  train:
+    val_fraction: 0.1
+    train_stride: 5
+    val_stride: 5
+    test_stride: 5
+    batch_size: 128
+    epochs: 20
+    learning_rate: 0.001
+    weight_decay: 0.0001
+    optimizer: adam
+    gradient_clip_norm: 1.0
+    early_stopping: false
+    early_stopping_patience: 5
+    seed: 42
