@@ -868,8 +868,9 @@ def train_one_model(
             frequencies=data.frequencies,
             site_grid_indices=(
                 find_site_grid_indices(
-                    resolve_path(config["data"]["map"].get("output_dir", "data/maps"))
-                    / f"{config['data']['map']['name']}_train.npz",
+                    # Map caches are named "<map>_<split>-<hash>.npz", so use the path the
+                    # loader actually read rather than reconstructing an unhashed name.
+                    Path(data.files["train_0"]),
                     str(config["data"].get("map_key", "map_db")),
                 )
                 if str(config["data"].get("representation", "")).lower() == "4d"
