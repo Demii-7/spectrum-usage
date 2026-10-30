@@ -79,6 +79,23 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
     model_cfg = config[model_name]["model"]
     print(f"[DEBUG] build_model: model_name={model_name}, train_data.shape={train_data.shape}")
 
+    if model_name == "spectrumllm":
+        from models.SpectrumLLM import SpectrumLLMForecaster
+
+        if train_data.ndim != 2:
+            raise ValueError(
+                f"Error! {model_name} expects training data shaped "
+                f"(time, features), got {train_data.shape}"
+            )
+        predictor_config = {
+            "model": {
+                **dict(model_cfg),
+                "input_size": int(train_data.shape[-1]),
+            }
+        }
+        return SpectrumLLMForecaster(predictor_config)
+
+
     if model_name in ("temporalconvnet", "lstmattn", "arima"):
         from models.ARIMA import ARIMAForecaster
         from models.LSTMAttn import LSTMAttnForecaster

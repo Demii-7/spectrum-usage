@@ -237,6 +237,17 @@ _specs = [
             "architecture": _bundle(**{"model.d_model": 64, "model.d_ff": 256, "model.encoder_layers": 2, "model.decoder_layers": 1, "model.n_heads": 8, "model.moving_avg": 25, "model.dropout": 0.05, "model.factor": 3, "model.csam_kernel_size": 7}),
             "train.learning_rate": 1e-4, "train.weight_decay": 0.0, "train.batch_size": 32,
         }}),
+    _tunable("spectrumllm", "2d", (
+        _bundle(**{"model.d_model": 16, "model.d_ff": 16, "model.patch_length": 8, "model.patch_stride": 8, "model.num_prototypes": 100, "model.attention_heads": 4, "model.dropout": 0.1, "model.llm_layers": 2, "model.revin_affine": False, "model.backbone": "openai-community/gpt2", "model.prompt_mode": "static"}),
+        _bundle(**{"model.d_model": 32, "model.d_ff": 32, "model.patch_length": 16, "model.patch_stride": 8, "model.num_prototypes": 500, "model.attention_heads": 8, "model.dropout": 0.1, "model.llm_layers": 6, "model.revin_affine": False, "model.backbone": "openai-community/gpt2", "model.prompt_mode": "static"}),
+        _bundle(**{"model.d_model": 64, "model.d_ff": 64, "model.patch_length": 16, "model.patch_stride": 8, "model.num_prototypes": 1000, "model.attention_heads": 8, "model.dropout": 0.1, "model.llm_layers": 6, "model.revin_affine": False, "model.backbone": "openai-community/gpt2", "model.prompt_mode": "static"}),
+    ), gpu=0.5,
+        optimizer_space={
+            "train.learning_rate": loguniform(1e-4, 3e-3),
+            "train.weight_decay": choice(0.0, 1e-5, 1e-4),
+            "train.batch_size": choice(8, 16, 32),
+        },
+        anchor_optimizer={"train.learning_rate": 1e-3, "train.weight_decay": 0.0, "train.batch_size": 16}),
     _tunable("convlstm", "4d", (
         _bundle(**{"model.hidden_channels": [8], "model.num_encoder_layers": 1, "model.kernel_size": [[1, 3]], "model.decoder_hidden_channels": 8, "model.decoder_kernel_size": [1, 1], "model.decoder_lstm_hidden": 32, "model.dropout": 0.1}),
         _bundle(**{"model.hidden_channels": [16, 32], "model.num_encoder_layers": 2, "model.kernel_size": [[1, 3], [1, 1]], "model.decoder_hidden_channels": 16, "model.decoder_kernel_size": [1, 1], "model.decoder_lstm_hidden": 64, "model.dropout": 0.2}),

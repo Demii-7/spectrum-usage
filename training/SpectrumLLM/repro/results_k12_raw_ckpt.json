@@ -1,0 +1,99 @@
+[
+ {
+  "dataset": "spec4_data.csv",
+  "channels": 4,
+  "horizon": 12,
+  "seed": 0,
+  "backbone": "openai-community/gpt2",
+  "llm_layers": 6,
+  "patch_length": 16,
+  "patch_stride": 8,
+  "num_prototypes": 1000,
+  "d_model": 32,
+  "d_ff": 32,
+  "heads": 8,
+  "prompt_mode": "static",
+  "epochs_run": 10,
+  "epochs_max": 10,
+  "batch_size": 32,
+  "lr": 0.0001,
+  "val_fraction": 0.1,
+  "n_train_windows": 1626,
+  "n_val_windows": 181,
+  "n_test_windows": 851,
+  "params_total": 134598336,
+  "params_trainable": 52685760,
+  "best_val_mse_std": 0.42710021138191223,
+  "test_mse_std": 0.3565012812614441,
+  "test_mse_raw": 0.2781759798526764,
+  "train_wall_s": 274.6,
+  "infer_s_per_sample": 0.02892,
+  "peak_gpu_mb": 3130.9,
+  "space_trained_in": "raw",
+  "checkpoint": "checkpoints/spec4_K12_seed0_raw.pt",
+  "checkpoint_sha256_16": "443103c2d9f054ac",
+  "checkpoint_mb": 210.7,
+  "references_std": {
+   "persistence": 0.5126883387565613,
+   "lookback_mean": 0.6768220067024231,
+   "seasonal_naive_24h": 0.536379337310791
+  },
+  "references_raw": {
+   "persistence": 0.5638418793678284,
+   "lookback_mean": 0.7075921893119812,
+   "seasonal_naive_24h": 0.4474104046821594
+  },
+  "history": [
+   {
+    "epoch": 0,
+    "train_mse": 1.0642904260941537,
+    "val_mse": 0.7380343079566956
+   },
+   {
+    "epoch": 1,
+    "train_mse": 0.7043200788829306,
+    "val_mse": 0.47259005904197693
+   },
+   {
+    "epoch": 2,
+    "train_mse": 0.5516582725232818,
+    "val_mse": 0.4533730745315552
+   },
+   {
+    "epoch": 3,
+    "train_mse": 0.5040115644424458,
+    "val_mse": 0.4437450170516968
+   },
+   {
+    "epoch": 4,
+    "train_mse": 0.4704775722630936,
+    "val_mse": 0.4421486556529999
+   },
+   {
+    "epoch": 5,
+    "train_mse": 0.4610860117540442,
+    "val_mse": 0.4456302225589752
+   },
+   {
+    "epoch": 6,
+    "train_mse": 0.4443331740952359,
+    "val_mse": 0.42710021138191223
+   },
+   {
+    "epoch": 7,
+    "train_mse": 0.43075820290441147,
+    "val_mse": 0.4397183060646057
+   },
+   {
+    "epoch": 8,
+    "train_mse": 0.41678782417765403,
+    "val_mse": 0.4750286936759949
+   },
+   {
+    "epoch": 9,
+    "train_mse": 0.4101930320409538,
+    "val_mse": 0.43095526099205017
+   }
+  ]
+ }
+]

@@ -1,0 +1,378 @@
+{
+  "trivial_reference_audit": {
+    "spec4_data.csv": {
+      "12": {
+        "std": {
+          "persistence": 0.5127,
+          "lookback_mean": 0.6768,
+          "seasonal_naive_24h": 0.5364
+        },
+        "raw": {
+          "persistence": 0.5638,
+          "lookback_mean": 0.7076,
+          "seasonal_naive_24h": 0.4474
+        },
+        "n_windows": 851
+      },
+      "24": {
+        "std": {
+          "persistence": 0.837,
+          "lookback_mean": 0.6853,
+          "seasonal_naive_24h": 0.5376
+        },
+        "raw": {
+          "persistence": 0.9272,
+          "lookback_mean": 0.713,
+          "seasonal_naive_24h": 0.4472
+        },
+        "n_windows": 839
+      },
+      "48": {
+        "std": {
+          "persistence": 1.2258,
+          "lookback_mean": 0.6852,
+          "seasonal_naive_24h": 0.532
+        },
+        "raw": {
+          "persistence": 1.3976,
+          "lookback_mean": 0.7177,
+          "seasonal_naive_24h": 0.4466
+        },
+        "n_windows": 815
+      },
+      "96": {
+        "std": {
+          "persistence": 1.2158,
+          "lookback_mean": 0.6884,
+          "seasonal_naive_24h": 0.5267
+        },
+        "raw": {
+          "persistence": 1.3807,
+          "lookback_mean": 0.7179,
+          "seasonal_naive_24h": 0.4473
+        },
+        "n_windows": 767
+      },
+      "192": {
+        "std": {
+          "persistence": 1.3042,
+          "lookback_mean": 0.7225,
+          "seasonal_naive_24h": 0.5217
+        },
+        "raw": {
+          "persistence": 1.4142,
+          "lookback_mean": 0.7373,
+          "seasonal_naive_24h": 0.4503
+        },
+        "n_windows": 671
+      }
+    },
+    "spec25_data.csv": {
+      "12": {
+        "std": {
+          "persistence": 0.5559,
+          "lookback_mean": 0.7632,
+          "seasonal_naive_24h": 0.8732
+        },
+        "raw": {
+          "persistence": 0.8076,
+          "lookback_mean": 1.2096,
+          "seasonal_naive_24h": 1.2732
+        },
+        "n_windows": 851
+      },
+      "24": {
+        "std": {
+          "persistence": 0.8335,
+          "lookback_mean": 0.7742,
+          "seasonal_naive_24h": 0.8684
+        },
+        "raw": {
+          "persistence": 1.2663,
+          "lookback_mean": 1.2306,
+          "seasonal_naive_24h": 1.2675
+        },
+        "n_windows": 839
+      },
+      "48": {
+        "std": {
+          "persistence": 1.1812,
+          "lookback_mean": 0.7851,
+          "seasonal_naive_24h": 0.8566
+        },
+        "raw": {
+          "persistence": 1.8538,
+          "lookback_mean": 1.2495,
+          "seasonal_naive_24h": 1.2506
+        },
+        "n_windows": 815
+      },
+      "96": {
+        "std": {
+          "persistence": 1.2604,
+          "lookback_mean": 0.8054,
+          "seasonal_naive_24h": 0.8442
+        },
+        "raw": {
+          "persistence": 1.9612,
+          "lookback_mean": 1.285,
+          "seasonal_naive_24h": 1.2364
+        },
+        "n_windows": 767
+      },
+      "192": {
+        "std": {
+          "persistence": 1.3794,
+          "lookback_mean": 0.8639,
+          "seasonal_naive_24h": 0.8209
+        },
+        "raw": {
+          "persistence": 2.164,
+          "lookback_mean": 1.3847,
+          "seasonal_naive_24h": 1.2071
+        },
+        "n_windows": 671
+      }
+    }
+  },
+  "paper_tables": {
+    "table_I_4ch": {
+      "DLinear": [
+        0.2718,
+        0.3036,
+        0.3305,
+        0.4019,
+        0.4043,
+        0.3424
+      ],
+      "LSTM": [
+        0.6822,
+        0.6751,
+        0.6726,
+        0.5516,
+        0.542,
+        0.6247
+      ],
+      "LightTS": [
+        0.3177,
+        0.328,
+        0.3439,
+        0.3667,
+        0.4449,
+        0.3602
+      ],
+      "PatchTST": [
+        0.2707,
+        0.3044,
+        0.3268,
+        0.3061,
+        0.3771,
+        0.317
+      ],
+      "Informer": [
+        0.7377,
+        0.5264,
+        0.5837,
+        0.5363,
+        0.6409,
+        0.605
+      ],
+      "Reformer": [
+        0.3577,
+        0.4819,
+        0.4078,
+        0.4948,
+        0.5807,
+        0.4646
+      ],
+      "Autoformer": [
+        0.4619,
+        0.648,
+        0.5879,
+        0.6026,
+        0.4813,
+        0.5563
+      ],
+      "TimesNet": [
+        0.3211,
+        0.364,
+        0.453,
+        0.6515,
+        0.8517,
+        0.5283
+      ],
+      "Time-LLM (BERT)": [
+        0.3045,
+        0.3068,
+        0.2911,
+        0.3081,
+        0.3438,
+        0.3109
+      ],
+      "Time-LLM (GPT2)": [
+        0.2621,
+        0.2982,
+        0.3154,
+        0.3157,
+        0.346,
+        0.3075
+      ],
+      "OFA (GPT2)": [
+        0.2686,
+        0.2892,
+        0.297,
+        0.2958,
+        0.3427,
+        0.2987
+      ]
+    },
+    "table_II_25ch": {
+      "DLinear": [
+        0.608,
+        0.8025,
+        0.9809,
+        1.2581,
+        1.6487,
+        1.0597
+      ],
+      "LSTM": [
+        1.5689,
+        2.1121,
+        2.039,
+        2.1126,
+        2.4215,
+        2.0508
+      ],
+      "LightTS": [
+        0.7006,
+        0.935,
+        1.159,
+        1.3474,
+        1.6807,
+        1.1645
+      ],
+      "PatchTST": [
+        0.6104,
+        0.7526,
+        0.9043,
+        1.0161,
+        1.0796,
+        0.8726
+      ],
+      "Informer": [
+        3.9209,
+        3.0819,
+        3.2069,
+        2.7101,
+        2.2602,
+        3.036
+      ],
+      "Reformer": [
+        1.4271,
+        2.4233,
+        2.4788,
+        2.3109,
+        2.2178,
+        2.1716
+      ],
+      "Autoformer": [
+        1.3279,
+        1.3601,
+        1.4001,
+        1.3995,
+        1.5653,
+        1.4106
+      ],
+      "TimesNet": [
+        1.1265,
+        1.0902,
+        1.1679,
+        1.269,
+        1.3063,
+        1.192
+      ],
+      "Time-LLM (BERT)": [
+        0.6321,
+        0.7564,
+        0.8666,
+        0.972,
+        1.0311,
+        0.8516
+      ],
+      "Time-LLM (GPT2)": [
+        0.6166,
+        0.7592,
+        0.8564,
+        0.9686,
+        1.0429,
+        0.8488
+      ],
+      "OFA (GPT2)": [
+        0.5846,
+        0.7593,
+        0.8698,
+        0.954,
+        1.0634,
+        null
+      ]
+    }
+  },
+  "issues": [
+    "TableI(4ch) 96-step: marked 2nd=Time-LLM (BERT) (0.3081) but 2nd lowest is PatchTST (0.3061)",
+    "TableI(4ch) 192-step: marked 2nd=Time-LLM (GPT2) (0.346) but 2nd lowest is Time-LLM (BERT) (0.3438)",
+    "TableI(4ch) 12-step: Time-LLM (BERT) 0.3045 LOSES to non-LLM PatchTST 0.2707",
+    "TableI(4ch) 24-step: Time-LLM (BERT) 0.3068 LOSES to non-LLM DLinear 0.3036",
+    "TableI(4ch) 96-step: Time-LLM (BERT) 0.3081 LOSES to non-LLM PatchTST 0.3061",
+    "TableI(4ch) 96-step: Time-LLM (GPT2) 0.3157 LOSES to non-LLM PatchTST 0.3061",
+    "TableII(25ch) Average: no best marked; lowest present is Time-LLM (GPT2) (0.8488)",
+    "TableII(25ch) Average-step: marked 2nd=Time-LLM (GPT2) (0.8488) but 2nd lowest is Time-LLM (BERT) (0.8516)",
+    "TableII(25ch) OFA (GPT2): Average MSE cell EMPTY; row mean = 0.8462",
+    "TableII(25ch) 12-step: Time-LLM (BERT) 0.6321 LOSES to non-LLM DLinear 0.608",
+    "TableII(25ch) 12-step: Time-LLM (GPT2) 0.6166 LOSES to non-LLM DLinear 0.608",
+    "TableII(25ch) 24-step: Time-LLM (BERT) 0.7564 LOSES to non-LLM PatchTST 0.7526",
+    "TableII(25ch) 24-step: Time-LLM (GPT2) 0.7592 LOSES to non-LLM PatchTST 0.7526",
+    "TableII(25ch) 24-step: OFA (GPT2) 0.7593 LOSES to non-LLM PatchTST 0.7526"
+  ],
+  "monotonicity": {
+    "4ch:DLinear": "monotone_increasing",
+    "4ch:LSTM": "decreasing_overall",
+    "4ch:LightTS": "monotone_increasing",
+    "4ch:PatchTST": "non-monotone",
+    "4ch:Informer": "decreasing_overall",
+    "4ch:Reformer": "non-monotone",
+    "4ch:Autoformer": "non-monotone",
+    "4ch:TimesNet": "monotone_increasing",
+    "4ch:Time-LLM (BERT)": "non-monotone",
+    "4ch:Time-LLM (GPT2)": "monotone_increasing",
+    "4ch:OFA (GPT2)": "non-monotone",
+    "25ch:DLinear": "monotone_increasing",
+    "25ch:LSTM": "non-monotone",
+    "25ch:LightTS": "monotone_increasing",
+    "25ch:PatchTST": "monotone_increasing",
+    "25ch:Informer": "decreasing_overall",
+    "25ch:Reformer": "non-monotone",
+    "25ch:Autoformer": "non-monotone",
+    "25ch:TimesNet": "non-monotone",
+    "25ch:Time-LLM (BERT)": "monotone_increasing",
+    "25ch:Time-LLM (GPT2)": "monotone_increasing",
+    "25ch:OFA (GPT2)": "monotone_increasing"
+  },
+  "derived": {
+    "spec4_data.csv_raw_persistence_H12": 0.56,
+    "spec4_data.csv_raw_persistence_H192": 1.41,
+    "spec4_data.csv_train_var_raw": 278.11,
+    "spec25_data.csv_raw_persistence_H12": 0.81,
+    "spec25_data.csv_raw_persistence_H192": 2.16,
+    "spec25_data.csv_train_var_raw": 68.98,
+    "time_ratio_4ch_TimeLLMGPT2_over_DLinear": 22.9,
+    "time_ratio_25ch_TimeLLMBERT_over_DLinear": 41.5,
+    "time_ratio_25ch_TimeLLMBERT_over_LSTM": 124.6,
+    "spec4_data.csv_train_rows": 2010,
+    "spec4_data.csv_train_scalars": 8040,
+    "spec4_data.csv_train_windows_H12": 1807,
+    "spec25_data.csv_train_rows": 2010,
+    "spec25_data.csv_train_scalars": 50250,
+    "spec25_data.csv_train_windows_H12": 1807
+  },
+  "protocol": "chronological 7:3 split; scaler fit on train; lookback 192; test windows start at n-n_test-192 (TSLib convention); MSE averaged over all horizons steps and channels"
+}
