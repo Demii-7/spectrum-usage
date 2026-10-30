@@ -76,10 +76,13 @@ _OPTIMIZER_2D = {
     "train.batch_size": choice(32, 64, 128, 256),
 }
 
+# TCN runs every frequency bin independently, so activation memory scales with batch size
+# (41 GB peak at batch 32 with 32 channels on the October data). Keep batch <= 32 so two
+# trials sharing a 96 GB GPU cannot run out of memory.
 _OPTIMIZER_TCN = {
     "train.learning_rate": loguniform(1e-4, 5e-3),
     "train.weight_decay": choice(0.0, 1e-5, 1e-4, 1e-3),
-    "train.batch_size": choice(32, 64, 128, 256),
+    "train.batch_size": choice(8, 16, 32),
 }
 
 _OPTIMIZER_MAP = {
@@ -225,10 +228,9 @@ _specs = [
         _bundle(**{"model.hidden_channels": [8] * 6, "model.kernel_size": 2, "model.dropout": 0.0, "model.feature_mode": "independent"}),
         _bundle(**{"model.hidden_channels": [16] * 6, "model.kernel_size": 2, "model.dropout": 0.1, "model.feature_mode": "independent"}),
         _bundle(**{"model.hidden_channels": [32, 32, 32, 32, 32, 32], "model.kernel_size": 2, "model.dropout": 0.1, "model.feature_mode": "independent"}),
-        _bundle(**{"model.hidden_channels": [64] * 6, "model.kernel_size": 2, "model.dropout": 0.1, "model.feature_mode": "independent"}),
         _bundle(**{"model.hidden_channels": [32] * 6, "model.kernel_size": 3, "model.dropout": 0.1, "model.feature_mode": "independent"}),
     ), gpu=0.5, optimizer_space=_OPTIMIZER_TCN,
-        anchor_optimizer={"train.learning_rate": 1e-3, "train.weight_decay": 0.0, "train.batch_size": 32},
+        anchor_optimizer={"train.learning_rate": 1e-3, "train.weight_decay": 0.0, "train.batch_size": 16},
         historical={"summary70_new_models": {
             "architecture": _bundle(**{"model.hidden_channels": [32] * 6, "model.kernel_size": 2, "model.dropout": 0.1, "model.feature_mode": "independent"}),
             "train.learning_rate": 1e-3, "train.weight_decay": 0.0, "train.batch_size": 32,

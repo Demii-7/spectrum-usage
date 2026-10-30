@@ -61,8 +61,8 @@ class RayRegistryTests(unittest.TestCase):
             self.assertIn(reference, spec.space["architecture"].choices)
 
     def test_extra_bundles_widen_search_without_changing_the_three_anchors(self):
-        for name in ("vanillalstm", "vanillalstm1d", "lstmattn", "temporalconvnet",
-                     "dswinlstm_i", "residualvanillalstm"):
+        for name in ("vanillalstm", "vanillalstm1d", "lstmattn", "dswinlstm_i",
+                     "residualvanillalstm"):
             spec = MODEL_REGISTRY[name]
             self.assertGreater(len(spec.space["architecture"].choices), 4, name)
         # The three anchors remain the first three bundles, in tiny/small/reference order.
@@ -70,6 +70,15 @@ class RayRegistryTests(unittest.TestCase):
             MODEL_REGISTRY["vanillalstm"].anchor("tiny")["architecture"]["model.hidden_size"], 8)
         self.assertEqual(
             MODEL_REGISTRY["vanillalstm"].anchor("reference")["architecture"]["model.hidden_size"], 128)
+
+    def test_tcn_search_is_memory_safe_for_two_trials_per_gpu(self):
+        spec = MODEL_REGISTRY["temporalconvnet"]
+        self.assertEqual(spec.resources.gpu, 0.5)
+        self.assertEqual(spec.space["train.batch_size"].choices, (8, 16, 32))
+        for bundle in spec.space["architecture"].choices:
+            self.assertLessEqual(max(bundle["model.hidden_channels"]), 32)
+        for capacity in ("tiny", "small", "reference"):
+            self.assertLessEqual(spec.anchor(capacity)["train.batch_size"], 32)
 
     def test_residual_lstm_bundles_keep_a_single_layer(self):
         spec = MODEL_REGISTRY["residualvanillalstm"]
