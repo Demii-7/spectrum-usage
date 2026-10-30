@@ -125,10 +125,10 @@ def validate_config(config: dict[str, Any]) -> None:
             if not isinstance(entry, dict) or not entry.get("path"):
                 raise ValueError("Each data.files entry requires path and partition")
             partition = entry.get("partition")
-            if partition not in {"train", "test"}:
-                raise ValueError("Each data.files partition must be train or test")
+            if partition not in {"train", "validation", "test"}:
+                raise ValueError("Each data.files partition must be train, validation, or test")
             partitions.add(partition)
-        if partitions != {"train", "test"}:
+        if not {"train", "test"} <= partitions:
             raise ValueError("data.files must include both train and test partitions")
         if "train_files" in data or "test_files" in data:
             raise ValueError("Use data.files; train_files and test_files are no longer supported")

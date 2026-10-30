@@ -131,15 +131,18 @@ def _flatten_segments(
 
 
 def _partition_files(raw_files: list[dict[str, str]]) -> dict[str, list[Path]]:
-    partitions = {"train": [], "test": []}
+    partitions = {"train": [], "validation": [], "test": []}
     for entry in raw_files:
         if not isinstance(entry, dict) or entry.get("partition") not in partitions:
-            raise ValueError("Each data.files entry requires partition: train or test")
+            raise ValueError("Each data.files entry requires partition: train, validation, or test")
         if not entry.get("path"):
             raise ValueError("Each data.files entry requires path")
         partitions[entry["partition"]].append(resolve_path(entry["path"]))
     if not partitions["train"] or not partitions["test"]:
         raise ValueError("data.files must include both train and test partitions")
+    if not partitions["validation"]:
+        # Validation is optional; without it, validation is cut from the train files.
+        del partitions["validation"]
     return partitions
 
 
@@ -281,9 +284,11 @@ def load_chunk(
         }
         partitions = {
             "train": partitions["train"],
-            "validation": partitions["train"],
+            "validation": partitions.get("validation") or partitions["train"],
             "test": partitions["test"],
         }
+    elif "validation" in partitions:
+        raise ValueError("partition: validation requires data.split.ranges")
 
     selected_sites = excluded_sites = None
     outage_threshold = None
