@@ -21,6 +21,18 @@ class RayReplicationTests(unittest.TestCase):
         self.assertEqual(metrics["objective"], 1.2)
         self.assertEqual(metrics["forecast_epoch"], 4.0)
         self.assertNotIn("completed", metrics)
+        self.assertNotIn("cost_from_hpo", metrics)
+
+    def test_search_trial_costs_carry_to_seed_42_and_are_flagged(self):
+        metrics = _source_validation_metrics({
+            "objective": 1.2,
+            "cost_parameters_total": 361,
+            "cost_gpu_name": "NVIDIA H100",
+            "cost_training_duration_sec": 52.9,
+        })
+        self.assertEqual(metrics["cost_parameters_total"], 361)
+        self.assertEqual(metrics["cost_gpu_name"], "NVIDIA H100")
+        self.assertTrue(metrics["cost_from_hpo"])
 
 
 if __name__ == "__main__":

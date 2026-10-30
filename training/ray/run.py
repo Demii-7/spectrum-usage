@@ -16,6 +16,7 @@ from .config import validate_tuning_config
 from .manifests import provenance_manifest, write_manifest
 from .optional import require_ray
 from .registry import MODEL_REGISTRY, get_model_spec
+from .robustness import DEFAULT_MAX_FAILURES, build_or_restore, run_config, summarize_results
 from .scheduler import ASHAConfig
 from .spaces import materialize_space
 from .storage import MinIOConfig
@@ -35,8 +36,27 @@ def candidate_budget(total: int = DEFAULT_CANDIDATE_BUDGET) -> dict[str, int]:
     return {"total": total, "anchors": len(CAPACITIES), "random": total - len(CAPACITIES)}
 
 
+def _resources(spec, gpu_fraction: float | None) -> dict[str, float]:
+    """Per-trial resources; ``gpu_fraction`` only applies to models that use a GPU."""
+    resources = dict(spec.resources.as_ray())
+    if gpu_fraction is not None and resources.get("gpu", 0) > 0:
+        resources["gpu"] = float(gpu_fraction)
+    return resources
+
+
+def _grace_period(model_name: str, override: int | None) -> int:
+    default = (12 if model_name == "temporalconvnet" else 1 if model_name == "stsprednet" else 5)
+    if override is None:
+        return default
+    # Keep the longer per-model grace period where one was chosen deliberately.
+    return max(int(override), default) if model_name == "temporalconvnet" else int(override)
+
+
 def build_plan(config: dict[str, Any], models: list[str], *, candidates: int = DEFAULT_CANDIDATE_BUDGET,
-               validate: bool = True, fixed_batch_size: int | None = None) -> dict[str, Any]:
+               validate: bool = True, fixed_batch_size: int | None = None,
+               grace_period: int | None = None, reduction_factor: int = 3, brackets: int = 1,
+               max_concurrent: int = DEFAULT_MAX_CONCURRENT_TRIALS,
+               gpu_fraction: float | None = None) -> dict[str, Any]:
     budget = candidate_budget(candidates)
     entries = []
     for requested_name in models:
@@ -46,7 +66,7 @@ def build_plan(config: dict[str, Any], models: list[str], *, candidates: int = D
             "status": spec.status,
             "policy": spec.policy,
             "reason": spec.reason,
-            "resources": spec.resources.as_ray(),
+            "resources": _resources(spec, gpu_fraction),
             "objective": spec.objective,
             "fallback_objective": spec.fallback_objective,
             "space": {name: domain.to_dict() for name, domain in spec.space.items()},
@@ -90,12 +110,10 @@ def build_plan(config: dict[str, Any], models: list[str], *, candidates: int = D
                     for name, parameters in historical.items()
                 },
                 "search_algorithm": "BasicVariantGenerator(points_to_evaluate=anchors)",
-                "max_concurrent_trials": DEFAULT_MAX_CONCURRENT_TRIALS,
-                "grace_period": (
-                    12 if spec.name == "temporalconvnet"
-                    else 1 if spec.name == "stsprednet"
-                    else 5
-                ),
+                "max_concurrent_trials": max_concurrent,
+                "grace_period": _grace_period(spec.name, grace_period),
+                "reduction_factor": reduction_factor,
+                "brackets": brackets,
             }
             entry["rerank"] = {
                 "selection_methods": ["best", "best-simple", "reference"],
@@ -158,10 +176,10 @@ def build_rerank_candidates(model_name: str,
 
 
 def _launch(config: dict[str, Any], plan: dict[str, Any], output: Path,
-            storage_path: str | None, fixed_batch_size: int | None = None) -> None:
+            storage_path: str | None, fixed_batch_size: int | None = None,
+            *, resume: bool = False, max_failures: int = DEFAULT_MAX_FAILURES) -> None:
     require_ray()
     from ray import tune
-    from ray.tune import RunConfig
     from ray.tune.search.basic_variant import BasicVariantGenerator
 
     for entry in plan["models"]:
@@ -203,23 +221,32 @@ def _launch(config: dict[str, Any], plan: dict[str, Any], output: Path,
         scheduler = ASHAConfig(
             max_t=epochs + 1,
             grace_period=int(entry["search"]["grace_period"]),
+            reduction_factor=int(entry["search"].get("reduction_factor", 3)),
+            brackets=int(entry["search"].get("brackets", 1)),
         ).build()
 
-        tuner = tune.Tuner(
-            tune.with_resources(trainable, spec.resources.as_ray()),
-            param_space=space,
-            tune_config=tune.TuneConfig(
-                num_samples=int(entry["search"]["candidate_budget"]["total"]),
-                max_concurrent_trials=int(entry["search"]["max_concurrent_trials"]),
-                search_alg=search,
-                scheduler=scheduler,
-            ),
-            run_config=RunConfig(
-                name=f"{spec.name}-search",
-                storage_path=storage_path or str(output.resolve()),
-            ),
+        experiment_name = f"{spec.name}-search"
+        root = storage_path or str(output.resolve())
+        resourced = tune.with_resources(trainable, entry["resources"])
+
+        def make_tuner(resourced=resourced, space=space, search=search, scheduler=scheduler,
+                       entry=entry, experiment_name=experiment_name, root=root):
+            return tune.Tuner(
+                resourced,
+                param_space=space,
+                tune_config=tune.TuneConfig(
+                    num_samples=int(entry["search"]["candidate_budget"]["total"]),
+                    max_concurrent_trials=int(entry["search"]["max_concurrent_trials"]),
+                    search_alg=search,
+                    scheduler=scheduler,
+                ),
+                run_config=run_config(experiment_name, root, max_failures=max_failures),
+            )
+
+        tuner = build_or_restore(
+            f"{root.rstrip('/')}/{experiment_name}", resourced, make_tuner, resume=resume
         )
-        tuner.fit()
+        summarize_results(tuner.fit(), label=experiment_name)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -235,6 +262,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--minio-endpoint")
     parser.add_argument("--fixed-batch-size", type=int,
                         help="Restrict HPO to one training batch size")
+    parser.add_argument("--grace-period", type=int,
+                        help="ASHA grace period in epochs (default: per-model, 5)")
+    parser.add_argument("--reduction-factor", type=int, default=3,
+                        help="ASHA reduction factor; lower is less aggressive (default: 3)")
+    parser.add_argument("--brackets", type=int, default=1, help="ASHA brackets (default: 1)")
+    parser.add_argument("--max-concurrent", type=int, default=DEFAULT_MAX_CONCURRENT_TRIALS,
+                        help=f"Concurrent trials (default: {DEFAULT_MAX_CONCURRENT_TRIALS})")
+    parser.add_argument("--gpu-fraction", type=float,
+                        help="Override the per-trial GPU fraction for GPU models")
+    parser.add_argument("--resume", action="store_true",
+                        help="Restore an interrupted search and rerun errored trials")
+    parser.add_argument("--max-failures", type=int, default=DEFAULT_MAX_FAILURES,
+                        help="Retries per failed trial (default: 2)")
     return parser.parse_args(argv)
 
 
@@ -242,7 +282,10 @@ def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     config = yaml.safe_load(args.config.read_text(encoding="utf-8"))
     plan = build_plan(config, args.models, candidates=args.candidates,
-                      validate=not args.dry_run, fixed_batch_size=args.fixed_batch_size)
+                      validate=not args.dry_run, fixed_batch_size=args.fixed_batch_size,
+                      grace_period=args.grace_period, reduction_factor=args.reduction_factor,
+                      brackets=args.brackets, max_concurrent=args.max_concurrent,
+                      gpu_fraction=args.gpu_fraction)
     if args.dry_run:
         print(json.dumps(plan, indent=2, sort_keys=True))
         return
@@ -255,7 +298,8 @@ def main(argv: list[str] | None = None) -> None:
         minio = MinIOConfig(args.minio_bucket, args.minio_prefix, args.minio_endpoint)
         os.environ.update(minio.environment())
         storage_path = minio.storage_path
-    _launch(config, plan, args.output_dir, storage_path, args.fixed_batch_size)
+    _launch(config, plan, args.output_dir, storage_path, args.fixed_batch_size,
+            resume=args.resume, max_failures=args.max_failures)
 
 
 if __name__ == "__main__":

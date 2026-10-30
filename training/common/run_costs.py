@@ -11,12 +11,11 @@ import socket
 import statistics
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import torch
-import torch.nn as nn
-
-from training.common.forecasting import forecast
+if TYPE_CHECKING:  # torch is imported lazily so reading cost files needs no GPU stack
+    import torch
+    import torch.nn as nn
 
 INFERENCE_BATCH = 32
 INFERENCE_WARMUP = 3
@@ -44,6 +43,8 @@ def _ray_assigned_gpu() -> float | None:
 
 
 def hardware_context() -> dict[str, Any]:
+    import torch
+
     assigned = _ray_assigned_gpu()
     context: dict[str, Any] = {
         "cost_hostname": socket.gethostname(),
@@ -58,11 +59,15 @@ def hardware_context() -> dict[str, Any]:
 
 
 def reset_peak_memory() -> None:
+    import torch
+
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
 
 
 def peak_memory_mb() -> float | None:
+    import torch
+
     if not torch.cuda.is_available():
         return None
     return torch.cuda.max_memory_allocated() / 2**20
@@ -76,6 +81,10 @@ def inference_timing(
     device: torch.device,
 ) -> dict[str, float]:
     """Median wall time of the shared forecast call on one small batch."""
+    import torch
+
+    from training.common.forecasting import forecast
+
     was_training = model.training
     model.eval()
     x = example_x[:INFERENCE_BATCH].to(device)

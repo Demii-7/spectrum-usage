@@ -39,6 +39,8 @@ class ModelSpec:
     objective: str = PRIMARY_OBJECTIVE
     fallback_objective: str | None = FALLBACK_OBJECTIVE
     historical: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    # Other data representations this model name may be tuned on (same anchors).
+    extra_representations: tuple[str, ...] = ()
 
     @property
     def executable(self) -> bool:
@@ -69,30 +71,30 @@ def _bundle(**paths: Any) -> dict[str, Any]:
 
 
 _OPTIMIZER_2D = {
-    "train.learning_rate": loguniform(3e-4, 3e-3),
-    "train.weight_decay": choice(0.0, 1e-5, 1e-4),
-    "train.batch_size": choice(32, 64, 128),
+    "train.learning_rate": loguniform(1e-4, 5e-3),
+    "train.weight_decay": choice(0.0, 1e-5, 1e-4, 1e-3),
+    "train.batch_size": choice(32, 64, 128, 256),
 }
 
 _OPTIMIZER_TCN = {
-    "train.learning_rate": loguniform(3e-4, 3e-3),
-    "train.weight_decay": choice(0.0, 1e-5, 1e-4),
-    "train.batch_size": choice(32, 64, 128),
+    "train.learning_rate": loguniform(1e-4, 5e-3),
+    "train.weight_decay": choice(0.0, 1e-5, 1e-4, 1e-3),
+    "train.batch_size": choice(32, 64, 128, 256),
 }
 
 _OPTIMIZER_MAP = {
-    "train.learning_rate": loguniform(3e-5, 5e-4),
+    "train.learning_rate": loguniform(1e-5, 5e-4),
     "train.weight_decay": choice(0.0, 1e-4, 1e-3, 4e-3),
     "train.batch_size": choice(1, 2, 4),
 }
 
 _OPTIMIZER_LINEAR = {
-    "train.learning_rate": loguniform(1e-5, 3e-3),
+    "train.learning_rate": loguniform(1e-5, 1e-2),
     "train.batch_size": choice(32, 64, 128),
 }
 
 _OPTIMIZER_LINEAR_MAP = {
-    "train.learning_rate": loguniform(1e-5, 3e-3),
+    "train.learning_rate": loguniform(1e-5, 1e-2),
     "train.batch_size": choice(8, 16, 32),
 }
 
@@ -114,6 +116,11 @@ _LINEAR_RIDGE_BUNDLES = (
     _bundle(**{"model.ridge_alpha": 1e-4}),
     _bundle(**{"model.ridge_alpha": 1e-2}),
     _bundle(**{"model.ridge_alpha": 1.0}),
+    # Extra ridge strengths widen the random search; the first three stay the anchors.
+    _bundle(**{"model.ridge_alpha": 1e-5}),
+    _bundle(**{"model.ridge_alpha": 1e-3}),
+    _bundle(**{"model.ridge_alpha": 1e-1}),
+    _bundle(**{"model.ridge_alpha": 10.0}),
 )
 
 
@@ -121,9 +128,12 @@ def _tunable(name: str, representation: str, bundles: tuple[dict[str, Any], ...]
               *, gpu: float, optimizer_space: Mapping[str, Domain],
               anchor_optimizer: Mapping[str, Any], cpu: float = 2.0,
               extra_space: Mapping[str, Domain] | None = None,
-              historical: Mapping[str, Mapping[str, Any]] | None = None) -> ModelSpec:
+              historical: Mapping[str, Mapping[str, Any]] | None = None,
+              extra_representations: tuple[str, ...] = ()) -> ModelSpec:
+    # The first three bundles are the tiny/small/reference anchors; any further
+    # bundles only widen the random search.
     tiny, small, reference = (
-        {"architecture": bundle, **dict(anchor_optimizer)} for bundle in bundles
+        {"architecture": bundle, **dict(anchor_optimizer)} for bundle in bundles[:3]
     )
     historical = dict(historical or {})
     historical_bundles = tuple(
@@ -144,6 +154,7 @@ def _tunable(name: str, representation: str, bundles: tuple[dict[str, Any], ...]
         }),
         resources=Resources(cpu, gpu),
         historical=MappingProxyType(historical),
+        extra_representations=tuple(extra_representations),
     )
 
 
@@ -180,6 +191,8 @@ _specs = [
         _bundle(**{"model.hidden_size": 8, "model.num_layers": 1, "model.dropout": 0.0}),
         _bundle(**{"model.hidden_size": 32, "model.num_layers": 1, "model.dropout": 0.0}),
         _bundle(**{"model.hidden_size": 128, "model.num_layers": 1, "model.dropout": 0.0}),
+        _bundle(**{"model.hidden_size": 256, "model.num_layers": 1, "model.dropout": 0.1}),
+        _bundle(**{"model.hidden_size": 64, "model.num_layers": 2, "model.dropout": 0.1}),
     ), gpu=0.5, optimizer_space=_OPTIMIZER_2D,
         anchor_optimizer={"train.learning_rate": 1e-3, "train.weight_decay": 1e-4, "train.batch_size": 128},
         historical={"summary70_residual_family": {
@@ -190,13 +203,19 @@ _specs = [
         _bundle(**{"model.hidden_size": 8, "model.num_layers": 1, "model.dropout": 0.0}),
         _bundle(**{"model.hidden_size": 32, "model.num_layers": 1, "model.dropout": 0.0}),
         _bundle(**{"model.hidden_size": 128, "model.num_layers": 1, "model.dropout": 0.0}),
+        _bundle(**{"model.hidden_size": 256, "model.num_layers": 1, "model.dropout": 0.1}),
+        _bundle(**{"model.hidden_size": 64, "model.num_layers": 2, "model.dropout": 0.1}),
     ), gpu=0.5, optimizer_space=_OPTIMIZER_2D,
         anchor_optimizer={"train.learning_rate": 1e-3, "train.weight_decay": 1e-4, "train.batch_size": 128}),
     _tunable("residualvanillalstm", "1d", (
         _bundle(**{"model.hidden_size": 8, "model.num_layers": 1, "model.dropout": 0.0}),
         _bundle(**{"model.hidden_size": 16, "model.num_layers": 1, "model.dropout": 0.0}),
         _bundle(**{"model.hidden_size": 64, "model.num_layers": 1, "model.dropout": 0.0}),
-    ), gpu=0.5, optimizer_space=_OPTIMIZER_2D,
+        # The residual model requires a single LSTM layer, so only width grows.
+        _bundle(**{"model.hidden_size": 128, "model.num_layers": 1, "model.dropout": 0.0}),
+        _bundle(**{"model.hidden_size": 256, "model.num_layers": 1, "model.dropout": 0.0}),
+    ), extra_representations=("2d",),
+        gpu=0.5, optimizer_space=_OPTIMIZER_2D,
         anchor_optimizer={"train.learning_rate": 1e-3, "train.weight_decay": 1e-4, "train.batch_size": 128},
         historical={"summary70_fast_2d": {
             "architecture": _bundle(**{"model.hidden_size": 32, "model.num_layers": 1, "model.dropout": 0.0}),
@@ -206,6 +225,8 @@ _specs = [
         _bundle(**{"model.hidden_channels": [8] * 6, "model.kernel_size": 2, "model.dropout": 0.0, "model.feature_mode": "independent"}),
         _bundle(**{"model.hidden_channels": [16] * 6, "model.kernel_size": 2, "model.dropout": 0.1, "model.feature_mode": "independent"}),
         _bundle(**{"model.hidden_channels": [32, 32, 32, 32, 32, 32], "model.kernel_size": 2, "model.dropout": 0.1, "model.feature_mode": "independent"}),
+        _bundle(**{"model.hidden_channels": [64] * 6, "model.kernel_size": 2, "model.dropout": 0.1, "model.feature_mode": "independent"}),
+        _bundle(**{"model.hidden_channels": [32] * 6, "model.kernel_size": 3, "model.dropout": 0.1, "model.feature_mode": "independent"}),
     ), gpu=0.5, optimizer_space=_OPTIMIZER_TCN,
         anchor_optimizer={"train.learning_rate": 1e-3, "train.weight_decay": 0.0, "train.batch_size": 32},
         historical={"summary70_new_models": {
@@ -216,6 +237,8 @@ _specs = [
         _bundle(**{"model.hidden_size": 16, "model.attention_size": 16, "model.num_layers": 1, "model.dropout": 0.0}),
         _bundle(**{"model.hidden_size": 64, "model.attention_size": 64, "model.num_layers": 1, "model.dropout": 0.1}),
         _bundle(**{"model.hidden_size": 128, "model.attention_size": 128, "model.num_layers": 1, "model.dropout": 0.1}),
+        _bundle(**{"model.hidden_size": 256, "model.attention_size": 256, "model.num_layers": 1, "model.dropout": 0.1}),
+        _bundle(**{"model.hidden_size": 64, "model.attention_size": 64, "model.num_layers": 2, "model.dropout": 0.1}),
     ), gpu=0.5, optimizer_space=_OPTIMIZER_2D,
         anchor_optimizer={"train.learning_rate": 1e-3, "train.weight_decay": 0.0, "train.batch_size": 128},
         historical={"summary70_new_models": {
@@ -228,7 +251,7 @@ _specs = [
         _bundle(**{"model.d_model": 64, "model.d_ff": 256, "model.encoder_layers": 2, "model.decoder_layers": 1, "model.n_heads": 8, "model.moving_avg": 25, "model.dropout": 0.05, "model.factor": 3, "model.csam_kernel_size": 7}),
     ), gpu=0.5,
         optimizer_space={
-            "train.learning_rate": loguniform(3e-5, 3e-4),
+            "train.learning_rate": loguniform(1e-5, 5e-4),
             "train.weight_decay": choice(0.0, 1e-5, 1e-4),
             "train.batch_size": choice(8, 16, 32),
         },
@@ -280,6 +303,9 @@ _specs = [
         _bundle(**{"model.embed_dim": 8, "model.hidden_dims": [8, 16], "model.encoder_units": 2, "model.decoder_units": 2, "model.swin_depths": [1, 1, 1, 1], "model.num_heads": [1, 2, 2, 1], "model.window_size": 2}),
         _bundle(**{"model.embed_dim": 16, "model.hidden_dims": [16, 32], "model.encoder_units": 2, "model.decoder_units": 2, "model.swin_depths": [1, 2, 2, 1], "model.num_heads": [1, 2, 2, 1], "model.window_size": 2}),
         _bundle(**{"model.embed_dim": 32, "model.hidden_dims": [32, 64], "model.encoder_units": 2, "model.decoder_units": 2, "model.swin_depths": [1, 2, 2, 1], "model.num_heads": [2, 4, 4, 2], "model.window_size": 2}),
+        # The reference (largest) preset won last time with error falling as size grew.
+        _bundle(**{"model.embed_dim": 48, "model.hidden_dims": [48, 96], "model.encoder_units": 2, "model.decoder_units": 2, "model.swin_depths": [1, 2, 2, 1], "model.num_heads": [2, 4, 4, 2], "model.window_size": 2}),
+        _bundle(**{"model.embed_dim": 64, "model.hidden_dims": [64, 128], "model.encoder_units": 2, "model.decoder_units": 2, "model.swin_depths": [1, 2, 2, 1], "model.num_heads": [2, 4, 4, 2], "model.window_size": 2}),
     ), gpu=0.5, optimizer_space=_OPTIMIZER_MAP,
         anchor_optimizer={"train.learning_rate": 1e-4, "train.weight_decay": 0.0, "train.batch_size": 2}),
 ]

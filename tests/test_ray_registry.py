@@ -9,7 +9,7 @@ EXPECTED = {
     "linearar2d", "linearar4d", "residuallinearar1d", "residuallinearar2d",
     "residuallinearar4d", "residualvanillalstm", "residualconvlstm",
     "temporalconvnet", "lstmattn", "autoformer_csa", "stsprednet", "tss_lcd",
-    "deepspred",
+    "deepspred", "vanillalstm1d", "spectrumllm",
 }
 
 
@@ -60,6 +60,27 @@ class RayRegistryTests(unittest.TestCase):
             reference = spec.anchor("reference")["architecture"]
             self.assertIn(reference, spec.space["architecture"].choices)
 
+    def test_extra_bundles_widen_search_without_changing_the_three_anchors(self):
+        for name in ("vanillalstm", "vanillalstm1d", "lstmattn", "temporalconvnet",
+                     "dswinlstm_i", "residualvanillalstm"):
+            spec = MODEL_REGISTRY[name]
+            self.assertGreater(len(spec.space["architecture"].choices), 4, name)
+        # The three anchors remain the first three bundles, in tiny/small/reference order.
+        self.assertEqual(
+            MODEL_REGISTRY["vanillalstm"].anchor("tiny")["architecture"]["model.hidden_size"], 8)
+        self.assertEqual(
+            MODEL_REGISTRY["vanillalstm"].anchor("reference")["architecture"]["model.hidden_size"], 128)
+
+    def test_residual_lstm_bundles_keep_a_single_layer(self):
+        spec = MODEL_REGISTRY["residualvanillalstm"]
+        for bundle in spec.space["architecture"].choices:
+            self.assertEqual(bundle["model.num_layers"], 1)
+
+    def test_residual_lstm_can_be_tuned_on_1d_and_2d_data(self):
+        spec = MODEL_REGISTRY["residualvanillalstm"]
+        self.assertEqual(spec.representation, "1d")
+        self.assertIn("2d", spec.extra_representations)
+
     def test_temporal_conv_net_search_excludes_joint_feature_mode(self):
         spec = MODEL_REGISTRY["temporalconvnet"]
         modes = {
@@ -84,7 +105,10 @@ class RayRegistryTests(unittest.TestCase):
                     bundle["model.ridge_alpha"]
                     for bundle in spec.space["architecture"].choices
                 }
-                self.assertEqual(ridge_values, {1e-4, 1e-2, 1.0})
+                self.assertEqual(ridge_values, {1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1.0, 10.0})
+                anchors = {spec.anchor(name)["architecture"]["model.ridge_alpha"]
+                           for name in ("tiny", "small", "reference")}
+                self.assertEqual(anchors, {1e-4, 1e-2, 1.0})
 
     def test_historical_presets_are_valid_and_guaranteed_for_known_results(self):
         expected = {

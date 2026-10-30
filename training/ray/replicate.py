@@ -15,6 +15,7 @@ import yaml
 from .config import inject_parameters
 from .optional import require_ray
 from .registry import get_model_spec
+from .robustness import DEFAULT_MAX_FAILURES, build_or_restore, run_config, summarize_results
 from .storage import MinIOConfig
 from .trainable import TuneReporter, run_integrated_trial
 
@@ -37,6 +38,12 @@ def _source_validation_metrics(source_metrics: dict[str, Any]) -> dict[str, Any]
         elif key.startswith("val_") or key in {"objective", "forecast_epoch"}:
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 output[key] = float(value)
+        elif key.startswith("cost_"):
+            # Seed 42 reuses the search checkpoint, so its cost record is the search
+            # trial's. It was measured under search-time GPU sharing; flagged below.
+            output[key] = value
+    if any(key.startswith("cost_") for key in output):
+        output["cost_from_hpo"] = True
     return output
 
 
@@ -139,7 +146,6 @@ def _campaign_trainable(base_config, model_name, parameters, source_checkpoint, 
 def launch(args: argparse.Namespace) -> None:
     require_ray()
     from ray import tune
-    from ray.tune import RunConfig
 
     os.environ.update(MinIOConfig(args.bucket, args.prefix, args.endpoint).environment())
     filesystem = _s3_filesystem(args.endpoint)
@@ -158,16 +164,28 @@ def launch(args: argparse.Namespace) -> None:
     output = args.output_dir
     output.mkdir(parents=True, exist_ok=True)
     (output / "campaign_plan.json").write_text(json.dumps(campaign, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    tuner = tune.Tuner(
-        tune.with_resources(trainable, get_model_spec(args.model).resources.as_ray()),
-        param_space={"seed": tune.grid_search(list(args.seeds))},
-        tune_config=tune.TuneConfig(max_concurrent_trials=args.max_concurrent),
-        run_config=RunConfig(name=f"{args.model}-replicate", storage_path=args.storage_path),
+    resources = dict(get_model_spec(args.model).resources.as_ray())
+    if args.gpu_fraction is not None and resources.get("gpu", 0) > 0:
+        resources["gpu"] = float(args.gpu_fraction)
+    resourced = tune.with_resources(trainable, resources)
+    experiment_name = f"{args.model}-replicate"
+
+    def make_tuner():
+        return tune.Tuner(
+            resourced,
+            param_space={"seed": tune.grid_search(list(args.seeds))},
+            tune_config=tune.TuneConfig(max_concurrent_trials=args.max_concurrent),
+            run_config=run_config(experiment_name, args.storage_path, max_failures=args.max_failures),
+        )
+
+    tuner = build_or_restore(
+        f"{args.storage_path.rstrip('/')}/{experiment_name}", resourced, make_tuner, resume=args.resume
     )
     results = tuner.fit()
     failed = [result.path for result in results if result.error is not None]
     if failed:
         raise RuntimeError(f"Replication trials failed: {failed}")
+    summarize_results(results, label=experiment_name)
 
 
 def parse_args(argv=None):
@@ -183,6 +201,12 @@ def parse_args(argv=None):
     parser.add_argument("--storage-path", default=None)
     parser.add_argument("--seeds", nargs="+", type=int, default=list(SEEDS))
     parser.add_argument("--epochs", type=int, default=None)
+    parser.add_argument("--gpu-fraction", type=float,
+                        help="Override the per-trial GPU fraction for GPU models")
+    parser.add_argument("--resume", action="store_true",
+                        help="Restore an interrupted replicate run and rerun errored trials")
+    parser.add_argument("--max-failures", type=int, default=DEFAULT_MAX_FAILURES,
+                        help="Retries per failed trial (default: 2)")
     return parser.parse_args(argv)
 
 

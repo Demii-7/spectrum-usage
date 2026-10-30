@@ -75,7 +75,8 @@ def validate_tuning_config(config: Mapping[str, Any], model_name: str) -> None:
         raise ConfigurationError(f"training.models/model_name must select {model_name!r}")
     if spec.representation in {"1d", "2d", "4d"}:
         actual = str((config.get("data") or {}).get("representation", "")).lower()
-        if actual != spec.representation:
+        allowed = {spec.representation, *spec.extra_representations}
+        if actual not in allowed:
             raise ConfigurationError(f"{model_name} requires {spec.representation} data, got {actual!r}")
 
 
