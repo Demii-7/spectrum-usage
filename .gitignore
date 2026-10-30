@@ -8,4 +8,14 @@ __pycache__/
 training/DeepSPred/FM-S*
 *.xls
 runs/
-data/powder/
+# Raw measurement data is synced from object storage; keep only the directories.
+data/powder/*
+data/ara/*
+data/cosmos/*
+data/aerpaw/*
+!data/*/.gitkeep
+# Model checkpoints: keep the directory and manifest, not the weights.
+checkpoints/*
+!checkpoints/.gitkeep
+!checkpoints/MANIFEST.tsv
+checkpoints.tgz
