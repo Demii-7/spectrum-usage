@@ -1,6 +1,64 @@
 # TSS-LCD Spectrum Prediction — Adaptation
 
-Standalone TSS-LCD adaptation for the AERPAW spectrum prediction pipeline. The **paper** (IEEE TCCN 2026) is the primary architecture reference. Where the original repository differs from the paper, those differences are documented separately under *Repo-Specific Implementation Notes*.
+> **Status, 2026-10-31.** This directory now holds three *separate* bodies of code.
+> Knowing which is which matters, because only one of them is ours.
+>
+> ### 1. House integration — pre-existing, tracked, unchanged by the reproduction
+> `dataset.py`, `model.py`, `train_autoencoder.py`, `train_tss_condition.py`,
+> `train_diffusion.py`, `train_integrated.py`, `evaluate.py`, `evaluate_integrated.py`,
+> `inference.py`, `utils.py`, `config.yaml`, `test_tss_lcd_integrated.py`.
+> These run TSS-LCD inside the spectrum-usage benchmark pipeline (4D/2D harness,
+> per-bin z-scoring, our splits). They were **not** used for the reproduction and were
+> not modified by it. The model they build lives in `models/TSSLCD.py`.
+>
+> ### 2. Reproduction runners — new, ours, tracked (`repro/`)
+> | file | what it does |
+> |---|---|
+> | `run_variant.py` | their model + their training loops verbatim; **only preprocessing varies** (`--smooth centered\|causal\|none`, `--scaler perfile\|trainfit`). Used to isolate the smoothing leak. |
+> | `run_split.py` | adds `--split chrono\|random`: pools every stride-1 window and shuffles before the 7:3 cut. This is the script that reproduced Table III. |
+> | `run_paper_faithful.py` | **our** model built to Table II (batch 32, latent 16, hidden 1024, 4 heads, 500 epochs, early stopping, 25% masking, no smoothing). `--smooth` exists only as an opt-in ablation. |
+> | `run_ours.py` | our model under the leak-free protocol, with latent-scale diagnostics. |
+> | `diagnose.py` | loads trained weights and splits the error into autoencoder-ceiling vs diffusion contribution. |
+> | `queue_followons.sh` | sequential GPU queue used for the seed replicates and ablations. |
+>
+> ### 3. Upstream authors' source — third-party, **gitignored**, not redistributed
+> `repro/upstream/`: `Context2CondNew.py`, `F2Cnet.py`, `NoiseNet.py`,
+> `DataSetPrepare.py`, `data_utils.py`, `config.py`, `train.py`, `test.py`.
+> Their repository ships **no LICENSE**, so these are not committed. `repro/upstream/README.md`
+> (tracked) carries the re-fetch command and pinned SHA. The only local edit is four
+> `TSSLCD_ABLATE` switches added for the Table IV ablations; `/tmp/Context2CondNew.bak`
+> on the GPU host holds the pristine copy.
+>
+> ### Data
+> `data/tsslcd/` — the authors' train/test split, **recovered from deleted commit
+> `d7f1e51263`**. Gitignored; `PROVENANCE.md` (tracked) records the recovery and warns it
+> is not interchangeable with our AERPAW file.
+>
+> ### Results
+> `RESULTS.md` — every arm, generated from `repro/results/*/metrics.json`, not retyped.
+> `MODEL_CARD.md` — the paper-and-reproduction audit.
+>
+> ### What the reproduction established
+> 1. **Their Table III reproduces to 0.43%, but only under a random split of overlapping
+>    windows** — a procedure no released code performs and the paper never states. The same
+>    code on a chronological split gives MSE 0.6966 against a published 0.1541.
+> 2. **Two leaks stack.** A centred `savgol_filter(51, 2)` applied *before* windowing (never
+>    mentioned in the paper) makes the target 3.6x smoother and the task 13x easier for a
+>    trivial predictor; and stride-1 windows shuffled across the split put near-twins of each
+>    test window into training.
+> 3. **It loses to last-value persistence everywhere** — by 22.9x in the run that matches the
+>    paper exactly.
+> 4. **Our implementation is not faithful to theirs.** Same leak, same split, 158x worse. Do
+>    not report it as a reproduction.
+> 5. **The ablation damage does not reproduce** even though the headline number does.
+> 6. **Single runs here are unreliable** — seed spread reached 5.31x, larger than effects we
+>    first attributed to the split.
+>
+> Fixed in `models/TSSLCD.py` during this work: the three TSS branches were rotated —
+> `TemporalFE` attended across all 750 (node, frequency) cells instead of over time, and
+> nothing attended over the 3 locations. Now one branch per axis, which also cut peak GPU
+> memory from 21.75 GB to 1.66 GB. Table II values applied (hidden 1024, latent 16);
+> `cosine_beta_schedule` s aligned to their 0.0018.
 
 ## Quick Start
 

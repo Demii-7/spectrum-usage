@@ -20,3 +20,36 @@ checkpoints/*
 !checkpoints/.gitkeep
 !checkpoints/MANIFEST.tsv
 checkpoints.tgz
+
+# ElectroSense Madrid (SpectrumLLM paper data): fetched and converted at run time by
+# datasets/electrosense_madrid/fetch_and_convert.py from github.com/LIUC-000/SP @ 64b7fa5e96.
+# Upstream declares no licence, so it is never vendored here.
+data/electrosense_madrid/*
+!data/electrosense_madrid/.gitkeep
+
+# --- training/SpectrumLLM/repro: deliberately untracked ---
+# Each entry is regenerable from what IS tracked; the recipe is in repro/TIMELLM_OFA_REFERENCE.md
+# and the model card's "Evidence provenance" section.
+# Source article text: IEEE copyright (Zotero 5ZG38NKM, DOI 10.1109/MWC.2025.3596934).
+training/SpectrumLLM/repro/spectrumllm_paper.txt
+# Third-party reference sources, local auditing only. Time-LLM is Apache-2.0
+# (KimMeen/Time-LLM @ b13e881f86); OFA (DAMO-DI-ML/NeurIPS2023-One-Fits-All @ 9f3875db)
+# declares NO licence, so redistribution is not granted. Re-fetch at those pinned commits.
+training/SpectrumLLM/repro/timellm_ref/
+# Raw upstream CSVs and trained weights (~210 MB per run).
+training/SpectrumLLM/repro/data/
+training/SpectrumLLM/repro/checkpoints/
+
+# --- TSS-LCD reproduction: deliberately untracked ---
+# Upstream data recovered from a deleted commit; see data/tsslcd/PROVENANCE.md
+# (tracked) for the recovery recipe. ~56 MB.
+data/tsslcd/*
+!data/tsslcd/.gitkeep
+!data/tsslcd/PROVENANCE.md
+# Trained weights (~280 MB per run) and regenerable result matrices.
+training/TSS-LCD/repro/checkpoints/
+training/TSS-LCD/repro/results/
+# Authors' own source, no LICENSE upstream -> not redistributed.
+# Re-fetch recipe in training/TSS-LCD/repro/upstream/README.md (tracked).
+training/TSS-LCD/repro/upstream/*
+!training/TSS-LCD/repro/upstream/README.md

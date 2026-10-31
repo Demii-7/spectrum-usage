@@ -184,39 +184,12 @@ class CrossAttention(nn.Module):
 # =====================================================================
 
 class TemporalFE(nn.Module):
-    """Temporal feature extractor — treats each (node, freq) pair as a token.
+    """TemFE - temporal dependency. Each TIME STEP is a token.
 
-    Reshapes input from (B, T, L, F) to (B, L*F, T) so each token
-    represents the full time series at one spatial-frequency location,
-    then applies a transformer encoder.
-    """
-
-    def __init__(self, T_in: int, L: int, F: int, hidden_dim: int,
-                 num_heads: int, num_layers: int, ffn_dim: int, dropout: float):
-        super().__init__()
-        self.L, self.F = L, F
-        self.token_dim = T_in
-        self.num_tokens = L * F
-        self.proj = nn.Linear(T_in, hidden_dim)
-        self.pos_enc = PositionalEncoding(hidden_dim, max_len=self.num_tokens)
-        self.encoder = TransformerEncoder(hidden_dim, num_heads, num_layers, ffn_dim, dropout)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        B, T_in, L, F = x.shape
-        # Each (L, F) cell becomes a token with T_in features
-        x = x.permute(0, 2, 3, 1).reshape(B, L * F, T_in)
-        x = self.proj(x)
-        x = self.pos_enc(x)
-        x = self.encoder(x)
-        return x
-
-
-class SpectralFE(nn.Module):
-    """Spectral feature extractor — treats each time step as a token.
-
-    Reshapes input from (B, T, L, F) to (B, T, L*F) so each token
-    represents the full spatial-frequency snapshot at one time step,
-    then applies a transformer encoder.
+    Paper: "Temporal Feature Extraction". Input (B, T, L, F) -> (B, T, L*F),
+    so attention runs across the T_in time steps with the spatial-frequency
+    snapshot as each token's feature vector. This matches the authors' released
+    code, whose time branch encodes (B, 50, 750) along the time axis.
     """
 
     def __init__(self, T_in: int, L: int, F: int, hidden_dim: int,
@@ -231,20 +204,15 @@ class SpectralFE(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, T_in, L, F = x.shape
-        # Each time step becomes a token with L*F features
         x = x.reshape(B, T_in, L * F)
-        x = self.proj(x)
-        x = self.pos_enc(x)
-        x = self.encoder(x)
-        return x
+        return self.encoder(self.pos_enc(self.proj(x)))
 
 
-class SpatialFE(nn.Module):
-    """Spatial (frequency) feature extractor — treats each frequency bin as a token.
+class SpectralFE(nn.Module):
+    """SpeFE - cross-frequency dependency. Each FREQUENCY BIN is a token.
 
-    Reshapes input from (B, T, L, F) to (B, F, T*L) so each token
-    captures the full spatiotemporal pattern at one frequency bin,
-    then applies a transformer encoder.
+    Paper: "Spectral Feature Extraction". Input (B, T, L, F) -> (B, F, T*L),
+    so attention runs across the F frequency bins.
     """
 
     def __init__(self, T_in: int, L: int, F: int, hidden_dim: int,
@@ -259,12 +227,33 @@ class SpatialFE(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, T_in, L, F = x.shape
-        # Each frequency bin becomes a token with T_in*L features
         x = x.permute(0, 3, 1, 2).reshape(B, F, T_in * L)
-        x = self.proj(x)
-        x = self.pos_enc(x)
-        x = self.encoder(x)
-        return x
+        return self.encoder(self.pos_enc(self.proj(x)))
+
+
+class SpatialFE(nn.Module):
+    """SpaFE - cross-location dependency. Each NODE is a token.
+
+    Paper: "Spatial Feature Extraction". Input (B, T, L, F) -> (B, L, T*F),
+    so attention runs across the L monitoring nodes. The authors' code reaches
+    the same axis by a different route: it pools each location's frequency
+    tokens, then attends over the resulting 3 location tokens.
+    """
+
+    def __init__(self, T_in: int, L: int, F: int, hidden_dim: int,
+                 num_heads: int, num_layers: int, ffn_dim: int, dropout: float):
+        super().__init__()
+        self.T_in, self.L, self.F = T_in, L, F
+        self.token_dim = T_in * F
+        self.num_tokens = L
+        self.proj = nn.Linear(T_in * F, hidden_dim)
+        self.pos_enc = PositionalEncoding(hidden_dim, max_len=max(L, 1))
+        self.encoder = TransformerEncoder(hidden_dim, num_heads, num_layers, ffn_dim, dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, T_in, L, F = x.shape
+        x = x.permute(0, 2, 1, 3).reshape(B, L, T_in * F)
+        return self.encoder(self.pos_enc(self.proj(x)))
 
 
 class FeatureFusionModule(nn.Module):
@@ -321,12 +310,12 @@ class TSSConditionConstructor(nn.Module):
         T_in: int,
         L: int,
         F: int,
-        hidden_dim: int = 256,
+        hidden_dim: int = 1024,
         num_heads: int = 4,
         num_layers: int = 2,
         ffn_dim: int = 1024,
         dropout: float = 0.1,
-        latent_dim: int = 32,
+        latent_dim: int = 16,
         use_temporal: bool = True,
         use_spectral: bool = True,
         use_spatial: bool = True,
@@ -651,8 +640,11 @@ class EnhancedNoiseNet(nn.Module):
 #  Diffusion Model (from repo NoiseNet.py)
 # =====================================================================
 
-def cosine_beta_schedule(T: int, s: float = 0.008) -> np.ndarray:
-    """Cosine noise schedule (cosine² ᾱ from Nichol & Dhariwal).
+def cosine_beta_schedule(T: int, s: float = 0.0018) -> np.ndarray:
+    """Cosine (s defaults to 0.0018, the value in the authors' released NoiseNet.py;
+    the DDPM paper and most implementations use 0.008).
+
+    Cosine noise schedule (cosine² ᾱ from Nichol & Dhariwal).
 
     Smoother than linear schedule; avoids adding too much noise too
     early in the diffusion process.
