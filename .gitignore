@@ -53,3 +53,11 @@ training/TSS-LCD/repro/results/
 # Re-fetch recipe in training/TSS-LCD/repro/upstream/README.md (tracked).
 training/TSS-LCD/repro/upstream/*
 !training/TSS-LCD/repro/upstream/README.md
+
+# Local credential files (never commit; .env.example is the tracked template)
+.env
+data/.env
+
+# TSS-LCD reproduction: local run outputs and checkpoint staging (793 MB+;
+# the checkpoints live in the object store at checkpoints/repro/tsslcd/)
+training/TSS-LCD/repro/ckpt_staging/

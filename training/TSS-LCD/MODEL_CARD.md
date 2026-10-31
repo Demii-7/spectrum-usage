@@ -19,10 +19,11 @@ residual_variant: false
 params: 65504442              # [M] their released code, config defaults: 62.3M context AE + 2.68M future AE + 0.53M diffusion
 code_available: full          # spectrum-specific, authors' own
 data_available: full          # train+test+source RECOVERED from commit d7f1e51263 (deleted from HEAD)
-checkpoints_available: false  # never committed in any of the 14 commits
+checkpoints_available: false  # THEIRS: never committed in any of the 14 commits
+our_checkpoints: checkpoints/repro/tsslcd/   # [M] our 3 arms, 793 MiB, Chameleon Swift container `spectrum`
 license: none-declared        # no LICENSE file in the repo
-reproducible: partial
-repro_blocker: "released predictions do not match the paper's own Table III; no checkpoints; GPU node down"
+reproducible: partial          # Table III yes (0.43% of published MSE); Table IV ablations no
+repro_blocker: "Table III reproduces ONLY under a random split of pooled stride-1 windows (MSE 0.1548 vs 0.1541); the chronological split the paper describes gives 0.6966, 4.5x worse. No checkpoints released, no seed, no validation split, and their own released predictions score 2.5x worse than their table."
 compares_vs_trivial: false
 beats_persistence: false      # [M] their own published predictions lose to persistence by 60x in MSE
 released_artifacts_match_paper: false   # 1.59x worse MAE than Table III
@@ -36,7 +37,7 @@ leakage_found: confirmed      # centred savgol(51) applied before windowing
 | Paper | TSS-guided latent conditional diffusion; two stages (TSS-CC condition, LCD-SP latent diffusion) |
 | Code | Full and spectrum-specific: `github.com/Xlab2024/TSS-LCD`, pushed 2025-12-03, 8 Python files |
 | Data | AERPAW CC1/CC2/LW1. **Complete**: training split, test split and the 6839-row source CSV all recovered from deleted commit `d7f1e51263` |
-| Reproducible | **partial** — architecture, full data and the exact preprocessing chain yes (ground truth regenerated to 1.7e-5 dB); checkpoints and Table III no |
+| Reproducible | **partial** — architecture, full data and the exact preprocessing chain yes (ground truth regenerated to 1.7e-5 dB). Table III yes, but *only* under a random split of pooled stride-1 windows: MSE 0.1548 vs the published 0.1541 (+0.43%), where the chronological split the paper describes gives 0.6966. Table IV ablations no. Their own released predictions, no |
 | Beats a trivial reference | **No.** Their published predictions score MSE 0.3866 dB²; last-value persistence on their own ground truth scores 0.0064 dB² `[M]` |
 | Headline claim | "consistently outperforms all baselines across all metrics" `[P:12]` |
 | Our verdict | Claim holds *within the baseline set they chose*; the set contains no trivial reference, and every row of Table III is beaten by persistence by ≥24x in MSE |
