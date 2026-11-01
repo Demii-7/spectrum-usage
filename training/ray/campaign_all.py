@@ -62,6 +62,9 @@ class Job:
     def key(self) -> str:
         return f"{self.model}-{self.representation}"
 
+    def job_base(self, job_prefix: str) -> str:
+        return f"{job_prefix}-{self.key}"
+
 
 def build_entrypoint(job: Job, args: argparse.Namespace) -> str:
     out = f"{args.output_root.rstrip('/')}/{job.representation}/{job.model}"
@@ -80,6 +83,8 @@ def build_entrypoint(job: Job, args: argparse.Namespace) -> str:
                 parts[parts.index(flag) + 1] = str(job.overrides[key])
             else:
                 parts += [flag, str(job.overrides[key])]
+    if args.export_prefix:
+        parts += ["--export-prefix", args.export_prefix]
     if args.skip_export:
         parts.append("--skip-export")
     return f"cd /workspace/spectrum-usage && {shlex.join(parts)}"
@@ -100,12 +105,12 @@ def _status_name(status: Any) -> str:
     return str(getattr(status, "value", status)).upper()
 
 
-def reconcile(jobs: list[Job], client) -> None:
+def reconcile(jobs: list[Job], client, job_prefix: str = "campaign") -> None:
     """Adopt jobs a previous supervisor already submitted (this one may be a restart)."""
     existing: dict[str, tuple[int, str]] = {}
     for detail in client.list_jobs():
         submission = detail.submission_id or ""
-        if not submission.startswith("campaign-"):
+        if not submission.startswith(f"{job_prefix}-"):
             continue
         base, _, attempt = submission.rpartition("-")
         if attempt.isdigit():
@@ -113,12 +118,12 @@ def reconcile(jobs: list[Job], client) -> None:
             if known is None or int(attempt) > known[0]:
                 existing[base] = (int(attempt), _status_name(detail.status))
     for job in jobs:
-        found = existing.get(f"campaign-{job.key}")
+        found = existing.get(job.job_base(job_prefix))
         if not found:
             continue
         attempt, status = found
         job.attempts = attempt + 1
-        job.submission_id = f"campaign-{job.key}-{attempt}"
+        job.submission_id = f"{job.job_base(job_prefix)}-{attempt}"
         if status == "SUCCEEDED":
             job.state = "done"
         elif status in {"PENDING", "RUNNING"}:
@@ -147,7 +152,7 @@ def step(jobs: list[Job], client, args: argparse.Namespace, now: float) -> None:
             break
         if job.state != "queued" or now - job.last_failure < args.retry_delay:
             continue
-        job.submission_id = f"campaign-{job.key}-{job.attempts}"
+        job.submission_id = f"{job.job_base(args.job_prefix)}-{job.attempts}"
         client.submit_job(entrypoint=build_entrypoint(job, args), submission_id=job.submission_id,
                           metadata={"model": job.model, "representation": job.representation})
         job.attempts += 1
@@ -167,7 +172,7 @@ def write_status(jobs: list[Job], path: Path) -> None:
 def supervise(args: argparse.Namespace, client) -> int:
     overrides = json.loads(Path(args.overrides).read_text()) if args.overrides else {}
     jobs = make_jobs(args.models, overrides)
-    reconcile(jobs, client)
+    reconcile(jobs, client, args.job_prefix)
     deadline = time.time() + args.deadline_hours * 3600 if args.deadline_hours else None
     status_path = Path(args.output_root) / "supervisor_status.json"
     while True:
@@ -199,6 +204,10 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--deadline-hours", type=float, default=None)
     parser.add_argument("--overrides", help="JSON file: {model or model-rep: {gpu_fraction: ..}}")
     parser.add_argument("--skip-export", action="store_true")
+    parser.add_argument("--export-prefix", default=None,
+                        help="Chameleon bucket prefix for exported checkpoints (default: campaign.py's)")
+    parser.add_argument("--job-prefix", default="campaign",
+                        help="Ray job submission-id prefix; use a new one for a second round")
     parser.add_argument("--dry-run", action="store_true", help="Print the entrypoints and exit")
     return parser.parse_args(argv)
 

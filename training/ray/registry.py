@@ -70,9 +70,18 @@ def _bundle(**paths: Any) -> dict[str, Any]:
     return paths
 
 
+def bundle_token(bundle: Mapping[str, Any]) -> str:
+    """Stable token for an architecture bundle, independent of its position in the registry."""
+    import hashlib
+    import json
+
+    digest = hashlib.sha1(json.dumps(dict(bundle), sort_keys=True, default=str).encode()).hexdigest()
+    return f"bundle:{digest[:10]}"
+
+
 _OPTIMIZER_2D = {
-    "train.learning_rate": loguniform(1e-4, 5e-3),
-    "train.weight_decay": choice(0.0, 1e-5, 1e-4, 1e-3),
+    "train.learning_rate": loguniform(3e-5, 5e-3),
+    "train.weight_decay": choice(0.0, 1e-5, 1e-4, 1e-3, 3e-3),
     "train.batch_size": choice(32, 64, 128, 256),
 }
 
@@ -88,7 +97,7 @@ _OPTIMIZER_TCN = {
 _OPTIMIZER_MAP = {
     "train.learning_rate": loguniform(1e-5, 5e-4),
     "train.weight_decay": choice(0.0, 1e-4, 1e-3, 4e-3),
-    "train.batch_size": choice(1, 2, 4),
+    "train.batch_size": choice(1, 2, 4, 8),
 }
 
 _OPTIMIZER_LINEAR = {

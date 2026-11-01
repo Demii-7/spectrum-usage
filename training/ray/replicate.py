@@ -14,7 +14,7 @@ import yaml
 
 from .config import inject_parameters
 from .optional import require_ray
-from .registry import get_model_spec
+from .registry import bundle_token, get_model_spec
 from .robustness import DEFAULT_MAX_FAILURES, build_or_restore, run_config, summarize_results
 from .storage import MinIOConfig
 from .trainable import TuneReporter, run_integrated_trial
@@ -83,7 +83,13 @@ def resolve_winner(search_path: str, model_name: str, filesystem) -> tuple[dict[
     architecture = parameters.get("architecture")
     if isinstance(architecture, str):
         token = architecture.removeprefix("historical:")
-        if token in spec.anchors:
+        if architecture.startswith("bundle:"):
+            matches = [dict(choice) for choice in spec.space["architecture"].choices
+                       if bundle_token(choice) == architecture]
+            if len(matches) != 1:
+                raise ValueError(f"Cannot resolve persisted architecture token {architecture!r}")
+            parameters["architecture"] = matches[0]
+        elif token in spec.anchors:
             parameters["architecture"] = dict(spec.anchors[token]["architecture"])
         elif token in spec.historical:
             parameters["architecture"] = dict(spec.historical[token]["architecture"])

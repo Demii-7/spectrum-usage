@@ -1,7 +1,8 @@
 import unittest
 
 from training.ray.config import validate_tuning_config
-from training.ray.run import build_plan
+from training.ray.registry import MODEL_REGISTRY, bundle_token
+from training.ray.run import build_plan, extra_architecture_tokens, ray_anchor_points
 
 
 def _config(model, representation="2d"):
@@ -47,6 +48,49 @@ class CampaignPlanOptionTests(unittest.TestCase):
     def test_residual_lstm_validates_for_both_1d_and_2d_data(self):
         for representation in ("1d", "2d"):
             validate_tuning_config(_config("residualvanillalstm", representation), "residualvanillalstm")
+
+
+class EffectiveSearchSpaceTests(unittest.TestCase):
+    """The search must really sample the registered bundles, not just the anchors."""
+
+    def _tokens(self, model):
+        representation = MODEL_REGISTRY[model].representation
+        entry = build_plan(_config(model, representation), [model])["models"][0]
+        _, architectures = ray_anchor_points(entry)
+        architectures.update(extra_architecture_tokens(MODEL_REGISTRY[model], architectures))
+        return architectures
+
+    def test_extra_bundles_are_sampled_for_the_widened_models(self):
+        for model, wanted in (("vanillalstm", {"model.hidden_size": 256}),
+                              ("lstmattn", {"model.hidden_size": 256}),
+                              ("dswinlstm_i", {"model.embed_dim": 64})):
+            bundles = list(self._tokens(model).values())
+            self.assertTrue(any(all(b.get(k) == v for k, v in wanted.items()) for b in bundles),
+                            f"{model} never samples {wanted}")
+
+    def test_every_registered_bundle_is_reachable(self):
+        for model in ("vanillalstm", "lstmattn", "dswinlstm_i", "temporalconvnet"):
+            spec = MODEL_REGISTRY[model]
+            reachable = list(self._tokens(model).values())
+            for bundle in spec.space["architecture"].choices:
+                self.assertIn(dict(bundle), reachable, f"{model}: {bundle}")
+
+    def test_tokens_are_position_independent_and_unique(self):
+        tokens = self._tokens("vanillalstm")
+        extras = [t for t in tokens if t.startswith("bundle:")]
+        self.assertTrue(extras)
+        for token in extras:
+            self.assertEqual(token, bundle_token(tokens[token]))
+        self.assertEqual(len(set(tokens)), len(tokens))
+
+    def test_extra_bundle_tokens_resolve_in_the_replicate_stage(self):
+        import training.ray.replicate as replicate
+
+        spec = MODEL_REGISTRY["vanillalstm"]
+        token = next(t for t in self._tokens("vanillalstm") if t.startswith("bundle:"))
+        matches = [dict(c) for c in spec.space["architecture"].choices if bundle_token(c) == token]
+        self.assertEqual(len(matches), 1)
+        self.assertTrue(hasattr(replicate, "bundle_token"))
 
 
 if __name__ == "__main__":

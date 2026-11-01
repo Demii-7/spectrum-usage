@@ -89,5 +89,20 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual(len(supervisor.PLAN), 19)
 
 
+    def test_second_round_uses_separate_job_ids_and_export_prefix(self):
+        client = FakeClient(existing=[("campaign-vanillalstm-2d-0", "SUCCEEDED")])
+        jobs = supervisor.make_jobs(["vanillalstm:2d"], {})
+        args = _args(job_prefix="campaign-r2", export_prefix="checkpoints-oct2026-r2")
+        supervisor.reconcile(jobs, client, args.job_prefix)
+        self.assertEqual(jobs[0].state, "queued")  # round-1 job is not adopted
+        supervisor.step(jobs, client, args, now=1.0)
+        self.assertEqual(client.submitted[0][0], "campaign-r2-vanillalstm-2d-0")
+        self.assertIn("--export-prefix checkpoints-oct2026-r2", client.submitted[0][1])
+
+    def test_model_and_representation_filter(self):
+        jobs = supervisor.make_jobs(["residualvanillalstm:2d", "dswinlstm_i"], {})
+        self.assertEqual(sorted(j.key for j in jobs), ["dswinlstm_i-4d", "residualvanillalstm-2d"])
+
+
 if __name__ == "__main__":
     unittest.main()

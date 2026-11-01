@@ -15,7 +15,7 @@ from .candidate import candidate_id
 from .config import validate_tuning_config
 from .manifests import provenance_manifest, write_manifest
 from .optional import require_ray
-from .registry import MODEL_REGISTRY, get_model_spec
+from .registry import MODEL_REGISTRY, bundle_token, get_model_spec
 from .robustness import DEFAULT_MAX_FAILURES, build_or_restore, run_config, summarize_results
 from .scheduler import ASHAConfig
 from .spaces import materialize_space
@@ -154,6 +154,20 @@ def ray_anchor_points(entry: dict[str, Any]) -> tuple[list[dict[str, Any]], dict
     return points, architectures
 
 
+def extra_architecture_tokens(spec, existing: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Tokens for registered architecture bundles beyond the anchors and historical presets.
+
+    The token is a hash of the bundle's contents (``bundle_token``), so the replicate stage can
+    resolve a winner back to its bundle even if the registry is reordered later.
+    """
+    known = [dict(bundle) for bundle in existing.values()]
+    return {
+        bundle_token(bundle): dict(bundle)
+        for bundle in spec.space["architecture"].choices
+        if dict(bundle) not in known
+    }
+
+
 def build_rerank_candidates(model_name: str,
                             selections: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     """Expand the three selected configurations into nine deterministic runs."""
@@ -188,6 +202,8 @@ def _launch(config: dict[str, Any], plan: dict[str, Any], output: Path,
         if fixed_batch_size is not None:
             space["train.batch_size"] = tune.choice([fixed_batch_size])
         points, architectures = ray_anchor_points(entry)
+        # Without this the random draws only ever pick the three anchors and historical presets.
+        architectures.update(extra_architecture_tokens(spec, architectures))
         if fixed_batch_size is not None:
             for point in points:
                 point["train.batch_size"] = fixed_batch_size
