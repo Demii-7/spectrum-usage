@@ -25,7 +25,7 @@ import yaml
 
 from .final_eval import (
     CORE_SITES, DEFAULT_TEST_END, DEFAULT_TEST_START, build_eval_config, config_file_for, ensure_site_files,
-    parse_checkpoint_key, restrict_files_to_site, summarize_metrics,
+    parse_checkpoint_key, pool_sites, restrict_files_to_site, summarize_metrics,
 )
 
 REFERENCE_MODELS = {"lookbackmean1d": "1d", "lookbackmean2d": "2d", "lookbackmean4d": "4d"}
@@ -118,6 +118,10 @@ def train_entry(entry: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         if site:  # a receiver-specific model: its own data, its own normalization statistics
             config = restrict_files_to_site(ensure_site_files(config, site), site)
             result["site"] = site
+        pooled = entry.get("pooled_sites")
+        if pooled:  # one model over exactly these receivers, normalization pooled across them
+            config = pool_sites(config, pooled)
+            result["pooled_sites"] = ",".join(pooled)
         config[model]["train"]["seed"] = seed
         with tempfile.TemporaryDirectory(prefix="fixed-train-") as scratch:
             run_dir = Path(scratch) / "run"
@@ -132,7 +136,7 @@ def train_entry(entry: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
             if costs_file:
                 result.update({k: v for k, v in json.loads(costs_file.read_text()).items()
                                if k.startswith("cost_") and not k.endswith("_json")})
-            site_part = f"/site-{site}" if site else ""
+            site_part = f"/site-{site}" if site else (f"/pooled-{len(pooled)}" if pooled else "")
             destination = f"{args['output_prefix'].strip('/')}/{args['band']}/{rep}/{model}{site_part}/seed-{seed}"
             for path in [checkpoint] + ([costs_file] if costs_file else []):
                 client.upload_file(str(path), bucket, f"{destination}/{path.name}")
@@ -177,6 +181,9 @@ def launch(args: argparse.Namespace) -> None:
         sites = args.sites or list(CORE_SITES)
         jobs = [{**e, "seed": seed, "site": site} for e in entries for site in sites
                 for seed in (args.seeds if e["model"] not in REFERENCE_MODELS else [42])]
+    elif args.pooled_sites:
+        jobs = [{**e, "seed": seed, "pooled_sites": args.pooled_sites} for e in entries if e["rep"] == "2d"
+                for seed in (args.seeds if e["model"] not in REFERENCE_MODELS else [42])]
     else:
         jobs = [{**e, "seed": seed} for e in entries
                 for seed in (args.seeds if e["model"] not in REFERENCE_MODELS else [42])]
@@ -198,7 +205,7 @@ def launch(args: argparse.Namespace) -> None:
                                   max_retries=1)(train_entry).remote(job, worker_args))
     frame = pd.DataFrame(ray.get(futures))
     stamp = time.strftime("%Y%m%dT%H%MZ", time.gmtime())
-    tag = "per_site_" if args.per_site else ""
+    tag = "per_site_" if args.per_site else ("pooled_" if args.pooled_sites else "")
     key = f"{args.output_prefix.strip('/')}/{args.band}/{tag}summary_{stamp}.csv"
     buffer = io.StringIO()
     frame.to_csv(buffer, index=False)
@@ -218,6 +225,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--include-reference", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--per-site", action="store_true",
                         help="Train a separate model per receiver (own data and normalization); not for 4D")
+    parser.add_argument("--pooled-sites", nargs="+",
+                        help="Train one pooled 2D model over exactly these receivers (may include held-out ones)")
     parser.add_argument("--sites", nargs="+", help="Receivers for --per-site (default: the four core nodes; held-out ones such as "
                         "law73 and guesthouse work too, trained on their own data)")
     parser.add_argument("--test-start", default=DEFAULT_TEST_START)

@@ -128,3 +128,16 @@ def test_ensure_site_files_adds_held_out_receiver():
         ("data/powder/law73-nuc1/RUN2/600_800/p.csv", "test")]
     assert len(config["data"]["files"]) == 4  # input untouched
     assert ensure_site_files(config, "madsen") == config  # already listed: no change
+
+
+def test_pool_sites_keeps_exactly_the_requested_receivers():
+    from training.ray.final_eval import pool_sites
+
+    config = {"data": {"files": [
+        {"path": "data/powder/humanities-nuc1/R1/b/p.csv", "partition": "train"},
+        {"path": "data/powder/madsen-nuc1/R1/b/p.csv", "partition": "train"},
+        {"path": "data/powder/humanities-nuc1/R2/b/p.csv", "partition": "test"},
+    ]}}
+    pooled = pool_sites(config, ["humanities", "law73"])["data"]["files"]
+    assert sorted(f["path"].split("/")[2] for f in pooled) == [
+        "humanities-nuc1", "humanities-nuc1", "law73-nuc1", "law73-nuc1"]

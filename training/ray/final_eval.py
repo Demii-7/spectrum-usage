@@ -88,6 +88,16 @@ def ensure_site_files(config: dict[str, Any], site: str, template: str = CORE_SI
     return config
 
 
+def pool_sites(config: dict[str, Any], sites: list[str]) -> dict[str, Any]:
+    """One pooled config over exactly these receivers (adding held-out ones' files as needed)."""
+    for site in sites:
+        config = ensure_site_files(config, site)
+    config = copy.deepcopy(config)
+    config["data"]["files"] = [e for e in config["data"]["files"]
+                               if any(f"/{site}-nuc1/" in e["path"] for site in sites)]
+    return config
+
+
 def restrict_files_to_site(config: dict[str, Any], site: str, partitions: tuple[str, ...] | None = None) -> dict[str, Any]:
     """Keep only one receiver's files, in all partitions or just the given ones."""
     config = copy.deepcopy(config)
