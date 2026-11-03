@@ -172,3 +172,13 @@ def test_per_bin_test_rows_keeps_only_test_split_and_tags_context():
     out = per_bin_test_rows(frame, {"model": "m", "scored_site": "all"})
     assert list(out["mae_db"]) == [2.0, 3.0]
     assert set(out["model"]) == {"m"} and "scored_site" in out.columns
+
+
+def test_per_bin_test_rows_context_overrides_existing_columns():
+    import pandas as pd
+
+    from training.ray.final_eval import per_bin_test_rows
+
+    frame = pd.DataFrame({"split": ["a_test"], "model": ["from_evaluator"], "mae_db": [1.0]})
+    out = per_bin_test_rows(frame, {"model": "from_context", "seed": 42})
+    assert list(out["model"]) == ["from_context"] and list(out.columns).count("model") == 1

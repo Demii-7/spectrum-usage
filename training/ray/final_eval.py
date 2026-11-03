@@ -154,6 +154,7 @@ def summarize_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
 def per_bin_test_rows(frame, context: dict[str, Any]):
     """Test-split rows of per_frequency_metrics.csv, tagged with which checkpoint they came from."""
     rows = frame[frame["split"].astype(str).str.endswith("test")].copy()
+    rows = rows.drop(columns=[name for name in context if name in rows.columns])  # context wins on clashes
     for name, value in context.items():
         rows.insert(0, name, value)
     return rows
@@ -204,8 +205,7 @@ def evaluate_entry(entry: dict[str, Any], args: dict[str, Any]) -> dict[str, Any
                 import io
 
                 table = pd.concat(per_bin_frames, ignore_index=True)
-                for name in ("seed", "model", "rep", "prefix"):
-                    table.insert(0, name, entry[name])
+                table = per_bin_test_rows(table, {name: entry[name] for name in ("prefix", "rep", "model", "seed")})
                 buffer = io.StringIO()
                 table.to_csv(buffer, index=False)
                 key = (f"{args['per_bin_prefix'].strip('/')}/{entry['prefix']}/{entry['rep']}/"
