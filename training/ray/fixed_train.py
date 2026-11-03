@@ -25,7 +25,7 @@ import yaml
 
 from .final_eval import (
     CORE_SITES, DEFAULT_TEST_END, DEFAULT_TEST_START, build_eval_config, config_file_for, ensure_site_files,
-    parse_checkpoint_key, per_bin_test_rows, pool_sites, restrict_files_to_site, summarize_metrics,
+    parse_checkpoint_key, pool_sites, restrict_files_to_site, summarize_metrics,
 )
 
 REFERENCE_MODELS = {"lookbackmean1d": "1d", "lookbackmean2d": "2d", "lookbackmean4d": "4d"}
@@ -132,18 +132,13 @@ def train_entry(entry: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
             evaluate_one_model(config, model, eval_dir, checkpoint, skip_plots=True)
             rows = pd.read_csv(eval_dir / "aggregate_metrics.csv").to_dict("records")
             result.update(summarize_metrics(rows))
-            per_bin_file = Path(scratch) / "per_bin_test.csv"
-            per_bin_test_rows(pd.read_csv(eval_dir / "per_frequency_metrics.csv"),
-                              {"seed": seed, "model": model, "rep": rep, "band": args["band"],
-                               "trained_site": site or entry.get("pooled_sites") and "pooled" or "all"}
-                              ).to_csv(per_bin_file, index=False)
             costs_file = next(run_dir.rglob("*_run_costs.json"), None)
             if costs_file:
                 result.update({k: v for k, v in json.loads(costs_file.read_text()).items()
                                if k.startswith("cost_") and not k.endswith("_json")})
             site_part = f"/site-{site}" if site else (f"/pooled-{len(pooled)}" if pooled else "")
             destination = f"{args['output_prefix'].strip('/')}/{args['band']}/{rep}/{model}{site_part}/seed-{seed}"
-            for path in [checkpoint, per_bin_file] + ([costs_file] if costs_file else []):
+            for path in [checkpoint] + ([costs_file] if costs_file else []):
                 client.upload_file(str(path), bucket, f"{destination}/{path.name}")
             result["checkpoint_key"] = f"{destination}/{checkpoint.name}"
         result["ok"] = True
