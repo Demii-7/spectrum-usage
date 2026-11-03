@@ -382,6 +382,30 @@ def _flattened_1d_normalization(
     }, frequency_indices
 
 
+def _extra_error_metrics(
+    prediction_dbm: np.ndarray,
+    target_dbm: np.ndarray,
+    squared_error: np.ndarray,
+) -> dict[str, float]:
+    """Metrics beyond MAE/RMSE for one (split, horizon).
+
+    mse_db2: mean squared error in dB^2 (the square of rmse_db).
+    mape_linear_pct: mean absolute percentage error of linear power (mW),
+        which depends only on the dB error: |10^(err/10) - 1| * 100.
+    mape_dbm_pct: mean |err| / |target dBm| * 100. This depends on the
+        arbitrary dBm offset (a 1 dB error at -130 dBm and at -60 dBm differ),
+        so treat it as a convention-bound number, not a physical one.
+    """
+    err = prediction_dbm.astype(np.float32) - target_dbm.astype(np.float32)  # float32: 4D maps are large
+    return {
+        "mse_db2": float(np.mean(squared_error)),
+        "mape_linear_pct": float(np.mean(np.abs(np.power(np.float32(10.0), err / np.float32(10.0)) - 1.0)) * 100.0),
+        "mape_dbm_pct": float(
+            np.mean(np.abs(err) / np.maximum(np.abs(target_dbm.astype(np.float32)), 1e-6), dtype=np.float64) * 100.0
+        ),
+    }
+
+
 def _per_site_map_errors(
     prediction_dbm: np.ndarray,
     target_dbm: np.ndarray,
@@ -672,6 +696,9 @@ def evaluate_chunk(
                 bands=bands,
                 feature_labels=data.feature_labels,
                 frequency_indices=frequency_indices,
+                extra_aggregate=_extra_error_metrics(
+                    prediction_dbm, target_dbm_export, squared_error
+                ),
             )
 
             predictions_by_horizon[

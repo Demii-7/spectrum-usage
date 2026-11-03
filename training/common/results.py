@@ -89,9 +89,11 @@ def append_metric_rows(
     bands: pd.DataFrame,
     feature_labels: list[str] | None = None,
     frequency_indices: np.ndarray | None = None,
+    extra_aggregate: dict[str, float] | None = None,
 ) -> None:
     aggregate_rows.append(
         {
+            **(extra_aggregate or {}),
             "chunk_id": chunk_id,
             "start_mhz": start_mhz,
             "end_mhz": end_mhz,

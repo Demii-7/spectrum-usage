@@ -114,18 +114,40 @@ def restrict_files_to_site(config: dict[str, Any], site: str, partitions: tuple[
 
 
 def summarize_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Collapse aggregate_metrics rows to per-split, per-horizon means plus an overall mean."""
+    """Collapse aggregate_metrics rows to per-split, per-horizon metrics plus an overall mean.
+
+    MAE keeps the plain mean over rows (as in earlier results). RMSE, MSE and the MAPEs pool the
+    rows by their target counts: RMSE is the square root of the pooled MSE, not a mean of RMSEs.
+    """
     out: dict[str, Any] = {}
     for split in ("validation", "test"):
         selected = [r for r in rows if str(r["split"]).endswith(split)]
         if not selected:
             continue
-        by_h: dict[int, list[float]] = {}
-        for r in selected:
-            by_h.setdefault(int(r["horizon"]), []).append(float(r["mae_db"]))
-        for horizon, values in sorted(by_h.items()):
-            out[f"{split}_mae_db_t{horizon}"] = sum(values) / len(values)
-        out[f"{split}_mean_horizon_mae_db"] = sum(sum(v) / len(v) for v in by_h.values()) / len(by_h)
+        horizons = sorted({int(r["horizon"]) for r in selected})
+        mae_by_h: dict[int, float] = {}
+        pooled: dict[str, dict[int, float]] = {"rmse_db": {}, "mse_db2": {}, "mape_linear_pct": {}, "mape_dbm_pct": {}}
+        for horizon in horizons:
+            group = [r for r in selected if int(r["horizon"]) == horizon]
+            mae_by_h[horizon] = sum(float(r["mae_db"]) for r in group) / len(group)
+            weights = [float(r.get("n_targets") or 1) for r in group]
+            total = sum(weights)
+            if all("rmse_db" in r for r in group):
+                mse = sum(w * float(r["rmse_db"]) ** 2 for w, r in zip(weights, group)) / total
+                pooled["rmse_db"][horizon] = mse ** 0.5
+                pooled["mse_db2"][horizon] = mse
+            for key in ("mape_linear_pct", "mape_dbm_pct"):
+                if all(key in r and r[key] == r[key] for r in group):  # present and not NaN
+                    pooled[key][horizon] = sum(w * float(r[key]) for w, r in zip(weights, group)) / total
+        for horizon, value in mae_by_h.items():
+            out[f"{split}_mae_db_t{horizon}"] = value
+        out[f"{split}_mean_horizon_mae_db"] = sum(mae_by_h.values()) / len(mae_by_h)
+        for name, values in pooled.items():
+            if not values:
+                continue
+            for horizon, value in values.items():
+                out[f"{split}_{name}_t{horizon}"] = value
+            out[f"{split}_mean_horizon_{name}"] = sum(values.values()) / len(values)
     return out
 
 

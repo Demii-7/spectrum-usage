@@ -141,3 +141,22 @@ def test_pool_sites_keeps_exactly_the_requested_receivers():
     pooled = pool_sites(config, ["humanities", "law73"])["data"]["files"]
     assert sorted(f["path"].split("/")[2] for f in pooled) == [
         "humanities-nuc1", "humanities-nuc1", "law73-nuc1", "law73-nuc1"]
+
+
+def test_summarize_metrics_pools_rmse_and_mape_by_target_count():
+    from training.ray.final_eval import summarize_metrics
+
+    rows = [
+        {"split": "a_test", "horizon": 1, "mae_db": 1.0, "rmse_db": 1.0, "n_targets": 100,
+         "mape_linear_pct": 10.0, "mape_dbm_pct": 1.0},
+        {"split": "b_test", "horizon": 1, "mae_db": 3.0, "rmse_db": 3.0, "n_targets": 300,
+         "mape_linear_pct": 30.0, "mape_dbm_pct": 3.0},
+    ]
+    out = summarize_metrics(rows)
+    assert out["test_mae_db_t1"] == 2.0  # unchanged: plain mean over rows
+    assert abs(out["test_mse_db2_t1"] - (100 * 1 + 300 * 9) / 400) < 1e-9  # pooled by n_targets
+    assert abs(out["test_rmse_db_t1"] - out["test_mse_db2_t1"] ** 0.5) < 1e-9
+    assert abs(out["test_mape_linear_pct_t1"] - 25.0) < 1e-9
+    # old-format rows (no new columns) still work
+    legacy = summarize_metrics([{"split": "a_test", "horizon": 1, "mae_db": 1.0}])
+    assert legacy == {"test_mae_db_t1": 1.0, "test_mean_horizon_mae_db": 1.0}
