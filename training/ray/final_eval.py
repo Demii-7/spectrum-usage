@@ -70,6 +70,24 @@ def build_eval_config(base: dict[str, Any], model: str, costs: dict[str, Any], *
 CORE_SITES = ("humanities", "madsen", "moran", "sagepoint")
 
 
+def ensure_site_files(config: dict[str, Any], site: str, template: str = CORE_SITES[0]) -> dict[str, Any]:
+    """Add ``site``'s files (same runs, bands and partitions) when the config does not list it.
+
+    Held-out receivers (guesthouse, law73) are not in the core configs; their files sit at the
+    same paths with the site name swapped, so copy each template-site entry for them.
+    """
+    config = copy.deepcopy(config)
+    files = config["data"]["files"]
+    if any(f"/{site}-nuc1/" in entry["path"] for entry in files):
+        return config
+    extra = [{**entry, "path": entry["path"].replace(f"/{template}-nuc1/", f"/{site}-nuc1/")}
+             for entry in files if f"/{template}-nuc1/" in entry["path"]]
+    if not extra:
+        raise ValueError(f"Cannot derive files for {site!r}: template site {template!r} not in config")
+    config["data"]["files"] = files + extra
+    return config
+
+
 def restrict_files_to_site(config: dict[str, Any], site: str, partitions: tuple[str, ...] | None = None) -> dict[str, Any]:
     """Keep only one receiver's files, in all partitions or just the given ones."""
     config = copy.deepcopy(config)

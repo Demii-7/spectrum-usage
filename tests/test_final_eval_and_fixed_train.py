@@ -109,3 +109,22 @@ class PerSiteTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_ensure_site_files_adds_held_out_receiver():
+    from training.ray.final_eval import ensure_site_files, restrict_files_to_site
+
+    config = {"data": {"files": [
+        {"path": "data/powder/humanities-nuc1/RUN1/600_800/p.csv", "partition": "train"},
+        {"path": "data/powder/madsen-nuc1/RUN1/600_800/p.csv", "partition": "train"},
+        {"path": "data/powder/humanities-nuc1/RUN2/600_800/p.csv", "partition": "validation"},
+        {"path": "data/powder/humanities-nuc1/RUN2/600_800/p.csv", "partition": "test"},
+    ]}}
+    extended = ensure_site_files(config, "law73")
+    law = restrict_files_to_site(extended, "law73")["data"]["files"]
+    assert [(f["path"], f["partition"]) for f in law] == [
+        ("data/powder/law73-nuc1/RUN1/600_800/p.csv", "train"),
+        ("data/powder/law73-nuc1/RUN2/600_800/p.csv", "validation"),
+        ("data/powder/law73-nuc1/RUN2/600_800/p.csv", "test")]
+    assert len(config["data"]["files"]) == 4  # input untouched
+    assert ensure_site_files(config, "madsen") == config  # already listed: no change

@@ -24,8 +24,8 @@ from typing import Any
 import yaml
 
 from .final_eval import (
-    CORE_SITES, DEFAULT_TEST_END, DEFAULT_TEST_START, build_eval_config, config_file_for, parse_checkpoint_key,
-    restrict_files_to_site, summarize_metrics,
+    CORE_SITES, DEFAULT_TEST_END, DEFAULT_TEST_START, build_eval_config, config_file_for, ensure_site_files,
+    parse_checkpoint_key, restrict_files_to_site, summarize_metrics,
 )
 
 REFERENCE_MODELS = {"lookbackmean1d": "1d", "lookbackmean2d": "2d", "lookbackmean4d": "4d"}
@@ -116,7 +116,7 @@ def train_entry(entry: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         config = swap_band(config, args["band"])
         site = entry.get("site")
         if site:  # a receiver-specific model: its own data, its own normalization statistics
-            config = restrict_files_to_site(config, site)
+            config = restrict_files_to_site(ensure_site_files(config, site), site)
             result["site"] = site
         config[model]["train"]["seed"] = seed
         with tempfile.TemporaryDirectory(prefix="fixed-train-") as scratch:
@@ -218,7 +218,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--include-reference", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--per-site", action="store_true",
                         help="Train a separate model per receiver (own data and normalization); not for 4D")
-    parser.add_argument("--sites", nargs="+", help="Receivers for --per-site (default: the four core nodes)")
+    parser.add_argument("--sites", nargs="+", help="Receivers for --per-site (default: the four core nodes; held-out ones such as "
+                        "law73 and guesthouse work too, trained on their own data)")
     parser.add_argument("--test-start", default=DEFAULT_TEST_START)
     parser.add_argument("--test-end", default="2026-10-30T18:00:00Z",
                         help="Preliminary cutoff by default; pass the final end once the data is synced")
