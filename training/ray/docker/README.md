@@ -1,5 +1,8 @@
 # Ray Docker and Swarm deployment
 
+For the mixed-GPU cluster headed by `129.114.25.96`, see
+[STANDALONE.md](STANDALONE.md).
+
 For the October 2026 two-host cluster and expansion procedure, see
 [CHAMELEON.md](CHAMELEON.md). The addresses below describe the earlier cluster.
 

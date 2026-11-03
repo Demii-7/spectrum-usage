@@ -7,6 +7,14 @@ fi
 
 source /usr/local/bin/load-storage-env.sh
 
+EXTRA_ARGS=()
+if [[ -n "${RAY_OBJECT_STORE_MEMORY:-}" ]]; then
+  EXTRA_ARGS+=(--object-store-memory="$RAY_OBJECT_STORE_MEMORY")
+fi
+if [[ -n "${RAY_MEMORY:-}" ]]; then
+  EXTRA_ARGS+=(--memory="$RAY_MEMORY")
+fi
+
 exec ray start \
   --head \
   --node-ip-address="${RAY_NODE_IP:-$(hostname -i | awk '{print $1}')}" \
@@ -18,4 +26,5 @@ exec ray start \
   --max-worker-port="${RAY_MAX_WORKER_PORT:-10999}" \
   --num-cpus="${RAY_HEAD_CPUS:-0}" \
   --num-gpus=0 \
+  "${EXTRA_ARGS[@]}" \
   --block

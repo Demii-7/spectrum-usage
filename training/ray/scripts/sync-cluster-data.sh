@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOCAL_REPO="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 source "${RAY_INVENTORY:-$SCRIPT_DIR/../docker/chameleon-nodes.sh}"
 : "${RAY_REPO_PATH:=/home/cc/spectrum-usage}"
+: "${RAY_STACK_NAME:=spectrum}"
 DRY_RUN=false
 CHECKPOINTS=false
 while (($#)); do
@@ -23,15 +24,26 @@ elif ((${#SELECTION[@]} == 0)); then
 fi
 HOSTS=("${RAY_NODE_SSH_HOSTS[@]}")
 ((${#HOSTS[@]} > 0)) || { printf 'No SSH hosts in inventory\n' >&2; exit 2; }
+SSH_OPTIONS=(-o BatchMode=yes -o ConnectTimeout=15)
+if [[ -n "${RAY_SSH_KNOWN_HOSTS:-}" ]]; then
+  SSH_OPTIONS+=(-o "UserKnownHostsFile=$RAY_SSH_KNOWN_HOSTS" -o StrictHostKeyChecking=accept-new)
+fi
+printf -v RSYNC_SSH '%q ' ssh "${SSH_OPTIONS[@]}"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 worker_exec() {
-  local host="$1" command
+  local host="$1" command index service="${RAY_STACK_NAME}_ray-worker"
   shift
+  for index in "${!HOSTS[@]}"; do
+    if [[ "${HOSTS[$index]}" == "$host" && -n "${RAY_NODE_SERVICES[$index]:-}" ]]; then
+      service="${RAY_NODE_SERVICES[$index]}"
+      break
+    fi
+  done
   printf -v command '%q ' "$@"
-  ssh -o BatchMode=yes -o ConnectTimeout=15 "$RAY_SSH_USER@$host" \
-    "container=\$(docker ps -q --filter label=com.docker.swarm.service.name=spectrum_ray-worker); test -n \"\$container\" && docker exec -i -w /workspace/spectrum-usage \"\$container\" $command"
+  ssh "${SSH_OPTIONS[@]}" "$RAY_SSH_USER@$host" \
+    "container=\$(docker ps -q --filter label=com.docker.swarm.service.name=$service); test -n \"\$container\" && docker exec -i -w /workspace/spectrum-usage \"\$container\" $command"
 }
 
 # WORKDIR inside the container differs from the host's bind-mount source.
@@ -45,7 +57,7 @@ if [[ "$CHECKPOINTS" == true ]]; then
   CHECKSUMS="$CONTAINER_REPO/data/.spectrum-sync/checkpoint-checksums.json"
 fi
 for host in "${HOSTS[@]}"; do
-  rsync -az -e 'ssh -o BatchMode=yes -o ConnectTimeout=15' \
+  rsync -az -e "$RSYNC_SSH" \
     --relative "$LOCAL_REPO/./data/sync_object_storage.py" "$RAY_SSH_USER@$host:$RAY_REPO_PATH/"
 done
 worker_exec "${HOSTS[0]}" python "$SYNC_SCRIPT" --spectrum-storage \
