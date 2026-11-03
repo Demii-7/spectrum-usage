@@ -5,7 +5,7 @@ from pathlib import Path
 import yaml
 
 from training.ray.final_eval import (
-    build_eval_config, config_file_for, parse_checkpoint_key, summarize_metrics,
+    build_eval_config, config_file_for, parse_checkpoint_key, restrict_files_to_site, summarize_metrics,
 )
 from training.ray.fixed_train import band_limits, pick_best_prefix, swap_band
 
@@ -82,6 +82,29 @@ class SwapBandTests(unittest.TestCase):
         self.assertEqual(band_limits("2400_2600"), (2400.0, 2600.0))
         self.assertEqual(pick_best_prefix({"r1": 1.07, "r2": 1.10}), "r1")
         self.assertEqual(pick_best_prefix({"r1": 1.07, "r2": 0.97}), "r2")
+
+
+class PerSiteTests(unittest.TestCase):
+    def test_per_receiver_config_keeps_one_receiver_in_every_partition(self):
+        config = restrict_files_to_site(_base(), "moran")
+        self.assertEqual(sorted({f["partition"] for f in config["data"]["files"]}), ["test", "train", "validation"])
+        self.assertTrue(all("/moran-nuc1/" in f["path"] for f in config["data"]["files"]))
+        self.assertEqual(len(config["data"]["files"]), 3)
+
+    def test_pooled_scoring_restricts_only_the_test_partition(self):
+        config = restrict_files_to_site(_base(), "madsen", ("test",))
+        by = {p: [f["path"] for f in config["data"]["files"] if f["partition"] == p] for p in ("train", "validation", "test")}
+        self.assertEqual(len(by["train"]), 4)       # normalization still fitted on all four receivers
+        self.assertEqual(len(by["validation"]), 4)
+        self.assertEqual(len(by["test"]), 1)
+        self.assertIn("/madsen-nuc1/", by["test"][0])
+
+    def test_unknown_receiver_is_rejected_and_base_is_untouched(self):
+        base = _base()
+        n = len(base["data"]["files"])
+        with self.assertRaises(ValueError):
+            restrict_files_to_site(base, "web")
+        self.assertEqual(len(base["data"]["files"]), n)
 
 
 if __name__ == "__main__":

@@ -67,6 +67,24 @@ def build_eval_config(base: dict[str, Any], model: str, costs: dict[str, Any], *
     return config
 
 
+CORE_SITES = ("humanities", "madsen", "moran", "sagepoint")
+
+
+def restrict_files_to_site(config: dict[str, Any], site: str, partitions: tuple[str, ...] | None = None) -> dict[str, Any]:
+    """Keep only one receiver's files, in all partitions or just the given ones."""
+    config = copy.deepcopy(config)
+    kept = []
+    for entry in config["data"]["files"]:
+        in_scope = partitions is None or entry["partition"] in partitions
+        if not in_scope or f"/{site}-nuc1/" in entry["path"]:
+            kept.append(entry)
+    for partition in (partitions or ("train", "validation", "test")):
+        if not any(e["partition"] == partition and f"/{site}-nuc1/" in e["path"] for e in kept):
+            raise ValueError(f"No {partition} files for site {site!r}")
+    config["data"]["files"] = kept
+    return config
+
+
 def summarize_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Collapse aggregate_metrics rows to per-split, per-horizon means plus an overall mean."""
     out: dict[str, Any] = {}
@@ -109,13 +127,24 @@ def evaluate_entry(entry: dict[str, Any], args: dict[str, Any]) -> dict[str, Any
                 test_stride=args["test_stride"],
                 data_dir_swap=tuple(args["data_dir_swap"]) if args["data_dir_swap"] else None,
                 device=args["device"])
-            out_dir = Path(scratch) / "eval"
-            out_dir.mkdir()
-            evaluate_one_model(config, entry["model"], out_dir, checkpoint, skip_plots=True)
-            rows = pd.read_csv(out_dir / "aggregate_metrics.csv").to_dict("records")
-        result.update(summarize_metrics(rows))
-        result["n_test_windows"] = int(max((r.get("n_targets") or 0) for r in rows
-                                           if str(r["split"]).endswith("test")) or 0)
+            sites = args.get("test_sites") or [None]
+            per_site = []
+            for site in sites:
+                site_config = config if site is None else restrict_files_to_site(config, site, ("test",))
+                out_dir = Path(scratch) / f"eval-{site or 'all'}"
+                out_dir.mkdir()
+                evaluate_one_model(site_config, entry["model"], out_dir, checkpoint, skip_plots=True)
+                rows = pd.read_csv(out_dir / "aggregate_metrics.csv").to_dict("records")
+                summary = summarize_metrics(rows)
+                summary["n_test_windows"] = int(max((r.get("n_targets") or 0) for r in rows
+                                                    if str(r["split"]).endswith("test")) or 0)
+                per_site.append((site, summary))
+        if len(per_site) == 1 and per_site[0][0] is None:
+            result.update(per_site[0][1])
+        else:
+            # one flat row per site: <site>__<metric>
+            for site, summary in per_site:
+                result.update({f"{site}__{k}": v for k, v in summary.items()})
         result["ok"] = True
     except Exception as error:
         import traceback
@@ -158,7 +187,8 @@ def launch(args: argparse.Namespace) -> None:
     remote = ray.remote(**options)(evaluate_entry)
     worker_args = {"repo_root": args.repo_root, "bucket": bucket, "test_start": args.test_start,
                    "test_end": args.test_end, "test_stride": args.test_stride,
-                   "data_dir_swap": args.data_dir_swap, "device": args.device}
+                   "data_dir_swap": args.data_dir_swap, "device": args.device,
+                   "test_sites": args.test_sites}
     frame = pd.DataFrame(ray.get([remote.remote(e, worker_args) for e in entries]))
     stamp = time.strftime("%Y%m%dT%H%MZ", time.gmtime())
     key = f"{args.output_prefix.strip('/')}/final_eval_{stamp}.csv"
@@ -183,6 +213,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--data-dir-swap", nargs=2, metavar=("OLD", "NEW"),
                         help="Replace this path prefix in data.files, e.g. data/powder/ data/powder_final/")
     parser.add_argument("--device", default=None, help="Override training.device (cuda/cpu)")
+    parser.add_argument("--test-sites", nargs="+", help="Also score the test range one receiver at a time "
+                        "(training/validation data, and so the normalization, stay pooled)")
     parser.add_argument("--gpu-fraction", type=float, default=0.25)
     parser.add_argument("--bucket", default=None)
     parser.add_argument("--output-prefix", default="oct2026-results/final-eval")

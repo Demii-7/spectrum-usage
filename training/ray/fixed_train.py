@@ -24,8 +24,8 @@ from typing import Any
 import yaml
 
 from .final_eval import (
-    DEFAULT_TEST_END, DEFAULT_TEST_START, build_eval_config, config_file_for, parse_checkpoint_key,
-    summarize_metrics,
+    CORE_SITES, DEFAULT_TEST_END, DEFAULT_TEST_START, build_eval_config, config_file_for, parse_checkpoint_key,
+    restrict_files_to_site, summarize_metrics,
 )
 
 REFERENCE_MODELS = {"lookbackmean1d": "1d", "lookbackmean2d": "2d", "lookbackmean4d": "4d"}
@@ -114,6 +114,10 @@ def train_entry(entry: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
                                        test_end=args["test_end"], test_stride=args["test_stride"],
                                        device=args["device"])
         config = swap_band(config, args["band"])
+        site = entry.get("site")
+        if site:  # a receiver-specific model: its own data, its own normalization statistics
+            config = restrict_files_to_site(config, site)
+            result["site"] = site
         config[model]["train"]["seed"] = seed
         with tempfile.TemporaryDirectory(prefix="fixed-train-") as scratch:
             run_dir = Path(scratch) / "run"
@@ -128,7 +132,8 @@ def train_entry(entry: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
             if costs_file:
                 result.update({k: v for k, v in json.loads(costs_file.read_text()).items()
                                if k.startswith("cost_") and not k.endswith("_json")})
-            destination = f"{args['output_prefix'].strip('/')}/{args['band']}/{rep}/{model}/seed-{seed}"
+            site_part = f"/site-{site}" if site else ""
+            destination = f"{args['output_prefix'].strip('/')}/{args['band']}/{rep}/{model}{site_part}/seed-{seed}"
             for path in [checkpoint] + ([costs_file] if costs_file else []):
                 client.upload_file(str(path), bucket, f"{destination}/{path.name}")
             result["checkpoint_key"] = f"{destination}/{checkpoint.name}"
@@ -167,7 +172,14 @@ def launch(args: argparse.Namespace) -> None:
     if args.include_reference:
         entries += [{"rep": rep, "model": m, "source_prefix": "", "costs_key": ""}
                     for m, rep in REFERENCE_MODELS.items() if not args.models or m in args.models]
-    jobs = [{**e, "seed": seed} for e in entries for seed in (args.seeds if e["model"] not in REFERENCE_MODELS else [42])]
+    if args.per_site:
+        entries = [e for e in entries if e["rep"] != "4d"]
+        sites = args.sites or list(CORE_SITES)
+        jobs = [{**e, "seed": seed, "site": site} for e in entries for site in sites
+                for seed in (args.seeds if e["model"] not in REFERENCE_MODELS else [42])]
+    else:
+        jobs = [{**e, "seed": seed} for e in entries
+                for seed in (args.seeds if e["model"] not in REFERENCE_MODELS else [42])]
     print(f"[fixed_train] {len(entries)} models x seeds -> {len(jobs)} runs on band {args.band}", flush=True)
     ray.init(address=args.address, ignore_reinit_error=True)
     worker_args = {"repo_root": args.repo_root, "bucket": bucket, "band": args.band, "test_start": args.test_start,
@@ -186,7 +198,8 @@ def launch(args: argparse.Namespace) -> None:
                                   max_retries=1)(train_entry).remote(job, worker_args))
     frame = pd.DataFrame(ray.get(futures))
     stamp = time.strftime("%Y%m%dT%H%MZ", time.gmtime())
-    key = f"{args.output_prefix.strip('/')}/{args.band}/summary_{stamp}.csv"
+    tag = "per_site_" if args.per_site else ""
+    key = f"{args.output_prefix.strip('/')}/{args.band}/{tag}summary_{stamp}.csv"
     buffer = io.StringIO()
     frame.to_csv(buffer, index=False)
     client.put_object(Bucket=bucket, Key=key, Body=buffer.getvalue().encode())
@@ -203,6 +216,9 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--models", nargs="+")
     parser.add_argument("--seeds", nargs="+", type=int, default=[42])
     parser.add_argument("--include-reference", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--per-site", action="store_true",
+                        help="Train a separate model per receiver (own data and normalization); not for 4D")
+    parser.add_argument("--sites", nargs="+", help="Receivers for --per-site (default: the four core nodes)")
     parser.add_argument("--test-start", default=DEFAULT_TEST_START)
     parser.add_argument("--test-end", default="2026-10-30T18:00:00Z",
                         help="Preliminary cutoff by default; pass the final end once the data is synced")
