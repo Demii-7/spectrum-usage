@@ -151,6 +151,14 @@ def summarize_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return out
 
 
+def per_bin_test_rows(frame, context: dict[str, Any]):
+    """Test-split rows of per_frequency_metrics.csv, tagged with which checkpoint they came from."""
+    rows = frame[frame["split"].astype(str).str.endswith("test")].copy()
+    for name, value in context.items():
+        rows.insert(0, name, value)
+    return rows
+
+
 def evaluate_entry(entry: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     """Remote worker: download one checkpoint, evaluate it, return a flat result row."""
     import os
@@ -179,16 +187,31 @@ def evaluate_entry(entry: dict[str, Any], args: dict[str, Any]) -> dict[str, Any
                 device=args["device"])
             sites = args.get("test_sites") or [None]
             per_site = []
+            per_bin_frames = []
             for site in sites:
                 site_config = config if site is None else restrict_files_to_site(config, site, ("test",))
                 out_dir = Path(scratch) / f"eval-{site or 'all'}"
                 out_dir.mkdir()
                 evaluate_one_model(site_config, entry["model"], out_dir, checkpoint, skip_plots=True)
                 rows = pd.read_csv(out_dir / "aggregate_metrics.csv").to_dict("records")
+                per_bin = pd.read_csv(out_dir / "per_frequency_metrics.csv")
+                per_bin_frames.append(per_bin_test_rows(per_bin, {"scored_site": site or "all"}))
                 summary = summarize_metrics(rows)
                 summary["n_test_windows"] = int(max((r.get("n_targets") or 0) for r in rows
                                                     if str(r["split"]).endswith("test")) or 0)
                 per_site.append((site, summary))
+            if args.get("per_bin_prefix"):
+                import io
+
+                table = pd.concat(per_bin_frames, ignore_index=True)
+                for name in ("seed", "model", "rep", "prefix"):
+                    table.insert(0, name, entry[name])
+                buffer = io.StringIO()
+                table.to_csv(buffer, index=False)
+                key = (f"{args['per_bin_prefix'].strip('/')}/{entry['prefix']}/{entry['rep']}/"
+                       f"{entry['model']}/seed-{entry['seed']}.csv")
+                client.put_object(Bucket=bucket, Key=key, Body=buffer.getvalue().encode())
+                result["per_bin_key"] = key
         if len(per_site) == 1 and per_site[0][0] is None:
             result.update(per_site[0][1])
         else:
@@ -238,7 +261,8 @@ def launch(args: argparse.Namespace) -> None:
     worker_args = {"repo_root": args.repo_root, "bucket": bucket, "test_start": args.test_start,
                    "test_end": args.test_end, "test_stride": args.test_stride,
                    "data_dir_swap": args.data_dir_swap, "device": args.device,
-                   "test_sites": args.test_sites}
+                   "test_sites": args.test_sites,
+                   "per_bin_prefix": None if args.no_per_bin else f"{args.output_prefix.strip('/')}/per-bin"}
     frame = pd.DataFrame(ray.get([remote.remote(e, worker_args) for e in entries]))
     stamp = time.strftime("%Y%m%dT%H%MZ", time.gmtime())
     key = f"{args.output_prefix.strip('/')}/final_eval_{stamp}.csv"
@@ -265,6 +289,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--device", default=None, help="Override training.device (cuda/cpu)")
     parser.add_argument("--test-sites", nargs="+", help="Also score the test range one receiver at a time "
                         "(training/validation data, and so the normalization, stay pooled)")
+    parser.add_argument("--no-per-bin", action="store_true",
+                        help="Do not save per-bin (per_frequency_metrics) test rows for each checkpoint")
     parser.add_argument("--gpu-fraction", type=float, default=0.25)
     parser.add_argument("--bucket", default=None)
     parser.add_argument("--output-prefix", default="oct2026-results/final-eval")

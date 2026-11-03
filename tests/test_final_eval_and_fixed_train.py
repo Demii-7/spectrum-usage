@@ -160,3 +160,15 @@ def test_summarize_metrics_pools_rmse_and_mape_by_target_count():
     # old-format rows (no new columns) still work
     legacy = summarize_metrics([{"split": "a_test", "horizon": 1, "mae_db": 1.0}])
     assert legacy == {"test_mae_db_t1": 1.0, "test_mean_horizon_mae_db": 1.0}
+
+
+def test_per_bin_test_rows_keeps_only_test_split_and_tags_context():
+    import pandas as pd
+
+    from training.ray.final_eval import per_bin_test_rows
+
+    frame = pd.DataFrame({"split": ["humanities_validation", "humanities_test", "madsen_test"],
+                          "frequency_mhz": [600.5, 600.5, 601.5], "mae_db": [1.0, 2.0, 3.0]})
+    out = per_bin_test_rows(frame, {"model": "m", "scored_site": "all"})
+    assert list(out["mae_db"]) == [2.0, 3.0]
+    assert set(out["model"]) == {"m"} and "scored_site" in out.columns

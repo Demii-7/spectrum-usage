@@ -90,6 +90,7 @@ def append_metric_rows(
     feature_labels: list[str] | None = None,
     frequency_indices: np.ndarray | None = None,
     extra_aggregate: dict[str, float] | None = None,
+    pct_errors: dict[str, np.ndarray] | None = None,
 ) -> None:
     aggregate_rows.append(
         {
@@ -122,6 +123,7 @@ def append_metric_rows(
         )
         if not np.any(selected):
             continue
+        column = 0 if frequency_indices is not None else idx
         frequency_rows.append(
             {
                 "chunk_id": chunk_id,
@@ -130,8 +132,10 @@ def append_metric_rows(
                 "split": split_name,
                 "horizon": int(horizon),
                 "model": model,
-                "mae_db": float(np.mean(abs_err[selected, 0 if frequency_indices is not None else idx])),
-                "rmse_db": float(np.sqrt(np.mean(sq_err[selected, 0 if frequency_indices is not None else idx]))),
+                "mae_db": float(np.mean(abs_err[selected, column])),
+                "rmse_db": float(np.sqrt(np.mean(sq_err[selected, column]))),
+                "mse_db2": float(np.mean(sq_err[selected, column])),
+                **{name: float(np.mean(values[selected, column])) for name, values in (pct_errors or {}).items()},
             }
         )
 
