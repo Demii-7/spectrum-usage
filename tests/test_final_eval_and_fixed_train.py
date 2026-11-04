@@ -182,3 +182,39 @@ def test_per_bin_test_rows_context_overrides_existing_columns():
     frame = pd.DataFrame({"split": ["a_test"], "model": ["from_evaluator"], "mae_db": [1.0]})
     out = per_bin_test_rows(frame, {"model": "from_context", "seed": 42})
     assert list(out["model"]) == ["from_context"] and list(out.columns).count("model") == 1
+
+
+def test_horizon_jobs_skip_one_step_and_already_direct_models():
+    from training.ray.fixed_train import horizon_jobs
+
+    entries = [{"rep": "2d", "model": m} for m in
+               ("vanillalstm", "linearar2d", "lookbackmean2d", "autoformer_csa")]
+    jobs = horizon_jobs(entries, [15, 60])
+    assert [(j["model"], j["horizon"]) for j in jobs] == [
+        ("vanillalstm", 15), ("vanillalstm", 60), ("autoformer_csa", 15)]
+
+
+def test_set_direct_horizon_sets_model_and_scoring_horizons():
+    from training.ray.fixed_train import set_direct_horizon
+
+    base = {"windowing": {"lookback": 60, "horizons": [1, 15, 60]},
+            "vanillalstm": {"model": {"prediction_horizon": 1}, "train": {}}}
+    c15 = set_direct_horizon(base, "vanillalstm", 15)
+    assert c15["windowing"]["horizons"] == [1, 15] and c15["vanillalstm"]["model"]["prediction_horizon"] == 15
+    c60 = set_direct_horizon(base, "vanillalstm", 60)
+    assert c60["windowing"]["horizons"] == [1, 15, 60] and c60["vanillalstm"]["model"]["prediction_horizon"] == 60
+    assert base["windowing"]["horizons"] == [1, 15, 60]  # input untouched
+
+
+def test_spectral_context_jobs_cover_every_cell_and_skip_non_2d():
+    from training.ray.spectral_context_fixed import make_jobs, record_key
+
+    entries = [{"rep": "2d", "model": "vanillalstm", "costs_key": "k"},
+               {"rep": "1d", "model": "linearar1d", "costs_key": "k"}]
+    regions = [{"band_id": "R1", "start_mhz": 600.5, "end_mhz": 607.5},
+               {"band_id": "R3", "start_mhz": 622.5, "end_mhz": 641.5}]
+    jobs = make_jobs(entries, regions, [40, 41])
+    assert len(jobs) == 1 * 2 * 2 * 2 and {j["model"] for j in jobs} == {"vanillalstm"}
+    assert {j["condition"] for j in jobs} == {"full_context", "region_only"}
+    assert record_key("p/", jobs[0]).startswith("p/vanillalstm/R1-")
+    assert len({record_key("p", j) for j in jobs}) == len(jobs)  # unique per cell

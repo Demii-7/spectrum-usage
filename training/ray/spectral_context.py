@@ -60,20 +60,12 @@ def regional_config(
     return config
 
 
-def _test_region_metrics(
+def region_metrics_from_forecasts(
     config: dict[str, Any],
-    model_name: str,
-    run_directory: Path,
+    output: Path,
     region: dict[str, Any],
 ) -> dict[str, float | int]:
-    from training.common.evaluation_integrated import evaluate_one_model
-
-    checkpoint = next((run_directory / "integrated/checkpoints").glob("*.pt"), None)
-    if checkpoint is None:
-        raise RuntimeError(f"No checkpoint found for {model_name}")
-    output = run_directory / "evaluation"
-    output.mkdir(parents=True, exist_ok=True)
-    evaluate_one_model(config, model_name, output, checkpoint, skip_plots=True)
+    """Test MAE/RMSE per horizon over one region's bins, from exported forecast files in ``output``."""
     metadata_paths = list((output / "forecasts").glob("*_metadata.json"))
     if len(metadata_paths) != 1:
         raise RuntimeError(f"Expected one forecast metadata file, found {len(metadata_paths)}")
@@ -105,6 +97,23 @@ def _test_region_metrics(
     metrics["test_mean_horizon_mae_db"] = float(np.mean(mae_values))
     metrics["test_mean_horizon_rmse_db"] = float(np.mean(rmse_values))
     return metrics
+
+
+def _test_region_metrics(
+    config: dict[str, Any],
+    model_name: str,
+    run_directory: Path,
+    region: dict[str, Any],
+) -> dict[str, float | int]:
+    from training.common.evaluation_integrated import evaluate_one_model
+
+    checkpoint = next((run_directory / "integrated/checkpoints").glob("*.pt"), None)
+    if checkpoint is None:
+        raise RuntimeError(f"No checkpoint found for {model_name}")
+    output = run_directory / "evaluation"
+    output.mkdir(parents=True, exist_ok=True)
+    evaluate_one_model(config, model_name, output, checkpoint, skip_plots=True)
+    return region_metrics_from_forecasts(config, output, region)
 
 
 def _campaign_trainable(base_config, model_name, parameters, regions):

@@ -33,6 +33,32 @@ REFERENCE_MODELS = {"lookbackmean1d": "1d", "lookbackmean2d": "2d", "lookbackmea
 COST_ORDER = {"dswinlstm_i": 100, "residualconvlstm": 40, "convlstm": 40, "vanillalstm1d": 30,
               "residualvanillalstm1d": 30, "autoformer_csa": 20, "temporalconvnet": 20}
 
+DIRECT_AT_60 = {"autoformer_csa", "dswinlstm_i"}  # already trained directly for 60 steps
+ONE_STEP_ONLY = {"linearar1d", "linearar2d", "linearar4d", "residuallinearar1d", "residuallinearar2d",
+                 "residuallinearar4d", *REFERENCE_MODELS}  # no direct multi-step form; rolled out instead
+STANDARD_HORIZONS = (1, 15, 60)
+
+
+def horizon_jobs(entries: list[dict[str, Any]], horizons: list[int]) -> list[dict[str, Any]]:
+    """One job per (model, horizon) for models that can be trained directly for that many steps."""
+    jobs = []
+    for entry in entries:
+        if entry["model"] in ONE_STEP_ONLY:
+            continue
+        for horizon in horizons:
+            if horizon == 60 and entry["model"] in DIRECT_AT_60:
+                continue  # the main run is already a direct 60-step model
+            jobs.append({**entry, "horizon": int(horizon)})
+    return jobs
+
+
+def set_direct_horizon(config: dict[str, Any], model: str, horizon: int) -> dict[str, Any]:
+    """Train the model directly for ``horizon`` steps and score at the standard horizons up to it."""
+    config = copy.deepcopy(config)
+    config["windowing"]["horizons"] = sorted({h for h in STANDARD_HORIZONS if h < horizon} | {horizon})
+    config[model]["model"]["prediction_horizon"] = int(horizon)
+    return config
+
 
 def band_limits(band: str) -> tuple[float, float]:
     low, high = band.split("_")
@@ -118,6 +144,10 @@ def train_entry(entry: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         if site:  # a receiver-specific model: its own data, its own normalization statistics
             config = restrict_files_to_site(ensure_site_files(config, site), site)
             result["site"] = site
+        horizon = entry.get("horizon")
+        if horizon:  # a model trained directly for this many steps (no new search)
+            config = set_direct_horizon(config, model, int(horizon))
+            result["horizon"] = int(horizon)
         pooled = entry.get("pooled_sites")
         if pooled:  # one model over exactly these receivers, normalization pooled across them
             config = pool_sites(config, pooled)
@@ -137,7 +167,10 @@ def train_entry(entry: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
                 result.update({k: v for k, v in json.loads(costs_file.read_text()).items()
                                if k.startswith("cost_") and not k.endswith("_json")})
             site_part = f"/site-{site}" if site else (f"/pooled-{len(pooled)}" if pooled else "")
-            destination = f"{args['output_prefix'].strip('/')}/{args['band']}/{rep}/{model}{site_part}/seed-{seed}"
+            horizon_part = f"/h{int(horizon)}" if horizon else ""
+            destination = (f"{args['output_prefix'].strip('/')}/{args['band']}/{rep}/{model}{horizon_part}"
+                           f"{site_part}/seed-{seed}")
+            result["destination"] = destination
             for path in [checkpoint] + ([costs_file] if costs_file else []):
                 client.upload_file(str(path), bucket, f"{destination}/{path.name}")
             result["checkpoint_key"] = f"{destination}/{checkpoint.name}"
@@ -147,6 +180,15 @@ def train_entry(entry: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
 
         result.update(ok=False, error=f"{type(error).__name__}: {error}"[:300], trace=traceback.format_exc()[-800:])
     result["wall_seconds"] = round(time.time() - started, 1)
+    # Per-run record next to the checkpoint (or where it would be), so failures are visible as they happen.
+    try:
+        site_part = f"/site-{entry['site']}" if entry.get("site") else ""
+        horizon_part = f"/h{int(entry['horizon'])}" if entry.get("horizon") else ""
+        record_key = (f"{args['output_prefix'].strip('/')}/{args['band']}/_results/{rep}-{model}{horizon_part}"
+                      f"{site_part.replace('/', '-')}-seed-{seed}.json")
+        client.put_object(Bucket=bucket, Key=record_key, Body=json.dumps(result, default=str).encode())
+    except Exception:
+        pass
     return result
 
 
@@ -181,6 +223,9 @@ def launch(args: argparse.Namespace) -> None:
         sites = args.sites or list(CORE_SITES)
         jobs = [{**e, "seed": seed, "site": site} for e in entries for site in sites
                 for seed in (args.seeds if e["model"] not in REFERENCE_MODELS else [42])]
+    elif args.horizon:
+        jobs = [{**j, "seed": seed} for j in horizon_jobs([e for e in entries if e["model"] not in REFERENCE_MODELS],
+                                                          args.horizon) for seed in args.seeds]
     elif args.pooled_sites:
         jobs = [{**e, "seed": seed, "pooled_sites": args.pooled_sites} for e in entries if e["rep"] == "2d"
                 for seed in (args.seeds if e["model"] not in REFERENCE_MODELS else [42])]
@@ -205,7 +250,7 @@ def launch(args: argparse.Namespace) -> None:
                                   max_retries=1)(train_entry).remote(job, worker_args))
     frame = pd.DataFrame(ray.get(futures))
     stamp = time.strftime("%Y%m%dT%H%MZ", time.gmtime())
-    tag = "per_site_" if args.per_site else ("pooled_" if args.pooled_sites else "")
+    tag = "per_site_" if args.per_site else ("pooled_" if args.pooled_sites else ("horizon_" if args.horizon else ""))
     key = f"{args.output_prefix.strip('/')}/{args.band}/{tag}summary_{stamp}.csv"
     buffer = io.StringIO()
     frame.to_csv(buffer, index=False)
@@ -225,6 +270,9 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--include-reference", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--per-site", action="store_true",
                         help="Train a separate model per receiver (own data and normalization); not for 4D")
+    parser.add_argument("--horizon", nargs="+", type=int,
+                        help="Train each model directly for these horizons (e.g. 15 60) with its selected "
+                             "hyperparameters; linear and reference models are skipped (one-step by design)")
     parser.add_argument("--pooled-sites", nargs="+",
                         help="Train one pooled 2D model over exactly these receivers (may include held-out ones)")
     parser.add_argument("--sites", nargs="+", help="Receivers for --per-site (default: the four core nodes; held-out ones such as "

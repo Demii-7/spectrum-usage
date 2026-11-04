@@ -1,0 +1,167 @@
+"""Spectral-context ablation (full context vs region-only) with inherited hyperparameters, on any Ray cluster.
+
+Standalone like ``fixed_train``: each model's selected configuration is rebuilt from the
+``*_run_costs.json`` next to its exported checkpoint (no search, no MinIO campaign state). For every
+(model, non-noise region, condition, seed) one model is trained and its test error over the region's bins
+is recorded. ``region_only`` replaces all other bins with noise-floor values; both conditions compute the
+loss over the target region only, so the comparison isolates whether out-of-region bins help.
+
+    python -m training.ray.spectral_context_fixed --models temporalconvnet vanillalstm
+"""
+
+from __future__ import annotations
+
+import argparse
+import copy
+import io
+import json
+import os
+import tempfile
+import time
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+from .final_eval import DEFAULT_TEST_START, build_eval_config, config_file_for
+from .fixed_train import discover_models
+
+DEFAULT_MODELS = ("vanillalstm", "residualvanillalstm", "lstmattn", "temporalconvnet", "autoformer_csa")
+DEFAULT_SEEDS = (40, 41, 42, 43, 44)
+CONDITIONS = ("full_context", "region_only")
+
+
+def make_jobs(entries: list[dict[str, Any]], regions: list[dict[str, Any]], seeds, conditions=CONDITIONS):
+    """One job per (model, region, condition, seed); entries are discover_models() rows for 2D models."""
+    return [{**entry, "region": region, "condition": condition, "seed": int(seed)}
+            for entry in entries if entry["rep"] == "2d"
+            for region in regions for condition in conditions for seed in seeds]
+
+
+def record_key(prefix: str, job: dict[str, Any]) -> str:
+    return (f"{prefix.strip('/')}/{job['model']}/{job['region']['band_id']}-{job['condition']}"
+            f"-seed-{job['seed']}.json")
+
+
+def ablation_entry(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    """Remote worker: train one (model, region, condition, seed) cell and record its region test metrics."""
+    import sys
+
+    sys.path.insert(0, args["repo_root"])
+    os.chdir(args["repo_root"])
+    from training.common.evaluation_integrated import evaluate_one_model
+    from training.common.train_integrated import train_one_model
+    from training.ray.spectral_context import regional_config, region_metrics_from_forecasts
+    from training.ray.storage import spectrum_s3_client
+
+    client, bucket = spectrum_s3_client(), args["bucket"]
+    model, region = job["model"], job["region"]
+    result = {"model": model, "seed": job["seed"], "condition": job["condition"],
+              "band_id": str(region["band_id"]), "start_mhz": float(region["start_mhz"]),
+              "end_mhz": float(region["end_mhz"]), "source_prefix": job.get("source_prefix", "")}
+    started = time.time()
+    try:
+        base = yaml.safe_load(Path(config_file_for(model, job["rep"])).read_text())
+        costs = json.loads(client.get_object(Bucket=bucket, Key=job["costs_key"])["Body"].read())
+        config = build_eval_config(base, model, costs, test_start=args["test_start"], test_end=args["test_end"],
+                                   test_stride=args["test_stride"], device=args["device"])
+        config = regional_config(config, region, job["condition"], job["seed"])
+        config[model]["train"]["seed"] = job["seed"]
+        with tempfile.TemporaryDirectory(prefix="spectral-ctx-") as scratch:
+            run_dir = Path(scratch) / "run"
+            train_one_model(config, model, run_dir)
+            checkpoint = next((run_dir / "checkpoints").glob("*.pt"))
+            eval_dir = Path(scratch) / "eval"
+            eval_dir.mkdir()
+            evaluate_one_model(config, model, eval_dir, checkpoint, skip_plots=True)
+            result.update(region_metrics_from_forecasts(config, eval_dir, region))
+        result["ok"] = True
+    except Exception as error:
+        import traceback
+
+        result.update(ok=False, error=f"{type(error).__name__}: {error}"[:300], trace=traceback.format_exc()[-800:])
+    result["wall_seconds"] = round(time.time() - started, 1)
+    try:  # per-cell record, so progress and failures are visible while the job runs and reruns can skip done cells
+        client.put_object(Bucket=bucket, Key=record_key(args["output_prefix"], job),
+                          Body=json.dumps(result, default=str).encode())
+    except Exception:
+        pass
+    return result
+
+
+def launch(args: argparse.Namespace) -> None:
+    import pandas as pd
+    import ray
+
+    from .registry import get_model_spec
+    from .spectral_context import non_noise_regions
+    from .storage import spectrum_s3_client
+
+    client = spectrum_s3_client()
+    bucket = args.bucket or os.environ.get("SPECTRUM_S3_BUCKET", "spectrum")
+    entries = discover_models(client, bucket, args.prefixes, list(args.models))
+    regions = non_noise_regions(args.regions)
+    if args.regions_only:
+        regions = [r for r in regions if str(r["band_id"]) in set(args.regions_only)]
+    jobs = make_jobs(entries, regions, args.seeds)
+    done = set()
+    if args.skip_done:
+        for page in client.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=args.output_prefix.strip("/") + "/"):
+            for obj in page.get("Contents", []):
+                body = json.loads(client.get_object(Bucket=bucket, Key=obj["Key"])["Body"].read()) \
+                    if obj["Key"].endswith(".json") else {}
+                if body.get("ok"):
+                    done.add(obj["Key"])
+    todo = [j for j in jobs if record_key(args.output_prefix, j) not in done]
+    print(f"[spectral_context] {len(entries)} models, {len(regions)} regions, {len(args.seeds)} seeds: "
+          f"{len(jobs)} cells, {len(jobs) - len(todo)} already done, {len(todo)} to run", flush=True)
+    ray.init(address=args.address, ignore_reinit_error=True)
+    worker_args = {"repo_root": args.repo_root, "bucket": bucket, "output_prefix": args.output_prefix,
+                   "test_start": args.test_start, "test_end": args.test_end, "test_stride": args.test_stride,
+                   "device": args.device}
+    futures = []
+    for job in todo:
+        spec = get_model_spec(job["model"])
+        resources = dict(spec.resources.as_ray())
+        gpu = args.gpu_fraction if resources.get("gpu", 0) > 0 else 0
+        futures.append(ray.remote(num_cpus=resources["cpu"], num_gpus=gpu, max_retries=1)(ablation_entry)
+                       .remote(job, worker_args))
+    frame = pd.DataFrame(ray.get(futures))
+    stamp = time.strftime("%Y%m%dT%H%MZ", time.gmtime())
+    key = f"{args.output_prefix.strip('/')}/summary_{stamp}.csv"
+    buffer = io.StringIO()
+    frame.to_csv(buffer, index=False)
+    client.put_object(Bucket=bucket, Key=key, Body=buffer.getvalue().encode())
+    failed = frame[~frame["ok"].astype(bool)] if len(frame) else frame
+    print(f"[spectral_context] wrote s3://{bucket}/{key}; {len(frame)} cells, {len(failed)} failed", flush=True)
+    for _, row in failed.head(8).iterrows():
+        print(f"[spectral_context] FAILED {row['model']} {row['band_id']} {row['condition']} seed {row['seed']}: "
+              f"{row.get('error')}", flush=True)
+
+
+def parse_args(argv=None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--models", nargs="+", default=list(DEFAULT_MODELS))
+    parser.add_argument("--seeds", nargs="+", type=int, default=list(DEFAULT_SEEDS))
+    parser.add_argument("--prefixes", nargs="+", default=["checkpoints-oct2026", "checkpoints-oct2026-r2"])
+    parser.add_argument("--regions", type=Path, default=Path("evaluation/analysis/plan_regions_600_800.csv"))
+    parser.add_argument("--regions-only", nargs="+", help="Only these band ids (e.g. R1 R3)")
+    parser.add_argument("--test-start", default=DEFAULT_TEST_START)
+    parser.add_argument("--test-end", default="2026-11-03T20:00:00Z")
+    parser.add_argument("--test-stride", type=int, default=None, help="Override test stride (default: as selected)")
+    parser.add_argument("--device", default=None)
+    parser.add_argument("--gpu-fraction", type=float, default=0.25)
+    parser.add_argument("--skip-done", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--bucket", default=None)
+    parser.add_argument("--output-prefix", default="oct2026-spectral-context")
+    parser.add_argument("--address", default="auto")
+    parser.add_argument("--repo-root", default="/workspace/spectrum-usage")
+    return parser.parse_args(argv)
+
+
+def main(argv=None) -> None:
+    launch(parse_args(argv))
+
+
+if __name__ == "__main__":
+    main()
