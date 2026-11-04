@@ -38,8 +38,9 @@ checkpoint, so the cost table has comparable numbers. Not written yet.
 ## Horizon-specific models (15 and 60 minutes)
 Train separate models directly for the 15- and 60-minute horizons (current models are one-step and rolled
 out autoregressively, except Autoformer-CSA and DSwinLSTM-I, which output 60 steps). Reuse each model's
-selected hyperparameters; no new search. `fixed_train` has no horizon option yet, so this needs a small code
-change. Start with 2D and 1D, add 4D only if a trend appears.
+selected hyperparameters; no new search. `fixed_train --horizon 15 60` now does this (code `c626a57`, needs
+syncing); linear and reference models are skipped because they are one-step by design (they stay rolled out).
+Start with 2D and 1D, add 4D only if a trend appears.
 
 ## TimeRAN (and MOMENT) experiments
 The paper's TimeRAN results (1D, per receiver-frequency series; head-only and full fine-tuning; plus the MOMENT
