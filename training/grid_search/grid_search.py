@@ -74,6 +74,12 @@ RESULTS_COLUMNS = [
     "use_batch_norm", "cell_activation",
     "fc_hidden_channels", "fc_kernel_size", "fc_intermediate_activation",
     "use_channel_projection", "channel_projection_dim",
+    # SpectrumLLM / OFA-specific. "dropout" is shared with the VanillaLSTM block above.
+    # d_model and d_ff are absent for ofa, which has no reprogramming stage; the column
+    # stays in the schema and is left empty for those rows.
+    "d_model", "d_ff", "patch_length", "patch_stride", "llm_layers",
+    "num_prototypes", "attention_heads", "channel_independent", "backbone",
+    "prompt_mode", "prompt_stats",
     # Shared
     "learning_rate", "batch_size", "weight_decay",
     "optimizer", "gradient_clip_norm",
@@ -86,6 +92,29 @@ RESULTS_COLUMNS = [
     "parameter_count", "peak_gpu_memory_mb",
     "training_seconds", "validation_seconds", "total_seconds",
     "checkpoint_path", "config_path", "error_message",
+]
+
+
+# The LLM arms are far slower per epoch than the ConvLSTM family -- a GPT-2 forward over
+# every patch of every window dominates -- so the smoke grid is three trials, not eight,
+# and leans on llm_layers to make the first one cheap.
+SPECTRUMLLM_SMOKE_GRID: list[dict[str, Any]] = [
+    {"d_model": 16, "d_ff": 32, "patch_length": 16, "patch_stride": 8, "llm_layers": 3,
+     "channel_independent": False, "dropout": 0.1,
+     "learning_rate": 0.001, "batch_size": 16, "weight_decay": 0.0},
+    {"d_model": 32, "d_ff": 32, "patch_length": 16, "patch_stride": 8, "llm_layers": 6,
+     "channel_independent": False, "dropout": 0.1,
+     "learning_rate": 0.001, "batch_size": 16, "weight_decay": 0.0},
+    {"d_model": 32, "d_ff": 128, "patch_length": 8, "patch_stride": 8, "llm_layers": 6,
+     "channel_independent": True, "dropout": 0.1,
+     "learning_rate": 0.0005, "batch_size": 8, "weight_decay": 0.0},
+]
+
+# Derived rather than written out, so the two grids cannot drift apart: OFA has no
+# reprogramming stage, so d_model and d_ff do not exist in its config.
+OFA_SMOKE_GRID: list[dict[str, Any]] = [
+    {k: v for k, v in trial.items() if k not in ("d_model", "d_ff")}
+    for trial in SPECTRUMLLM_SMOKE_GRID
 ]
 
 
@@ -163,6 +192,78 @@ def _inject_convlstm_params(
     tc["seed"] = int(params.get("seed", 42))
     tc["epochs"] = int(params.get("epochs", 10))
     tc["val_stride"] = int(params.get("val_stride", 10))
+
+
+# Which search keys belong in the model section for each LLM arm. OFA has no
+# reprogramming stage and no prompt, so those keys are absent from its config; injecting
+# them would put a d_model in results.csv that never reached the model.
+_LLM_MODEL_KEYS: dict[str, tuple[str, ...]] = {
+    "spectrumllm": (
+        "d_model", "d_ff", "patch_length", "patch_stride", "num_prototypes",
+        "attention_heads", "dropout", "llm_layers", "backbone", "channel_independent",
+        "prompt_mode", "prompt_stats", "prompt_top_lags", "revin_affine",
+    ),
+    "ofa": (
+        "patch_length", "patch_stride", "dropout", "llm_layers", "backbone",
+        "channel_independent", "revin_affine",
+    ),
+}
+
+# Everything else a trial may legitimately carry. Anything outside the union of these and
+# _LLM_MODEL_KEYS is a typo: the old positional injectors would have raised a KeyError on a
+# missing name, but a key-driven one would silently drop it and report a result for the
+# default architecture instead.
+_LLM_TRAIN_KEYS: frozenset[str] = frozenset({
+    "learning_rate", "batch_size", "weight_decay", "optimizer", "gradient_clip_norm",
+    "early_stopping", "early_stopping_patience", "seed", "epochs", "val_stride",
+    "prediction_horizon",
+})
+
+
+def _inject_spectrumllm_params(
+    config: dict[str, Any],
+    params: dict[str, Any],
+    model_name: str,
+) -> None:
+    """Inject one trial's parameters for the Time-LLM (spectrumllm) and GPT4TS (ofa) arms.
+
+    Unlike the two functions above this one is key-driven rather than positional, because
+    the two arms share a search space apart from the reprogramming parameters.
+    """
+    unsupported = set(params) & (
+        set(_LLM_MODEL_KEYS["spectrumllm"]) - set(_LLM_MODEL_KEYS[model_name])
+    )
+    if unsupported:
+        raise ValueError(
+            f"{model_name} has no {sorted(unsupported)} -- it would be silently ignored. "
+            f"Remove it from the search space."
+        )
+    unknown = set(params) - set(_LLM_MODEL_KEYS[model_name]) - _LLM_TRAIN_KEYS
+    if unknown:
+        raise ValueError(
+            f"Unknown search key(s) for {model_name}: {sorted(unknown)}"
+        )
+
+    mc = config[model_name]["model"]
+    tc = config[model_name]["train"]
+
+    for key in _LLM_MODEL_KEYS[model_name]:
+        if key in params:
+            mc[key] = params[key]
+
+    mc["prediction_horizon"] = int(params.get("prediction_horizon", 1))
+    mc["input_sequence_length"] = int(config["windowing"]["lookback"])
+
+    tc["learning_rate"] = float(params["learning_rate"])
+    tc["batch_size"] = int(params["batch_size"])
+    tc["weight_decay"] = float(params["weight_decay"])
+    tc["optimizer"] = str(params.get("optimizer", "adam"))
+    tc["gradient_clip_norm"] = float(params.get("gradient_clip_norm", 1.0))
+    tc["early_stopping"] = bool(params.get("early_stopping", True))
+    tc["early_stopping_patience"] = int(params.get("early_stopping_patience", 3))
+    tc["seed"] = int(params.get("seed", 42))
+    tc["epochs"] = int(params.get("epochs", 10))
+    tc["val_stride"] = int(params.get("val_stride", 5))
 
 
 def _validate_no_nan(
@@ -317,6 +418,13 @@ def _run_trial(
         full_params.setdefault("use_channel_projection", False)
         full_params.setdefault("channel_projection_dim", 16)
         _inject_convlstm_params(config, full_params)
+    elif model_name in ("spectrumllm", "ofa"):
+        full_params.setdefault("prediction_horizon", 1)
+        full_params.setdefault("optimizer", "adam")
+        full_params.setdefault("gradient_clip_norm", 1.0)
+        full_params.setdefault("early_stopping", True)
+        full_params.setdefault("early_stopping_patience", 3)
+        _inject_spectrumllm_params(config, full_params, model_name)
     else:
         raise ValueError(f"Unsupported model for search: {model_name}")
 
@@ -421,6 +529,10 @@ def _run_trial(
         row["dropout"] = float(full_params["dropout"]) if full_params["num_layers"] > 1 else 0.0
         row["output_strategy"] = "final_hidden"
         row["bidirectional"] = False
+    elif model_name in ("spectrumllm", "ofa"):
+        for key in _LLM_MODEL_KEYS[model_name]:
+            if key in full_params:
+                row[key] = full_params[key]
     elif model_name == "convlstm":
         row["hidden_channels"] = json.dumps(full_params["hidden_channels"])
         row["kernel_size"] = json.dumps(full_params["kernel_size"])
@@ -482,6 +594,10 @@ def _build_smoke_grid(model_name: str) -> list[dict[str, Any]]:
         return VANILLA_SMOKE_GRID
     elif model_name == "convlstm":
         return CONVLSTM_SMOKE_GRID
+    elif model_name == "spectrumllm":
+        return SPECTRUMLLM_SMOKE_GRID
+    elif model_name == "ofa":
+        return OFA_SMOKE_GRID
     raise ValueError(f"No smoke grid for {model_name}")
 
 
@@ -491,7 +607,7 @@ def _build_architecture_combos(
 ) -> list[dict[str, Any]]:
     if model_name == "vanillalstm":
         return _generate_vanilla_architecture_grid()
-    elif model_name == "convlstm":
+    elif model_name in ("convlstm", "spectrumllm", "ofa"):
         return list(hp_cfg.get("architecture_search", {}).get("candidates", []))
     raise ValueError(f"No architecture grid for {model_name}")
 
@@ -520,7 +636,7 @@ def _build_optimization_combos(
                             "batch_size": bs,
                             "weight_decay": wd,
                         }, f"hs={ta['hidden_size']} nl={ta['num_layers']} lr={lr} bs={bs} wd={wd}"))
-    elif model_name == "convlstm":
+    elif model_name in ("convlstm", "spectrumllm", "ofa"):
         opt_candidates = hp_cfg.get("optimization_search", {}).get("candidates", [])
         for ta in top_archs:
             for cand in opt_candidates:
@@ -538,6 +654,15 @@ def _build_optimization_combos(
     return combos
 
 
+def _llm_trial_description(params: dict[str, Any]) -> str:
+    """One line per LLM-arm trial. d_model/d_ff are the two squeeze points, so they lead."""
+    bits = [f"{k}={params[k]}" for k in
+            ("d_model", "d_ff", "patch_length", "patch_stride", "llm_layers",
+             "channel_independent", "learning_rate", "batch_size", "weight_decay")
+            if k in params]
+    return " ".join(bits)
+
+
 def _smoke_trial_description(
     params: dict[str, Any],
     model_name: str,
@@ -551,6 +676,8 @@ def _smoke_trial_description(
         ks = json.dumps(params['kernel_size'])
         return (f"hc={hc} ks={ks} nl={params.get('num_encoder_layers','?')} "
                 f"lr={params['learning_rate']} bs={params['batch_size']}")
+    elif model_name in ("spectrumllm", "ofa"):
+        return _llm_trial_description(params)
     return str(params)
 
 
@@ -692,6 +819,8 @@ def main() -> None:
 
         if model_name == "vanillalstm":
             desc = f"hs={a_params['hidden_size']} nl={a_params['num_layers']} do={a_params['dropout']}"
+        elif model_name in ("spectrumllm", "ofa"):
+            desc = _llm_trial_description(a_params)
         else:
             hc = json.dumps(a_params.get('hidden_channels', ''))
             desc = f"hc={hc}"
@@ -754,6 +883,12 @@ def main() -> None:
             print(
                 f"    #{rank}: hs={ta['hidden_size']} nl={ta['num_layers']} "
                 f"do={ta['dropout']} RMSE={ta['mean_horizon_rmse_db']:.4f} dB "
+                f"({ta['trial_id']})"
+            )
+        elif model_name in ("spectrumllm", "ofa"):
+            print(
+                f"    #{rank}: {_llm_trial_description(ta)} "
+                f"RMSE={ta['mean_horizon_rmse_db']:.4f} dB "
                 f"({ta['trial_id']})"
             )
         else:
@@ -856,6 +991,21 @@ def main() -> None:
                     if best_row["dropout"] != "" else None
                 ),
             }
+        elif model_name in ("spectrumllm", "ofa"):
+            # results.csv round-trips through pandas, so numeric columns come back as
+            # numpy scalars and booleans as the strings "True"/"False". Cast explicitly.
+            _casts: dict[str, Any] = {
+                "d_model": int, "d_ff": int, "patch_length": int, "patch_stride": int,
+                "llm_layers": int, "num_prototypes": int, "attention_heads": int,
+                "dropout": float, "prompt_top_lags": int,
+                "channel_independent": lambda v: str(v).lower() == "true",
+                "revin_affine": lambda v: str(v).lower() == "true",
+            }
+            best_params = {}
+            for key in _LLM_MODEL_KEYS[model_name]:
+                if key not in best_row or best_row[key] == "":
+                    continue
+                best_params[key] = _casts.get(key, str)(best_row[key])
         elif model_name == "convlstm":
             best_params = {
                 "hidden_channels": (

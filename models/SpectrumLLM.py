@@ -16,7 +16,8 @@ and tagged `[T:file:line]` below. The full item-by-item ledger is in
 training/SpectrumLLM/repro/TIMELLM_OFA_REFERENCE.md.
 
 From the ARTICLE:
-  - one patch token spans every channel, x_i in R^{N x L} (its eq. in sec. IV-B)
+  - one patch token spans every channel, x_i in R^{N x P} where P = patch_length = 16 (its eq. in sec. IV-B)
+    (the article writes L; it is the patch, not the 192-step lookback)
   - f_embed is "a simple MLP"
   - backbone is a lightweight pretrained LLM (BERT / GPT-2), fully frozen
   - the head is a linear layer with output dimension K
@@ -210,6 +211,14 @@ class SpectrumLLMForecaster(nn.Module):
         self.dropout = float(model_config.get("dropout", 0.1))
         self.num_lags = int(model_config.get("prompt_top_lags", 5))
         self.prompt_mode = str(model_config.get("prompt_mode", "static")).lower()
+        # Which series the prompt's "Input statistics" describe. Time-LLM builds the
+        # prompt from the series as fed to the patcher, i.e. AFTER RevIN, so min/max/median
+        # are z-scores and the article's "input statistics" lose their physical meaning.
+        # "raw" (default) describes the un-normalised input instead, which is what the
+        # article's template implies; "normalized" reproduces the earlier runs.
+        self.prompt_stats = str(model_config.get("prompt_stats", "raw")).lower()
+        if self.prompt_stats not in {"raw", "normalized"}:
+            raise ValueError("prompt_stats must be 'raw' or 'normalized'")
         if self.prompt_mode not in {"static", "none"}:
             raise ValueError("prompt_mode must be 'static' or 'none'")
         self.backbone_name = str(model_config.get("backbone", "openai-community/gpt2"))
@@ -218,12 +227,32 @@ class SpectrumLLMForecaster(nn.Module):
             model_config.get("domain_hint", "radio spectrum power spectral density")
         )
 
+        # Channel handling. The article's eq. (1) makes a token the WHOLE multivariate patch
+        # x_i in R^{N x L}; Time-LLM, whose released code produced the article's tables, is
+        # channel-independent -- it folds channels into the batch and embeds L -> d_model per
+        # series, and the article's own sentence "a linear layer with an output dimension of K"
+        # (not K x N) matches that. The all-channel token projects N*patch_length -> d_model
+        # with one shared linear map: 64 -> 32 at N=4, 400 -> 32 at N=25, 2416 -> 32 at N=151.
+        # Do NOT read that as a fixed information loss. The article states no d_model, no patch
+        # length and no stride; d_model=32 is ours (Time-LLM's own default is 16) and stride=8
+        # is Time-LLM's. The AGGREGATE representation is num_patches*d_model, which at stride 1
+        # would be 178*32 = 5696 against 192*25 = 4800 input values -- an expansion, not a
+        # bottleneck. Only the per-token width is pinched, and overlapping windows recover much
+        # of it. Our measured all-channel penalty (1.37x at N=25, 1.08x at N=4) was obtained
+        # with d_model held at 32 for every N and stride fixed at 8, so it CONFOUNDS channel
+        # fusion with an under-provisioned embedding; a width-scaled control has not been run.
+        # The default (False) follows the article's own equation; set True to follow the
+        # Time-LLM code that produced its tables. Neither reading reproduces both scenarios:
+        # on 4 channels all-channel is closer, on 25 channel-independent is.
+        self.channel_independent = bool(model_config.get("channel_independent", False))
+        self._series_width = 1 if self.channel_independent else self.input_size
+
         self.revin = RevIN(self.input_size, affine=bool(model_config.get("revin_affine", False)))
         self.tokenizer_module = PatchTokenizer(self.patch_length, self.patch_stride)
         self._patches = self.tokenizer_module.num_patches(self.input_sequence_length)
 
         self.patch_embedding = nn.Sequential(
-            nn.Linear(self.patch_length * self.input_size, self.d_model),
+            nn.Linear(self.patch_length * self._series_width, self.d_model),
             nn.GELU(),
             nn.Linear(self.d_model, self.d_model),
         )
@@ -249,7 +278,7 @@ class SpectrumLLMForecaster(nn.Module):
         self.output_projection = nn.Sequential(
             nn.Flatten(start_dim=1),
             nn.Dropout(self.dropout),
-            nn.Linear(self._patches * self.d_ff, self.prediction_horizon * self.input_size),
+            nn.Linear(self._patches * self.d_ff, self.prediction_horizon * self._series_width),
         )
 
     def _load_backbone(self, model_config: dict) -> tuple[nn.Module, Any, int, int]:
@@ -345,12 +374,24 @@ class SpectrumLLMForecaster(nn.Module):
 
         batch_size = x.shape[0]
         normalized = self.revin.normalize(x)
+        # The prompt is rendered from this tensor; see prompt_stats. It is folded exactly like
+        # `normalized` so prompt row i always describes the series that produced token row i.
+        prompt_source = x if self.prompt_stats == "raw" else normalized
+
+        if self.channel_independent:
+            # (B, T, N) -> (B*N, T, 1): every channel becomes its own univariate series,
+            # exactly as Time-LLM does before patching. RevIN has already run per (sample,
+            # channel), so each folded series carries its own statistics.
+            fold = lambda a: (a.permute(0, 2, 1)
+                              .reshape(batch_size * self.input_size, self.input_sequence_length, 1))
+            normalized = fold(normalized)
+            prompt_source = fold(prompt_source)
 
         patches = self.tokenizer_module(normalized)
         patch_embeddings = self.patch_embedding(patches)
         aligned = self.reprogramming(patch_embeddings, self._word_embeddings())
 
-        prefix = self._prompt_prefix(normalized)
+        prefix = self._prompt_prefix(prompt_source)
         if prefix is not None:
             sequence = torch.cat([prefix.to(aligned.dtype), aligned], dim=1)
             data_start = prefix.shape[1]
@@ -362,9 +403,13 @@ class SpectrumLLMForecaster(nn.Module):
         hidden = hidden[:, data_start:, : self.d_ff]
 
         prediction = self.output_projection(hidden)
-        prediction = prediction.reshape(
-            batch_size, self.prediction_horizon, self.input_size
-        )
+        if self.channel_independent:
+            prediction = (prediction.reshape(batch_size, self.input_size, self.prediction_horizon)
+                          .permute(0, 2, 1))
+        else:
+            prediction = prediction.reshape(
+                batch_size, self.prediction_horizon, self.input_size
+            )
 
         return self.revin.denormalize(prediction)
 

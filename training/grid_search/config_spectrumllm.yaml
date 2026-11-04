@@ -1,0 +1,144 @@
+# Hyperparameter search for SpectrumLLM (Time-LLM arm).
+# Run: python -m training.grid_search.grid_search --config training/grid_search/config_spectrumllm.yaml
+#
+# Three stages, same as config_convlstm.yaml: smoke (does it train at all) ->
+# architecture -> optimization, with the top-k architectures carried forward. Results land
+# in <output_dir>/results.csv and failed.csv, one YAML per trial under <output_dir>/configs/.
+#
+# The search evaluates an autoregressive rollout at t = 1, 5, 15, 60 (HORIZONS in
+# grid_search.py), so every trial trains a one-step model and is scored on all four.
+
+data:
+  representation: 2d
+  files:
+    - {path: data/powder/humanities-nuc1/20260628T0436Z/600_800/power_1mhz_avg_per_minute.csv, partition: train}
+    - {path: data/powder/humanities-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv, partition: test}
+  concat: rows
+  chunks:
+    - {id: powder_600_800, start_mhz: 600.0, end_mhz: 800.0}
+
+windowing:
+  lookback: 60
+  horizons: [1, 5, 15, 60]
+
+outputs:
+  root_dir: results/powder/600_800
+
+preprocessing: {normalize: true, impute: true, max_missing_gap: 9}
+data_loader: {num_workers: 0, pin_memory: false}
+
+training:
+  device: auto
+  model_name: spectrumllm
+
+spectrumllm:
+  evaluation: {}
+  # Starting point; every key listed under hyperparameter_search below is overwritten
+  # per trial. input_sequence_length and prediction_horizon are set from windowing.lookback
+  # and the trial's prediction_horizon by the injector, not from here.
+  model:
+    input_sequence_length: 60
+    prediction_horizon: 1
+    patch_length: 16
+    patch_stride: 8
+    d_model: 32
+    d_ff: 32
+    num_prototypes: 1000
+    attention_heads: 8
+    dropout: 0.1
+    prompt_top_lags: 5
+    prompt_mode: static
+    prompt_stats: raw
+    backbone: openai-community/gpt2
+    llm_layers: 6
+    revin_affine: false
+    local_files_only: false
+    channel_independent: false
+  train:
+    val_fraction: 0.15
+    train_stride: 1
+    val_stride: 1
+    test_stride: 1
+    batch_size: 16
+    epochs: 20
+    learning_rate: 0.001
+    weight_decay: 0.0
+    optimizer: adam
+    gradient_clip_norm: 1.0
+    early_stopping: true
+    early_stopping_patience: 5
+    seed: 42
+
+hyperparameter_search:
+  enabled: true
+  search_name: spectrumllm_powder_600_800
+
+  smoke_test:
+    enabled: true
+    epochs: 2
+
+  architecture_search:
+    epochs: 8
+    validation_stride: 10
+    top_architectures: 2
+
+    # The two squeeze points are d_model (patch_length x channels -> d_model) and d_ff
+    # (only the first d_ff of the backbone's 768 hidden dimensions reach the head). On the
+    # ElectroSense reproduction, head parameters per target value were ~0.4 at d_ff 32 and
+    # ~1.7 at 128 regardless of channel count, and widening to 128 made the fit worse, so
+    # the grid brackets 32 rather than climbing past it.
+    candidates:
+      - {d_model: 16, d_ff: 32,  patch_length: 16, patch_stride: 8, llm_layers: 6, channel_independent: false}
+      - {d_model: 32, d_ff: 32,  patch_length: 16, patch_stride: 8, llm_layers: 6, channel_independent: false}
+      - {d_model: 64, d_ff: 32,  patch_length: 16, patch_stride: 8, llm_layers: 6, channel_independent: false}
+      - {d_model: 32, d_ff: 64,  patch_length: 16, patch_stride: 8, llm_layers: 6, channel_independent: false}
+      - {d_model: 32, d_ff: 128, patch_length: 16, patch_stride: 8, llm_layers: 6, channel_independent: false}
+      - {d_model: 32, d_ff: 32,  patch_length: 8,  patch_stride: 4, llm_layers: 6, channel_independent: false}
+      - {d_model: 32, d_ff: 32,  patch_length: 16, patch_stride: 16, llm_layers: 6, channel_independent: false}
+      # Channel-independent folds every frequency into the batch as its own univariate
+      # series, so the head sees N x the features. It won on 25 channels and lost on 4.
+      - {d_model: 32, d_ff: 32,  patch_length: 16, patch_stride: 8, llm_layers: 6, channel_independent: true}
+      - {d_model: 32, d_ff: 32,  patch_length: 16, patch_stride: 8, llm_layers: 3, channel_independent: false}
+
+    fixed:
+      num_prototypes: 1000
+      attention_heads: 8
+      dropout: 0.1
+      prompt_mode: static
+      prompt_stats: raw
+      prompt_top_lags: 5
+      revin_affine: false
+      # Fixed, not searched: the GPT-2/BERT comparison is the article's own ablation, and
+      # varying it here would confound it with d_model. For the BERT arm, change this one
+      # line to google-bert/bert-base-uncased and the search_name/output_dir below.
+      backbone: openai-community/gpt2
+      learning_rate: 0.001
+      weight_decay: 0.0
+      batch_size: 16
+      optimizer: adam
+      gradient_clip_norm: 1.0
+      early_stopping: true
+      early_stopping_patience: 3
+
+  optimization_search:
+    epochs: 15
+    validation_stride: 10
+    top_architectures: 2
+
+    # lr is the parameter the reproduction was most sensitive to: on raw PSD the model
+    # diverges above 1e-3, so the grid stops there.
+    candidates:
+      - {learning_rate: 0.0001, weight_decay: 0.0,    dropout: 0.1}
+      - {learning_rate: 0.0001, weight_decay: 0.0001, dropout: 0.1}
+      - {learning_rate: 0.0005, weight_decay: 0.0,    dropout: 0.0}
+      - {learning_rate: 0.0005, weight_decay: 0.0,    dropout: 0.1}
+      - {learning_rate: 0.0005, weight_decay: 0.0001, dropout: 0.3}
+      - {learning_rate: 0.001,  weight_decay: 0.0,    dropout: 0.1}
+      - {learning_rate: 0.001,  weight_decay: 0.0001, dropout: 0.1}
+      - {learning_rate: 0.001,  weight_decay: 0.0001, dropout: 0.3}
+
+  selection:
+    metric: mean_horizon_rmse_db
+    mode: min
+
+  output_dir: results/powder/600_800/hyperparameter_search/spectrumllm

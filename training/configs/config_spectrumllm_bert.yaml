@@ -1,0 +1,73 @@
+# SpectrumLLM, BERT backbone -- the article's Time-LLM (BERT) row.
+#   python -m training.common.train_integrated --config training/configs/config_spectrumllm_bert.yaml
+#
+# Checkpoints land centrally: <run_dir>/checkpoints/<chunk_id>_spectrumllm.pt, where run_dir is
+# runs/<--name or spectrumllm_<UTC>> unless --output-dir says otherwise. The payload carries
+# model_name / model_state_dict / normalization / frequencies / training_results / pretraining,
+# written by training/common/train_integrated.py -- nothing model-specific.
+#
+# Identical to config_spectrumllm.yaml except for the backbone, so the two rows differ in
+# exactly one thing. BERT is 768-wide like GPT-2, so no other value needs to move.
+#
+# This is the BENCHMARK path on our own data. The article's regime (ElectroSense, 15-min, T=192,
+# K=12..192) is a separate question and is reproduced by training/SpectrumLLM/repro/, which
+# shares only models/SpectrumLLM.py with this file.
+
+data:
+  representation: 2d
+  files:
+    - {path: data/powder/humanities-nuc1/20260628T0436Z/600_800/power_1mhz_avg_per_minute.csv, partition: train}
+    - {path: data/powder/humanities-nuc1/20260703T1839Z/600_800/power_1mhz_avg_per_minute.csv, partition: test}
+  concat: rows
+  chunks:
+    - {id: powder_600_800, start_mhz: 600.0, end_mhz: 800.0}
+
+windowing:
+  lookback: 60
+  horizons: [1, 15, 60]
+
+preprocessing: {normalize: true, impute: true, max_missing_gap: 9}
+data_loader: {num_workers: 0, pin_memory: false}
+
+training:
+  device: auto
+  models: [spectrumllm]
+
+spectrumllm:
+  evaluation: {}
+  # Architecture. d_model and d_ff are the two squeeze points: a patch of
+  # patch_length x channels is projected to d_model, and only the first d_ff of the backbone's
+  # hidden dimensions reach the head. Head parameters / target values is ~0.4 at d_ff 32 and
+  # ~1.7 at 128 regardless of channel count, so widening d_ff over-fits on short records.
+  model:
+    input_sequence_length: 60
+    prediction_horizon: 1
+    patch_length: 16
+    patch_stride: 8
+    d_model: 32
+    d_ff: 32
+    num_prototypes: 1000
+    attention_heads: 8
+    dropout: 0.1
+    prompt_top_lags: 5
+    prompt_mode: static
+    prompt_stats: raw          # input statistics in PSD units, not post-RevIN z-scores
+    backbone: google-bert/bert-base-uncased
+    llm_layers: 6
+    revin_affine: false
+    local_files_only: false
+    channel_independent: false # false = one token spans every channel (the article's eq. 1)
+  train:
+    val_fraction: 0.1
+    train_stride: 1
+    val_stride: 1
+    test_stride: 1
+    batch_size: 16
+    epochs: 20
+    learning_rate: 0.001
+    weight_decay: 0.0
+    optimizer: adam
+    gradient_clip_norm: 1.0
+    early_stopping: true
+    early_stopping_patience: 5
+    seed: 42

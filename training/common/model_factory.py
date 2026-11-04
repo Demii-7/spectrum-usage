@@ -39,6 +39,10 @@ import torch
 import torch.nn as nn
 SUPPORTED_MODELS = {
     "arima",
+    "spectrumllm",   # Time-LLM arm; the backbone key selects GPT-2 or BERT. build_model has
+                     # handled this since the port but the name was never added here, so
+                     # train_integrated refused it and the reproduction ran standalone.
+    "ofa",           # GPT4TS arm: no reprogramming, no prompt, ln+wpe partially fine-tuned.
     "vanillalstm",
     "vanillalstm1d",
     "convlstm",
@@ -95,6 +99,22 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
         }
         return SpectrumLLMForecaster(predictor_config)
 
+
+    if model_name == "ofa":
+        from models.OFA import OFAForecaster
+
+        if train_data.ndim != 2:
+            raise ValueError(
+                f"Error! {model_name} expects training data shaped "
+                f"(time, features), got {train_data.shape}"
+            )
+        predictor_config = {
+            "model": {
+                **dict(model_cfg),
+                "input_size": int(train_data.shape[-1]),
+            }
+        }
+        return OFAForecaster(predictor_config)
 
     if model_name in ("temporalconvnet", "lstmattn", "arima"):
         from models.ARIMA import ARIMAForecaster
