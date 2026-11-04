@@ -32,8 +32,10 @@ pooled models). Outputs: `oct2026-per-receiver/`, `oct2026-pooled6/`.
 
 ## Inference benchmark
 Existing inference timings come from training runs on shared (fractional) GPUs, mostly H100. Run a clean
-benchmark on an idle A100 (one model at a time, same batch size, warm-up, median) for every exported
-checkpoint, so the cost table has comparable numbers. Not written yet.
+benchmark (one model at a time on an otherwise idle GPU, same batch size, warm-up, median) for every exported
+checkpoint, so the cost table has comparable numbers. Plan: do it on the H100 cluster once its campaign has
+drained (expected about Nov 5-6, lease ends Nov 7 16:58 UTC), since the H100s are the main training GPU type
+for the cost table. Not written yet.
 
 ## Horizon-specific models (15 and 60 minutes)
 Train separate models directly for the 15- and 60-minute horizons (current models are one-step and rolled
