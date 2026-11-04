@@ -1,0 +1,216 @@
+"""Run the SpectrumLLM paper's baselines with the Time-Series-Library on the ElectroSense-Madrid datasets.
+
+The library (https://github.com/thuml/Time-Series-Library, MIT) is cloned on each worker at a pinned commit and run
+in an isolated virtualenv that reuses the system packages, so its dependencies cannot disturb our pipeline.
+Protocol: ``--data custom`` (70/10/20 split, StandardScaler on train), ``--features M``, input 192, horizons
+12/24/48/96/192, library-default hyperparameters (what a reproduction without tuning would use). Each run reports
+standardized-unit MSE/MAE (the library default) from training, and raw-unit MSE/MAE from a second ``--inverse``
+test pass on the saved checkpoint.
+
+    python -m training.ray.tsl_runs setup
+    python -m training.ray.tsl_runs run --models DLinear PatchTST --seeds 2021 2022 2023
+"""
+
+from __future__ import annotations
+
+import argparse
+import io
+import json
+import os
+import re
+import subprocess
+import time
+from pathlib import Path
+from typing import Any
+
+from .electrosense import DATASETS, HORIZONS, RAW_PREFIX, SEQ_LEN
+
+TSL_URL = "https://github.com/thuml/Time-Series-Library"
+TSL_DIR = "/workspace/tsl"
+VENV = "/workspace/tsl/venv"
+DEFAULT_MODELS = ("DLinear", "PatchTST", "Informer", "Reformer", "Autoformer", "TimesNet", "LightTS")
+CHANNELS = {"spec4": 4, "spec25": 25, "spec151": 151}
+LABEL_LEN = SEQ_LEN // 2
+
+
+def run_command(model: str, dataset: str, horizon: int, seed: int, root: str, target: str, *,
+                training: bool, inverse: bool, has_seed_flag: bool) -> list[str]:
+    """The run.py command line for one cell (library defaults except data/shape arguments)."""
+    channels = CHANNELS[dataset]
+    command = [
+        f"{VENV}/bin/python", "-u", "run.py", "--task_name", "long_term_forecast",
+        "--is_training", "1" if training else "0",
+        "--root_path", root, "--data_path", DATASETS[dataset],
+        "--model_id", f"{dataset}_{SEQ_LEN}_{horizon}_s{seed}", "--model", model,
+        "--data", "custom", "--features", "M", "--target", target, "--freq", "t",
+        "--seq_len", str(SEQ_LEN), "--label_len", str(LABEL_LEN), "--pred_len", str(horizon),
+        "--enc_in", str(channels), "--dec_in", str(channels), "--c_out", str(channels),
+        "--des", "electrosense", "--itr", "1",
+    ]
+    if has_seed_flag:
+        command += ["--seed", str(seed)]
+    if inverse:
+        command.append("--inverse")
+    return command
+
+
+_METRIC = re.compile(r"mse:\s*([-+0-9.eE]+),\s*mae:\s*([-+0-9.eE]+)")
+
+
+def parse_metrics(output: str) -> tuple[float, float] | None:
+    """Last 'mse:..., mae:...' line printed by run.py's test pass."""
+    matches = _METRIC.findall(output)
+    return (float(matches[-1][0]), float(matches[-1][1])) if matches else None
+
+
+def setup_node(args: dict[str, Any]) -> dict[str, Any]:
+    """Remote worker: clone the library at the pinned commit, build the venv, fetch the data, and smoke-import."""
+    f = lambda c, t=1800: subprocess.run(c, shell=True, capture_output=True, text=True, timeout=t)
+    out: dict[str, Any] = {"host": f("hostname").stdout.strip()}
+    os.makedirs(TSL_DIR, exist_ok=True)
+    repo = f"{TSL_DIR}/Time-Series-Library"
+    if not os.path.isdir(repo):
+        r = f(f"git clone -q {TSL_URL} {repo} 2>&1 | tail -2")
+        out["clone"] = r.stdout.strip()[-200:]
+    if args.get("commit"):
+        out["checkout"] = f(f"cd {repo} && git checkout -q {args['commit']} 2>&1 | tail -1").stdout.strip()
+    out["commit"] = f(f"cd {repo} && git rev-parse HEAD").stdout.strip()
+    if not os.path.exists(f"{VENV}/bin/python"):
+        f(f"python -m venv --system-site-packages {VENV}")
+    # install only what the library's imports are missing, one at a time (never its pinned requirements)
+    installed = []
+    for _ in range(12):
+        r = f(f"cd {repo} && {VENV}/bin/python -c 'import run' 2>&1 | tail -3")
+        match = re.search(r"No module named '([A-Za-z0-9_]+)", r.stdout)
+        if not match:
+            break
+        module = {"sklearn": "scikit-learn", "reformer_pytorch": "reformer-pytorch"}.get(match.group(1), match.group(1))
+        f(f"{VENV}/bin/pip install -q {module} 2>&1 | tail -1")
+        installed.append(module)
+    out["pip_installed"] = installed
+    out["import_check"] = f(f"cd {repo} && {VENV}/bin/python -c 'import run; print(\"ok\")' 2>&1 | tail -2").stdout.strip()[-200:]
+    help_text = f(f"cd {repo} && {VENV}/bin/python run.py --help 2>&1").stdout
+    out["has_seed_flag"] = "--seed" in help_text
+    out["has_inverse_flag"] = "--inverse" in help_text
+    # data
+    import sys
+
+    sys.path.insert(0, args["repo_root"])
+    from training.ray.storage import spectrum_s3_client
+
+    client = spectrum_s3_client()
+    root = f"{args['repo_root']}/data/electrosense_raw"
+    os.makedirs(root, exist_ok=True)
+    for name, filename in DATASETS.items():
+        path = f"{root}/{filename}"
+        if not os.path.exists(path):
+            client.download_file(args["bucket"], f"{RAW_PREFIX}/{filename}", path)
+    out["data"] = sorted(os.listdir(root))
+    return out
+
+
+def tsl_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    """Remote worker: train one (model, dataset, horizon, seed) cell and report standardized and raw metrics."""
+    import sys
+
+    sys.path.insert(0, args["repo_root"])
+    from training.ray.storage import spectrum_s3_client
+
+    client = spectrum_s3_client()
+    model, dataset, horizon, seed = job["model"], job["dataset"], int(job["horizon"]), int(job["seed"])
+    result = {"dataset": dataset, "model": model, "horizon": horizon, "seed": seed, "kind": "tsl",
+              "hyperparameters": "library defaults"}
+    started = time.time()
+    try:
+        repo = f"{TSL_DIR}/Time-Series-Library"
+        root = f"{args['repo_root']}/data/electrosense_raw/"
+        header = Path(root, DATASETS[dataset]).read_text().splitlines()[0].split(",")
+        target = header[-1]
+        common = dict(root=root, target=target, has_seed_flag=args["has_seed_flag"])
+        env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+        train = subprocess.run(run_command(model, dataset, horizon, seed, training=True, inverse=False, **common),
+                               cwd=repo, env=env, capture_output=True, text=True, timeout=args["timeout"])
+        metrics = parse_metrics(train.stdout + train.stderr)
+        if metrics is None:
+            raise RuntimeError("no metrics in run.py output: " + (train.stdout + train.stderr)[-400:])
+        result["mse_std"], result["mae_std"] = metrics
+        raw = subprocess.run(run_command(model, dataset, horizon, seed, training=False, inverse=True, **common),
+                             cwd=repo, env=env, capture_output=True, text=True, timeout=args["timeout"])
+        raw_metrics = parse_metrics(raw.stdout + raw.stderr)
+        if raw_metrics is not None:
+            result["mse_raw"], result["mae_raw"] = raw_metrics
+        result["ok"] = True
+    except Exception as error:
+        result.update(ok=False, error=f"{type(error).__name__}: {error}"[:500])
+    result["wall_seconds"] = round(time.time() - started, 1)
+    try:
+        key = f"{args['output_prefix'].strip('/')}/tsl/{dataset}/{model}/h{horizon}/seed-{seed}.json"
+        client.put_object(Bucket=args["bucket"], Key=key, Body=json.dumps(result).encode())
+    except Exception:
+        pass
+    return result
+
+
+def launch(args: argparse.Namespace) -> None:
+    import pandas as pd
+    import ray
+    from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
+
+    from .storage import spectrum_s3_client
+
+    client = spectrum_s3_client()
+    bucket = args.bucket or os.environ.get("SPECTRUM_S3_BUCKET", "spectrum")
+    ray.init(address=args.address, ignore_reinit_error=True)
+    base = {"repo_root": args.repo_root, "bucket": bucket, "output_prefix": args.output_prefix}
+    if args.command == "setup":
+        nodes = [n for n in ray.nodes() if n["Alive"] and n["Resources"].get("GPU", 0) > 0]
+        futures = [ray.remote(num_cpus=2, scheduling_strategy=NodeAffinitySchedulingStrategy(n["NodeID"], soft=False))(
+            setup_node).remote({**base, "commit": args.commit}) for n in nodes]
+        for row in ray.get(futures):
+            print("[tsl setup]", json.dumps(row), flush=True)
+        return
+    worker_args = {**base, "timeout": args.timeout, "has_seed_flag": not args.no_seed_flag}
+    jobs = [{"model": m, "dataset": d, "horizon": h, "seed": s}
+            for d in args.datasets for m in args.models for h in args.horizons for s in args.seeds]
+    print(f"[tsl] {len(jobs)} runs", flush=True)
+    remote = ray.remote(num_cpus=2, num_gpus=args.gpu_fraction, max_retries=1)(tsl_job)
+    frame = pd.DataFrame(ray.get([remote.remote(j, worker_args) for j in jobs]))
+    stamp = time.strftime("%Y%m%dT%H%MZ", time.gmtime())
+    key = f"{args.output_prefix.strip('/')}/summary_tsl_{stamp}.csv"
+    buffer = io.StringIO()
+    frame.to_csv(buffer, index=False)
+    client.put_object(Bucket=bucket, Key=key, Body=buffer.getvalue().encode())
+    failed = frame[~frame["ok"].astype(bool)] if "ok" in frame else frame
+    print(f"[tsl] wrote s3://{bucket}/{key}; {len(frame)} rows, {len(failed)} failed", flush=True)
+    for _, row in failed.head(8).iterrows():
+        print(f"[tsl] FAILED {row.get('dataset')}/{row.get('model')}/h{row.get('horizon')}: {row.get('error')}",
+              flush=True)
+
+
+def parse_args(argv=None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True)
+    for name in ("setup", "run"):
+        p = sub.add_parser(name)
+        p.add_argument("--bucket", default=None)
+        p.add_argument("--output-prefix", default="electrosense-results")
+        p.add_argument("--address", default="auto")
+        p.add_argument("--repo-root", default="/workspace/spectrum-usage")
+    sub.choices["setup"].add_argument("--commit", default=None, help="Pin this library commit (default: clone HEAD)")
+    run = sub.choices["run"]
+    run.add_argument("--models", nargs="+", default=list(DEFAULT_MODELS))
+    run.add_argument("--datasets", nargs="+", default=list(DATASETS), choices=list(DATASETS))
+    run.add_argument("--horizons", nargs="+", type=int, default=list(HORIZONS))
+    run.add_argument("--seeds", nargs="+", type=int, default=[2021, 2022, 2023])
+    run.add_argument("--gpu-fraction", type=float, default=0.25)
+    run.add_argument("--timeout", type=int, default=5400)
+    run.add_argument("--no-seed-flag", action="store_true", help="run.py has no --seed flag (set by setup output)")
+    return parser.parse_args(argv)
+
+
+def main(argv=None) -> None:
+    launch(parse_args(argv))
+
+
+if __name__ == "__main__":
+    main()
