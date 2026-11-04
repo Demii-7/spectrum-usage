@@ -35,7 +35,7 @@ COST_ORDER = {"dswinlstm_i": 100, "residualconvlstm": 40, "convlstm": 40, "vanil
 
 DIRECT_AT_60 = {"autoformer_csa", "dswinlstm_i"}  # already trained directly for 60 steps
 ONE_STEP_ONLY = {"linearar1d", "linearar2d", "linearar4d", "residuallinearar1d", "residuallinearar2d",
-                 "residuallinearar4d", *REFERENCE_MODELS}  # no direct multi-step form; rolled out instead
+                 "residuallinearar4d", "temporalconvnet", *REFERENCE_MODELS}  # no direct multi-step form; rolled out instead
 STANDARD_HORIZONS = (1, 15, 60)
 
 
