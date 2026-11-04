@@ -54,6 +54,28 @@ Redo on the October split. Open points:
   need re-pointing; their transfer settings (head-only vs full fine-tune) need the same level-handling
   treatment as the rest of the transfer re-run.
 
+## TimesFM-3 (zero-shot, used as a 2D model)
+Frozen Google TimesFM-3 (330M, weights under the TimesFM Non-Commercial License v1.0; code Apache 2.0), prediction
+only, no training and no search. Preliminary test on the A100 cluster (150 windows, humanities, CPU) showed it
+runs and beat a last-60-minute mean by about 8% at 1 min, 6% at 15 min and 4-5% at 60 min when forecasting all
+200 bins in one call. Not yet comparable to our results: different windows, quick baselines, one receiver.
+To do:
+- Run it through the real evaluation (same test windows, all metrics, per-bin files, per-receiver scoring) so it
+  can be compared with LinearAR and LookbackMean on identical windows, with window-level confidence intervals.
+- Choose the channel grouping on the validation range, then freeze it before scoring the test range: all 200
+  bins in one call (the model accepted 200 targets, though it is reportedly trained for up to 32), contiguous
+  32-bin blocks, or overlapping blocks (50% overlap, step 16, center-weighted or plain averaging).
+- Same 60-minute lookback as every other model; a longer-context variant, if run, is a separate labelled result.
+- Weights (`google/timesfm-3.0-pytorch`, 1.32 GB, sha256 a7592b0a...f17da) are only on one worker (`/tmp/tfm3`);
+  copy to the bucket and all workers. Package: `timesfm[torch]`, imported as `timesfm3`.
+- Needs a GPU slot for the full test range; CPU is about 0.7 s per 200-bin window.
+- State the non-commercial license in the paper.
+
+## MOMENT backbone (not TimeRAN-pretrained)
+Loaded from Hugging Face (`AutonLab/MOMENT-1-{small,base,large}`) via `momentfm`; the A100 workers can reach
+Hugging Face. The pretrained weights have no forecasting head, so true zero-shot forecasting is not built in.
+Feasibility job: `claude-moment-1`.
+
 ## Spectral-context ablation (full context vs region only)
 Rerun on the new data with each 2D model's selected hyperparameters: 13 non-noise regions x 2 conditions x
 5 seeds per model (LinearAR is unchanged by construction). Code: `training/ray/spectral_context_fixed.py`.
