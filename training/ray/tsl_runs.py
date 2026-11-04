@@ -63,36 +63,60 @@ def parse_metrics(output: str) -> tuple[float, float] | None:
     return (float(matches[-1][0]), float(matches[-1][1])) if matches else None
 
 
+PINNED_COMMIT = "4e938a1767106324dd753b2a44832bf870a0252e"  # thuml/Time-Series-Library main, 2026-04-18
+MODULE_TO_PACKAGE = {"patoolib": "patool", "sklearn": "scikit-learn", "reformer_pytorch": "reformer-pytorch",
+                     "skimage": "scikit-image", "PIL": "pillow", "yaml": "pyyaml"}
+
+
+def download_library(commit: str, repo: str) -> None:
+    """Fetch the pinned commit as a tarball (workers have no git) and extract it, refusing unsafe paths."""
+    import tarfile
+    import urllib.request
+
+    data = urllib.request.urlopen(f"https://codeload.github.com/thuml/Time-Series-Library/tar.gz/{commit}",
+                                  timeout=120).read()
+    tmp = Path(repo).parent / "_extract"
+    tmp.mkdir(parents=True, exist_ok=True)
+    root = os.path.realpath(tmp)
+    with tarfile.open(fileobj=io.BytesIO(data)) as archive:
+        for member in archive.getmembers():
+            target = os.path.realpath(os.path.join(root, member.name))
+            if target != root and not target.startswith(root + os.sep):
+                raise RuntimeError(f"unsafe path in archive: {member.name}")
+            if member.issym() or member.islnk():
+                continue
+            archive.extract(member, root)
+    os.rename(os.path.join(root, os.listdir(root)[0]), repo)
+
+
 def setup_node(args: dict[str, Any]) -> dict[str, Any]:
-    """Remote worker: clone the library at the pinned commit, build the venv, fetch the data, and smoke-import."""
+    """Remote worker: fetch the pinned library, build the venv, import its training entry point, fetch the data."""
     f = lambda c, t=1800: subprocess.run(c, shell=True, capture_output=True, text=True, timeout=t)
     out: dict[str, Any] = {"host": f("hostname").stdout.strip()}
     os.makedirs(TSL_DIR, exist_ok=True)
     repo = f"{TSL_DIR}/Time-Series-Library"
-    if not os.path.isdir(repo):
-        r = f(f"git clone -q {TSL_URL} {repo} 2>&1 | tail -2")
-        out["clone"] = r.stdout.strip()[-200:]
-    if args.get("commit"):
-        out["checkout"] = f(f"cd {repo} && git checkout -q {args['commit']} 2>&1 | tail -1").stdout.strip()
-    out["commit"] = f(f"cd {repo} && git rev-parse HEAD").stdout.strip()
+    commit = args.get("commit") or PINNED_COMMIT
+    if not os.path.isfile(f"{repo}/run.py"):
+        download_library(commit, repo)
+    out["commit"] = commit
     if not os.path.exists(f"{VENV}/bin/python"):
         f(f"python -m venv --system-site-packages {VENV}")
     # install only what the library's imports are missing, one at a time (never its pinned requirements)
     installed = []
-    for _ in range(12):
-        r = f(f"cd {repo} && {VENV}/bin/python -c 'import run' 2>&1 | tail -3")
+    probe = "from exp.exp_long_term_forecasting import Exp_Long_Term_Forecast; print('IMPORT_OK')"
+    for _ in range(20):
+        r = f(f"cd {repo} && {VENV}/bin/python -c \"{probe}\" 2>&1 | tail -3")
         match = re.search(r"No module named '([A-Za-z0-9_]+)", r.stdout)
-        if not match:
+        if "IMPORT_OK" in r.stdout or not match:
             break
-        module = {"sklearn": "scikit-learn", "reformer_pytorch": "reformer-pytorch"}.get(match.group(1), match.group(1))
-        f(f"{VENV}/bin/pip install -q {module} 2>&1 | tail -1")
-        installed.append(module)
+        package = MODULE_TO_PACKAGE.get(match.group(1), match.group(1))
+        f(f"{VENV}/bin/pip install -q {package} 2>&1 | tail -1")
+        installed.append(package)
     out["pip_installed"] = installed
-    out["import_check"] = f(f"cd {repo} && {VENV}/bin/python -c 'import run; print(\"ok\")' 2>&1 | tail -2").stdout.strip()[-200:]
+    out["import_ok"] = "IMPORT_OK" in f(f"cd {repo} && {VENV}/bin/python -c \"{probe}\" 2>&1 | tail -1").stdout
     help_text = f(f"cd {repo} && {VENV}/bin/python run.py --help 2>&1").stdout
     out["has_seed_flag"] = "--seed" in help_text
     out["has_inverse_flag"] = "--inverse" in help_text
-    # data
     import sys
 
     sys.path.insert(0, args["repo_root"])
@@ -101,10 +125,9 @@ def setup_node(args: dict[str, Any]) -> dict[str, Any]:
     client = spectrum_s3_client()
     root = f"{args['repo_root']}/data/electrosense_raw"
     os.makedirs(root, exist_ok=True)
-    for name, filename in DATASETS.items():
-        path = f"{root}/{filename}"
-        if not os.path.exists(path):
-            client.download_file(args["bucket"], f"{RAW_PREFIX}/{filename}", path)
+    for filename in DATASETS.values():
+        if not os.path.exists(f"{root}/{filename}"):
+            client.download_file(args["bucket"], f"{RAW_PREFIX}/{filename}", f"{root}/{filename}")
     out["data"] = sorted(os.listdir(root))
     return out
 
@@ -196,7 +219,7 @@ def parse_args(argv=None) -> argparse.Namespace:
         p.add_argument("--output-prefix", default="electrosense-results")
         p.add_argument("--address", default="auto")
         p.add_argument("--repo-root", default="/workspace/spectrum-usage")
-    sub.choices["setup"].add_argument("--commit", default=None, help="Pin this library commit (default: clone HEAD)")
+    sub.choices["setup"].add_argument("--commit", default=None, help=f"Library commit (default: {PINNED_COMMIT[:10]})")
     run = sub.choices["run"]
     run.add_argument("--models", nargs="+", default=list(DEFAULT_MODELS))
     run.add_argument("--datasets", nargs="+", default=list(DATASETS), choices=list(DATASETS))
