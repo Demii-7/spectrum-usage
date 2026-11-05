@@ -12,7 +12,7 @@ Expected input shapes:
     4D: (batch, time, C, H, W)   spatial map
 
 Output shapes:
-    (batch, 1, ...)   single-step prediction (prediction_horizon=1)
+    (batch, prediction_horizon, ...)   one step (prediction_horizon=1) or direct multi-step
 """
 
 from __future__ import annotations
@@ -32,10 +32,17 @@ class LinearAutoregressiveForecaster(nn.Module):
         if self.ridge_alpha < 0:
             raise ValueError("ridge_alpha must be non-negative")
 
-        self.weight = nn.Parameter(
-            torch.empty(self.input_size, self.input_sequence_length)
-        )
-        self.bias = nn.Parameter(torch.zeros(self.input_size))
+        # One-step models keep the original (features, lags) weight so existing checkpoints load unchanged.
+        # Direct multi-step models (prediction_horizon > 1) get one weight vector per feature AND per output step:
+        # weight (features, lags, horizon), bias (features, horizon). Still independent per feature.
+        if self.prediction_horizon == 1:
+            self.weight = nn.Parameter(torch.empty(self.input_size, self.input_sequence_length))
+            self.bias = nn.Parameter(torch.zeros(self.input_size))
+        else:
+            self.weight = nn.Parameter(
+                torch.empty(self.input_size, self.input_sequence_length, self.prediction_horizon)
+            )
+            self.bias = nn.Parameter(torch.zeros(self.input_size, self.prediction_horizon))
         nn.init.xavier_uniform_(self.weight)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -43,12 +50,20 @@ class LinearAutoregressiveForecaster(nn.Module):
 
         x_flat = x.reshape(B, self.input_sequence_length, self.input_size)
 
-        # Per-feature linear map: out[b,d] = sum_t x[b,t,d] * weight[d,t] + bias[d]
-        # Optimized as element-wise multiply + sum (avoids slow einsum for large D)
-        out = torch.mul(x_flat, self.weight.T.unsqueeze(0)).sum(dim=1) + self.bias
+        if self.prediction_horizon == 1:
+            # Per-feature linear map: out[b,d] = sum_t x[b,t,d] * weight[d,t] + bias[d]
+            # Optimized as element-wise multiply + sum (avoids slow einsum for large D)
+            out = torch.mul(x_flat, self.weight.T.unsqueeze(0)).sum(dim=1) + self.bias
+            return out.reshape(B, self.prediction_horizon, *x.shape[2:])
 
+        # Direct multi-step: out[b,h,d] = sum_t x[b,t,d] * weight[d,t,h] + bias[d,h]
+        out = torch.einsum("btd,dth->bhd", x_flat, self.weight) + self.bias.T.unsqueeze(0)
         return out.reshape(B, self.prediction_horizon, *x.shape[2:])
 
     def ridge_penalty(self) -> torch.Tensor:
-        """Return L2 regularization for AR weights without penalizing the bias."""
+        """Return L2 regularization for AR weights without penalizing the bias.
+
+        Summed over lags and averaged over features (and output steps for direct models), so the penalty has the
+        same scale for one-step and direct multi-step models.
+        """
         return self.ridge_alpha * self.weight.square().sum(dim=1).mean()

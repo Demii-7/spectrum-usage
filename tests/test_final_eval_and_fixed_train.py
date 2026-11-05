@@ -190,8 +190,8 @@ def test_horizon_jobs_skip_one_step_and_already_direct_models():
     entries = [{"rep": "2d", "model": m} for m in
                ("vanillalstm", "linearar2d", "lookbackmean2d", "autoformer_csa", "temporalconvnet")]
     jobs = horizon_jobs(entries, [15, 60])
-    assert [(j["model"], j["horizon"]) for j in jobs] == [
-        ("vanillalstm", 15), ("vanillalstm", 60), ("autoformer_csa", 15)]
+    assert [(j["model"], j["horizon"]) for j in jobs] == [   # linear AR now has a direct form; TCN and references do not
+        ("vanillalstm", 15), ("vanillalstm", 60), ("linearar2d", 15), ("linearar2d", 60), ("autoformer_csa", 15)]
 
 
 def test_set_direct_horizon_sets_model_and_scoring_horizons():

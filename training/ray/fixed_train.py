@@ -34,8 +34,9 @@ COST_ORDER = {"dswinlstm_i": 100, "residualconvlstm": 40, "convlstm": 40, "vanil
               "residualvanillalstm1d": 30, "autoformer_csa": 20, "temporalconvnet": 20}
 
 DIRECT_AT_60 = {"autoformer_csa", "dswinlstm_i"}  # already trained directly for 60 steps
-ONE_STEP_ONLY = {"linearar1d", "linearar2d", "linearar4d", "residuallinearar1d", "residuallinearar2d",
-                 "residuallinearar4d", "temporalconvnet", *REFERENCE_MODELS}  # no direct multi-step form; rolled out instead
+# Models with no direct multi-step form (they stay one-step and are rolled out). The linear AR models used to be
+# listed here; they now support prediction_horizon > 1 (one weight vector per feature and output step).
+ONE_STEP_ONLY = {"temporalconvnet", *REFERENCE_MODELS}
 STANDARD_HORIZONS = (1, 15, 60)
 
 

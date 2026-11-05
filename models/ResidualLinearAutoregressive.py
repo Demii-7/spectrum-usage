@@ -3,6 +3,9 @@
 The model predicts a correction to the lookback-mean baseline from recent
 deviations around that mean. Its residual head starts at zero, so the initial
 prediction is exactly the lookback-mean prediction.
+
+With ``prediction_horizon > 1`` the model is direct multi-step: the lookback mean (shape (B, 1, ...)) is broadcast
+over all horizon steps and the residual head predicts one correction per step.
 """
 
 from __future__ import annotations
