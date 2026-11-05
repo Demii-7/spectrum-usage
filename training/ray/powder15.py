@@ -46,6 +46,11 @@ TRAIN_RUN, TEST_RUN = "20261015T1434Z", "20261025T1355Z"
 
 
 # ----------------------------------------------------------------------------------------------- data
+def site_name(node: str) -> str:
+    """Receiver name as the file-restriction helpers expect it: 'humanities-nuc1' -> 'humanities'."""
+    return node.removesuffix("-nuc1")
+
+
 def block_average_db(frame: pd.DataFrame, minutes: int = BLOCK_MINUTES) -> pd.DataFrame:
     """Per-minute dBm (UTC minute index) -> aligned block means in dB, averaged in linear power."""
     power = np.power(10.0, frame / 10.0)
@@ -190,7 +195,7 @@ def ours_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         if site:  # a receiver-specific model: only that receiver's files, so its own normalization statistics
             from training.ray.final_eval import restrict_files_to_site
 
-            config = restrict_files_to_site(config, site)
+            config = restrict_files_to_site(config, site_name(site))
             result["site"] = site
         with tempfile.TemporaryDirectory(prefix="powder15-") as scratch:
             run_dir, eval_dir = Path(scratch) / "run", Path(scratch) / "eval"
@@ -207,10 +212,10 @@ def ours_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
                 for node in CORE_NODES:
                     out = Path(scratch) / f"eval-{node}"
                     out.mkdir()
-                    evaluate_one_model(restrict_files_to_site(config, node, ("test",)), model, out, checkpoint,
-                                       skip_plots=True)
+                    evaluate_one_model(restrict_files_to_site(config, site_name(node), ("test",)), model, out,
+                                       checkpoint, skip_plots=True)
                     per_site = summarize_metrics(pd.read_csv(out / "aggregate_metrics.csv").to_dict("records"))
-                    result.update({f"{node.split('-')[0]}__{k}": v for k, v in per_site.items()})
+                    result.update({f"{site_name(node)}__{k}": v for k, v in per_site.items()})
         result["ok"] = True
     except Exception as error:
         import traceback

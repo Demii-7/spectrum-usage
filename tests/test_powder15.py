@@ -70,3 +70,25 @@ def test_expand_sites_gives_one_job_per_core_receiver_or_leaves_pooled_jobs_alon
     split = expand_sites(jobs, True)
     assert len(split) == 2 * len(CORE_NODES) and {j["site"] for j in split} == set(CORE_NODES)
     assert split[0]["model"] == "m" and "site" not in jobs[0]    # input untouched
+
+
+def test_per_site_restriction_works_on_powder15_configs_with_plain_site_names():
+    from pathlib import Path
+
+    import pytest
+    import yaml
+
+    from training.ray.final_eval import config_file_for, restrict_files_to_site
+    from training.ray.powder15 import CORE_NODES, site_name
+
+    base = yaml.safe_load(Path(config_file_for("vanillalstm", "2d")).read_text())
+    config = apply_powder15(base, "600_800", "/repo", list(HORIZONS))
+    for node in CORE_NODES:
+        assert site_name(node) == node.removesuffix("-nuc1") and "-" not in site_name(node)
+        train_only = restrict_files_to_site(config, site_name(node))
+        assert {e["partition"] for e in train_only["data"]["files"]} == {"train", "validation", "test"}
+        assert all(f"/{node}/" in e["path"] for e in train_only["data"]["files"])
+        only_test = restrict_files_to_site(config, site_name(node), ("test",))
+        assert any(e["partition"] == "train" for e in only_test["data"]["files"])   # pooled train files kept
+    with pytest.raises(ValueError):
+        restrict_files_to_site(config, CORE_NODES[0])        # the suffixed name was the bug: it matches nothing
