@@ -34,8 +34,12 @@ LABEL_LEN = SEQ_LEN // 2
 
 
 def run_command(model: str, dataset: str, horizon: int, seed: int, root: str, target: str, *,
-                training: bool, inverse: bool, has_seed_flag: bool) -> list[str]:
-    """The run.py command line for one cell (library defaults except data/shape arguments)."""
+                training: bool, inverse: bool, has_seed_flag: bool, extra: list[str] | None = None,
+                des: str = "electrosense") -> list[str]:
+    """The run.py command line for one cell (library defaults except data/shape arguments and ``extra``).
+
+    ``des`` names the run (the library derives its checkpoint directory from it), so runs with different
+    hyperparameters must use different values."""
     channels = CHANNELS[dataset]
     command = [
         f"{VENV}/bin/python", "-u", "run.py", "--task_name", "long_term_forecast",
@@ -45,13 +49,23 @@ def run_command(model: str, dataset: str, horizon: int, seed: int, root: str, ta
         "--data", "custom", "--features", "M", "--target", target, "--freq", "t",
         "--seq_len", str(SEQ_LEN), "--label_len", str(LABEL_LEN), "--pred_len", str(horizon),
         "--enc_in", str(channels), "--dec_in", str(channels), "--c_out", str(channels),
-        "--des", "electrosense", "--itr", "1",
+        "--des", des, "--itr", "1",
     ]
+    command += list(extra or [])
     if has_seed_flag:
         command += ["--seed", str(seed)]
     if inverse:
         command.append("--inverse")
     return command
+
+
+_VALI = re.compile(r"Vali Loss:\s*([-+0-9.eE]+)")
+
+
+def parse_best_validation(output: str) -> float | None:
+    """Lowest per-epoch 'Vali Loss' (standardized MSE) printed by run.py's training loop."""
+    values = [float(v) for v in _VALI.findall(output)]
+    return min(values) if values else None
 
 
 _METRIC = re.compile(r"mse:\s*([-+0-9.eE]+),\s*mae:\s*([-+0-9.eE]+)")
@@ -142,14 +156,17 @@ def tsl_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     client = spectrum_s3_client()
     model, dataset, horizon, seed = job["model"], job["dataset"], int(job["horizon"]), int(job["seed"])
     result = {"dataset": dataset, "model": model, "horizon": horizon, "seed": seed, "kind": "tsl",
-              "hyperparameters": "library defaults"}
+              "hyperparameters": job.get("hp_label", "library defaults")}
+    if job.get("params"):
+        result["params"] = job["params"]
     started = time.time()
     try:
         repo = f"{TSL_DIR}/Time-Series-Library"
         root = f"{args['repo_root']}/data/electrosense_raw/"
         header = Path(root, DATASETS[dataset]).read_text().splitlines()[0].split(",")
         target = header[-1]
-        common = dict(root=root, target=target, has_seed_flag=args["has_seed_flag"])
+        common = dict(root=root, target=target, has_seed_flag=args["has_seed_flag"],
+                      extra=job.get("extra"), des=job.get("des", "electrosense"))
         env = {**os.environ, "PYTHONUNBUFFERED": "1"}
         train = subprocess.run(run_command(model, dataset, horizon, seed, training=True, inverse=False, **common),
                                cwd=repo, env=env, capture_output=True, text=True, timeout=args["timeout"])
