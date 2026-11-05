@@ -65,6 +65,55 @@ def build_config(arm: str, resolution: str, band: str, horizon: int, seed: int, 
     return config, model_name
 
 
+PYLIBS = "/workspace/pylibs"
+HF_HOME = "/workspace/hf-cache"
+TRANSFORMERS_VERSION = "4.44.2"
+BACKBONE = "openai-community/gpt2"
+
+
+def use_isolated_libs() -> None:
+    """Put the isolated ``transformers`` install first on the path and point Hugging Face at the node-local cache."""
+    import sys
+
+    if PYLIBS not in sys.path:
+        sys.path.insert(0, PYLIBS)
+    os.environ.setdefault("HF_HOME", HF_HOME)
+
+
+def setup_node(_: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Remote worker: install ``transformers`` under PYLIBS (system packages untouched) and cache GPT-2 weights."""
+    import shutil
+    import socket
+    import subprocess
+    import sys
+
+    row: dict[str, Any] = {"host": socket.gethostname()}
+    try:
+        marker = Path(PYLIBS) / f".installed-{TRANSFORMERS_VERSION}"
+        if not marker.exists():
+            subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "--target", PYLIBS,
+                            f"transformers=={TRANSFORMERS_VERSION}"], check=True, capture_output=True, text=True,
+                           timeout=1800)
+            for leftover in list(Path(PYLIBS).glob("numpy*")):   # keep the system NumPy
+                shutil.rmtree(leftover, ignore_errors=True)
+            marker.write_text("ok")
+        use_isolated_libs()
+        os.makedirs(HF_HOME, exist_ok=True)
+        from transformers import AutoConfig, AutoModel
+
+        AutoConfig.from_pretrained(BACKBONE)
+        backbone = AutoModel.from_pretrained(BACKBONE)       # downloads (safetensors) into HF_HOME on first use
+        import transformers
+
+        row.update(transformers=transformers.__version__, backbone_parameters=sum(p.numel() for p in backbone.parameters()),
+                   ok=True)
+    except subprocess.CalledProcessError as error:
+        row.update(ok=False, error=f"pip failed: {(error.stderr or '')[-400:]}")
+    except Exception as error:
+        row.update(ok=False, error=f"{type(error).__name__}: {error}"[:400])
+    return row
+
+
 def result_key(prefix: str, resolution: str, band: str, arm: str, horizon: int, seed: int) -> str:
     return f"{prefix.strip('/')}/{resolution}/{band}/{arm}/h{horizon}/seed-{seed}.json"
 
@@ -75,6 +124,7 @@ def llm_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
 
     sys.path.insert(0, args["repo_root"])
     os.chdir(args["repo_root"])
+    use_isolated_libs()
     from training.common.evaluation_integrated import evaluate_one_model
     from training.common.train_integrated import train_one_model
     from training.ray.final_eval import summarize_metrics
@@ -125,6 +175,15 @@ def launch(args: argparse.Namespace) -> None:
     client = spectrum_s3_client()
     bucket = args.bucket or os.environ.get("SPECTRUM_S3_BUCKET", "spectrum")
     ray.init(address=args.address, ignore_reinit_error=True)
+    if args.setup:
+        from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
+
+        nodes = [n for n in ray.nodes() if n["Alive"] and n["Resources"].get("GPU", 0) > 0]
+        futures = [ray.remote(num_cpus=1, scheduling_strategy=NodeAffinitySchedulingStrategy(n["NodeID"], soft=False))(
+            setup_node).remote() for n in nodes]
+        for row in ray.get(futures):
+            print("[llm-powder setup]", json.dumps(row), flush=True)
+        return
     horizons = args.horizons or list(RESOLUTIONS[args.resolution]["horizons"])
     worker_args = {"repo_root": args.repo_root, "bucket": bucket, "output_prefix": args.output_prefix,
                    "train_stride": args.train_stride, "epochs": args.epochs, "batch_size": args.batch_size,
@@ -153,7 +212,8 @@ def launch(args: argparse.Namespace) -> None:
 
 def parse_args(argv=None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--resolution", choices=list(RESOLUTIONS), required=True)
+    p.add_argument("--setup", action="store_true", help="install transformers + cache GPT-2 on every GPU node, then exit")
+    p.add_argument("--resolution", choices=list(RESOLUTIONS))
     p.add_argument("--band", default="600_800")
     p.add_argument("--arms", nargs="+", default=["ofa", "timellm"], choices=list(ARMS))
     p.add_argument("--horizons", nargs="+", type=int)
@@ -169,7 +229,10 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--output-prefix", default="powder-llm-results")
     p.add_argument("--address", default="auto")
     p.add_argument("--repo-root", default="/workspace/spectrum-usage")
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+    if not args.setup and not args.resolution:
+        p.error("--resolution is required unless --setup is given")
+    return args
 
 
 def main(argv=None) -> None:
