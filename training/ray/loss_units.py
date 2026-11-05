@@ -26,6 +26,7 @@ HORIZONS = (12, 24, 48, 96, 192)
 SEQ_LEN = 192
 RIDGE = 0.01
 CLIP = 1.0
+VAL_STRIDE = 5
 
 
 def channel_weights(std: np.ndarray, arm: str) -> np.ndarray:
@@ -96,6 +97,25 @@ def train_arm(values: np.ndarray, stats: dict[str, Any], arm: str, seed: int, ep
         "input_sequence_length": SEQ_LEN, "prediction_horizon": 1, "input_size": 1, "ridge_alpha": RIDGE}}).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     data = torch.as_tensor(standardized, device=device)
+    v0, v1 = stats["borders"]["validation"]
+    val = torch.as_tensor(((values[v0:v1] - mean) / std).astype(np.float32), device=device)
+    val_starts = np.arange(0, len(val) - SEQ_LEN, VAL_STRIDE)
+
+    def validation_loss() -> float:
+        """One-step loss on the validation partition with the same per-channel weights as training."""
+        model.eval()
+        total, count = 0.0, 0
+        with torch.no_grad():
+            for lo in range(0, len(val_starts), 256):
+                idx = torch.as_tensor(val_starts[lo:lo + 256], device=device)
+                x = val[idx[:, None] + torch.arange(SEQ_LEN, device=device)[None, :]]        # (B, L, C)
+                y = val[idx + SEQ_LEN]                                                          # (B, C)
+                pred = model(x.permute(0, 2, 1).reshape(-1, SEQ_LEN, 1)).reshape(len(idx), channels)
+                total += float((weights[None, :] * (pred - y) ** 2).sum())
+                count += pred.numel()
+        return total / count
+
+    best_loss, best_state = float("inf"), None
     for _ in range(epochs):
         model.train()
         order = rng.permutation(n_windows * channels)                          # (window, channel) pairs
@@ -111,6 +131,10 @@ def train_arm(values: np.ndarray, stats: dict[str, Any], arm: str, seed: int, ep
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), CLIP)
             optimizer.step()
+        current = validation_loss()                                            # keep the best epoch, as the pipeline
+        if current < best_loss:
+            best_loss, best_state = current, {k: v.detach().clone() for k, v in model.state_dict().items()}
+    model.load_state_dict(best_state)
     return rollout_raw_mse(model, values, *stats["borders"]["test"], mean, std)
 
 
@@ -154,7 +178,7 @@ def main(argv=None) -> None:
     sys.path.insert(0, args.repo_root)
     from training.ray.storage import spectrum_s3_client  # noqa: F401  (fail early if storage is unavailable)
 
-    bucket = args.bucket or os.environ.get("S3_BUCKET", "spectrum")
+    bucket = args.bucket or os.environ.get("SPECTRUM_S3_BUCKET", "spectrum")
     ray.init(address="auto")
     specs = [{"dataset": d, "arm": a, "seed": s, "epochs": args.epochs, "repo_root": args.repo_root,
               "bucket": bucket, "output_prefix": args.output_prefix}
