@@ -188,7 +188,7 @@ def test_horizon_jobs_skip_one_step_and_already_direct_models():
     from training.ray.fixed_train import horizon_jobs
 
     entries = [{"rep": "2d", "model": m} for m in
-               ("vanillalstm", "linearar2d", "lookbackmean2d", "autoformer_csa")]
+               ("vanillalstm", "linearar2d", "lookbackmean2d", "autoformer_csa", "temporalconvnet")]
     jobs = horizon_jobs(entries, [15, 60])
     assert [(j["model"], j["horizon"]) for j in jobs] == [
         ("vanillalstm", 15), ("vanillalstm", 60), ("autoformer_csa", 15)]
