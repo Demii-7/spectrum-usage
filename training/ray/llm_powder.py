@@ -37,7 +37,7 @@ RESOLUTIONS = {"1min": {"lookback": 60, "horizons": (1, 15, 60)}, "15min": {"loo
 
 
 def build_config(arm: str, resolution: str, band: str, horizon: int, seed: int, repo_root: str, *,
-                 train_stride: int = 1, epochs: int = 10, batch_size: int = 4, learning_rate: float = 1e-4,
+                 train_stride: int = 1, test_stride: int = 1, epochs: int = 10, batch_size: int = 4, learning_rate: float = 1e-4,
                  patience: int = 5, device: str | None = None) -> tuple[dict[str, Any], str]:
     """Pipeline config for one (arm, resolution, band, horizon, seed) run; returns (config, model_name)."""
     model_name, arm_file = ARMS[arm]
@@ -59,7 +59,7 @@ def build_config(arm: str, resolution: str, band: str, horizon: int, seed: int, 
         config["windowing"] = {"lookback": spec["lookback"], "horizons": [int(horizon)]}
     model, train = config[model_name]["model"], config[model_name]["train"]
     model.update(input_sequence_length=spec["lookback"], prediction_horizon=int(horizon), channel_independent=True)
-    train.update(train_stride=int(train_stride), val_stride=int(train_stride), test_stride=1, epochs=int(epochs),
+    train.update(train_stride=int(train_stride), val_stride=int(train_stride), test_stride=int(test_stride), epochs=int(epochs),
                  batch_size=int(batch_size), learning_rate=float(learning_rate), seed=int(seed),
                  early_stopping=True, early_stopping_patience=int(patience))
     return config, model_name
@@ -133,7 +133,7 @@ def llm_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     client, bucket = spectrum_s3_client(), args["bucket"]
     arm, resolution, band, horizon, seed = job["arm"], job["resolution"], job["band"], int(job["horizon"]), int(job["seed"])
     result = {"arm": arm, "resolution": resolution, "band": band, "horizon": horizon, "seed": seed, "kind": "llm",
-              "channel_independent": True, "train_stride": args["train_stride"], "epochs_max": args["epochs"],
+              "channel_independent": True, "train_stride": args["train_stride"], "test_stride": args["test_stride"], "epochs_max": args["epochs"],
               "batch_size": args["batch_size"], "learning_rate": args["learning_rate"],
               "hyperparameters": "SpectrumLLM reproduction regime (untuned)"}
     started = time.time()
@@ -143,7 +143,7 @@ def llm_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
 
             result["conversion"] = json.dumps(ensure_powder15(band, args["repo_root"]))
         config, model_name = build_config(arm, resolution, band, horizon, seed, args["repo_root"],
-                                          train_stride=args["train_stride"], epochs=args["epochs"],
+                                          train_stride=args["train_stride"], test_stride=args["test_stride"], epochs=args["epochs"],
                                           batch_size=args["batch_size"], learning_rate=args["learning_rate"],
                                           patience=args["patience"], device=args.get("device"))
         with tempfile.TemporaryDirectory(prefix="llm-powder-") as scratch:
@@ -186,7 +186,7 @@ def launch(args: argparse.Namespace) -> None:
         return
     horizons = args.horizons or list(RESOLUTIONS[args.resolution]["horizons"])
     worker_args = {"repo_root": args.repo_root, "bucket": bucket, "output_prefix": args.output_prefix,
-                   "train_stride": args.train_stride, "epochs": args.epochs, "batch_size": args.batch_size,
+                   "train_stride": args.train_stride, "test_stride": args.test_stride, "epochs": args.epochs, "batch_size": args.batch_size,
                    "learning_rate": args.learning_rate, "patience": args.patience, "device": args.device}
     jobs = []
     for arm in args.arms:
@@ -219,6 +219,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--horizons", nargs="+", type=int)
     p.add_argument("--seeds", nargs="+", type=int, default=[40, 41, 42, 43, 44])
     p.add_argument("--train-stride", type=int, default=1)
+    p.add_argument("--test-stride", type=int, default=1, help="score every n-th test window (use 1 for real results)")
     p.add_argument("--epochs", type=int, default=10)
     p.add_argument("--batch-size", type=int, default=4)
     p.add_argument("--learning-rate", type=float, default=1e-4)
