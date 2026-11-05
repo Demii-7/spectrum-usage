@@ -281,7 +281,9 @@ def launch(args: argparse.Namespace) -> None:
         winners.append({**{k: group[k] for k in ("dataset", "model", "rep")}, "candidate_id": winner["candidate_id"],
                         "objective": winner["objective"], "trials_ok": sum(1 for t in trials if t.get("ok")),
                         "budget": group["n"], "parameters": json.dumps(winner["parameters"], default=str)})
-        finished = {r["seed"] for r in read_records(client, bucket, group["prefix"] + "/final") if r.get("ok")}
+        # only finals trained from the CURRENT winner count; a rerun that finds a better candidate redoes them
+        finished = {r["seed"] for r in read_records(client, bucket, group["prefix"] + "/final")
+                    if r.get("ok") and r.get("candidate_id") == winner["candidate_id"]}
         for seed in FINAL_SEEDS:
             if seed in finished:
                 continue

@@ -58,3 +58,12 @@ def test_prepared_config_keeps_the_new_lookback_after_injection():
     assert out["vanillalstm"]["model"]["prediction_horizon"] == 1
     assert out["vanillalstm"]["train"]["seed"] == 42 and out["vanillalstm"]["train"]["test_stride"] == 1
     assert out["windowing"]["lookback"] == LOOKBACK
+
+
+def test_finals_from_an_older_winner_are_not_counted_as_done():
+    import inspect
+
+    from training.ray import tune_fixed
+
+    source = inspect.getsource(tune_fixed.launch)
+    assert 'r.get("candidate_id") == winner["candidate_id"]' in source
