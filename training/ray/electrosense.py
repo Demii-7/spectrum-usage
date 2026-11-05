@@ -255,6 +255,9 @@ def ours_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         config = apply_dataset(config, series_path, stats, name, horizons)
         config = set_lookback_and_horizon(config, model, horizon)
         config[model]["train"]["seed"] = seed
+        if job.get("model_overrides"):  # an architecture variant (for example a seasonal baseline), same hyperparameters
+            config[model]["model"].update(job["model_overrides"])
+            result["variant"] = job.get("variant", "")
         with tempfile.TemporaryDirectory(prefix="electrosense-") as scratch:
             run_dir, eval_dir = Path(scratch) / "run", Path(scratch) / "eval"
             train_one_model(config, model, run_dir)
@@ -271,6 +274,7 @@ def ours_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     result["wall_seconds"] = round(time.time() - started, 1)
     try:
         suffix = f"/h{horizon}" if horizon else ""
+        suffix += f"/variant-{job['variant']}" if job.get("model_overrides") else ""
         key = f"{args['output_prefix'].strip('/')}/{args['mode']}/{name}/{rep}/{model}{suffix}/seed-{seed}.json"
         client.put_object(Bucket=bucket, Key=key, Body=json.dumps(result, default=str).encode())
     except Exception:
@@ -293,6 +297,19 @@ def ours_jobs(entries, datasets, seeds, mode, horizons):
             elif model not in ONE_STEP_ONLY:  # direct: one model per horizon
                 jobs += [{**entry, "dataset": dataset, "seed": s, "horizon": h} for h in horizons for s in use_seeds]
     return jobs
+
+
+def expand_variants(jobs: list[dict[str, Any]], variants: list[str] | None) -> list[dict[str, Any]]:
+    """``NAME=JSON`` variants -> one job per (job, variant) carrying model-config overrides; no variants: unchanged."""
+    if not variants:
+        return jobs
+    parsed = []
+    for token in variants:
+        name, _, text = token.partition("=")
+        if not name or not text:
+            raise ValueError(f"variant {token!r} must look like NAME={{json overrides}}")
+        parsed.append((name, json.loads(text)))
+    return [{**job, "variant": name, "model_overrides": overrides} for job in jobs for name, overrides in parsed]
 
 
 def launch(args: argparse.Namespace) -> None:
@@ -320,7 +337,7 @@ def launch(args: argparse.Namespace) -> None:
                         for m, rep in (("lookbackmean1d", "1d"), ("lookbackmean2d", "2d"))
                         if not args.models or m in args.models]
         entries = [e for e in entries if e["rep"] in ("1d", "2d")]
-        jobs = ours_jobs(entries, args.datasets, args.seeds, args.mode, args.horizons)
+        jobs = expand_variants(ours_jobs(entries, args.datasets, args.seeds, args.mode, args.horizons), args.variant)
         print(f"[electrosense] {len(jobs)} runs ({args.mode})", flush=True)
         for job in jobs:
             spec = get_model_spec(job["model"])
@@ -359,6 +376,9 @@ def parse_args(argv=None) -> argparse.Namespace:
     ours.add_argument("--models", nargs="+")
     ours.add_argument("--prefixes", nargs="+", default=["checkpoints-oct2026", "checkpoints-oct2026-r2"])
     ours.add_argument("--include-reference", action=argparse.BooleanOptionalAction, default=True)
+    ours.add_argument("--variant", action="append", metavar="NAME=JSON",
+                      help='Model-config overrides, e.g. seasonal=\'{"baseline":"seasonal","seasonal_period":96}\' '
+                           "(repeatable; each variant is run in addition to nothing else, so include the plain run separately)")
     ours.add_argument("--gpu-fraction", type=float, default=0.25)
     return parser.parse_args(argv)
 

@@ -82,3 +82,17 @@ def test_tsl_command_uses_the_paper_protocol_and_pins_run_identity():
     assert "--is_training 0" in raw and "--inverse" in raw and "--seed" not in raw and "--enc_in 4" in raw
     assert parse_metrics("noise\nmse:0.2718, mae:0.3105\n") == (0.2718, 0.3105)
     assert parse_metrics("no metrics here") is None
+
+
+def test_expand_variants_adds_one_job_per_variant_with_overrides():
+    import pytest
+
+    from training.ray.electrosense import expand_variants
+
+    jobs = [{"model": "residuallinearar1d", "seed": 40}, {"model": "residuallinearar2d", "seed": 40}]
+    assert expand_variants(jobs, None) == jobs
+    out = expand_variants(jobs, ['seasonal={"baseline":"seasonal","seasonal_period":96}', 'norm={"window_norm":"std"}'])
+    assert len(out) == 4 and {j["variant"] for j in out} == {"seasonal", "norm"}
+    assert out[0]["model_overrides"] == {"baseline": "seasonal", "seasonal_period": 96} and "variant" not in jobs[0]
+    with pytest.raises(ValueError):
+        expand_variants(jobs, ["badtoken"])
