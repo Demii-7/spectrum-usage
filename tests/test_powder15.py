@@ -60,3 +60,13 @@ def test_apply_powder15_swaps_paths_windows_and_keeps_ranges():
     direct = set_lookback_and_horizon(model_cfg, "vanillalstm", 24)
     assert direct["vanillalstm"]["model"] == {"input_sequence_length": LOOKBACK, "prediction_horizon": 24}
     assert direct["vanillalstm"]["train"]["test_stride"] == 1
+
+
+def test_expand_sites_gives_one_job_per_core_receiver_or_leaves_pooled_jobs_alone():
+    from training.ray.powder15 import CORE_NODES, expand_sites
+
+    jobs = [{"model": "m", "band": "600_800", "seed": 40}, {"model": "n", "band": "600_800", "seed": 41}]
+    assert expand_sites(jobs, False) == jobs
+    split = expand_sites(jobs, True)
+    assert len(split) == 2 * len(CORE_NODES) and {j["site"] for j in split} == set(CORE_NODES)
+    assert split[0]["model"] == "m" and "site" not in jobs[0]    # input untouched

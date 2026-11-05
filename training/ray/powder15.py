@@ -186,6 +186,12 @@ def ours_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         config = apply_powder15(config, band, args["repo_root"], horizons)
         config = set_lookback_and_horizon(config, model, horizon)
         config[model]["train"]["seed"] = seed
+        site = job.get("site")
+        if site:  # a receiver-specific model: only that receiver's files, so its own normalization statistics
+            from training.ray.final_eval import restrict_files_to_site
+
+            config = restrict_files_to_site(config, site)
+            result["site"] = site
         with tempfile.TemporaryDirectory(prefix="powder15-") as scratch:
             run_dir, eval_dir = Path(scratch) / "run", Path(scratch) / "eval"
             train_one_model(config, model, run_dir)
@@ -194,6 +200,17 @@ def ours_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
             evaluate_one_model(config, model, eval_dir, checkpoint, skip_plots=True)
             rows = pd.read_csv(eval_dir / "aggregate_metrics.csv").to_dict("records")
             result.update(summarize_metrics(rows))
+            if args.get("per_site_eval") and not site:
+                # score the pooled model one receiver at a time (training/validation data, so normalization, stay pooled)
+                from training.ray.final_eval import restrict_files_to_site
+
+                for node in CORE_NODES:
+                    out = Path(scratch) / f"eval-{node}"
+                    out.mkdir()
+                    evaluate_one_model(restrict_files_to_site(config, node, ("test",)), model, out, checkpoint,
+                                       skip_plots=True)
+                    per_site = summarize_metrics(pd.read_csv(out / "aggregate_metrics.csv").to_dict("records"))
+                    result.update({f"{node.split('-')[0]}__{k}": v for k, v in per_site.items()})
         result["ok"] = True
     except Exception as error:
         import traceback
@@ -202,6 +219,7 @@ def ours_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     result["wall_seconds"] = round(time.time() - started, 1)
     try:
         suffix = f"/h{horizon}" if horizon else ""
+        suffix += f"/site-{job['site']}" if job.get("site") else ""
         key = f"{args['output_prefix'].strip('/')}/{args['mode']}/{band}/{rep}/{model}{suffix}/seed-{seed}.json"
         client.put_object(Bucket=bucket, Key=key, Body=json.dumps(result, default=str).encode())
     except Exception:
@@ -210,6 +228,13 @@ def ours_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------------------------------------ CLI
+def expand_sites(jobs: list[dict[str, Any]], per_site: bool) -> list[dict[str, Any]]:
+    """Per-receiver mode: one job per (job, core receiver); otherwise unchanged (pooled over the four receivers)."""
+    if not per_site:
+        return jobs
+    return [{**job, "site": node} for job in jobs for node in CORE_NODES]
+
+
 def launch(args: argparse.Namespace) -> None:
     import ray
 
@@ -222,7 +247,8 @@ def launch(args: argparse.Namespace) -> None:
     bucket = args.bucket or os.environ.get("SPECTRUM_S3_BUCKET", "spectrum")
     ray.init(address=args.address, ignore_reinit_error=True)
     worker_args = {"repo_root": args.repo_root, "bucket": bucket, "output_prefix": args.output_prefix,
-                   "mode": getattr(args, "mode", "baselines"), "device": args.device}
+                   "mode": getattr(args, "mode", "baselines"), "device": args.device,
+                   "per_site_eval": getattr(args, "per_site_eval", False)}
     futures = []
     if args.command == "baselines":
         kinds = ("train_mean", "last_value", "window_mean", "seasonal_naive", "seasonal_mean")
@@ -239,6 +265,7 @@ def launch(args: argparse.Namespace) -> None:
         jobs = ours_jobs(entries, args.bands, args.seeds, args.mode, args.horizons)
         for job in jobs:
             job["band"] = job.pop("dataset")
+        jobs = expand_sites(jobs, args.per_site)
         print(f"[powder15] {len(jobs)} runs ({args.mode})", flush=True)
         for job in jobs:
             spec = get_model_spec(job["model"])
@@ -277,6 +304,10 @@ def parse_args(argv=None) -> argparse.Namespace:
     ours.add_argument("--models", nargs="+")
     ours.add_argument("--prefixes", nargs="+", default=["checkpoints-oct2026", "checkpoints-oct2026-r2"])
     ours.add_argument("--include-reference", action=argparse.BooleanOptionalAction, default=True)
+    ours.add_argument("--per-site", action="store_true",
+                      help="Train one model per core receiver (own data and normalization); default is pooled over four")
+    ours.add_argument("--per-site-eval", action="store_true",
+                      help="Also score each pooled model on each receiver's test windows separately")
     ours.add_argument("--gpu-fraction", type=float, default=0.25)
     return parser.parse_args(argv)
 
