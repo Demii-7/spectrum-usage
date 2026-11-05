@@ -39,6 +39,11 @@ training/SpectrumLLM/repro/timellm_ref/
 # Raw upstream CSVs and trained weights (~210 MB per run).
 training/SpectrumLLM/repro/data/
 training/SpectrumLLM/repro/checkpoints/
+# DLinear working archive: the protocol search, diagnostic campaigns and direct
+# TSLib run logs that settled the published DLinear rows (2026-11-04). The
+# conclusions live in repro/RESULTS_PAPER_REGIME.md; the canonical DLinear
+# results come from repro/run_dlinear.sh -> results_dlinear_settled.json.
+training/SpectrumLLM/repro/dlinear/
 
 # --- TSS-LCD reproduction: deliberately untracked ---
 # Upstream data recovered from a deleted commit; see data/tsslcd/PROVENANCE.md

@@ -344,14 +344,20 @@ class SpectrumLLMForecaster(nn.Module):
         if self.prompt_mode == "none" or self.text_tokenizer is None:
             return None
         prompts = [
+            # Time-LLM's template verbatim [T:models/TimeLLM.py:219-228], which is
+            # what the article's Fig. 3 depicts -- including the full-precision
+            # numbers (no rounding) and the doubled bracket in <|<end_prompt|>.
+            # domain_hint stands in for their prompt_bank dataset description.
             (
-                f"<|start_prompt|>Dataset description: {self.domain_hint} measurements. "
+                f"<|start_prompt|>Dataset description: {self.domain_hint}"
                 f"Task description: forecast the next {self.prediction_horizon} steps "
-                f"given the previous {self.input_sequence_length} steps. "
+                f"given the previous {self.input_sequence_length} steps information; "
                 "Input statistics: "
-                f"min value {entry['min']:.3f}, max value {entry['max']:.3f}, "
-                f"median value {entry['median']:.3f}, the trend of input is {entry['trend']}, "
-                f"top {len(entry['lags'])} lags are {entry['lags']}<|end_prompt|>"
+                f"min value {entry['min']}, "
+                f"max value {entry['max']}, "
+                f"median value {entry['median']}, "
+                f"the trend of input is {entry['trend']}, "
+                f"top {len(entry['lags'])} lags are : {entry['lags']}<|<end_prompt|>"
             )
             for entry in series_statistics(normalized, self.num_lags)
         ]

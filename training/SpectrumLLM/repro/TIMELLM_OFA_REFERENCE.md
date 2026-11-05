@@ -16,16 +16,17 @@ Source tags below: `[T:file:line]` = Time-LLM's code, `[F:file:line]` = OFA's co
 
 | Item | Time-LLM released | Ours | Verdict |
 |---|---|---|---|
+| *(rows below re-verified 2026-11-05; the port has since been aligned on RevIN, patch count, lags and head geometry — original verdicts in parentheses where they changed)* | | | |
 | Patch length / stride | 16 / 8 `[T:models/TimeLLM.py:32]` | 16 / 8 | **match** |
 | Prototype count | **1000, hardcoded** `[T:models/TimeLLM.py:178]` | 1000 default | **match** |
 | Top-k lags in prompt | 5 `[T:models/TimeLLM.py:38]` | 5 | match in count |
-| **How "lags" are computed** | **FFT autocorrelation**, `topk` over the mean autocorrelation `[T:models/TimeLLM.py:257-264]` | `topk` over the **raw series values** `[O:models/SpectrumLLM.py:series_statistics]` | **ours is wrong** - our "top lags" are indices of the largest samples, not lags |
+| **How "lags" are computed** | **FFT autocorrelation**, `topk` over the mean autocorrelation `[T:models/TimeLLM.py:257-264]` | FFT autocorrelation, `autocorrelation_lags` | **match** (was: ours wrong; aligned 2026-11) |
 | Trend string | sign of `x.diff(dim=1).sum(dim=1)` `[T:...:211,226]` | sign of `series[-1] - series[0]` | equivalent (a telescoping sum), cosmetic |
 | Channel handling | **strictly channel-independent**: `reshape(B*N, T, 1)` `[T:...:205]` | all-channel token by default; `channel_independent: true` available | ours defaults to the *article's* equation, not the instantiation's |
-| RevIN | `Normalize(enc_in, affine=False)` `[T:...:192]` | `revin_affine: true` | **differs** |
-| Patch count | `(L - P)/S + 2` - `ReplicationPad1d((0, stride))` pads before unfolding `[T:layers/Embed.py:166,180]` | `(L - P)/S + 1`, no padding | **differs** (one token fewer) |
+| RevIN | `Normalize(enc_in, affine=False)` `[T:...:192]` | `revin_affine: false` | **match** (was: differs; aligned 2026-11) |
+| Patch count | `(L - P)/S + 2` - `ReplicationPad1d((0, stride))` pads before unfolding `[T:layers/Embed.py:166,180]` | replicate pad, `(L - P)/S + 2` | **match** (was: differs; aligned 2026-11) |
 | Patch embedding | `TokenEmbedding` = a **Conv1d(patch_len -> d_model, k=3, circular padding)** `[T:layers/Embed.py:169]` | 2-layer MLP with GELU | **differs**; the article only says "a simple MLP", so ours follows the article and theirs does not |
-| Post-LLM head | truncate hidden states to the **first `d_ff` dims** `[T:...:244]`, then `FlattenHead` over `d_ff x patch_nums` per variable | flatten the **full `d_llm` (768)** x patches, one linear to `K x N` | **differs** - exactly 23.0x more head parameters at every (K, channels): (23 x 768) / (24 x 32); e.g. 84,792,000 vs 3,691,200 at K=192 / 25 channels. Adopted from Time-LLM; note the head was never the bulk of the trainable mass - the 50.3M prototype probe is |
+| Post-LLM head | truncate hidden states to the **first `d_ff` dims** `[T:...:244]`, then `FlattenHead` over `d_ff x patch_nums` per variable | d_ff truncation, flatten, one linear to `K x N` | **match in geometry** (was: differs; aligned 2026-11) |
 | Reprogramming layer | explicit Q/K/V projections with `d_keys = d_ff`, out-projection to `d_llm` `[T:...:267-276]` | `nn.MultiheadAttention(embed_dim=d_llm)` + query projection `d_model -> d_llm` | **differs** in width and parameter count |
 | Backbone | LLaMA-7B default; GPT-2 and BERT also wired | GPT-2 | the article uses BERT and GPT-2 |
 | **Backbone truncation** | **`num_hidden_layers = llm_layers`, default 6** `[T:...:46]`, `run_main.py` | truncated to 6 | **match - and this resolves a flagged uncertainty: truncating the backbone is Time-LLM's own practice, not an invention of ours** |
