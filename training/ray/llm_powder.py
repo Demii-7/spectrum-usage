@@ -153,6 +153,10 @@ def llm_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
             eval_dir.mkdir()
             evaluate_one_model(config, model_name, eval_dir, checkpoint, skip_plots=True)
             result.update(summarize_metrics(pd.read_csv(eval_dir / "aggregate_metrics.csv").to_dict("records")))
+            from training.ray.artifacts import save_run
+
+            result.update(save_run(client, bucket, f"{args['output_prefix'].strip('/')}/weights/{resolution}/{band}/{arm}/"
+                                   f"h{horizon}/seed-{seed}", run_dir, config, {"result_kind": "llm_powder", "seed": seed}))
         result["ok"] = True
     except Exception as error:
         import traceback

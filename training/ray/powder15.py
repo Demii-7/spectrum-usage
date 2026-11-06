@@ -205,6 +205,12 @@ def ours_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
             evaluate_one_model(config, model, eval_dir, checkpoint, skip_plots=True)
             rows = pd.read_csv(eval_dir / "aggregate_metrics.csv").to_dict("records")
             result.update(summarize_metrics(rows))
+            from training.ray.artifacts import save_run
+
+            result.update(save_run(client, bucket, f"{args['output_prefix'].strip('/')}/weights/{band}/{rep}/{model}"
+                                   f"{'/h' + str(horizon) if horizon else ''}{'/site-' + str(site) if site else ''}/seed-{seed}",
+                                   run_dir, config, {"result_kind": "powder15_ours", "seed": seed, "horizon": horizon,
+                                                     "site": site}))
             if args.get("per_site_eval") and not site:
                 # score the pooled model one receiver at a time (training/validation data, so normalization, stay pooled)
                 from training.ray.final_eval import restrict_files_to_site

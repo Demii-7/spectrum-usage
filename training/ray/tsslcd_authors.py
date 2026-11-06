@@ -302,6 +302,23 @@ def run_one(args: dict[str, Any]) -> dict[str, Any]:
     epochs_of("diff", diffusion, diffusion_loss, args["epochs"]["diff"], LEARNING_RATE)
     diffusion.eval()
 
+    import tempfile
+
+    from training.ray.artifacts import save_artifact
+    from training.ray.storage import spectrum_s3_client
+
+    with tempfile.TemporaryDirectory(prefix="tsslcd-authors-save-") as scratch:
+        for part, module in (("ae_ctx", ae_ctx), ("ae_fut", ae_fut), ("diffusion", diffusion)):
+            path = Path(scratch) / f"{part}.pth"
+            torch.save(module.state_dict(), path)
+            saved = save_artifact(spectrum_s3_client(), args["bucket"],
+                                  f"{args['output_prefix'].strip('/')}/weights/savgol-{savgol}/seed-{seed}", path,
+                                  {"savgol": savgol, "seed": seed, "epochs": args["epochs"], "columns": n_cols,
+                                   "timing": {k: v for k, v in result.items() if k.startswith("stage_")}}, repo_root=root)
+            result.setdefault("artifact_keys", []).append(saved.get("weights_key"))
+            if "artifact_error" in saved:
+                result["artifact_error"] = saved["artifact_error"]
+
     # inference: one diffusion sample per test window; keep the three scored horizons
     torch.manual_seed(seed + 1000)
     test_series = torch.as_tensor(test_model, dtype=torch.float32, device=device)

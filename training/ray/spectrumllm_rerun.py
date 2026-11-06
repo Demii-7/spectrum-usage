@@ -90,11 +90,20 @@ def job(spec: dict[str, Any]) -> dict[str, Any]:
             command = [sys.executable, "-u", SCRIPT, "--data-dir", str(data_dir), "--datasets", name,
                        "--horizons", str(HORIZON), "--seeds", str(seed), "--arm", "timellm", "--backbone", BACKBONE,
                        "--channel-independent", "--micro-batch-size", str(MICRO_BATCH[channels]), "--split", "tslib",
-                       "--lr", str(lr), "--checkpoint-dir", "", "--out", str(out)]
+                       "--lr", str(lr), "--checkpoint-dir", str(Path(scratch) / "ckpt"), "--out", str(out)]
             run = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True, timeout=spec["timeout"])
             if not out.exists():
                 raise RuntimeError("training script wrote no result: " + (run.stdout + run.stderr)[-400:])
             row = json.loads(out.read_text())[-1]
+            from training.ray.artifacts import save_artifact
+
+            for path in sorted((Path(scratch) / "ckpt").rglob("*.pt")):   # trainable weights, config and normalization inside
+                saved = save_artifact(client, bucket, f"{spec['output_prefix'].strip('/')}/weights/lr{lr}/n{channels}/seed-{seed}",
+                                      path, {"command": command, "lr": float(lr), "seed": seed, "channels": channels,
+                                             "backbone": BACKBONE, "result_row": row}, repo_root=root)
+                record.setdefault("artifact_keys", []).append(saved.get("weights_key"))
+                if "artifact_error" in saved:
+                    record["artifact_error"] = saved["artifact_error"]
         record.update({k: row.get(k) for k in ("test_mse_raw", "test_mse_std", "best_val_mse_std", "epochs_run",
                                                "train_wall_s", "peak_gpu_mb", "references_std", "params_trainable")})
         record["collapsed"] = is_collapsed(float(record["best_val_mse_std"]), record["val_lookback_mean_mse_std"])

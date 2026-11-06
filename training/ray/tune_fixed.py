@@ -202,6 +202,11 @@ def final_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
             eval_dir.mkdir()
             evaluate_one_model(config, model, eval_dir, result["checkpoint"], skip_plots=True)
             record.update(metrics(eval_dir))
+            from training.ray.artifacts import save_artifact
+
+            record.update(save_artifact(client, bucket, f"{job['prefix']}/weights/seed-{seed}", result["checkpoint"],
+                                        {"config": config, "parameters": job["parameters"], "seed": seed,
+                                         "candidate_id": job["candidate_id"], "kind": "tuned_final"}))
         record.update(ok=True, objective=result["objective"], objective_name=result["objective_name"])
     except Exception as error:
         import traceback

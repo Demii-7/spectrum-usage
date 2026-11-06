@@ -235,6 +235,18 @@ def job(spec: dict[str, Any]) -> dict[str, Any]:
             record.update(savgol=savgol, seed=seed, epochs=spec["epochs"])
             models, timing = train_models(source, savgol, seed, spec["epochs"], device, lambda m: print(f"[{name}] {m}", flush=True))
             record["timing"] = timing
+            from training.ray.artifacts import save_artifact
+
+            with tempfile.TemporaryDirectory(prefix="tsslcd-save-") as scratch:
+                for part, module in zip(("ae_ctx", "ae_fut", "diffusion"), models):
+                    path = Path(scratch) / f"{part}.pth"
+                    torch.save(module.state_dict(), path)
+                    saved = save_artifact(client, bucket, f"{spec['output_prefix']}/weights/{name}", path,
+                                          {"savgol": savgol, "seed": seed, "epochs": spec["epochs"], "timing": timing,
+                                           "protocol": "d2d4f29 first commit, 750 columns"})
+                    record.setdefault("artifact_keys", []).append(saved.get("weights_key"))
+                    if "artifact_error" in saved:
+                        record["artifact_error"] = saved["artifact_error"]
         t0 = time.time()
         record.update(evaluate(models, source, savgol, device))
         record["inference_seconds"] = round(time.time() - t0, 1)

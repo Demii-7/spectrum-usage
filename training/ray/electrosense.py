@@ -266,6 +266,11 @@ def ours_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
             evaluate_one_model(config, model, eval_dir, checkpoint, skip_plots=True)
             per_freq = pd.read_csv(eval_dir / "per_frequency_metrics.csv")
             result.update(standardized_from_per_frequency(per_freq, stats))
+            from training.ray.artifacts import save_run
+
+            result.update(save_run(client, bucket, f"{args['output_prefix'].strip('/')}/weights/{name}/{rep}/{model}"
+                                   f"{'/h' + str(horizon) if horizon else ''}/seed-{seed}", run_dir, config,
+                                   {"result_kind": "electrosense_ours", "seed": seed, "horizon": horizon}))
         result["ok"] = True
     except Exception as error:
         import traceback
