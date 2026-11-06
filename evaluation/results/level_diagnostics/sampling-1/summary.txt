@@ -1,0 +1,344 @@
+              node       band    ok  wall_seconds
+0  humanities-nuc1    600_800  True         198.4
+1  humanities-nuc1  2400_2600  True         192.2
+2      madsen-nuc1    600_800  True         207.6
+3      madsen-nuc1  2400_2600  True         205.0
+4       moran-nuc1    600_800  True         198.2
+5       moran-nuc1  2400_2600  True         204.6
+6   sagepoint-nuc1    600_800  True         195.0
+7   sagepoint-nuc1  2400_2600  True         206.5
+
+==== lookback 60 min: test MAE (mean over receivers; decim = mean over receivers and 15 phases)
+band                                    2400_2600               600_800              
+horizon                                        15     30     60      15     30     60
+target rep2                   predictor                                              
+avg15  1min                   ridge         0.422  0.488  0.591   0.479  0.543  0.638
+                              strong        0.447  0.510  0.614   0.486  0.549  0.648
+       block                  ridge         0.434  0.500  0.608   0.463  0.529  0.628
+                              strong        0.450  0.509  0.616   0.480  0.542  0.643
+       decim(avg over phases) ridge         0.564  0.614  0.703   0.656  0.703  0.783
+                              strong        0.621  0.667  0.750   0.698  0.743  0.820
+point  1min                   ridge         0.752  0.785  0.858   0.917  0.951  1.017
+                              strong        0.733  0.775  0.833   0.896  0.932  1.001
+       block                  ridge         0.774  0.802  0.881   0.948  0.982  1.048
+                              strong        0.831  0.868  0.942   1.006  1.033  1.098
+       decim(avg over phases) ridge         0.822  0.855  0.930   1.002  1.034  1.096
+                              strong        0.817  0.852  0.928   1.003  1.035  1.098
+
+---- lookback 60: skill vs the 1-min validation-selected simple baseline (same target/origins)
+band                                    2400_2600               600_800              
+horizon                                        15     30     60      15     30     60
+target rep2                   predictor                                              
+avg15  1min                   ridge         0.027  0.013  0.000   0.018  0.015  0.017
+                              strong        0.000  0.000  0.000   0.000  0.000  0.000
+       block                  ridge         0.013  0.001 -0.007   0.047  0.038  0.031
+                              strong       -0.022 -0.018 -0.021   0.014  0.013  0.008
+       decim(avg over phases) ridge        -0.377 -0.311 -0.246  -0.347 -0.279 -0.209
+                              strong       -0.433 -0.357 -0.282  -0.438 -0.356 -0.270
+point  1min                   ridge        -0.032 -0.031 -0.031  -0.024 -0.022 -0.016
+                              strong        0.000  0.000  0.000   0.000  0.000  0.000
+       block                  ridge        -0.046 -0.041 -0.044  -0.057 -0.053 -0.045
+                              strong       -0.092 -0.092 -0.089  -0.123 -0.109 -0.097
+       decim(avg over phases) ridge        -0.139 -0.133 -0.129  -0.119 -0.111 -0.095
+                              strong       -0.119 -0.115 -0.115  -0.120 -0.112 -0.097
+
+---- lookback 60: ridge skill vs its own representation's best simple baseline
+band                          2400_2600               600_800              
+horizon                              15     30     60      15     30     60
+target rep2                                                                
+avg15  1min                       0.027  0.013  0.000   0.018  0.015  0.017
+       block                      0.034  0.019  0.014   0.034  0.025  0.023
+       decim(avg over phases)     0.040  0.035  0.029   0.063  0.057  0.048
+point  1min                      -0.032 -0.031 -0.031  -0.024 -0.022 -0.016
+       block                      0.040  0.046  0.040   0.059  0.051  0.047
+       decim(avg over phases)    -0.018 -0.016 -0.012   0.001  0.001  0.001
+
+==== lookback 240 min: test MAE (mean over receivers; decim = mean over receivers and 15 phases)
+band                                    2400_2600               600_800              
+horizon                                        15     30     60      15     30     60
+target rep2                   predictor                                              
+avg15  1min                   ridge         0.429  0.496  0.594   0.493  0.559  0.654
+                              strong        0.447  0.510  0.614   0.486  0.549  0.648
+       block                  ridge         0.437  0.501  0.601   0.467  0.532  0.631
+                              strong        0.450  0.509  0.616   0.480  0.542  0.643
+       decim(avg over phases) ridge         0.551  0.601  0.691   0.621  0.670  0.757
+                              strong        0.619  0.666  0.750   0.678  0.724  0.810
+point  1min                   ridge         0.768  0.799  0.875   0.935  0.965  1.030
+                              strong        0.733  0.775  0.833   0.896  0.932  1.001
+       block                  ridge         0.777  0.806  0.884   0.959  0.993  1.059
+                              strong        0.831  0.868  0.942   1.006  1.033  1.098
+       decim(avg over phases) ridge         0.827  0.860  0.929   0.995  1.028  1.093
+                              strong        0.816  0.851  0.928   1.000  1.033  1.098
+
+---- lookback 240: skill vs the 1-min validation-selected simple baseline (same target/origins)
+band                                    2400_2600               600_800              
+horizon                                        15     30     60      15     30     60
+target rep2                   predictor                                              
+avg15  1min                   ridge         0.004 -0.006  0.004  -0.010 -0.014 -0.008
+                              strong        0.000  0.000  0.000   0.000  0.000  0.000
+       block                  ridge         0.005  0.006  0.014   0.041  0.032  0.027
+                              strong       -0.022 -0.018 -0.021   0.014  0.013  0.008
+       decim(avg over phases) ridge        -0.322 -0.266 -0.210  -0.273 -0.218 -0.167
+                              strong       -0.403 -0.343 -0.278  -0.397 -0.322 -0.254
+point  1min                   ridge        -0.047 -0.042 -0.046  -0.044 -0.037 -0.029
+                              strong        0.000  0.000  0.000   0.000  0.000  0.000
+       block                  ridge        -0.051 -0.045 -0.043  -0.069 -0.064 -0.056
+                              strong       -0.092 -0.092 -0.089  -0.123 -0.109 -0.097
+       decim(avg over phases) ridge        -0.137 -0.131 -0.125  -0.111 -0.104 -0.092
+                              strong       -0.114 -0.112 -0.114  -0.117 -0.110 -0.097
+
+---- lookback 240: ridge skill vs its own representation's best simple baseline
+band                          2400_2600               600_800              
+horizon                              15     30     60      15     30     60
+target rep2                                                                
+avg15  1min                       0.004 -0.006  0.004  -0.010 -0.014 -0.008
+       block                      0.026  0.024  0.034   0.027  0.018  0.018
+       decim(avg over phases)     0.058  0.058  0.054   0.088  0.078  0.068
+point  1min                      -0.047 -0.042 -0.046  -0.044 -0.037 -0.029
+       block                      0.036  0.042  0.041   0.048  0.041  0.038
+       decim(avg over phases)    -0.021 -0.018 -0.009   0.005  0.005  0.004
+
+==== per-receiver ridge vs own-strong CIs (1min and block), lookback 60
+           band target  horizon    rep             node  skill_vs_own_strong  own_ci_lo  own_ci_hi
+1339  2400_2600  avg15       15   1min  humanities-nuc1                0.010     -0.026      0.036
+3799  2400_2600  avg15       15   1min      madsen-nuc1                0.008     -0.018      0.030
+6259  2400_2600  avg15       15   1min       moran-nuc1                0.010     -0.017      0.032
+8719  2400_2600  avg15       15   1min   sagepoint-nuc1                0.079      0.057      0.097
+1345  2400_2600  avg15       15  block  humanities-nuc1                0.027      0.016      0.036
+3805  2400_2600  avg15       15  block      madsen-nuc1                0.054      0.040      0.069
+6265  2400_2600  avg15       15  block       moran-nuc1                0.021      0.007      0.035
+8725  2400_2600  avg15       15  block   sagepoint-nuc1                0.035      0.019      0.052
+1749  2400_2600  avg15       30   1min  humanities-nuc1               -0.005     -0.037      0.022
+4209  2400_2600  avg15       30   1min      madsen-nuc1               -0.020     -0.051      0.004
+6669  2400_2600  avg15       30   1min       moran-nuc1                0.012     -0.011      0.032
+9129  2400_2600  avg15       30   1min   sagepoint-nuc1                0.067      0.043      0.090
+1755  2400_2600  avg15       30  block  humanities-nuc1                0.013      0.007      0.020
+4215  2400_2600  avg15       30  block      madsen-nuc1                0.019      0.011      0.028
+6675  2400_2600  avg15       30  block       moran-nuc1                0.027      0.010      0.043
+9135  2400_2600  avg15       30  block   sagepoint-nuc1                0.016      0.008      0.024
+2159  2400_2600  avg15       60   1min  humanities-nuc1               -0.018     -0.061      0.016
+4619  2400_2600  avg15       60   1min      madsen-nuc1               -0.016     -0.042      0.006
+7079  2400_2600  avg15       60   1min       moran-nuc1               -0.026     -0.050     -0.007
+9539  2400_2600  avg15       60   1min   sagepoint-nuc1                0.062      0.029      0.086
+2165  2400_2600  avg15       60  block  humanities-nuc1                0.011     -0.000      0.023
+4625  2400_2600  avg15       60  block      madsen-nuc1                0.026      0.010      0.040
+7085  2400_2600  avg15       60  block       moran-nuc1                0.006     -0.005      0.016
+9545  2400_2600  avg15       60  block   sagepoint-nuc1                0.012     -0.001      0.024
+1237  2400_2600  point       15   1min  humanities-nuc1               -0.043     -0.073     -0.022
+3697  2400_2600  point       15   1min      madsen-nuc1               -0.026     -0.041     -0.011
+6157  2400_2600  point       15   1min       moran-nuc1               -0.039     -0.065     -0.020
+8617  2400_2600  point       15   1min   sagepoint-nuc1               -0.021     -0.037     -0.009
+1243  2400_2600  point       15  block  humanities-nuc1                0.042      0.027      0.062
+3703  2400_2600  point       15  block      madsen-nuc1                0.009      0.001      0.017
+6163  2400_2600  point       15  block       moran-nuc1                0.022      0.012      0.033
+8623  2400_2600  point       15  block   sagepoint-nuc1                0.089      0.065      0.110
+1647  2400_2600  point       30   1min  humanities-nuc1               -0.047     -0.072     -0.024
+4107  2400_2600  point       30   1min      madsen-nuc1               -0.033     -0.053     -0.015
+6567  2400_2600  point       30   1min       moran-nuc1               -0.047     -0.073     -0.025
+9027  2400_2600  point       30   1min   sagepoint-nuc1                0.003     -0.018      0.020
+1653  2400_2600  point       30  block  humanities-nuc1                0.050      0.033      0.070
+4113  2400_2600  point       30  block      madsen-nuc1                0.015      0.007      0.024
+6573  2400_2600  point       30  block       moran-nuc1                0.023      0.014      0.035
+9033  2400_2600  point       30  block   sagepoint-nuc1                0.096      0.071      0.121
+2057  2400_2600  point       60   1min  humanities-nuc1               -0.035     -0.063     -0.015
+4517  2400_2600  point       60   1min      madsen-nuc1               -0.012     -0.033      0.005
+6977  2400_2600  point       60   1min       moran-nuc1               -0.047     -0.076     -0.021
+9437  2400_2600  point       60   1min   sagepoint-nuc1               -0.030     -0.051     -0.011
+2063  2400_2600  point       60  block  humanities-nuc1                0.037      0.011      0.065
+4523  2400_2600  point       60  block      madsen-nuc1                0.018      0.006      0.029
+6983  2400_2600  point       60  block       moran-nuc1                0.021      0.009      0.033
+9443  2400_2600  point       60  block   sagepoint-nuc1                0.084      0.053      0.115
+109     600_800  avg15       15   1min  humanities-nuc1               -0.015     -0.040      0.008
+2569    600_800  avg15       15   1min      madsen-nuc1                0.040      0.025      0.057
+5029    600_800  avg15       15   1min       moran-nuc1                0.049      0.035      0.065
+7489    600_800  avg15       15   1min   sagepoint-nuc1                0.000     -0.025      0.026
+115     600_800  avg15       15  block  humanities-nuc1                0.032      0.024      0.041
+2575    600_800  avg15       15  block      madsen-nuc1                0.042      0.035      0.050
+5035    600_800  avg15       15  block       moran-nuc1                0.032      0.024      0.040
+7495    600_800  avg15       15  block   sagepoint-nuc1                0.030      0.021      0.037
+519     600_800  avg15       30   1min  humanities-nuc1               -0.021     -0.047      0.003
+2979    600_800  avg15       30   1min      madsen-nuc1                0.021      0.000      0.038
+5439    600_800  avg15       30   1min       moran-nuc1                0.042      0.027      0.059
+7899    600_800  avg15       30   1min   sagepoint-nuc1                0.017     -0.008      0.041
+525     600_800  avg15       30  block  humanities-nuc1                0.019      0.010      0.027
+2985    600_800  avg15       30  block      madsen-nuc1                0.030      0.022      0.037
+5445    600_800  avg15       30  block       moran-nuc1                0.025      0.019      0.030
+7905    600_800  avg15       30  block   sagepoint-nuc1                0.026      0.021      0.031
+929     600_800  avg15       60   1min  humanities-nuc1               -0.015     -0.037      0.006
+3389    600_800  avg15       60   1min      madsen-nuc1                0.015     -0.003      0.029
+5849    600_800  avg15       60   1min       moran-nuc1                0.040      0.024      0.056
+8309    600_800  avg15       60   1min   sagepoint-nuc1                0.030      0.019      0.039
+935     600_800  avg15       60  block  humanities-nuc1                0.020      0.012      0.028
+3395    600_800  avg15       60  block      madsen-nuc1                0.024      0.016      0.030
+5855    600_800  avg15       60  block       moran-nuc1                0.028      0.020      0.036
+8315    600_800  avg15       60  block   sagepoint-nuc1                0.019      0.015      0.023
+7       600_800  point       15   1min  humanities-nuc1               -0.026     -0.040     -0.015
+2467    600_800  point       15   1min      madsen-nuc1               -0.016     -0.027     -0.006
+4927    600_800  point       15   1min       moran-nuc1               -0.034     -0.049     -0.021
+7387    600_800  point       15   1min   sagepoint-nuc1               -0.022     -0.031     -0.013
+13      600_800  point       15  block  humanities-nuc1                0.058      0.042      0.077
+2473    600_800  point       15  block      madsen-nuc1                0.059      0.050      0.068
+4933    600_800  point       15  block       moran-nuc1                0.083      0.067      0.102
+7393    600_800  point       15  block   sagepoint-nuc1                0.035      0.027      0.041
+417     600_800  point       30   1min  humanities-nuc1               -0.022     -0.038     -0.009
+2877    600_800  point       30   1min      madsen-nuc1               -0.019     -0.031     -0.007
+5337    600_800  point       30   1min       moran-nuc1               -0.031     -0.047     -0.017
+7797    600_800  point       30   1min   sagepoint-nuc1               -0.015     -0.025     -0.006
+423     600_800  point       30  block  humanities-nuc1                0.048      0.029      0.069
+2883    600_800  point       30  block      madsen-nuc1                0.044      0.031      0.058
+5343    600_800  point       30  block       moran-nuc1                0.077      0.062      0.097
+7803    600_800  point       30  block   sagepoint-nuc1                0.033      0.025      0.040
+827     600_800  point       60   1min  humanities-nuc1               -0.021     -0.040     -0.007
+3287    600_800  point       60   1min      madsen-nuc1               -0.013     -0.029      0.003
+5747    600_800  point       60   1min       moran-nuc1               -0.020     -0.037     -0.006
+8207    600_800  point       60   1min   sagepoint-nuc1               -0.009     -0.023      0.005
+833     600_800  point       60  block  humanities-nuc1                0.050      0.027      0.072
+3293    600_800  point       60  block      madsen-nuc1                0.042      0.027      0.059
+5753    600_800  point       60  block       moran-nuc1                0.071      0.053      0.093
+8213    600_800  point       60  block   sagepoint-nuc1                0.025      0.016      0.035
+
+==== selected simple baselines (1min/block), lookback 240
+rep                                            1min    block
+band      target horizon node                               
+2400_2600 avg15  15      humanities-nuc1     mean30    mean2
+                         madsen-nuc1         mean16     last
+                         moran-nuc1          mean30    mean3
+                         sagepoint-nuc1   linmean30    mean3
+                 30      humanities-nuc1     mean30    mean2
+                         madsen-nuc1         mean16    mean2
+                         moran-nuc1          mean30    mean2
+                         sagepoint-nuc1   linmean30    mean2
+                 60      humanities-nuc1     mean15    mean2
+                         madsen-nuc1         mean16    mean2
+                         moran-nuc1          mean30    mean2
+                         sagepoint-nuc1   linmean30    mean3
+          point  15      humanities-nuc1   median16  median3
+                         madsen-nuc1       median30    mean2
+                         moran-nuc1        median30    mean3
+                         sagepoint-nuc1    median16    mean2
+                 30      humanities-nuc1   median30    mean2
+                         madsen-nuc1       median16     last
+                         moran-nuc1        median30    mean2
+                         sagepoint-nuc1     median8    mean2
+                 60      humanities-nuc1   median16    mean2
+                         madsen-nuc1       median16     last
+                         moran-nuc1        median30    mean2
+                         sagepoint-nuc1    median16    mean2
+600_800   avg15  15      humanities-nuc1  linmean30    mean2
+                         madsen-nuc1      linmean30    mean2
+                         moran-nuc1       linmean30    mean3
+                         sagepoint-nuc1   linmean30    mean2
+                 30      humanities-nuc1  linmean30    mean2
+                         madsen-nuc1      linmean30    mean2
+                         moran-nuc1       linmean30    mean3
+                         sagepoint-nuc1   linmean30    mean3
+                 60      humanities-nuc1  linmean30    mean3
+                         madsen-nuc1      linmean30    mean2
+                         moran-nuc1       linmean30    mean2
+                         sagepoint-nuc1      mean30    mean3
+          point  15      humanities-nuc1   median30     last
+                         madsen-nuc1       median16     last
+                         moran-nuc1        median30  median4
+                         sagepoint-nuc1    median30    mean3
+                 30      humanities-nuc1   median30    mean2
+                         madsen-nuc1       median30    mean2
+                         moran-nuc1        median30  median3
+                         sagepoint-nuc1    median30    mean2
+                 60      humanities-nuc1   median30     last
+                         madsen-nuc1       median30    mean2
+                         moran-nuc1        median30  median3
+                         sagepoint-nuc1    median60  median3
+
+==== decimation phase spread (test MAE sd over phases, mean over receivers)
+predictor                               ridge  strong
+band      target horizon lookback_min                
+2400_2600 avg15  15      60.0          0.0208  0.0219
+                         240.0         0.0203  0.0224
+                 30      60.0          0.0188  0.0212
+                         240.0         0.0172  0.0203
+                 60      60.0          0.0181  0.0161
+                         240.0         0.0182  0.0163
+          point  15      60.0          0.0156  0.0165
+                         240.0         0.0154  0.0165
+                 30      60.0          0.0162  0.0183
+                         240.0         0.0166  0.0184
+                 60      60.0          0.0172  0.0164
+                         240.0         0.0159  0.0165
+600_800   avg15  15      60.0          0.0179  0.0169
+                         240.0         0.0183  0.0174
+                 30      60.0          0.0150  0.0148
+                         240.0         0.0158  0.0160
+                 60      60.0          0.0136  0.0139
+                         240.0         0.0150  0.0154
+          point  15      60.0          0.0126  0.0123
+                         240.0         0.0125  0.0113
+                 30      60.0          0.0126  0.0121
+                         240.0         0.0126  0.0122
+                 60      60.0          0.0116  0.0112
+                         240.0         0.0124  0.0111
+
+==== error floor (local-level model) vs achieved MSE: floor / achieved (1.0 = at the floor)
+                                          floor_mse  noise_only_mse  level_est_mse  drift_mse  floor_mae_gaussian  best_mse  strong1min_mse  floor/best  floor/strong1min
+band      node            target horizon                                                                                                                                 
+600_800   humanities-nuc1 point  15          4.0308          3.3547         0.2254     0.4507              1.1182    4.3742          5.0704      0.9215            0.7950
+                          avg15  15          0.6146          0.2236         0.2254     0.1656              0.4769    0.9363          1.0213      0.6564            0.6018
+                          point  30          4.4815          3.3547         0.2254     0.9014              1.2086    4.6031          5.3194      0.9736            0.8425
+                          avg15  30          1.0653          0.2236         0.2254     0.6163              0.6444    1.2523          1.3258      0.8507            0.8036
+                          point  60          5.3830          3.3547         0.2254     1.8029              1.3650    5.1344          5.8213      1.0484            0.9247
+                          avg15  60          1.9668          0.2236         0.2254     1.5178              0.8828    1.7689          1.8634      1.1119            1.0555
+2400_2600 humanities-nuc1 point  15          1.0548          0.7999         0.0871     0.1678              0.6772    1.1191          1.1755      0.9426            0.8973
+                          avg15  15          0.2021          0.0533         0.0871     0.0617              0.2922    0.3391          0.3837      0.5959            0.5266
+                          point  30          1.2226          0.7999         0.0871     0.3356              0.7281    1.2033          1.2756      1.0161            0.9585
+                          avg15  30          0.3699          0.0533         0.0871     0.2295              0.3924    0.4545          0.5047      0.8138            0.7329
+                          point  60          1.5583          0.7999         0.0871     0.6713              0.8192    1.4280          1.4751      1.0913            1.0564
+                          avg15  60          0.7055          0.0533         0.0871     0.5651              0.5381    0.6353          0.7187      1.1105            0.9817
+600_800   madsen-nuc1     point  15          2.6903          2.1786         0.1703     0.3413              0.9800    2.6504          2.9052      1.0151            0.9260
+                          avg15  15          0.4410          0.1452         0.1703     0.1254              0.4116    0.6375          0.7520      0.6917            0.5864
+                          point  30          3.0316          2.1786         0.1703     0.6826              1.0532    2.8891          3.1223      1.0493            0.9709
+                          avg15  30          0.7823          0.1452         0.1703     0.4667              0.5491    0.8644          0.9739      0.9050            0.8032
+                          point  60          3.7142          2.1786         0.1703     1.3653              1.1800    3.3433          3.6076      1.1109            1.0295
+                          avg15  60          1.4649          0.1452         0.1703     1.1493              0.7467    1.2894          1.4041      1.1361            1.0433
+2400_2600 madsen-nuc1     point  15          0.3401          0.2725         0.0251     0.0425              0.4008    0.4458          0.4583      0.7630            0.7421
+                          avg15  15          0.0589          0.0182         0.0251     0.0156              0.1620    0.0952          0.1015      0.6192            0.5806
+                          point  30          0.3826          0.2725         0.0251     0.0850              0.4228    0.4697          0.4806      0.8146            0.7961
+                          avg15  30          0.1014          0.0182         0.0251     0.0581              0.2080    0.1241          0.1298      0.8174            0.7812
+                          point  60          0.4676          0.2725         0.0251     0.1700              0.4629    0.5493          0.5816      0.8513            0.8041
+                          avg15  60          0.1864          0.0182         0.0251     0.1431              0.2768    0.1900          0.2030      0.9812            0.9183
+600_800   moran-nuc1      point  15          2.8041          2.3746         0.1686     0.2609              0.8621    2.7614          3.0251      1.0154            0.9269
+                          avg15  15          0.4227          0.1583         0.1686     0.0958              0.3515    0.6624          0.8025      0.6382            0.5268
+                          point  30          3.0649          2.3746         0.1686     0.5217              0.9170    2.8869          3.1193      1.0617            0.9826
+                          avg15  30          0.6836          0.1583         0.1686     0.3567              0.4586    0.7732          0.9129      0.8841            0.7488
+                          point  60          3.5867          2.3746         0.1686     1.0435              1.0131    3.0778          3.3764      1.1653            1.0623
+                          avg15  60          1.2054          0.1583         0.1686     0.8785              0.6150    0.9659          1.1193      1.2480            1.0769
+2400_2600 moran-nuc1      point  15          0.1129          0.0824         0.0095     0.0210              0.2053    0.0674          0.0713      1.6761            1.5849
+                          avg15  15          0.0227          0.0055         0.0095     0.0077              0.0884    0.0102          0.0109      2.2269            2.0869
+                          point  30          0.1340          0.0824         0.0095     0.0421              0.2212    0.0688          0.0713      1.9469            1.8803
+                          avg15  30          0.0438          0.0055         0.0095     0.0288              0.1189    0.0120          0.0125      3.6441            3.4920
+                          point  60          0.1760          0.0824         0.0095     0.0841              0.2493    0.0731          0.0750      2.4075            2.3484
+                          avg15  60          0.0859          0.0055         0.0095     0.0708              0.1629    0.0152          0.0152      5.6652            5.6652
+600_800   sagepoint-nuc1  point  15          5.6973          3.0360         0.4308     2.2306              1.2541    3.2262          3.4280      1.7659            1.6620
+                          avg15  15          1.4527          0.2024         0.4308     0.8195              0.5689    1.1274          1.2955      1.2886            1.1214
+                          point  30          7.9279          3.0360         0.4308     4.4612              1.3982    3.4136          3.6452      2.3225            2.1749
+                          avg15  30          3.6833          0.2024         0.4308     3.0501              0.8119    1.4597          1.6629      2.5234            2.2150
+                          point  60         12.3891          3.0360         0.4308     8.9223              1.6338    3.7559          3.9584      3.2986            3.1298
+                          avg15  60          8.1444          0.2024         0.4308     7.5113              1.1443    1.9142          2.1430      4.2548            3.8004
+2400_2600 sagepoint-nuc1  point  15          8.3197          6.2271         0.6820     1.4106              1.8632   10.9947         11.6760      0.7567            0.7125
+                          avg15  15          1.6154          0.4151         0.6820     0.5183              0.8152    3.5496          4.4969      0.4551            0.3592
+                          point  30          9.7302          6.2271         0.6820     2.8212              2.0222   11.8780         13.0409      0.8192            0.7461
+                          avg15  30          3.0260          0.4151         0.6820     1.9288              1.1142    4.8950          5.8974      0.6182            0.5131
+                          point  60         12.5514          6.2271         0.6820     5.6423              2.3006   14.0975         14.5022      0.8903            0.8655
+                          avg15  60          5.8471          0.4151         0.6820     4.7500              1.5410    7.5895          8.9082      0.7704            0.6564
+                          floor/best  floor/strong1min
+band      target horizon                              
+2400_2600 avg15  15            0.974             0.888
+                 30            1.473             1.380
+                 60            2.132             2.055
+          point  15            1.035             0.984
+                 30            1.149             1.095
+                 60            1.310             1.269
+600_800   avg15  15            0.819             0.709
+                 30            1.291             1.143
+                 60            1.938             1.744
+          point  15            1.179             1.077
+                 30            1.352             1.243
+                 60            1.656             1.537

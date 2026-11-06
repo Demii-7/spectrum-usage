@@ -1,0 +1,9 @@
+node,band,ok,wall_seconds
+humanities-nuc1,600_800,True,388.7
+humanities-nuc1,2400_2600,True,351.2
+madsen-nuc1,600_800,True,402.9
+madsen-nuc1,2400_2600,True,348.7
+moran-nuc1,600_800,True,341.5
+moran-nuc1,2400_2600,True,412.8
+sagepoint-nuc1,600_800,True,409.9
+sagepoint-nuc1,2400_2600,True,384.1
