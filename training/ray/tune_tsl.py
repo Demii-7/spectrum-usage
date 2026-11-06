@@ -167,6 +167,18 @@ def _exists(client, bucket: str, key: str, need_ok: bool = False) -> dict | None
     return body if (body.get("ok") or not need_ok) else None
 
 
+def run_bounded(ray, remote, jobs: list[dict[str, Any]], base: dict[str, Any], limit: int | None):
+    """Yield (job, result) as runs finish, keeping at most ``limit`` runs in flight (None = submit everything at once)."""
+    queue, inflight = list(jobs), {}
+    while queue or inflight:
+        while queue and (limit is None or len(inflight) < limit):
+            job = queue.pop(0)
+            inflight[remote.remote(job, base)] = job
+        done, _ = ray.wait(list(inflight), num_returns=1)
+        ref = done[0]
+        yield inflight.pop(ref), ray.get(ref)
+
+
 def launch(args: argparse.Namespace) -> None:
     import ray
 
@@ -200,15 +212,12 @@ def launch(args: argparse.Namespace) -> None:
     for attempt in range(1, args.retries + 1):
         if not todo:
             break
-        pending, failed = [trial_remote.remote(j, base) for j in todo], []
-        by_ref = dict(zip(pending, todo))
-        while pending:
-            done, pending = ray.wait(pending, num_returns=1)
-            r = ray.get(done[0])
+        failed = []
+        for job, r in run_bounded(ray, trial_remote, todo, base, args.max_parallel):
             if r["ok"]:
                 scores[(r["dataset"], r["model"])].setdefault(r["index"], {})[r["horizon"]] = float(r["vali_loss"])
             else:
-                failed.append(by_ref[done[0]])
+                failed.append(job)
                 print(f"[tune-tsl] trial failed (attempt {attempt}): {r['dataset']}/{r['model']} c{r['index']} "
                       f"h{r['horizon']}: {r['error'][:120]}", flush=True)
         todo = failed
@@ -239,13 +248,7 @@ def launch(args: argparse.Namespace) -> None:
     for attempt in range(1, args.retries + 1):
         if not jobs:
             break
-        refs = {final_remote.remote(j, base): j for j in jobs}
-        pending, failed = list(refs), []
-        while pending:
-            done, pending = ray.wait(pending, num_returns=1)
-            r = ray.get(done[0])
-            if not r.get("ok"):
-                failed.append(refs[done[0]])
+        failed = [job for job, r in run_bounded(ray, final_remote, jobs, base, args.max_parallel) if not r.get("ok")]
         print(f"[tune-tsl] finals attempt {attempt}: {len(failed)} failed", flush=True)
         jobs = failed
 
@@ -259,6 +262,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--gpu-fraction", type=float, default=0.25)
     p.add_argument("--cpu", action="store_true", help="train on CPU (library --no_use_gpu) and reserve no GPU")
     p.add_argument("--cpus", type=int, default=2, help="CPU cores reserved per run (more helps with --cpu)")
+    p.add_argument("--max-parallel", type=int, default=None, help="cap on runs in flight (default: all at once)")
     p.add_argument("--timeout", type=int, default=3600)
     p.add_argument("--retries", type=int, default=3)
     p.add_argument("--trials-only", action="store_true")
