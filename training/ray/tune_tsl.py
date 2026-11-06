@@ -1,4 +1,4 @@
-"""Equal-budget hyperparameter search for Time-Series-Library baselines (PatchTST, DLinear) on ElectroSense.
+"""Equal-budget hyperparameter search for Time-Series-Library baselines (PatchTST, DLinear, Informer, Autoformer, LightTS).
 
 Same protocol as ``tune_fixed`` for our models: 16 candidates per (dataset, model) -- the library defaults first, then
 random draws -- each trained with seed 42 and scored on *validation* data only (the lowest per-epoch ``Vali Loss``
@@ -7,8 +7,8 @@ validation loss at a short and a long horizon (12 and 192). The winner per (data
 horizon with seeds 40-44 and scored on the test partition (raw and standardized MSE), exactly like the default-
 hyperparameter library runs, and written under ``<prefix>/tsl/...`` with ``hyperparameters = "tuned"``.
 
-PatchTST's patch length/stride and DLinear's ``individual`` switch are fixed inside the library's model constructors
-(not read from the command line), so they are not part of the search.
+PatchTST's patch length/stride, DLinear's ``individual`` switch, Informer's ``distil`` flag and LightTS's chunk size are
+fixed inside the library's model constructors (not read from the command line), so they are not part of the search.
 
 Records are written as they finish, so a restart skips completed work:
 
@@ -39,6 +39,11 @@ DEFAULTS = {
     "PatchTST": {"learning_rate": 1e-4, "d_model": 512, "n_heads": 8, "e_layers": 2, "d_ff": 2048, "dropout": 0.1,
                  "batch_size": 32, "train_epochs": 10},
     "DLinear": {"learning_rate": 1e-4, "moving_avg": 25, "batch_size": 32, "train_epochs": 10},
+    "Informer": {"learning_rate": 1e-4, "d_model": 512, "n_heads": 8, "e_layers": 2, "d_layers": 1, "d_ff": 2048,
+                 "factor": 1, "dropout": 0.1, "batch_size": 32, "train_epochs": 10},
+    "Autoformer": {"learning_rate": 1e-4, "d_model": 512, "n_heads": 8, "e_layers": 2, "d_layers": 1, "d_ff": 2048,
+                   "factor": 1, "moving_avg": 25, "dropout": 0.1, "batch_size": 32, "train_epochs": 10},
+    "LightTS": {"learning_rate": 1e-4, "d_model": 512, "dropout": 0.1, "batch_size": 32, "train_epochs": 10},
 }
 # ("choice", [..]) | ("loguniform", lo, hi) | ("uniform", lo, hi)
 SPACES = {
@@ -48,6 +53,20 @@ SPACES = {
                  "batch_size": ("choice", [16, 32, 64]), "train_epochs": ("choice", [10, 20])},
     "DLinear": {"learning_rate": ("loguniform", 1e-4, 1e-2), "moving_avg": ("choice", [5, 13, 25, 49, 97]),
                 "batch_size": ("choice", [16, 32, 64]), "train_epochs": ("choice", [10, 20])},
+    "Informer": {"learning_rate": ("loguniform", 1e-4, 3e-3), "d_model": ("choice", [64, 128, 256, 512]),
+                 "n_heads": ("choice", [4, 8]), "e_layers": ("choice", [1, 2, 3]), "d_layers": ("choice", [1, 2]),
+                 "d_ff": ("choice", [256, 512, 1024, 2048]), "factor": ("choice", [1, 3, 5]),
+                 "dropout": ("uniform", 0.0, 0.3), "batch_size": ("choice", [16, 32, 64]),
+                 "train_epochs": ("choice", [10, 20])},
+    "Autoformer": {"learning_rate": ("loguniform", 1e-4, 3e-3), "d_model": ("choice", [64, 128, 256, 512]),
+                   "n_heads": ("choice", [4, 8]), "e_layers": ("choice", [1, 2, 3]), "d_layers": ("choice", [1, 2]),
+                   "d_ff": ("choice", [256, 512, 1024, 2048]), "factor": ("choice", [1, 3, 5]),
+                   "moving_avg": ("choice", [13, 25, 49]), "dropout": ("uniform", 0.0, 0.3),
+                   "batch_size": ("choice", [16, 32, 64]), "train_epochs": ("choice", [10, 20])},
+    # LightTS reads only d_model and dropout from the command line (its chunk size is fixed in the constructor)
+    "LightTS": {"learning_rate": ("loguniform", 1e-4, 3e-3), "d_model": ("choice", [64, 128, 256, 512]),
+                "dropout": ("uniform", 0.0, 0.3), "batch_size": ("choice", [16, 32, 64]),
+                "train_epochs": ("choice", [10, 20])},
 }
 CHANNELS = {"spec4": 4, "spec25": 25, "spec151": 151}
 
@@ -119,7 +138,8 @@ def trial_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         root = f"{args['repo_root']}/data/electrosense_raw/"
         target = open(root + FILES[dataset]).readline().strip().split(",")[-1]
         command = run_command(model, dataset, horizon, SEARCH_SEED, root, target, training=True, inverse=False,
-                              has_seed_flag=True, extra=flags(job["params"]), des=f"tune-{model}-c{index}")
+                              has_seed_flag=True, extra=flags(job["params"]) + (["--no_use_gpu"] if args.get("cpu") else []),
+                              des=f"tune-{model}-c{index}")
         run = subprocess.run(command, cwd=f"{TSL_DIR}/Time-Series-Library", capture_output=True, text=True,
                              env={**os.environ, "PYTHONUNBUFFERED": "1"}, timeout=args["timeout"])
         best = parse_best_validation(run.stdout + run.stderr)
@@ -154,9 +174,10 @@ def launch(args: argparse.Namespace) -> None:
     bucket = args.bucket or os.environ.get("SPECTRUM_S3_BUCKET", "spectrum")
     ray.init(address=args.address, ignore_reinit_error=True)
     base = {"repo_root": args.repo_root, "bucket": bucket, "output_prefix": args.output_prefix,
-            "timeout": args.timeout, "has_seed_flag": True}
-    trial_remote = ray.remote(num_cpus=2, num_gpus=args.gpu_fraction)(trial_job)
-    final_remote = ray.remote(num_cpus=2, num_gpus=args.gpu_fraction)(tsl_job)
+            "timeout": args.timeout, "has_seed_flag": True, "cpu": args.cpu}
+    gpus = 0 if args.cpu else args.gpu_fraction
+    trial_remote = ray.remote(num_cpus=args.cpus, num_gpus=gpus)(trial_job)
+    final_remote = ray.remote(num_cpus=args.cpus, num_gpus=gpus)(tsl_job)
 
     candidates = {m: candidate_list(m, args.budget) for m in args.models}
     # 1. trials (skipping finished ones; failed ones retried, e.g. GPU memory contention)
@@ -207,7 +228,8 @@ def launch(args: argparse.Namespace) -> None:
         for h in args.horizons:
             for s in FINAL_SEEDS:
                 if not _exists(client, bucket, final_key(args.output_prefix, d, m, h, s), need_ok=True):
-                    jobs.append({"model": m, "dataset": d, "horizon": h, "seed": s, "extra": flags(win["params"]),
+                    jobs.append({"model": m, "dataset": d, "horizon": h, "seed": s,
+                                 "extra": flags(win["params"]) + (["--no_use_gpu"] if args.cpu else []),
                                  "des": f"tuned-{m}", "hp_label": "tuned", "params": win["params"]})
     print(f"[tune-tsl] {len(jobs)} final runs", flush=True)
     for attempt in range(1, args.retries + 1):
@@ -231,6 +253,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--horizons", nargs="+", type=int, default=list(HORIZONS))
     p.add_argument("--budget", type=int, default=BUDGET)
     p.add_argument("--gpu-fraction", type=float, default=0.25)
+    p.add_argument("--cpu", action="store_true", help="train on CPU (library --no_use_gpu) and reserve no GPU")
+    p.add_argument("--cpus", type=int, default=2, help="CPU cores reserved per run (more helps with --cpu)")
     p.add_argument("--timeout", type=int, default=3600)
     p.add_argument("--retries", type=int, default=3)
     p.add_argument("--trials-only", action="store_true")

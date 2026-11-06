@@ -21,7 +21,7 @@ def test_candidates_stay_inside_the_space_and_heads_divide_width():
                     assert c[name] in domain[1]
                 else:
                     assert domain[1] <= c[name] <= domain[2]
-            if model == "PatchTST":
+            if "n_heads" in c:
                 assert c["d_model"] % c["n_heads"] == 0
 
 
