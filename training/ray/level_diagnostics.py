@@ -685,18 +685,139 @@ def aggregation_rows(splits: dict[str, Split], meta: dict[str, Any], rng: np.ran
     return rows
 
 
+# ------------------------------------------------------------------------------- sampling / floor part
+SAMPLING_HORIZONS = (15, 30, 60)
+TARGETS = ("point", "avg15")
+
+
+def random_walk_mean_var(horizon: int, width: int) -> float:
+    """Var(mean_{j in (H-W, H]} mu_{t+j} - mu_t) / sigma_eta^2 for a random-walk level (W=0: point at t+H)."""
+    if width <= 1:
+        return float(horizon)
+    j = np.arange(horizon - width + 1, horizon + 1)
+    return float(np.minimum.outer(j, j).sum() / width ** 2)
+
+
+def simple_candidates(hist: np.ndarray, rep: str) -> dict[str, np.ndarray]:
+    """Parameter-free predictors from one history representation (n, F, K), newest last."""
+    k = hist.shape[-1]
+    out = {"last": hist[..., -1]}
+    lengths = [j for j in (2, 4, 5, 8, 15, 16, 30, 60, 120, 240) if j <= k] if rep == "1min" else \
+        [j for j in (2, 3, 4, 8, 16) if j <= k]
+    for j in lengths:
+        tail = hist[..., -j:]
+        out[f"mean{j}"] = tail.mean(axis=-1)
+        out[f"linmean{j}"] = 10.0 * np.log10(np.power(10.0, tail / 10.0).mean(axis=-1))
+        out[f"median{j}"] = np.median(tail, axis=-1)
+    return out
+
+
+def representations(s: Split, t: np.ndarray, lookback: int) -> dict[str, np.ndarray]:
+    """History representations with the same wall-clock lookback: raw 1-minute, 15-minute linear-power block means,
+    and decimated (every 15th minute) at each phase."""
+    k = lookback // BLOCK
+    reps = {"1min": windows(s, t, lookback), "block": block_history(s, t, k)}
+    for phase in range(BLOCK):
+        reps[f"decim{phase}"] = block_history(s, t, k, phase=phase)
+    return reps
+
+
+def sampling_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    """Like-for-like grid: input representation x target (point / 15-min average) x horizon x lookback, all on the
+    same 15-minute-aligned origins; validation-selected simple baseline and a ridge correction per representation;
+    MAE and MSE; and the local-level irreducible-error floor for each target."""
+    import sys
+
+    sys.path.insert(0, args["repo_root"])
+    started = time.time()
+    node, band = job["node"], job["band"]
+    meta = {"node": node, "band": band}
+    rows: list[dict[str, Any]] = []
+    rng = np.random.default_rng(54321)
+    try:
+        splits = load_cell(args["repo_root"], node, band)
+        train = splits["train"]
+        fit = fit_local_level(train.values[train.lo:train.hi])
+        for h in SAMPLING_HORIZONS:
+            origins = {n: s.origins(h, history=MAX_HISTORY, aligned=True, width=BLOCK) for n, s in splits.items()}
+            targets = {"point": {n: s.values[origins[n] + h] for n, s in splits.items()},
+                       "avg15": {n: avg_target(s, origins[n], h) for n, s in splits.items()}}
+            # local-level floor (per bin, then bin-averaged): level estimation + drift + noise
+            for tk in TARGETS:
+                width = BLOCK if tk == "avg15" else 1
+                floor = (fit["gain"] * fit["sigma_eps2"] + fit["sigma_eta2"] * random_walk_mean_var(h, width)
+                         + fit["sigma_eps2"] / width)
+                noise_only = fit["sigma_eps2"] / width
+                rows.append({**meta, "part": "floor", "horizon": h, "target": tk,
+                             "floor_mse": float(np.nanmean(floor)),
+                             "floor_mae_gaussian": float(np.nanmean(np.sqrt(2.0 / np.pi * floor))),
+                             "noise_only_mse": float(np.nanmean(noise_only)),
+                             "level_est_mse": float(np.nanmean(fit["gain"] * fit["sigma_eps2"])),
+                             "drift_mse": float(np.nanmean(fit["sigma_eta2"] * random_walk_mean_var(h, width)))})
+            for lookback in AGG_LOOKBACKS:
+                reps = {n: representations(s, origins[n], lookback) for n, s in splits.items()}
+                for tk in TARGETS:
+                    tg = targets[tk]
+                    results: dict[str, dict[str, Any]] = {}
+                    for rep in reps["train"]:
+                        family = "decim" if rep.startswith("decim") else rep
+                        cands = {n: simple_candidates(reps[n][rep], family) for n in splits}
+                        best = min(cands["validation"], key=lambda c: np.nanmean(
+                            np.abs(cands["validation"][c] - tg["validation"])))
+                        ridge = ridge_on_history({n: reps[n][rep] for n in splits}, tg)
+                        results[rep] = {"family": family, "strong": {n: cands[n][best] for n in splits},
+                                        "strong_name": best, "ridge": {n: ridge[n] for n in splits},
+                                        "ridge_sel": ridge["_sel"]}
+                    ref = per_origin_abs(results["1min"]["strong"]["test"], tg["test"])
+                    for rep, res in results.items():
+                        for kind in ("strong", "ridge"):
+                            for n in splits:
+                                pred = res[kind][n]
+                                e = per_origin_abs(pred, tg[n])
+                                row = {**meta, "part": "sampling", "horizon": h, "lookback_min": lookback,
+                                       "target": tk, "rep": rep, "family": res["family"], "predictor": kind,
+                                       "split": n, "mae": float(e.mean()),
+                                       "mse": float(np.nanmean((pred - tg[n]) ** 2)), "n_origins": len(e),
+                                       "selected": res["strong_name"] if kind == "strong" else json.dumps(res["ridge_sel"])}
+                                if n == "test":
+                                    sk, lo, hi = block_bootstrap_skill(e, ref, rng, block=16)
+                                    row.update(skill_vs_1min_strong=sk, ci_lo=lo, ci_hi=hi)
+                                    if kind == "ridge":
+                                        own = per_origin_abs(res["strong"]["test"], tg["test"])
+                                        sk, lo, hi = block_bootstrap_skill(e, own, rng, block=16)
+                                        row.update(skill_vs_own_strong=sk, own_ci_lo=lo, own_ci_hi=hi)
+                                rows.append(row)
+        status = {"ok": True}
+    except Exception as error:
+        import traceback
+
+        status = {"ok": False, "error": f"{type(error).__name__}: {error}"[:300], "trace": traceback.format_exc()[-1500:]}
+    return {"meta": {**meta, **status, "wall_seconds": round(time.time() - started, 1)}, "rows": rows}
+
+
 # ------------------------------------------------------------------------------------------------ driver
 def launch(args: argparse.Namespace) -> None:
     import ray
 
     ray.init(address=args.address, ignore_reinit_error=True)
     worker_args = {"repo_root": args.repo_root, "gbm": not args.no_gbm}
-    remote = ray.remote(num_cpus=args.cpus_per_task, num_gpus=0, max_retries=0)(cell_job)
     jobs = [{"node": n, "band": b} for n in args.nodes for b in args.bands]
-    print(f"[level-diag] {len(jobs)} cells, {args.cpus_per_task} CPUs each, no GPUs", flush=True)
-    results = ray.get([remote.remote(job, worker_args) for job in jobs])
     out = Path(args.repo_root) / args.output_dir
     out.mkdir(parents=True, exist_ok=True)
+    if args.part == "sampling":
+        remote = ray.remote(num_cpus=args.cpus_per_task, num_gpus=0, max_retries=0)(sampling_job)
+        print(f"[level-diag] sampling part: {len(jobs)} cells, {args.cpus_per_task} CPUs each, no GPUs", flush=True)
+        results = ray.get([remote.remote(job, worker_args) for job in jobs])
+        pd.DataFrame([r["meta"] for r in results]).to_csv(out / "cells.csv", index=False)
+        pd.DataFrame([row for r in results for row in r["rows"]]).to_csv(out / "sampling.csv", index=False)
+        failed = [r["meta"] for r in results if not r["meta"]["ok"]]
+        print(f"[level-diag] wrote {out}; {len(results)} cells, {len(failed)} failed", flush=True)
+        for f in failed:
+            print(f"[level-diag] FAILED {f['node']}/{f['band']}: {f['error']}\n{f.get('trace', '')}", flush=True)
+        return
+    remote = ray.remote(num_cpus=args.cpus_per_task, num_gpus=0, max_retries=0)(cell_job)
+    print(f"[level-diag] {len(jobs)} cells, {args.cpus_per_task} CPUs each, no GPUs", flush=True)
+    results = ray.get([remote.remote(job, worker_args) for job in jobs])
     pd.DataFrame([r["meta"] for r in results]).to_csv(out / "cells.csv", index=False)
     pd.DataFrame([row for r in results for row in r["rows"]]).to_csv(out / "results.csv", index=False)
     for name in ("statespace", "condmedian", "cheap", "daily", "equivalence"):
@@ -719,6 +840,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--address", default="auto")
     p.add_argument("--cpus-per-task", type=int, default=4)
     p.add_argument("--no-gbm", action="store_true")
+    p.add_argument("--part", choices=("main", "sampling"), default="main",
+                   help="main: the original diagnostics; sampling: input-representation x target grid and error floor")
     return p.parse_args(argv)
 
 
