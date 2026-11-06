@@ -140,8 +140,11 @@ def trial_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         command = run_command(model, dataset, horizon, SEARCH_SEED, root, target, training=True, inverse=False,
                               has_seed_flag=True, extra=flags(job["params"]) + (["--no_use_gpu"] if args.get("cpu") else []),
                               des=f"tune-{model}-c{index}")
+        env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+        if args.get("cpu"):                                  # one run per reserved-core group: do not oversubscribe the node
+            env.update(OMP_NUM_THREADS=str(args["cpus"]), MKL_NUM_THREADS=str(args["cpus"]))
         run = subprocess.run(command, cwd=f"{TSL_DIR}/Time-Series-Library", capture_output=True, text=True,
-                             env={**os.environ, "PYTHONUNBUFFERED": "1"}, timeout=args["timeout"])
+                             env=env, timeout=args["timeout"])
         best = parse_best_validation(run.stdout + run.stderr)
         if best is None:
             raise RuntimeError("no validation loss in output: " + (run.stdout + run.stderr)[-300:])
@@ -174,7 +177,7 @@ def launch(args: argparse.Namespace) -> None:
     bucket = args.bucket or os.environ.get("SPECTRUM_S3_BUCKET", "spectrum")
     ray.init(address=args.address, ignore_reinit_error=True)
     base = {"repo_root": args.repo_root, "bucket": bucket, "output_prefix": args.output_prefix,
-            "timeout": args.timeout, "has_seed_flag": True, "cpu": args.cpu}
+            "timeout": args.timeout, "has_seed_flag": True, "cpu": args.cpu, "cpus": args.cpus}
     gpus = 0 if args.cpu else args.gpu_fraction
     trial_remote = ray.remote(num_cpus=args.cpus, num_gpus=gpus)(trial_job)
     final_remote = ray.remote(num_cpus=args.cpus, num_gpus=gpus)(tsl_job)
@@ -230,6 +233,7 @@ def launch(args: argparse.Namespace) -> None:
                 if not _exists(client, bucket, final_key(args.output_prefix, d, m, h, s), need_ok=True):
                     jobs.append({"model": m, "dataset": d, "horizon": h, "seed": s,
                                  "extra": flags(win["params"]) + (["--no_use_gpu"] if args.cpu else []),
+                                 "threads": args.cpus if args.cpu else None,
                                  "des": f"tuned-{m}", "hp_label": "tuned", "params": win["params"]})
     print(f"[tune-tsl] {len(jobs)} final runs", flush=True)
     for attempt in range(1, args.retries + 1):

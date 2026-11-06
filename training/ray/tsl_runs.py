@@ -168,6 +168,8 @@ def tsl_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         common = dict(root=root, target=target, has_seed_flag=args["has_seed_flag"],
                       extra=job.get("extra"), des=job.get("des", "electrosense"))
         env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+        if job.get("threads"):                               # CPU runs: stay inside the reserved cores
+            env.update(OMP_NUM_THREADS=str(job["threads"]), MKL_NUM_THREADS=str(job["threads"]))
         train = subprocess.run(run_command(model, dataset, horizon, seed, training=True, inverse=False, **common),
                                cwd=repo, env=env, capture_output=True, text=True, timeout=args["timeout"])
         metrics = parse_metrics(train.stdout + train.stderr)
