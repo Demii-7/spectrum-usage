@@ -12,6 +12,9 @@ Optional variants (model config keys; the defaults reproduce the original model 
                   "seasonal": for output step h the mean of the window values at the same time of day, i.e. at
                   positions L + h - 1 - k * seasonal_period inside the window (k = 1, 2, ...); steps with no such
                   position fall back to the lookback mean.
+                  "last": persistence, the last observation of the window repeated over the horizon. The correction
+                  head then sees the window centred on that last observation (x - x_last) instead of on the mean, so
+                  the model is still level-shift equivariant and starts as exactly persistence.
 ``window_norm``   "none" (default), or "std": the deviations are divided by the window's standard deviation and the
                   head's output is multiplied back by it (instance normalization of the correction, as in RevIN
                   without the affine terms). The model is then equivariant to affine rescaling of the window.
@@ -48,8 +51,8 @@ class ResidualLinearAutoregressiveForecaster(nn.Module):
         model_config = config["model"]
         self.baseline_kind = str(model_config.get("baseline", "mean")).lower()
         self.window_norm = str(model_config.get("window_norm", "none")).lower()
-        if self.baseline_kind not in {"mean", "seasonal"}:
-            raise ValueError(f"baseline must be 'mean' or 'seasonal', got {self.baseline_kind!r}")
+        if self.baseline_kind not in {"mean", "seasonal", "last"}:
+            raise ValueError(f"baseline must be 'mean', 'seasonal' or 'last', got {self.baseline_kind!r}")
         if self.window_norm not in {"none", "std"}:
             raise ValueError(f"window_norm must be 'none' or 'std', got {self.window_norm!r}")
         self.baseline = LookbackMeanForecaster(config)
@@ -71,6 +74,10 @@ class ResidualLinearAutoregressiveForecaster(nn.Module):
             flat = x.reshape(batch, length, -1)
             base = torch.einsum("hl,bld->bhd", self.seasonal_weights, flat)
             base = base.reshape(batch, self.seasonal_weights.shape[0], *x.shape[2:])
+        elif self.baseline_kind == "last":
+            anchor = x[:, -1:]                                           # (B, 1, ...), the last observation
+            base = anchor.expand(-1, self.residual.prediction_horizon, *([-1] * (x.dim() - 2)))
+            mean = anchor                                                # centre the correction input on it
         else:
             base = mean
         deviations = x - mean

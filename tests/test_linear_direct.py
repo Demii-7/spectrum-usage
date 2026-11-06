@@ -120,6 +120,35 @@ def test_window_norm_model_is_equivariant_to_affine_rescaling_of_the_window():
     assert not torch.allclose(plain(a * x + b), a * plain(x) + b, atol=1e-4)   # the unnormalized model is not
 
 
+def test_last_anchor_model_starts_as_persistence_for_every_step():
+    m = _residual(horizon=4, lags=8, baseline="last")
+    x = torch.randn(2, 8, 3)
+    out = m(x)
+    assert out.shape == (2, 4, 3)
+    assert torch.allclose(out, x[:, -1:].expand(-1, 4, -1), atol=1e-7)
+
+
+def test_last_anchor_model_is_level_shift_equivariant_and_centres_on_the_last_value():
+    torch.manual_seed(2)
+    m = _residual(horizon=2, lags=8, baseline="last")
+    with torch.no_grad():
+        m.residual.weight.normal_(); m.residual.bias.normal_()
+    x = torch.randn(3, 8, 3)
+    c = 7.0
+    assert torch.allclose(m(x + c), m(x) + c, atol=1e-4)
+    expected = x[:, -1:] + m.residual(x - x[:, -1:])
+    assert torch.allclose(m(x), expected, atol=1e-6)
+
+
+def test_last_anchor_with_window_norm_is_affine_equivariant():
+    torch.manual_seed(3)
+    m = _residual(horizon=2, lags=8, baseline="last", window_norm="std")
+    with torch.no_grad():
+        m.residual.weight.normal_(); m.residual.bias.normal_()
+    x = torch.randn(3, 8, 3)
+    assert torch.allclose(m(2.5 * x - 4.0), 2.5 * m(x) - 4.0, atol=1e-4)
+
+
 def test_unknown_variant_values_are_rejected():
     for bad in ({"baseline": "median"}, {"window_norm": "robust"}):
         try:
