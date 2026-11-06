@@ -99,7 +99,7 @@ def main(argv=None) -> None:
     worker_args = {"repo_root": args.repo_root, "bucket": bucket, "prefix": args.prefix, "threads": args.threads}
     futures = []
     for node in ray.nodes():
-        if node.get("Alive"):
+        if node.get("Alive") and node.get("Resources", {}).get("CPU", 0) >= 1:
             strategy = NodeAffinitySchedulingStrategy(node_id=node["NodeID"], soft=False)
             futures.append(ray.remote(num_cpus=1, scheduling_strategy=strategy, max_retries=0)(upload_node).remote(worker_args))
     for result in ray.get(futures):
