@@ -1,0 +1,8 @@
+{
+ "epochs": 40,
+ "no_diffusion_mse": 0.5035672783851624,
+ "ae_ceiling_mse": 0.4428994953632355,
+ "persistence_mse": 0.006756713148206472,
+ "lookback_mean_mse": 0.5997283458709717,
+ "full_pipeline_mse_reference": 24.3888
+}

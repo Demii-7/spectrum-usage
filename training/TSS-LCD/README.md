@@ -4,22 +4,35 @@
 > Knowing which is which matters, because only one of them is ours.
 >
 > ### 1. House integration — pre-existing, tracked, unchanged by the reproduction
-> `dataset.py`, `model.py`, `train_autoencoder.py`, `train_tss_condition.py`,
-> `train_diffusion.py`, `train_integrated.py`, `evaluate.py`, `evaluate_integrated.py`,
-> `inference.py`, `utils.py`, `config.yaml`, `test_tss_lcd_integrated.py`.
+> `dataset.py`, `model.py`, `train_integrated.py`, `evaluate_integrated.py`,
+> `config.yaml`, `test_tss_lcd_integrated.py`.
+>
+> (The standalone paper-pipeline stage scripts — `train_autoencoder.py`,
+> `train_tss_condition.py`, `train_diffusion.py`, `evaluate.py`, `inference.py`,
+> `utils.py` — and the repro campaign runners were removed in the 2026-11-06
+> cleanup; their results are preserved in `repro/results_master.csv`,
+> `repro/archive_arms.json` and the per-arm metrics.json inside each
+> checkpoint directory. The integrated path is the live entry point.)
 > These run TSS-LCD inside the spectrum-usage benchmark pipeline (4D/2D harness,
 > per-bin z-scoring, our splits). They were **not** used for the reproduction and were
 > not modified by it. The model they build lives in `models/TSSLCD.py`.
 >
-> ### 2. Reproduction runners — new, ours, tracked (`repro/`)
+> ### 2. Reproduction artifacts (`repro/`)
+> The campaign runner scripts (`run_variant.py`, `run_split.py`,
+> `run_paper_faithful.py`, `run_ours.py`, `diagnose.py`, `queue_*.sh`,
+> `diag_*.py`, `make_experiment_log.py`) were removed in the 2026-11-06
+> cleanup — every result they produced is preserved in
+> `repro/results_master.csv` (one row per arm, all campaigns),
+> `repro/archive_arms.json` (arms from lost hosts) and the per-arm
+> `metrics.json` inside each checkpoint directory.
+> What remains, and why:
+>
 > | file | what it does |
 > |---|---|
-> | `run_variant.py` | their model + their training loops verbatim; **only preprocessing varies** (`--smooth centered\|causal\|none`, `--scaler perfile\|trainfit`). Used to isolate the smoothing leak. |
-> | `run_split.py` | adds `--split chrono\|random`: pools every stride-1 window and shuffles before the 7:3 cut. This is the script that reproduced Table III. |
-> | `run_paper_faithful.py` | **our** model built to Table II (batch 32, latent 16, hidden 1024, 4 heads, 500 epochs, early stopping, 25% masking, no smoothing). `--smooth` exists only as an opt-in ablation. |
-> | `run_ours.py` | our model under the leak-free protocol, with latent-scale diagnostics. |
-> | `diagnose.py` | loads trained weights and splits the error into autoencoder-ceiling vs diffusion contribution. |
-> | `queue_followons.sh` | sequential GPU queue used for the seed replicates and ablations. |
+> | `run_firstcommit_eval.py` | loads a first-commit-campaign checkpoint into the upstream authors' code and evaluates it with the campaign protocol (`--ablate` sets the `TSSLCD_ABLATE` bypass for ablation arms). Validated bit-exact against the campaign runner. |
+> | `results_master.csv` | the single consolidated results file — every arm of both campaigns. |
+> | `archive_arms.json` | full metrics of the 8 arms whose host was lost. |
+> | `diag_*.json`, `all_arms_uc.csv` | campaign diagnostics (error decomposition, conditioning probes). |
 >
 > ### 3. Upstream authors' source — third-party, **gitignored**, not redistributed
 > `repro/upstream/`: `Context2CondNew.py`, `F2Cnet.py`, `NoiseNet.py`,
@@ -35,13 +48,17 @@
 > is not interchangeable with our AERPAW file.
 >
 > ### Results
-> `RESULTS.md` — every arm, generated from `repro/results/*/metrics.json`, not retyped.
-> `MODEL_CARD.md` — the paper-and-reproduction audit.
+> `repro/results_master.csv` — the single results file: one row per arm across
+> both campaigns (HEAD `b156d0a` arms, archived arms, first-commit `d2d4f29`
+> arms), with MSE/RMSE/MAE/MAPE, persistence baseline and arm metadata.
+> `MODEL_CARD.md` — the paper-and-reproduction audit and the narrative summary
+> of what the numbers mean (§13).
 >
 > ### What the reproduction established
 > 1. **Their Table III reproduces to 0.43%, but only under a random split of overlapping
 >    windows** — a procedure no released code performs and the paper never states. The same
->    code on a chronological split gives MSE 0.6966 against a published 0.1541.
+>    code on a chronological split gives MSE 0.8814 against a published 0.1541.
+>    (Figures here are illustrative; `repro/results_master.csv` is the authority.)
 > 2. **Two leaks stack.** A centred `savgol_filter(51, 2)` applied *before* windowing (never
 >    mentioned in the paper) makes the target 3.6x smoother and the task 13x easier for a
 >    trivial predictor; and stride-1 windows shuffled across the split put near-twins of each
@@ -92,13 +109,14 @@ pip install torch numpy pandas scipy scikit-learn pyyaml matplotlib
 # 3. Place CSV at expected path
 #    training/data/merged_power_data_sub6GHz_avg_per_minute.csv
 
-# 4. Run training (three stages)
-python3 training/TSS-LCD/train_autoencoder.py    # Stage 1 — latent autoencoder
-python3 training/TSS-LCD/train_tss_condition.py  # Stage 2 — TSS condition stage
-python3 training/TSS-LCD/train_diffusion.py      # Stage 3 — LCD noise-estimation
+# 4. Train + evaluate inside the benchmark framework (the live path):
+python3 training/common/train_integrated.py \
+    --config training/common/config.yaml --name tss_lcd_baseline
+python3 training/common/evaluation_integrated.py \
+    --config training/common/config.yaml --name tss_lcd_baseline
 
-# 5. Evaluate
-python3 training/TSS-LCD/evaluate.py
+#    (The standalone three-stage paper pipeline was removed in the 2026-11-06
+#     cleanup; the integrated adapters are the supported entry points.)
 ```
 
 ## Scripts Reference
@@ -107,12 +125,10 @@ python3 training/TSS-LCD/evaluate.py
 |--------|---------|
 | `dataset.py` | Dataset class, windowing, masking, reshaping |
 | `model.py` | All model components (TSS-CC, LSE, LSD, NEN) |
-| `train_autoencoder.py` | Stage 1: latent autoencoder pretraining (LSE + LSD) |
-| `train_tss_condition.py` | Stage 2: TSS-CC condition training (TemFE, SpeFE, SpaFE, FFM) |
-| `train_diffusion.py` | Stage 3: LCD noise-estimation training (NEN only) |
-| `evaluate.py` | Evaluation on test split with metric computation |
-| `inference.py` | Online inference from incomplete observations |
-| `utils.py` | Normalization, metrics, checkpointing, config loading |
+| `train_integrated.py` | Benchmark-framework trainer (three stages, `train_chunk` contract) |
+| `evaluate_integrated.py` | Benchmark-framework evaluator (`evaluate_chunk`, DDIM-50 sampling) |
+| `test_tss_lcd_integrated.py` | Unit tests for config shim and window layout |
+| `repro/run_firstcommit_eval.py` | Scores a reproduction checkpoint with the upstream authors' code |
 
 ## File Structure
 
@@ -122,14 +138,17 @@ training/TSS-LCD/
 ├── config.yaml            # Full configuration (all tunable parameters)
 ├── dataset.py             # Dataset and dataloading
 ├── model.py               # TSS-LCD model definition
-├── train_autoencoder.py   # Stage 1 training script
-├── train_tss_condition.py # Stage 2 training script
-├── train_diffusion.py     # Stage 3 training script
-├── evaluate.py            # Evaluation script
-├── inference.py           # Inference script
-├── utils.py               # Utilities
-├── checkpoints/           # Saved model weights (created during training)
-└── results/               # Metric CSVs, plots (created during evaluation)
+├── train_integrated.py    # Benchmark-framework trainer (live entry point)
+├── evaluate_integrated.py # Benchmark-framework evaluator
+├── test_tss_lcd_integrated.py
+├── INTEGRATION_NOTES.md   # pre-integration survey and decisions (2026-11-05)
+├── MODEL_CARD.md          # paper-and-reproduction audit + results narrative
+└── repro/
+    ├── results_master.csv     # THE single results file (all campaigns, one row per arm)
+    ├── archive_arms.json      # full metrics of arms from lost hosts
+    ├── diag_*.json            # campaign diagnostics
+    ├── run_firstcommit_eval.py # score a checkpoint with the upstream code
+    └── upstream/              # authors' code, gitignored (no LICENSE; fetch recipe in README.md)
 ```
 
 ## Configuration Reference

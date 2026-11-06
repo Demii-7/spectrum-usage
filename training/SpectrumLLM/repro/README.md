@@ -182,39 +182,23 @@ configuration it covered has a full 10-epoch run.
 | file | contents |
 |---|---|
 | `MATRIX.md` | coverage matrix per arm and protocol cell, hyperparameter coverage, known gaps, caveats |
-| `results_master.csv` | **all 291 runs**, one row each, with status (`primary` / `sweep` / `superseded_lr1e-3`) and provenance |
-| `configuration_matrix.csv` | the 90 primary configuration cells, grouped, mean test MSE and ratio to the published row |
-| `CHECKPOINTS.tsv` | every checkpoint on disk (repo-relative path), its true owner run (sha-matched), the first-campaign hash each file replaced, live sha256 verification |
-| `build_master.py` | regenerates all four files above from the result JSONs; standard library only |
+| `results_master.csv` | **all 331 runs**, one row each, with status (`primary` / `sweep` / `superseded_lr1e-3`), provenance and sha-verified checkpoint presence |
+| **`results_archive.json`** | **the record**: every kept campaign's runs at full fidelity (per-epoch history, trivial references, both metric spaces), the published tables with their 14 internal inconsistencies, the 70-file checkpoint reload audit, and the headline findings -- 16 campaigns, 241 runs in one file |
 
-Raw result records (each row records every hyperparameter and both metric spaces):
+The loose per-campaign result JSONs were consolidated into `results_archive.json`
+and deleted on 2026-11-05; the campaign keys inside the archive are their
+original filenames. Superseded campaigns whose checkpoints no longer exist
+(old OFA/BERT literal runs, the lr 1e-3 campaign, protocol sweeps, split probes)
+were dropped entirely -- their conclusions live in the documents below.
 
-| file | contents |
-|---|---|
-| `reeval_runs.json` | the 150 first-campaign checkpoint re-evaluations, each cross-checked bit-exact against its checkpoint record |
-| `results_ofa_bert.json` | the 40 OFA and BERT runs |
-| `results_dlinear_settled.json` | the canonical DLinear runs: the exact TSLib protocol, produced by `run_dlinear.sh` |
-| `results_split_study.json` | the 6-run 25-channel split study: literal K=12, then the full `tslib` campaign |
-| `res4_all_dm32.json` | 4-channel, all-channel, `tslib`, d_model 32 / d_ff 32 (5 horizons) |
-| `res4_all_match.json` | 4-channel, all-channel, `tslib`, capacity-matched d_model 64 / d_ff 128 (5 horizons) |
-| `res4_ci_dm32.json` | 4-channel, channel-independent, `tslib`, d_model 32 / d_ff 32 (5 horizons) |
-| `results_protocol_sweep.json` | the learning-rate / epoch sweep that identified the source of the residual gap |
-| `results_paper_regime.json` | the 30-run first campaign; superseded (lr 1e-3), kept for the record |
-| `results_k12_raw.json`, `results_k12_raw_ckpt.json` | the raw-space probes that settled which units the article reports |
-| `split_probe.json` | 80 re-scorings of frozen weights under four test-split conventions |
-
-Analysis documents and derived tables:
+Analysis documents:
 
 | file | contents |
 |---|---|
-| `RESULTS_PAPER_REGIME.md` | the reproduction result in detail |
-| `ALL_RESULTS.md` | every number of the **first campaign** in one place (regenerate with `build_all_results.py`; predates the split-study and `res4` campaigns -- `MATRIX.md` is the authoritative inventory) |
-| `dlinear/` | **archived DLinear working set** (gitignored): the 450-fit protocol search, all diagnostic campaigns, the direct Time-Series-Library run logs, and the seed sweeps that established the protocol and its noise band |
+| `RESULTS_PAPER_REGIME.md` | the reproduction result in detail, including the DLinear protocol search and the direct Time-Series-Library verification |
+| `CHECKPOINTS.md` | the checkpoint guide: filename decoder, reload rules, what every weight file means |
 | `TIMELLM_OFA_REFERENCE.md` | line-by-line comparison of our port against Time-LLM's released code |
-| `comparison_vs_paper.csv` | our numbers against the article's: all 110 published cells plus 30 `ours only` rows |
-| `spec25_split_retrain.csv` | the 25-channel split comparison at a glance |
-| `spectrumllm_published_audit.json` | the article's two tables plus the 14 internal inconsistencies found in them |
-| `verification.json` | output of the 32 implementation checks |
+| `dlinear/` | **archived DLinear working set** (gitignored): the 450-fit protocol search, all diagnostic campaigns, the direct Time-Series-Library run logs, and the seed sweeps that established the protocol and its noise band |
 
 Scripts and configs:
 
@@ -224,7 +208,7 @@ Scripts and configs:
 | `search_spectrumllm.py`, `config_search_spectrumllm.yaml` | staged hyperparameter search driving the runner |
 | `config_search_node.yaml` | the same search configured for a worker node (smoke first, relative `data_dir`) |
 | `make_preds.py`, `pred_plot_K96.npz` | forecast extraction from the K=96 25-channel checkpoint for plotting |
-| `verify_spectrumllm.py`, `export_results_csv.py`, `build_all_results.py` | checks and generators |
+| `verify_spectrumllm.py` | the 32 implementation checks |
 | `run_dlinear.sh` | runs the settled DLinear reproduction in the container (`training/SpectrumLLM/run_dlinear.py`) |
 | `make_figures.py` | plots (channel heatmaps, spec4-vs-spec25 crop check); runs in the `tsslcd-ours:mpl` image |
 

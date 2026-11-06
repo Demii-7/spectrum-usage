@@ -76,44 +76,52 @@ All values are test MSE in raw PSD units, seed 0, `tslib` split, recorded in the
 named result file. "pub" = the article's published cell; ratio = ours/published.
 
 **Time-LLM (GPT-2), d_model 32 -- the four protocol cells (2026-11-05,
-verbatim prompt):**
+verbatim prompt).** Result records: campaign `results_n*_tslib.json` in
+`results_archive.json`:
 
-| files | cell | mean MSE | ratio to pub | result file |
-|---|---|---:|---:|---|
-| `n4_h*_tslib_spectrumllm` | 4ch all-channel | 0.3093 | **1.006** | `results_n4_all_d32_tslib.json` |
-| `n4_h*_tslib_ci_*` | 4ch channel-indep | 0.2977 | 0.968 | `results_n4_ci_d32_tslib.json` |
-| `n25_h*_tslib_spectrumllm` | 25ch all-channel | 1.1425 | 1.144 | `results_n25_all_d32_tslib.json` |
-| `n25_h*_tslib_ci_*` | 25ch channel-indep | 0.8240 | **0.968** | `results_n25_ci_d32_tslib.json` |
+| files | cell | mean MSE | ratio to pub |
+|---|---|---:|---:|
+| `n4_h*_tslib_spectrumllm` | 4ch all-channel | 0.3093 | **1.006** |
+| `n4_h*_tslib_ci_*` | 4ch channel-indep | 0.2977 | 0.968 |
+| `n25_h*_tslib_spectrumllm` | 25ch all-channel | 1.1425 | 1.144 |
+| `n25_h*_tslib_ci_*` | 25ch channel-indep | 0.8240 | **0.968** |
 
 The two bolded cells are the reproduction: **4ch published row = all-channel,
 25ch published row = channel-independent**, each matched within ~3% under a
 single protocol.
 
 **Capacity variants:** `*_tslib_dm64ff128_*` -- d_model 64 / d_ff 128
-(`results_n25_all_d64_tslib.json`, `res4_all_match.json`). Finding: widening
-does **not** rescue all-channel at 25ch (1.45x vs CI) -- the failure is
+(campaigns `results_n25_all_d64_tslib.json`, `res4_all_match.json`, with the
+d32 side in `res4_all_dm32.json`; all in `results_archive.json`). Finding:
+widening does **not** rescue all-channel at 25ch (1.45x vs CI) -- the failure is
 architectural, not a width bottleneck.
 
-**Other arms (CI, both scenarios):** `*_tslib_ci_ofa_*` (OFA/GPT-2:
-`results_n4_ofa_ci_tslib.json`, `results_n25_ofa_ci_tslib.json`; 25ch matches
-published at 0.956, 4ch overshoots at 0.885) and
-`*_tslib_bbbertbaseuncased_ci_*` (Time-LLM/BERT: `results_n*_bert_ci_tslib.json`;
-matches at K=12-96, **diverges at K=192** in both scenarios -- a real training
-instability of BERT at the longest horizon, recorded as-is).
+**Other arms (CI, both scenarios):** `*_tslib_ci_ofa_*` (OFA/GPT-2, campaigns
+`results_n*_ofa_ci_tslib.json`: 25ch matches published at 0.956, 4ch overshoots
+at 0.885) and `*_tslib_bbbertbaseuncased_ci_*` (Time-LLM/BERT, campaigns
+`results_n*_bert_ci_tslib.json`; matches at K=12-96, **diverges at K=192** in
+both scenarios -- a real training instability of BERT at the longest horizon,
+recorded as-is).
 
 **Old-prompt vintage (kept for the multi-seed evidence):**
-`n25_h*_spectrumllm` without `_tslib` = `results_n25_all_tslib.json`, the only
-**3-seed** campaign (seeds 0/1/2, hence `tslib/seed-1`, `tslib/seed-2` remote);
-`res4_*` and the split-study `n25_h*_ci_*` files are superseded by the four
+`n25_h*_spectrumllm` without `_tslib` = campaign `results_n25_all_tslib.json`,
+the only **3-seed** campaign (seeds 0/1/2, hence `tslib/seed-1`, `tslib/seed-2`
+remote); the `res4_*` and split-study campaigns are superseded by the four
 protocol cells above but document the campaign that settled the split question.
 
 **Remote `literal/` (150 files):** the first campaign, superseded as a
 reproduction but the only 5-seed evidence (4ch all-channel, seeds 0-4). Its
-metrics are `reeval_runs.json`; its protocol search is `dlinear/DLINEAR_VARIANTS.md`.
+metrics are campaign `reeval_runs.json`; its protocol search is
+`dlinear/DLINEAR_VARIANTS.md`.
 
-## 5. Regenerating the inventory
+## 5. The record
 
-`python training/SpectrumLLM/repro/build_master.py` rebuilds
-`CHECKPOINTS.tsv` (local files, sha-verified against their run records) and
-`results_master.csv` (every run, with `checkpoint_on_disk` status).
-`checkpoint_storage.py verify` re-checks the remote side.
+Every result record at full fidelity -- per-epoch histories, trivial references,
+both metric spaces, the published tables, and the checkpoint reload audit --
+is consolidated in **`results_archive.json`** (one file, 16 campaigns, 241
+runs; built 2026-11-05 by a one-off consolidation, verified by regenerating
+`results_master.csv` byte-identically from it). `results_master.csv` and
+`MATRIX.md` are the flat and readable views of the same data, kept as
+snapshots. The inventory of every local and remote checkpoint with SHA-256 is
+`checkpoints_manifest.tsv`; `checkpoint_storage.py verify` re-checks the
+remote side.

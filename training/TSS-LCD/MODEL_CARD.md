@@ -20,14 +20,14 @@ params: 65504442              # [M] their released code, config defaults: 62.3M 
 code_available: full          # spectrum-specific, authors' own
 data_available: full          # train+test+source RECOVERED from commit d7f1e51263 (deleted from HEAD)
 checkpoints_available: false  # THEIRS: never committed in any of the 14 commits
-our_checkpoints: checkpoints/repro/tsslcd/   # [M] our 3 arms, 793 MiB, Chameleon Swift container `spectrum`
+our_checkpoints: checkpoints/repro/tsslcd/   # [M] HEAD campaign: 19 arms, ~5.5 GB, consolidated in the repo checkpoints folder (mirrored to Swift `spectrum/checkpoints/repro/tsslcd/`). First-commit campaign: checkpoints/repro/tsslcd_firstcommit/ (separate prefix — weights are architecture-incompatible with our rewrite, INTEGRATION_NOTES.md §3b, but load byte-exactly into the upstream authors' code via repro/run_firstcommit_eval.py)
 license: none-declared        # no LICENSE file in the repo
-reproducible: partial          # Table III yes (0.43% of published MSE); Table IV ablations no
-repro_blocker: "Table III reproduces ONLY under a random split of pooled stride-1 windows (MSE 0.1548 vs 0.1541); the chronological split the paper describes gives 0.6966, 4.5x worse. No checkpoints released, no seed, no validation split, and their own released predictions score 2.5x worse than their table."
+reproducible: partial          # Table III yes, under BOTH leaking evaluations (random pooled split 0.1548 vs 0.1541; first-commit overlapping split 0.164-0.186); chronological split 3-5x worse; Table IV ablations no
+repro_blocker: "Table III reproduces only under evaluations that leak: a random split of pooled stride-1 windows (0.1548 vs 0.1541) or the first commit's overlapping split (0.164-0.186 across two campaigns). Every leak-free chronological run scores 0.45-0.88. No checkpoints released, no seed, no validation split. Live numbers: repro/results_master.csv (one row per arm, all campaigns); narrative in §13(c)-(e)."
 compares_vs_trivial: false
-beats_persistence: false      # [M] their own published predictions lose to persistence by 60x in MSE
-released_artifacts_match_paper: false   # 1.59x worse MAE than Table III
-leakage_found: confirmed      # centred savgol(51) applied before windowing
+beats_persistence: false      # [M] persistence 0.0064 dB² beats every trained variant by 15-60x under their protocol, and 4.14 vs 7.3-39 on raw targets
+released_artifacts_match_paper: false   # HEAD predictions 2.51x worse than Table III; the FIRST COMMIT's shipped predictions score 0.1780, between Table III (0.1541) and HEAD's (0.3866)
+leakage_found: confirmed      # (1) centred savgol(51) before windowing, (2) full-series/per-file scaler, (3) first-commit split overlap (55% of test windows in train), (4) eval-time moving averages incl. hindsight (A5b)
 ```
 
 ## 0. At a glance
@@ -37,7 +37,7 @@ leakage_found: confirmed      # centred savgol(51) applied before windowing
 | Paper | TSS-guided latent conditional diffusion; two stages (TSS-CC condition, LCD-SP latent diffusion) |
 | Code | Full and spectrum-specific: `github.com/Xlab2024/TSS-LCD`, pushed 2025-12-03, 8 Python files |
 | Data | AERPAW CC1/CC2/LW1. **Complete**: training split, test split and the 6839-row source CSV all recovered from deleted commit `d7f1e51263` |
-| Reproducible | **partial** — architecture, full data and the exact preprocessing chain yes (ground truth regenerated to 1.7e-5 dB). Table III yes, but *only* under a random split of pooled stride-1 windows: MSE 0.1548 vs the published 0.1541 (+0.43%), where the chronological split the paper describes gives 0.6966. Table IV ablations no. Their own released predictions, no |
+| Reproducible | **partial** — architecture, full data and the exact preprocessing chain yes (ground truth regenerated to 1.7e-5 dB). Table III yes, but *only* under a random split of pooled stride-1 windows: MSE 0.1548 vs the published 0.1541 (+0.43%), where the chronological split gives 0.8814 through the same code path. Table IV ablations no. Their own released predictions, no. **Live numbers: `repro/results_master.csv`** |
 | Beats a trivial reference | **No.** Their published predictions score MSE 0.3866 dB²; last-value persistence on their own ground truth scores 0.0064 dB² `[M]` |
 | Headline claim | "consistently outperforms all baselines across all metrics" `[P:12]` |
 | Our verdict | Claim holds *within the baseline set they chose*; the set contains no trivial reference, and every row of Table III is beaten by persistence by ≥24x in MSE |
@@ -399,27 +399,100 @@ their exact pipeline reproduces `results/gt_mat.csv` to **max 1.67e-5 dB, mean 3
 3018 x 750 values. Every preprocessing claim in §3 of this card is therefore confirmed by reconstruction,
 not inferred from reading code.
 
-**(c) Training on their real training split**: **not yet run.** The data is now in hand
-(`tsslcd_hist/trainDataset.csv`), but all GPU capacity is unavailable: `ssh:chameleon-temp` fails with
-`Could not resolve hostname`, and `ssh:chameleon-uc` times out at 192.5.86.172:22. CPU is not a viable substitute: measured
-14.84 min/epoch, i.e. 74.2 h for the context autoencoder's 300 epochs alone `[M]`. Commands are staged in `TSSLCD_REPRODUCTION.md` §5, now pointing
-at the recovered file rather than the AERPAW substitute.
+**(c) The GPU campaigns on the authors' code** `[M]` — 2026-11, two independent
+campaigns (HEAD `b156d0a`; first commit
+`d2d4f29` wrapped by `/home/cc/TSS-LCD/repro/first_commit_repro.py`). The
+**model code is byte-identical across commits** (only the harness differs) and
+the data is byte-identical (same MD5), so the campaigns are directly
+comparable. All numbers MSE dBm, t+1, their protocol (incl. the w6/w3
+eval-time averaging where noted):
 
-**(d) Our implementation, smoke build**: **fails.** `KeyError: 'latent_dim'` at
+| evaluation | HEAD campaign | first-commit campaign | paper |
+|---|---|---|---|
+| random pooled 7:3 split (leak) | **0.1548** / 0.1647 / 0.1731 | — | 0.1541 |
+| first commit's overlapping split (leak) | 0.1862 / 0.1868 | **0.1638** / 0.1677 / (s2 queued) | — |
+| same, no eval-time averaging | 0.2272 / 0.2281 | 0.2012 | — |
+| chronological, leak-free | 0.8814 / 0.7037 / 0.6591 | 0.4534 / 0.5264 / 0.5437 | — |
+| persistence, same windows | 0.0060-0.0068 | 0.0064 | — |
+
+Three results. **Table III is real but leak-dependent**: every leaking
+evaluation lands in 0.15-0.19 and brackets the published number; every
+leak-free evaluation is 3-5x worse; the two distributions do not touch.
+**The campaigns differ by a systematic ~13% on identical config** (0.164 vs
+0.186, each internally consistent to ±2% across seeds) — implementation-level
+variance in a stochastic pipeline, worth remembering when quoting any single
+diffusion number. **Persistence beats everything everywhere.**
+
+**Ablations (Table IV) do not reproduce in any of three independent
+measurement sets** `[M]` — deltas vs the respective full model:
+
+| ablation | HEAD, random split | HEAD, firstcommit split | first-commit, paper split | paper |
+|---|---|---|---|---|
+| w/o TemFE | +38.6% | +4.4% | +4.0% | +96.4% |
+| w/o SpeFE | +5.4% | −7.5% | −9.9% | +88.8% |
+| w/o SpaFE | +14.9% | −14.9% | +32.1% | +85.7% |
+| w/o FFM | +17.0% | +49.9% | +0.2% | +103.7% |
+
+The paper's tight +86..+104% cluster is reproduced nowhere; the *ordering*
+is inconsistent across our own three sets; removing SpeFE improves the model
+in two of three. Component criticality is not established by the paper's
+evidence.
+
+**(d) First-commit campaign findings** `[M]` (detail: `/home/cc/TSS-LCD/`
+`CODE_REVIEW.md`, `CROSS_CAMPAIGN.md`, `EXPERIMENTS.md` — kept in the campaign workspace, not this repo):
+- **Memorization gradient**: on the overlapping split, test windows that
+  were in training score 0.068; boundary windows 0.126; fully held-out
+  0.289 — while persistence stays flat at 0.0064. The headline is ~55%
+  memorized windows by count.
+- **Why the model cannot learn persistence**: the 32-dim condition retains
+  ~56% of the last step's variance; the future-AE reconstruction floor
+  (0.040 dBm MSE) is 6x worse than persistence; a ridge probe through the
+  same latents scores 0.174 vs the model's 0.164 — the diffusion is at its
+  representation ceiling.
+- **Sampler contradicts the paper's own Algorithm 1** (uses √α where √ᾱ is
+  required). Implementing the paper's update diverges (MSE ~1e7); an oracle
+  test proves equations + schedule are self-consistent, so the released
+  sampler is *required* to make the released schedule runnable.
+- **The undocumented steps carry the result**: savgol pre-smoothing makes
+  the task ~660x easier (persistence 4.25 raw → 0.0064 smoothed); eval-time
+  averaging improves the headline by ~19% and makes the scored series
+  unrealizable in real time (1/3 of each point's weight is hindsight).
+- **Wide-condition test**: conditioning the diffusion on the paper's full
+  fused representation instead of the 32-dim bottleneck makes the model
+  *worse* (0.200 vs 0.164) despite a 2x better ridge ceiling (0.087) — the
+  bottleneck is load-bearing for their tiny noise net.
+
+**(e) Their own implementation on raw (unsmoothed) targets** `[M]`
+(`repro/archive_arms.json`, 8 arms from lost hosts + `pf2f_*`): MSE
+7.3-39.0 across seeds and splits against raw-target persistence 4.14 —
+i.e. on the actual measurement series the model family is dominated by the
+trivial predictor in every configuration tested.
+
+**(f) Our implementation, smoke build**: **fails.** `KeyError: 'latent_dim'` at
 `training/common/model_factory.py:509` `[M]` — the registry anchor omits a key the factory requires. This is
 a harness/config gap, not a model defect; the real YAML in `training/configs/` supplies it. Seven of the nine
 smoke failures in the A30 sweep share this shape.
 
 ## 14. Open questions and next actions
 
-- [ ] Restore GPU capacity, then run the staged training on the **recovered** `trainDataset.csv`
-      (smoke 1/1/1, then 300/300/2000) and `test.py`; compare against `pred_matours.csv` and against persistence
-- [ ] Fix the `latent_dim` registry anchor so `tss_lcd` builds in the smoke harness; record parameter count
+- [x] **Done 2026-11** — GPU reproduction run on the recovered data: 19 HEAD arms + 10
+      first-commit arms (+ seed replicates still queuing). Table III reproduces under both
+      leaking evaluations; leak-free is 3-5x worse; ablations do not reproduce (§13c-e).
+- [x] **Done 2026-11** — leakage quantified directly: overlapping split 0.164→0.453
+      (2.8x); savgol 660x task-ease; eval averaging 19% of the headline; scaler leak
+      arm queued. Full decomposition in `/home/cc/TSS-LCD/CODE_REVIEW.md`.
+- [x] **Done 2026-11** — checkpoints for every arm archived: Swift
+      `spectrum/checkpoints/repro/tsslcd/` (19 HEAD arms, ~5.8 GB) and
+      `.../tsslcd_firstcommit/` (first-commit arms; separate prefix — weights are
+      architecture-incompatible with our rewrite, INTEGRATION_NOTES.md §3b).
+- [ ] Fix the `latent_dim` registry anchor so `tss_lcd` builds in the smoke harness
 - [ ] Decide and document the latent-rescaling arm (faithful vs fixed) and run both
 - [ ] Add the 10% context masking as an explicit flag
-- [ ] Email the authors for **checkpoints** — the data and split questions are now answered from history,
-      so checkpoints are the only remaining ask, and they alone can explain the Table III gap
-- [ ] Quantify the leakage directly: retrain with savgol applied *after* splitting and report the gap
+- [ ] Integration into the benchmark per `INTEGRATION_NOTES.md` §5 decisions
+      (architecture choice, eval-masking default, L=1 vs multi-site, campaign)
+- [ ] Email the authors for **checkpoints** — now the only remaining ask; they alone
+      can explain why HEAD's released predictions miss Table III by 2.5x while the
+      first commit's shipped predictions (0.1780) sit between Table III and HEAD's
 - [ ] Measure sampling wall-clock per forecast (1000-step chain) for the deployability column
 
 ## 15. Evidence provenance
@@ -436,5 +509,16 @@ smoke failures in the A30 sweep share this shape.
   (3079 x 750).
 - **Our runs**: `tsslcd_published_audit.json`, `tsslcd_table3_check.json`, `smoke_all_models.json`
   (`tss_lcd` entry), `smoke_tss_lcd2_result.json`, `smoke_tss_lcd3_result.json`.
+- **GPU campaigns (2026-11)**: HEAD campaign — 19 arms with checkpoints consolidated at
+  `checkpoints/repro/tsslcd/` (mirrored to Swift `spectrum/checkpoints/repro/tsslcd/`), log
+  consolidated in `repro/results_master.csv` (the runner scripts were removed after the campaign; each checkpoint dir keeps its own metrics.json); 8 further arms
+  from lost hosts archived in `repro/archive_arms.json`. First-commit campaign —
+  `/home/cc/TSS-LCD/` (`EXPERIMENTS.md`, `CODE_REVIEW.md`, `CROSS_CAMPAIGN.md` — campaign workspace), checkpoints
+  at `checkpoints/repro/tsslcd_firstcommit/` (mirrored to Swift). Model code verified
+  byte-identical across the two commits; data verified byte-identical (MD5 `c151234b...`)
+  across the two campaigns. **Cross-harness validation**: `repro/run_firstcommit_eval.py`
+  loads the first-commit checkpoints into the upstream code and reproduces the campaign
+  numbers exactly (paper_s0 MSE 0.16384 vs 0.1638; spefe_s0 0.14757 vs 0.1476) `[M]`.
 - **Our code**: `models/TSSLCD.py` at 873 lines, beta schedule aligned to 0.0018 on 2026-10-29.
-- **Card author / date**: automated audit, 2026-10-30. Revise after the GPU reproduction run.
+- **Card author / date**: automated audit, 2026-10-30; revised 2026-11-06 with the GPU
+  campaign results (§13c-e), checkpoint archive locations and the first-commit findings.

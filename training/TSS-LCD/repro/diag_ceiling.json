@@ -1,0 +1,9 @@
+{
+ "n_test": 3017,
+ "architectural_ceiling_mse": 0.0687260851264,
+ "persistence_mse": 0.006426297593861818,
+ "ceiling_vs_persistence": 10.694507081658468,
+ "full_model_mse": 0.1862,
+ "full_model_vs_ceiling": 2.7093060758159546,
+ "full_model_vs_persistence": 28.97469301419404
+}
