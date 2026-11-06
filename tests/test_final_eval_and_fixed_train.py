@@ -218,3 +218,15 @@ def test_spectral_context_jobs_cover_every_cell_and_skip_non_2d():
     assert {j["condition"] for j in jobs} == {"full_context", "region_only"}
     assert record_key("p/", jobs[0]).startswith("p/vanillalstm/R1-")
     assert len({record_key("p", j) for j in jobs}) == len(jobs)  # unique per cell
+
+
+def test_model_rep_specs_restrict_only_the_named_model():
+    from training.ray.fixed_train import keep_requested, split_model_specs
+
+    names, pairs = split_model_specs(["residualvanillalstm:1d", "convlstm"])
+    assert names == ["residualvanillalstm", "convlstm"] and pairs == {("residualvanillalstm", "1d")}
+    entries = [{"model": "residualvanillalstm", "rep": "1d"}, {"model": "residualvanillalstm", "rep": "2d"},
+               {"model": "convlstm", "rep": "4d"}]
+    kept = keep_requested(entries, pairs)
+    assert [(e["model"], e["rep"]) for e in kept] == [("residualvanillalstm", "1d"), ("convlstm", "4d")]
+    assert split_model_specs(None) == (None, set())

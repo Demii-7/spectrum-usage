@@ -40,6 +40,28 @@ ONE_STEP_ONLY = {"temporalconvnet", *REFERENCE_MODELS}
 STANDARD_HORIZONS = (1, 15, 60)
 
 
+def split_model_specs(specs: list[str] | None) -> tuple[list[str] | None, set[tuple[str, str]]]:
+    """``--models`` items are ``model`` (every representation) or ``model:rep`` (only that one).
+
+    Returns (plain model names for discovery, the exact (model, rep) pairs that were requested).
+    """
+    if not specs:
+        return None, set()
+    names, pairs = [], set()
+    for spec in specs:
+        name, _, rep = spec.partition(":")
+        names.append(name)
+        if rep:
+            pairs.add((name, rep))
+    return names, pairs
+
+
+def keep_requested(entries: list[dict[str, Any]], pairs: set[tuple[str, str]]) -> list[dict[str, Any]]:
+    """Drop entries of a model whose representation was not requested, when that model was given as ``model:rep``."""
+    restricted = {name for name, _ in pairs}
+    return [e for e in entries if e["model"] not in restricted or (e["model"], e["rep"]) in pairs]
+
+
 def horizon_jobs(entries: list[dict[str, Any]], horizons: list[int]) -> list[dict[str, Any]]:
     """One job per (model, horizon) for models that can be trained directly for that many steps."""
     jobs = []
@@ -215,10 +237,11 @@ def launch(args: argparse.Namespace) -> None:
 
     client = spectrum_s3_client()
     bucket = args.bucket or os.environ.get("SPECTRUM_S3_BUCKET", "spectrum")
-    entries = discover_models(client, bucket, args.prefixes, args.models)
+    model_names, requested_pairs = split_model_specs(args.models)
+    entries = keep_requested(discover_models(client, bucket, args.prefixes, model_names), requested_pairs)
     if args.include_reference:
         entries += [{"rep": rep, "model": m, "source_prefix": "", "costs_key": ""}
-                    for m, rep in REFERENCE_MODELS.items() if not args.models or m in args.models]
+                    for m, rep in REFERENCE_MODELS.items() if not model_names or m in model_names]
     if args.per_site:
         entries = [e for e in entries if e["rep"] != "4d"]
         sites = args.sites or list(CORE_SITES)
