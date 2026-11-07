@@ -1,16 +1,26 @@
 """Clean inference-cost benchmark: one model per GPU, nothing else on that GPU, fixed batch sizes, warm-up, median.
 
-For every selected checkpoint the worker builds the evaluation pipeline exactly as ``final_eval`` does, but wraps
+For every selected checkpoint the worker rebuilds the evaluation pipeline exactly as the original run did, but wraps
 ``evaluation_integrated.forecast`` (one full forecast of every horizon for a batch of windows, including the roll-out for
 one-step models) with CUDA-synchronized timers. Per (model, batch size) it reports the median seconds per forecast call,
 milliseconds per window, windows per second, forward passes per call, parameter count and peak GPU memory.
 
-Timings are only comparable if nothing else runs on the GPUs: each task reserves a whole GPU (``num_gpus=1``) and the
-launcher refuses to start unless the cluster is idle (``--force`` overrides, for smoke tests only; the output is then marked
-``idle=false``).
+Checkpoint sources (all POWDER, all in the results bucket):
 
-    python -m training.ray.inference_benchmark --manifest-only                      # which checkpoints exist, which models are missing
-    python -m training.ray.inference_benchmark --batch-sizes 1 32 --output-prefix inference-benchmark/h100
+* ``oct``      1-minute 600-800 MHz campaign and round 2 (``checkpoints-oct2026``, ``checkpoints-oct2026-r2``): config from the base
+               YAML plus the run's ``run_costs.json``.
+* ``band``     1-minute 2400-2600 MHz runs (``oct2026-band-runs``): same, with the band swapped.
+* ``p15``      15-minute pooled models, rolled out and direct (``powder15-results-w``): the exact resolved config in the ``.meta.json``.
+* ``p15tuned`` 15-minute tuned finals (``tuning/powder15``): same.
+
+Not covered: per-receiver and pooled-6 models (same architectures and shapes as the 2D models, so the same cost), lookback-mean
+baselines (no parameters), TSS-LCD, Time-LLM/OFA (own pipelines).
+
+Timings are only comparable if nothing else runs on the GPUs: each task reserves a whole GPU (``num_gpus=1``) and the launcher
+refuses to start unless the cluster is idle (``--force`` overrides, for smoke tests only; the output is then marked ``idle=false``).
+
+    python -m training.ray.inference_benchmark --manifest-only
+    python -m training.ray.inference_benchmark --output-prefix inference-benchmark/h100
 """
 
 from __future__ import annotations
@@ -19,6 +29,7 @@ import argparse
 import io
 import json
 import os
+import re
 import statistics
 import sys
 import tempfile
@@ -29,13 +40,38 @@ from typing import Any
 WARMUP_CALLS = 3
 BATCH_SIZES = (1, 32)
 PREFERRED_SEED = 42
+ALL_SOURCES = ("oct", "band", "p15", "p15tuned")
+TEST_RANGE = ("2026-10-27T20:00:00Z", "2026-11-03T20:00:00Z")
+DEFAULT_STRIDE = {"oct": 20, "band": 20, "p15": 1, "p15tuned": 1}   # about 500 windows either way
+
+META_KEY = re.compile(
+    r"^(?P<prefix>.+?)/weights/(?P<band>\d+_\d+)/(?P<rep>[124]d)/(?P<model>[^/]+?)(?:/h(?P<horizon>\d+))?"
+    r"/seed-(?P<seed>\d+)/(?P<file>[^/]+\.pt)$")
+TUNED_KEY = re.compile(
+    r"^(?P<prefix>tuning/powder15)/(?P<band>\d+_\d+)/(?P<rep>[124]d)/(?P<model>[^/]+)/weights/seed-(?P<seed>\d+)/(?P<file>[^/]+\.pt)$")
+BAND_PREFIX = re.compile(r"(\d+_\d+)$")
+
+
+def parse_meta_key(key: str) -> dict[str, Any] | None:
+    """Weights uploaded by ``artifacts.save_run``/``save_artifact`` (15-minute runs) -> entry fields, else None."""
+    match = TUNED_KEY.match(key) or META_KEY.match(key)
+    if not match or "/site-" in key:
+        return None
+    fields = match.groupdict()
+    return {"prefix": fields["prefix"], "band": fields["band"], "rep": fields["rep"], "model": fields["model"],
+            "horizon": int(fields["horizon"]) if fields.get("horizon") else None, "seed": int(fields["seed"]), "pt_key": key,
+            "meta_key": key + ".meta.json"}
 
 
 def pick_checkpoints(entries: list[dict[str, Any]], preferred_seed: int = PREFERRED_SEED) -> list[dict[str, Any]]:
-    """One checkpoint per (prefix, rep, model): the preferred seed if present, else the lowest seed. Timing does not depend on the seed."""
-    chosen: dict[tuple[str, str, str], dict[str, Any]] = {}
-    for entry in sorted(entries, key=lambda e: (e["prefix"], e["rep"], e["model"], e["seed"])):
-        key = (entry["prefix"], entry["rep"], entry["model"])
+    """One checkpoint per (source, prefix, band, rep, model, horizon): the preferred seed if present, else the lowest seed.
+
+    Timing does not depend on the seed. Direct models trained for different horizons are different models and are all kept.
+    """
+    chosen: dict[tuple, dict[str, Any]] = {}
+    for entry in sorted(entries, key=lambda e: (e["source"], e["prefix"], e.get("band") or "", e["rep"], e["model"],
+                                                 e.get("horizon") or 0, e["seed"])):
+        key = (entry["source"], entry["prefix"], entry.get("band"), entry["rep"], entry["model"], entry.get("horizon"))
         current = chosen.get(key)
         if current is None or (entry["seed"] == preferred_seed and current["seed"] != preferred_seed):
             chosen[key] = entry
@@ -53,33 +89,87 @@ def summarize_calls(seconds: list[float], batch_rows: list[int], warmup: int = W
             "windows_per_s": full / median, "p90_s_per_call": sorted(timed)[int(0.9 * (len(timed) - 1))]}
 
 
+def discover_sources(client, bucket: str, sources: list[str], models: list[str] | None = None) -> list[dict[str, Any]]:
+    """Every checkpoint of the requested sources that has what its config needs (a cost record or a sidecar)."""
+    from training.ray.final_eval import discover
+    from training.ray.fixed_train import REFERENCE_MODELS
+
+    entries: list[dict[str, Any]] = []
+    costs_prefixes = {"oct": ["checkpoints-oct2026", "checkpoints-oct2026-r2"], "band": ["oct2026-band-runs"]}
+    for source in sources:
+        if source in costs_prefixes:
+            for entry in discover(client, bucket, costs_prefixes[source], models, None):
+                band = BAND_PREFIX.search(entry["prefix"])
+                entries.append({**entry, "source": source, "kind": "costs", "band": band.group(1) if band else "600_800",
+                                "horizon": None})
+        else:
+            root = "powder15-results-w/weights/" if source == "p15" else "tuning/powder15/"
+            keys = [o["Key"] for page in client.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=root)
+                    for o in page.get("Contents", [])]
+            have = set(keys)
+            for key in keys:
+                if not key.endswith(".pt"):
+                    continue
+                entry = parse_meta_key(key)
+                if entry and entry["meta_key"] in have and (not models or entry["model"] in models):
+                    entries.append({**entry, "source": source, "kind": "meta"})
+    return [e for e in entries if e["model"] not in REFERENCE_MODELS]
+
+
+def build_config(entry: dict[str, Any], args: dict[str, Any], client, bucket: str, scratch: Path) -> tuple[dict[str, Any], Path]:
+    """Download the checkpoint and return the evaluation config that rebuilds it, plus the local checkpoint path."""
+    import yaml
+
+    from training.ray.final_eval import build_eval_config, config_file_for
+    from training.ray.fixed_train import swap_band
+
+    checkpoint = scratch / Path(entry["pt_key"]).name
+    client.download_file(bucket, entry["pt_key"], str(checkpoint))
+    stride = args["strides"][entry["source"]]
+    if entry["kind"] == "costs":
+        costs = json.loads(client.get_object(Bucket=bucket, Key=entry["costs_key"])["Body"].read())
+        base = yaml.safe_load(Path(config_file_for(entry["model"], entry["rep"])).read_text())
+        config = build_eval_config(base, entry["model"], costs, test_start=args["test_start"], test_end=args["test_end"],
+                                   test_stride=stride, device=args["device"])
+        if entry["band"] != "600_800":
+            config = swap_band(config, entry["band"])
+        return config, checkpoint
+    meta = json.loads(client.get_object(Bucket=bucket, Key=entry["meta_key"])["Body"].read())
+    config = meta["config"]
+    config[entry["model"]].setdefault("train", {})["test_stride"] = int(stride)
+    config["training"] = {**config.get("training", {}), "models": [entry["model"]]}
+    if args["device"]:
+        config["training"]["device"] = args["device"]
+    from training.ray.powder15 import ensure_powder15
+
+    ensure_powder15(entry["band"], args["repo_root"])        # the 15-minute traces, converted once per worker
+    return config, checkpoint
+
+
 def benchmark_entry(entry: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     """Remote worker (whole GPU): download one checkpoint, time its forecast at each batch size."""
     sys.path.insert(0, args["repo_root"])
     os.chdir(args["repo_root"])
+    import copy
+
     import torch
-    import yaml
 
     from training.common import evaluation_integrated as ei
-    from training.ray.final_eval import build_eval_config, config_file_for
     from training.ray.storage import spectrum_s3_client
 
     client, bucket = spectrum_s3_client(), args["bucket"]
     rows: list[dict[str, Any]] = []
-    base_row = {k: entry[k] for k in ("prefix", "rep", "model", "seed")}
+    base_row = {k: entry.get(k) for k in ("source", "prefix", "band", "rep", "model", "horizon", "seed")}
     started = time.time()
     try:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        gpu = torch.cuda.get_device_name(0) if device.type == "cuda" else "cpu"
-        with tempfile.TemporaryDirectory(prefix="infer-bench-") as scratch:
-            checkpoint = Path(scratch) / Path(entry["pt_key"]).name
-            client.download_file(bucket, entry["pt_key"], str(checkpoint))
-            costs = json.loads(client.get_object(Bucket=bucket, Key=entry["costs_key"])["Body"].read())
-            base = yaml.safe_load(Path(config_file_for(entry["model"], entry["rep"])).read_text())
+        with tempfile.TemporaryDirectory(prefix="infer-bench-") as scratch_dir:
+            scratch = Path(scratch_dir)
+            base_config, checkpoint = build_config(entry, args, client, bucket, scratch)
+            device = torch.device("cuda" if torch.cuda.is_available() and args["device"] != "cpu" else "cpu")
+            gpu = torch.cuda.get_device_name(0) if device.type == "cuda" else "cpu"
             original = ei.forecast
             for batch in args["batch_sizes"]:
-                config = build_eval_config(base, entry["model"], costs, test_start=args["test_start"], test_end=args["test_end"],
-                                           test_stride=args["test_stride"], device=args["device"])
+                config = copy.deepcopy(base_config)
                 config.setdefault(entry["model"], {}).setdefault("evaluation", {})["batch_size"] = int(batch)
                 seconds: list[float] = []
                 batch_rows: list[int] = []
@@ -109,7 +199,7 @@ def benchmark_entry(entry: dict[str, Any], args: dict[str, Any]) -> dict[str, An
                     torch.cuda.reset_peak_memory_stats()
                 ei.forecast = timed
                 try:
-                    out_dir = Path(scratch) / f"eval-b{batch}"
+                    out_dir = scratch / f"eval-b{batch}"
                     out_dir.mkdir()
                     ei.evaluate_one_model(config, entry["model"], out_dir, checkpoint, skip_plots=True)
                 finally:
@@ -132,47 +222,55 @@ def benchmark_entry(entry: dict[str, Any], args: dict[str, Any]) -> dict[str, An
     return {"rows": rows}
 
 
-def manifest(client, bucket: str, prefixes: list[str]) -> list[dict[str, Any]]:
-    """Every (prefix, rep, model) with a checkpoint and cost record, plus the models of the campaign plan that have none."""
-    from training.ray.campaign_all import PLAN
-    from training.ray.final_eval import discover
-
-    entries = discover(client, bucket, prefixes, None, None)
-    have = {(e["rep"], e["model"]) for e in entries}
-    rows = [{"prefix": e["prefix"], "rep": e["rep"], "model": e["model"], "seeds": [x["seed"] for x in entries
-            if (x["prefix"], x["rep"], x["model"]) == (e["prefix"], e["rep"], e["model"])]} for e in pick_checkpoints(entries)]
-    for model, rep, _config in PLAN:
-        if (rep, model) not in have:
-            rows.append({"prefix": "", "rep": rep, "model": model, "seeds": [], "missing": True})
-    return rows
+def manifest(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One row per model the benchmark will time (the chosen seed) with the seeds that exist."""
+    seeds: dict[tuple, list[int]] = {}
+    for e in entries:
+        seeds.setdefault((e["source"], e["prefix"], e.get("band"), e["rep"], e["model"], e.get("horizon")), []).append(e["seed"])
+    return [{**{k: e.get(k) for k in ("source", "prefix", "band", "rep", "model", "horizon", "seed")},
+             "seeds": sorted(seeds[(e["source"], e["prefix"], e.get("band"), e["rep"], e["model"], e.get("horizon"))])}
+            for e in pick_checkpoints(entries)]
 
 
 def main(argv=None) -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--prefixes", nargs="+", default=["checkpoints-oct2026", "checkpoints-oct2026-r2"])
+    p.add_argument("--sources", nargs="+", default=list(ALL_SOURCES), choices=list(ALL_SOURCES))
     p.add_argument("--models", nargs="+")
+    p.add_argument("--max-per-source", type=int, help="smoke tests: keep only this many models per source (spread across models)")
     p.add_argument("--batch-sizes", type=int, nargs="+", default=list(BATCH_SIZES))
-    p.add_argument("--test-start", default="2026-10-27T20:00:00Z")
-    p.add_argument("--test-end", default="2026-11-03T20:00:00Z")
-    p.add_argument("--test-stride", type=int, default=20, help="windows are sampled at this stride; 20 gives about 500 windows")
+    p.add_argument("--test-start", default=TEST_RANGE[0])
+    p.add_argument("--test-end", default=TEST_RANGE[1])
+    p.add_argument("--stride-1min", type=int, default=DEFAULT_STRIDE["oct"], help="window stride for the 1-minute sources")
+    p.add_argument("--stride-15min", type=int, default=DEFAULT_STRIDE["p15"], help="window stride for the 15-minute sources")
     p.add_argument("--manifest-only", action="store_true")
     p.add_argument("--force", action="store_true", help="run even if the cluster is not idle (smoke tests; results are marked idle=false)")
     p.add_argument("--gpus-per-task", type=float, default=1.0)
-    p.add_argument("--device", default=None)
+    p.add_argument("--device", default=None, help="'cpu' for smoke tests without a GPU")
     p.add_argument("--bucket", default=None)
     p.add_argument("--output-prefix", default="inference-benchmark")
     p.add_argument("--address", default="auto")
     p.add_argument("--repo-root", default="/workspace/spectrum-usage")
     args = p.parse_args(argv)
     sys.path.insert(0, args.repo_root)
-    from training.ray.final_eval import discover
     from training.ray.storage import spectrum_s3_client
 
     client = spectrum_s3_client()
     bucket = args.bucket or os.environ.get("SPECTRUM_S3_BUCKET", "spectrum")
+    entries = pick_checkpoints(discover_sources(client, bucket, args.sources, args.models))
+    if args.max_per_source:
+        kept: list[dict[str, Any]] = []
+        for source in args.sources:
+            group = [e for e in entries if e["source"] == source]
+            step = max(len(group) // args.max_per_source, 1)
+            kept += group[::step][:args.max_per_source]
+        entries = kept
     if args.manifest_only:
-        for row in manifest(client, bucket, args.prefixes):
+        for row in manifest(entries):
             print(json.dumps(row))
+        counts: dict[str, int] = {}
+        for e in entries:
+            counts[e["source"]] = counts.get(e["source"], 0) + 1
+        print("[bench] models per source:", json.dumps(counts), "total", len(entries), flush=True)
         return
     import pandas as pd
     import ray
@@ -182,19 +280,19 @@ def main(argv=None) -> None:
     idle = free >= total
     if not idle and not args.force:
         raise SystemExit(f"cluster is not idle ({free}/{total} GPUs free); timings would be contaminated. Use --force only for a smoke test")
-    entries = pick_checkpoints(discover(client, bucket, args.prefixes, args.models, None))
-    print(f"[bench] {len(entries)} checkpoints, batch sizes {args.batch_sizes}, idle={idle}", flush=True)
+    print(f"[bench] {len(entries)} checkpoints, batch sizes {args.batch_sizes}, idle={idle}, GPUs {total}", flush=True)
     remote = ray.remote(num_cpus=4, num_gpus=args.gpus_per_task, max_retries=0)(benchmark_entry)
+    strides = {"oct": args.stride_1min, "band": args.stride_1min, "p15": args.stride_15min, "p15tuned": args.stride_15min}
     worker_args = {"repo_root": args.repo_root, "bucket": bucket, "batch_sizes": args.batch_sizes, "test_start": args.test_start,
-                   "test_end": args.test_end, "test_stride": args.test_stride, "device": args.device, "idle": idle}
+                   "test_end": args.test_end, "strides": strides, "device": args.device, "idle": idle}
     pending = [remote.remote(e, worker_args) for e in entries]
     rows: list[dict[str, Any]] = []
     while pending:
         done, pending = ray.wait(pending, num_returns=1)
         for row in ray.get(done[0])["rows"]:
             rows.append(row)
-            print(f"[bench] {row['rep']}/{row['model']} b={row.get('requested_batch')} ok={row['ok']} "
-                  f"ms/window={row.get('ms_per_window')} {row.get('error', '')} [{len(pending)} left]", flush=True)
+            print(f"[bench] {row['source']} {row['band']} {row['rep']}/{row['model']} h={row.get('horizon')} b={row.get('requested_batch')} "
+                  f"ok={row['ok']} ms/window={row.get('ms_per_window')} {row.get('error', '')} [{len(pending)} left]", flush=True)
     stamp = time.strftime("%Y%m%dT%H%MZ", time.gmtime())
     buffer = io.StringIO()
     pd.DataFrame(rows).to_csv(buffer, index=False)

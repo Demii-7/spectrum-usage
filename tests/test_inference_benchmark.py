@@ -1,17 +1,30 @@
-from training.ray.inference_benchmark import pick_checkpoints, summarize_calls
+from training.ray.inference_benchmark import parse_meta_key, pick_checkpoints, summarize_calls
 
 
-def test_pick_prefers_seed_42_else_lowest():
-    entries = [{"prefix": "p", "rep": "1d", "model": "m", "seed": s} for s in (40, 41, 42)]
-    entries += [{"prefix": "p", "rep": "2d", "model": "n", "seed": s} for s in (41, 44)]
-    picked = {(e["rep"], e["model"]): e["seed"] for e in pick_checkpoints(entries)}
-    assert picked == {("1d", "m"): 42, ("2d", "n"): 41}
+def entry(source, rep, model, seed, band="600_800", horizon=None, prefix="p"):
+    return {"source": source, "prefix": prefix, "band": band, "rep": rep, "model": model, "seed": seed, "horizon": horizon}
+
+
+def test_pick_prefers_seed_42_else_lowest_and_keeps_horizons():
+    entries = [entry("oct", "1d", "m", s) for s in (40, 41, 42)]
+    entries += [entry("p15", "2d", "n", s, horizon=h) for s in (41, 44) for h in (4, 12)]
+    picked = {(e["source"], e["model"], e["horizon"]): e["seed"] for e in pick_checkpoints(entries)}
+    assert picked == {("oct", "m", None): 42, ("p15", "n", 4): 41, ("p15", "n", 12): 41}
 
 
 def test_summarize_drops_warmup_and_partial_batch():
-    seconds = [9.0, 9.0, 9.0, 0.10, 0.20, 0.30, 0.01]
-    rows = [32, 32, 32, 32, 32, 32, 5]
-    out = summarize_calls(seconds, rows)
+    out = summarize_calls([9.0, 9.0, 9.0, 0.10, 0.20, 0.30, 0.01], [32, 32, 32, 32, 32, 32, 5])
     assert out["n_timed_calls"] == 3 and out["batch"] == 32
     assert abs(out["median_s_per_call"] - 0.20) < 1e-9 and abs(out["ms_per_window"] - 6.25) < 1e-9
     assert summarize_calls([1.0], [4])["n_timed_calls"] == 0
+
+
+def test_parse_meta_keys():
+    rollout = parse_meta_key("powder15-results-w/weights/600_800/2d/vanillalstm/seed-42/powder15_600_800_vanillalstm.pt")
+    assert rollout["band"] == "600_800" and rollout["rep"] == "2d" and rollout["model"] == "vanillalstm"
+    assert rollout["horizon"] is None and rollout["seed"] == 42 and rollout["meta_key"].endswith(".pt.meta.json")
+    direct = parse_meta_key("powder15-results-w/weights/2400_2600/1d/linearar1d/h12/seed-40/powder15_2400_2600_linearar1d.pt")
+    assert direct["horizon"] == 12 and direct["prefix"] == "powder15-results-w"
+    tuned = parse_meta_key("tuning/powder15/2400_2600/1d/linearar1d/weights/seed-40/powder15_2400_2600_linearar1d.pt")
+    assert tuned["prefix"] == "tuning/powder15" and tuned["model"] == "linearar1d" and tuned["horizon"] is None
+    assert parse_meta_key("powder15-results-w/weights/600_800/2d/x/site-humanities/seed-40/f.pt") is None
