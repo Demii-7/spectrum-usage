@@ -232,6 +232,16 @@ def job(spec: dict[str, Any]) -> dict[str, Any]:
                 eval_dir.mkdir()
                 evaluate_one_model(config, name, eval_dir, result["checkpoint"], skip_plots=True)
                 record.update(summarize_metrics(pd.read_csv(eval_dir / "aggregate_metrics.csv").to_dict("records")))
+                import io
+
+                from training.ray.final_eval import per_bin_test_rows
+
+                table = per_bin_test_rows(pd.read_csv(eval_dir / "per_frequency_metrics.csv"),
+                                          {"model": model, "resolution": resolution, "band": band, "trained_horizon": horizon, "seed": seed})
+                buffer = io.StringIO()
+                table.to_csv(buffer, index=False)
+                record["per_bin_key"] = f"{base}/per-bin/h{horizon}/seed-{seed}.csv"
+                client.put_object(Bucket=bucket, Key=record["per_bin_key"], Body=buffer.getvalue().encode())
                 record["run_costs"] = read_run_costs(Path(scratch) / "run" / "integrated")
                 record.update(save_artifact(client, bucket, f"{base}/weights/h{horizon}/seed-{seed}", result["checkpoint"],
                                             {"config": config, "params": spec["params"], "seed": seed, "horizon": horizon, "model": model,

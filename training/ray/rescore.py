@@ -5,7 +5,9 @@ and the 2400-2600 runs mix 10-30 and 11-03 ends. This job re-evaluates every che
 2026-10-27T20:00Z to 2026-11-03T20:00Z and writes one record per checkpoint with all five metrics (MAE, MSE, RMSE, MAPE linear and dBm).
 
 Sources (see ``inference_benchmark``): ``oct`` (October 1-minute 600-800; restrict with ``--models``), ``band`` (2400-2600 runs),
-``p15`` and ``p15tuned`` (15-minute). Stride: 1 everywhere except the 1-minute 1D LSTMs, which score one bin at a time (about
+``p15`` and ``p15tuned`` (15-minute), ``direct`` (the OFA, Time-LLM, PatchTST, DLinear and residual-head finals of ``tune_direct``).
+Every record also gets a per-bin table: the evaluator's per-frequency metrics (all five metrics per bin and horizon) for the test
+split are uploaded as ``<output-prefix>/per-bin/<same path>.csv`` and linked from the record as ``per_bin_key``. Stride: 1 everywhere except the 1-minute 1D LSTMs, which score one bin at a time (about
 800 windows per time step) and are thinned by ``--thin-1d-lstm`` (default 10; disclosed in every record).
 
     python -m training.ray.rescore --sources p15tuned
@@ -33,13 +35,23 @@ LSTM_1D = {"vanillalstm1d", "residualvanillalstm"}
 def stride_for(entry: dict[str, Any], thin_1d_lstm: int = 10) -> int:
     """1 everywhere; the 1-minute 1D LSTMs are thinned (one bin per window makes stride 1 about 30 million windows)."""
     one_minute = entry["source"] in ("oct", "band") or entry.get("resolution") == "1min"
+    if entry["source"] == "direct" and entry.get("resolution") == "1min":
+        return 15                                    # as in tune_direct: the 1-minute test windows are thinned 15x (disclosed)
     return thin_1d_lstm if (one_minute and entry["rep"] == "1d" and entry["model"] in LSTM_1D) else 1
 
 
 def record_key(prefix: str, entry: dict[str, Any]) -> str:
     horizon = f"/h{entry['horizon']}" if entry.get("horizon") else ""
     source = entry["prefix"].replace("/", "_") if entry["source"] in ("oct",) else entry["source"]
-    return (f"{prefix.strip('/')}/{source}/{entry.get('band') or ''}/{entry['rep']}/{entry['model']}{horizon}/seed-{entry['seed']}.json")
+    resolution = f"/{entry['resolution']}" if entry.get("resolution") else ""
+    return (f"{prefix.strip('/')}/{source}{resolution}/{entry.get('band') or ''}/{entry['rep']}/{entry['model']}{horizon}/seed-{entry['seed']}.json")
+
+
+def per_bin_key(prefix: str, entry: dict[str, Any]) -> str:
+    """Where the per-bin table of ``record_key``'s record goes."""
+    key = record_key(prefix, entry)
+    root = prefix.strip("/")
+    return f"{root}/per-bin/{key[len(root) + 1:].removesuffix('.json')}.csv"
 
 
 def rescore_entry(entry: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
@@ -72,6 +84,15 @@ def rescore_entry(entry: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]
             ei.evaluate_one_model(config, name, out_dir, checkpoint, skip_plots=True)
             rows = pd.read_csv(out_dir / "aggregate_metrics.csv").to_dict("records")
             record.update(summarize_metrics(rows))
+            from training.ray.final_eval import per_bin_test_rows
+
+            table = per_bin_test_rows(pd.read_csv(out_dir / "per_frequency_metrics.csv"),
+                                      {"source": entry["source"], "band": entry.get("band"), "rep": entry["rep"], "model": entry["model"],
+                                       "trained_horizon": entry.get("horizon"), "seed": entry["seed"], "test_stride": stride})
+            buffer = io.StringIO()
+            table.to_csv(buffer, index=False)
+            record["per_bin_key"] = per_bin_key(args["output_prefix"], entry)
+            client.put_object(Bucket=bucket, Key=record["per_bin_key"], Body=buffer.getvalue().encode())
             record["n_test_windows"] = int(max((r.get("n_targets") or 0) for r in rows if str(r["split"]).endswith("test")) or 0)
         record["ok"] = True
     except Exception as error:
@@ -116,7 +137,7 @@ def main(argv=None) -> None:
     import ray
 
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--sources", nargs="+", required=True, choices=["oct", "band", "p15", "p15tuned"])
+    p.add_argument("--sources", nargs="+", required=True, choices=["oct", "band", "p15", "p15tuned", "direct"])
     p.add_argument("--models", nargs="+")
     p.add_argument("--seeds", type=int, nargs="+")
     p.add_argument("--test-start", default=RANGE[0])

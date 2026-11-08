@@ -1,4 +1,4 @@
-from training.ray.rescore import LINEAR, record_key, stride_for
+from training.ray.rescore import LINEAR, per_bin_key, record_key, stride_for
 
 
 def e(source, rep, model, **kw):
@@ -15,3 +15,10 @@ def test_record_keys_and_linear_set():
     assert record_key("rescored/", e("band", "2d", "lstmattn")) == "rescored/band/600_800/2d/lstmattn/seed-40.json"
     assert record_key("r", e("oct", "4d", "convlstm", prefix="checkpoints-oct2026-r2")) == "r/checkpoints-oct2026-r2/600_800/4d/convlstm/seed-40.json"
     assert "residuallinearar4d" in LINEAR and "convlstm" not in LINEAR
+
+
+def test_per_bin_key_and_direct_stride():
+    assert per_bin_key("rescored/", e("band", "2d", "lstmattn")) == "rescored/per-bin/band/600_800/2d/lstmattn/seed-40.csv"
+    direct = e("direct", "2d", "timellm", resolution="1min", horizon=60)
+    assert record_key("r", direct) == "r/direct/1min/600_800/2d/timellm/h60/seed-40.json" and stride_for(direct) == 15
+    assert stride_for(e("direct", "2d", "ofa", resolution="15min", horizon=4)) == 1
