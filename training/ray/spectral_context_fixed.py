@@ -7,6 +7,10 @@ is recorded. ``region_only`` replaces all other bins with noise-floor values; bo
 loss over the target region only, so the comparison isolates whether out-of-region bins help.
 
     python -m training.ray.spectral_context_fixed --models temporalconvnet vanillalstm
+    python -m training.ray.spectral_context_fixed --resolution 15min --output-prefix oct2026-spectral-context-15min
+
+``--resolution 15min`` runs the same ablation on the block-averaged 15-minute POWDER data (lookback 96, horizons 4/12/24/48 steps, the
+one-step models rolled out, as in ``powder15``), with each model's inherited 1-minute 600-800 configuration, over the same regions.
 """
 
 from __future__ import annotations
@@ -58,13 +62,20 @@ def ablation_entry(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     model, region = job["model"], job["region"]
     result = {"model": model, "seed": job["seed"], "condition": job["condition"],
               "band_id": str(region["band_id"]), "start_mhz": float(region["start_mhz"]),
-              "end_mhz": float(region["end_mhz"]), "source_prefix": job.get("source_prefix", "")}
+              "end_mhz": float(region["end_mhz"]), "source_prefix": job.get("source_prefix", ""),
+              "resolution": args.get("resolution", "1min")}
     started = time.time()
     try:
         base = yaml.safe_load(Path(config_file_for(model, job["rep"])).read_text())
         costs = json.loads(client.get_object(Bucket=bucket, Key=job["costs_key"])["Body"].read())
         config = build_eval_config(base, model, costs, test_start=args["test_start"], test_end=args["test_end"],
                                    test_stride=args["test_stride"], device=args["device"])
+        if args.get("resolution") == "15min":
+            from training.ray.powder15 import HORIZONS, apply_powder15, ensure_powder15, set_lookback_and_horizon
+
+            ensure_powder15(args["band"], args["repo_root"])
+            config = apply_powder15(config, args["band"], args["repo_root"], list(HORIZONS))
+            config = set_lookback_and_horizon(config, model, None)
         config = regional_config(config, region, job["condition"], job["seed"])
         config[model]["train"]["seed"] = job["seed"]
         with tempfile.TemporaryDirectory(prefix="spectral-ctx-") as scratch:
@@ -118,13 +129,13 @@ def launch(args: argparse.Namespace) -> None:
     ray.init(address=args.address, ignore_reinit_error=True)
     worker_args = {"repo_root": args.repo_root, "bucket": bucket, "output_prefix": args.output_prefix,
                    "test_start": args.test_start, "test_end": args.test_end, "test_stride": args.test_stride,
-                   "device": args.device}
+                   "device": args.device, "resolution": args.resolution, "band": args.band}
     futures = []
     for job in todo:
         spec = get_model_spec(job["model"])
         resources = dict(spec.resources.as_ray())
         gpu = args.gpu_fraction if resources.get("gpu", 0) > 0 else 0
-        futures.append(ray.remote(num_cpus=resources["cpu"], num_gpus=gpu, max_retries=1)(ablation_entry)
+        futures.append(ray.remote(num_cpus=resources["cpu"], num_gpus=gpu, max_retries=1, memory=int(args.memory_gb * 2 ** 30))(ablation_entry)
                        .remote(job, worker_args))
     frame = pd.DataFrame(ray.get(futures))
     stamp = time.strftime("%Y%m%dT%H%MZ", time.gmtime())
@@ -150,6 +161,9 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--test-end", default="2026-11-03T20:00:00Z")
     parser.add_argument("--test-stride", type=int, default=None, help="Override test stride (default: as selected)")
     parser.add_argument("--device", default=None)
+    parser.add_argument("--resolution", choices=("1min", "15min"), default="1min")
+    parser.add_argument("--band", default="600_800", help="band for --resolution 15min (the region plan exists for 600_800)")
+    parser.add_argument("--memory-gb", type=float, default=8.0, help="memory reserved per cell so Ray never oversubscribes a node")
     parser.add_argument("--gpu-fraction", type=float, default=0.25)
     parser.add_argument("--skip-done", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--bucket", default=None)
