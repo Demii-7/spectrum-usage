@@ -1,4 +1,4 @@
-from training.ray.inference_benchmark import effective_stride, parse_meta_key, pick_checkpoints, spectra_per_window, summarize_calls
+from training.ray.inference_benchmark import effective_stride, parse_direct_key, parse_meta_key, stride_key, pick_checkpoints, spectra_per_window, summarize_calls
 
 
 def entry(source, rep, model, seed, band="600_800", horizon=None, prefix="p"):
@@ -33,3 +33,13 @@ def test_parse_meta_keys():
 def test_stride_and_spectra_per_window():
     assert effective_stride("1d", 20) == 400 and effective_stride("2d", 20) == 20 and effective_stride("4d", 1) == 1
     assert spectra_per_window("1d") == 1 / 200 and spectra_per_window("2d") == 1.0 and spectra_per_window("4d") == 4.0
+
+
+def test_direct_keys_and_stride_choice():
+    e = parse_direct_key("direct-tuning/1min/2400_2600/timellm/weights/h60/seed-40/powder_2400_2600_spectrumllm.pt")
+    assert (e["resolution"], e["band"], e["model"], e["pipeline"], e["horizon"], e["seed"]) == ("1min", "2400_2600", "timellm", "spectrumllm", 60, 40)
+    assert e["meta_key"].endswith(".pt.meta.json") and e["rep"] == "2d"
+    assert parse_direct_key("direct-tuning/15min/600_800/unknownmodel/weights/h4/seed-40/x.pt") is None
+    assert parse_direct_key("direct-tuning/15min/600_800/ofa/trials/c00_h4.json") is None
+    assert stride_key({"source": "direct", "resolution": "1min"}) == "oct" and stride_key({"source": "direct", "resolution": "15min"}) == "p15"
+    assert stride_key({"source": "band"}) == "band"

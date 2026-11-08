@@ -40,15 +40,18 @@ from typing import Any
 WARMUP_CALLS = 3
 BATCH_SIZES = (1, 32)
 PREFERRED_SEED = 42
-ALL_SOURCES = ("oct", "band", "p15", "p15tuned")
+ALL_SOURCES = ("oct", "band", "p15", "p15tuned", "direct")
 TEST_RANGE = ("2026-10-27T20:00:00Z", "2026-11-03T20:00:00Z")
-DEFAULT_STRIDE = {"oct": 20, "band": 20, "p15": 1, "p15tuned": 1}   # about 500 windows either way
+DEFAULT_STRIDE = {"oct": 20, "band": 20, "p15": 1, "p15tuned": 1, "direct": 1}   # about 500 windows either way (direct: per resolution, see stride_key)
 
 META_KEY = re.compile(
     r"^(?P<prefix>.+?)/weights/(?P<band>\d+_\d+)/(?P<rep>[124]d)/(?P<model>[^/]+?)(?:/h(?P<horizon>\d+))?"
     r"/seed-(?P<seed>\d+)/(?P<file>[^/]+\.pt)$")
 TUNED_KEY = re.compile(
     r"^(?P<prefix>tuning/powder15)/(?P<band>\d+_\d+)/(?P<rep>[124]d)/(?P<model>[^/]+)/weights/seed-(?P<seed>\d+)/(?P<file>[^/]+\.pt)$")
+DIRECT_KEY = re.compile(
+    r"^(?P<prefix>direct-tuning)/(?P<resolution>15min|1min)/(?P<band>\d+_\d+)/(?P<model>[^/]+)/weights/h(?P<horizon>\d+)"
+    r"/seed-(?P<seed>\d+)/(?P<file>[^/]+\.pt)$")
 BAND_PREFIX = re.compile(r"(\d+_\d+)$")
 BINS = 200                  # 1 MHz bins in each 200 MHz band
 ONE_D_STRIDE_FACTOR = 20    # a 1D "window" is one (receiver, bin) series, about 800 per time window, so thin the time windows 20x
@@ -62,6 +65,28 @@ def effective_stride(rep: str, stride: int) -> int:
 def spectra_per_window(rep: str) -> float:
     """How many receiver spectra one forecast window covers: 1D = one bin of one receiver, 2D = one receiver's 200 bins, 4D = the four core receivers."""
     return {"1d": 1.0 / BINS, "2d": 1.0, "4d": 4.0}[rep]
+
+
+def parse_direct_key(key: str) -> dict[str, Any] | None:
+    """Weights of ``tune_direct`` finals (``direct-tuning/<resolution>/<band>/<model>/weights/h<h>/seed-<s>/<file>.pt``)."""
+    from training.ray.tune_direct import PIPELINE_NAME
+
+    match = DIRECT_KEY.match(key)
+    if not match:
+        return None
+    f = match.groupdict()
+    if f["model"] not in PIPELINE_NAME:
+        return None
+    return {"prefix": f["prefix"], "resolution": f["resolution"], "band": f["band"], "rep": "2d", "model": f["model"],
+            "pipeline": PIPELINE_NAME[f["model"]], "horizon": int(f["horizon"]), "seed": int(f["seed"]), "pt_key": key,
+            "meta_key": key + ".meta.json"}
+
+
+def stride_key(entry: dict[str, Any]) -> str:
+    """Which stride setting applies: direct models follow their resolution, the others their source."""
+    if entry["source"] == "direct":
+        return "oct" if entry.get("resolution") == "1min" else "p15"
+    return entry["source"]
 
 
 def parse_meta_key(key: str) -> dict[str, Any] | None:
@@ -114,6 +139,14 @@ def discover_sources(client, bucket: str, sources: list[str], models: list[str] 
                 band = BAND_PREFIX.search(entry["prefix"])
                 entries.append({**entry, "source": source, "kind": "costs", "band": band.group(1) if band else "600_800",
                                 "horizon": None})
+        elif source == "direct":
+            keys = [o["Key"] for page in client.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix="direct-tuning/")
+                    for o in page.get("Contents", [])]
+            have = set(keys)
+            for key in keys:
+                entry = parse_direct_key(key) if key.endswith(".pt") else None
+                if entry and entry["meta_key"] in have and (not models or entry["model"] in models):
+                    entries.append({**entry, "source": "direct", "kind": "meta"})
         else:
             root = "powder15-results-w/weights/" if source == "p15" else "tuning/powder15/"
             keys = [o["Key"] for page in client.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=root)
@@ -137,7 +170,8 @@ def build_config(entry: dict[str, Any], args: dict[str, Any], client, bucket: st
 
     checkpoint = scratch / Path(entry["pt_key"]).name
     client.download_file(bucket, entry["pt_key"], str(checkpoint))
-    stride = effective_stride(entry["rep"], args["strides"][entry["source"]])
+    stride = effective_stride(entry["rep"], args["strides"][stride_key(entry)])
+    name = entry.get("pipeline", entry["model"])
     if entry["kind"] == "costs":
         costs = json.loads(client.get_object(Bucket=bucket, Key=entry["costs_key"])["Body"].read())
         base = yaml.safe_load(Path(config_file_for(entry["model"], entry["rep"])).read_text())
@@ -148,13 +182,14 @@ def build_config(entry: dict[str, Any], args: dict[str, Any], client, bucket: st
         return config, checkpoint
     meta = json.loads(client.get_object(Bucket=bucket, Key=entry["meta_key"])["Body"].read())
     config = meta["config"]
-    config[entry["model"]].setdefault("train", {})["test_stride"] = int(stride)
-    config["training"] = {**config.get("training", {}), "models": [entry["model"]]}
+    config[name].setdefault("train", {})["test_stride"] = int(stride)
+    config["training"] = {**config.get("training", {}), "models": [name]}
     if args["device"]:
         config["training"]["device"] = args["device"]
-    from training.ray.powder15 import ensure_powder15
+    if entry.get("resolution", "15min") == "15min":
+        from training.ray.powder15 import ensure_powder15
 
-    ensure_powder15(entry["band"], args["repo_root"])        # the 15-minute traces, converted once per worker
+        ensure_powder15(entry["band"], args["repo_root"])    # the 15-minute traces, converted once per worker
     return config, checkpoint
 
 
@@ -171,7 +206,7 @@ def benchmark_entry(entry: dict[str, Any], args: dict[str, Any]) -> dict[str, An
 
     client, bucket = spectrum_s3_client(), args["bucket"]
     rows: list[dict[str, Any]] = []
-    base_row = {k: entry.get(k) for k in ("source", "prefix", "band", "rep", "model", "horizon", "seed")}
+    base_row = {k: entry.get(k) for k in ("source", "prefix", "resolution", "band", "rep", "model", "horizon", "seed")}
     started = time.time()
     try:
         with tempfile.TemporaryDirectory(prefix="infer-bench-") as scratch_dir:
@@ -182,7 +217,8 @@ def benchmark_entry(entry: dict[str, Any], args: dict[str, Any]) -> dict[str, An
             original = ei.forecast
             for batch in args["batch_sizes"]:
                 config = copy.deepcopy(base_config)
-                config.setdefault(entry["model"], {}).setdefault("evaluation", {})["batch_size"] = int(batch)
+                name = entry.get("pipeline", entry["model"])
+                config.setdefault(name, {}).setdefault("evaluation", {})["batch_size"] = int(batch)
                 seconds: list[float] = []
                 batch_rows: list[int] = []
                 info: dict[str, Any] = {}
@@ -213,7 +249,7 @@ def benchmark_entry(entry: dict[str, Any], args: dict[str, Any]) -> dict[str, An
                 try:
                     out_dir = scratch / f"eval-b{batch}"
                     out_dir.mkdir()
-                    ei.evaluate_one_model(config, entry["model"], out_dir, checkpoint, skip_plots=True)
+                    ei.evaluate_one_model(config, name, out_dir, checkpoint, skip_plots=True)
                 finally:
                     ei.forecast = original
                     if "handle" in info:
@@ -297,7 +333,8 @@ def main(argv=None) -> None:
         raise SystemExit(f"cluster is not idle ({free}/{total} GPUs free); timings would be contaminated. Use --force only for a smoke test")
     print(f"[bench] {len(entries)} checkpoints, batch sizes {args.batch_sizes}, idle={idle}, GPUs {total}", flush=True)
     remote = ray.remote(num_cpus=4, num_gpus=args.gpus_per_task, max_retries=0)(benchmark_entry)
-    strides = {"oct": args.stride_1min, "band": args.stride_1min, "p15": args.stride_15min, "p15tuned": args.stride_15min}
+    strides = {"oct": args.stride_1min, "band": args.stride_1min, "p15": args.stride_15min, "p15tuned": args.stride_15min,
+               "direct": args.stride_15min}
     worker_args = {"repo_root": args.repo_root, "bucket": bucket, "batch_sizes": args.batch_sizes, "test_start": args.test_start,
                    "test_end": args.test_end, "strides": strides, "device": args.device, "idle": idle}
     pending = [remote.remote(e, worker_args) for e in entries]
