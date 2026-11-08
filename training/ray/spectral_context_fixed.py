@@ -130,14 +130,25 @@ def launch(args: argparse.Namespace) -> None:
     worker_args = {"repo_root": args.repo_root, "bucket": bucket, "output_prefix": args.output_prefix,
                    "test_start": args.test_start, "test_end": args.test_end, "test_stride": args.test_stride,
                    "device": args.device, "resolution": args.resolution, "band": args.band}
-    futures = []
-    for job in todo:
+    def submit(job):
         spec = get_model_spec(job["model"])
         resources = dict(spec.resources.as_ray())
         gpu = args.gpu_fraction if resources.get("gpu", 0) > 0 else 0
-        futures.append(ray.remote(num_cpus=resources["cpu"], num_gpus=gpu, max_retries=1, memory=int(args.memory_gb * 2 ** 30))(ablation_entry)
-                       .remote(job, worker_args))
-    frame = pd.DataFrame(ray.get(futures))
+        return ray.remote(num_cpus=resources["cpu"], num_gpus=gpu, max_retries=1, memory=int(args.memory_gb * 2 ** 30))(ablation_entry).remote(job, worker_args)
+
+    # At most --max-parallel cells in flight: submitting every cell up front queued over a thousand tasks that sat ahead of every
+    # other job's tasks for hours (Ray schedules same-shape tasks first come, first served).
+    queue = list(todo)
+    pending = [submit(queue.pop(0)) for _ in range(min(args.max_parallel, len(queue)))]
+    rows = []
+    while pending:
+        done_refs, pending = ray.wait(pending, num_returns=1)
+        rows.append(ray.get(done_refs[0]))
+        if queue:
+            pending.append(submit(queue.pop(0)))
+        if len(rows) % 10 == 0:
+            print(f"[spectral_context] {len(rows)} of {len(todo)} cells done", flush=True)
+    frame = pd.DataFrame(rows)
     stamp = time.strftime("%Y%m%dT%H%MZ", time.gmtime())
     key = f"{args.output_prefix.strip('/')}/summary_{stamp}.csv"
     buffer = io.StringIO()
@@ -164,6 +175,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--resolution", choices=("1min", "15min"), default="1min")
     parser.add_argument("--band", default="600_800", help="band for --resolution 15min (the region plan exists for 600_800)")
     parser.add_argument("--memory-gb", type=float, default=8.0, help="memory reserved per cell so Ray never oversubscribes a node")
+    parser.add_argument("--max-parallel", type=int, default=8, help="most cells in flight at once (keeps the queue short for other jobs)")
     parser.add_argument("--gpu-fraction", type=float, default=0.25)
     parser.add_argument("--skip-done", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--bucket", default=None)
