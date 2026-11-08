@@ -19,6 +19,7 @@ Disclosed deviations (set by the user): training windows are thinned by ``--trai
 from __future__ import annotations
 
 import argparse
+import collections
 import copy
 import json
 import math
@@ -297,6 +298,7 @@ def main(argv=None) -> None:
     p.add_argument("--train-stride", action="append", default=[], metavar="MODEL=N", help="override a model's training-window stride")
     p.add_argument("--test-stride-1min", type=int, default=15, help="thinning of the 1-minute test windows")
     p.add_argument("--trials-only", action="store_true")
+    p.add_argument("--max-retries", type=int, default=3, help="Ray retries for a task whose node died (a lease ending mid-run)")
     p.add_argument("--bucket", default=None)
     p.add_argument("--output-prefix", default="direct-tuning")
     p.add_argument("--address", default="auto")
@@ -318,8 +320,42 @@ def main(argv=None) -> None:
     def stride(model: str) -> int:
         return overrides.get(model, default_train_stride(model, args.resolution))
 
+    # Pipelined: every (model, band) group goes trials -> winner -> finals on its own, so a deadline that arrives mid-run still leaves
+    # complete results for the groups that finished (an earlier version waited for ALL trials before starting any final).
     scores: dict[tuple[str, str], dict[int, dict[int, float]]] = {}
-    todo = []
+    pending: dict[Any, tuple[str, tuple[str, str]]] = {}
+    trials_left: collections.Counter = collections.Counter()
+    finals_total = 0
+
+    def submit(spec: dict[str, Any]):
+        cpus, gpus = RESOURCES[spec["model"]]
+        return ray.remote(num_cpus=cpus, num_gpus=gpus, max_retries=args.max_retries)(job).remote(spec)
+
+    def finalize(model: str, band: str) -> None:
+        nonlocal finals_total
+        table = scores.get((model, band), {})
+        picked = pick_winner(table, tune_horizons)
+        if picked is None:
+            print(f"[tune-direct] no complete candidate for {model} {band}", flush=True)
+            return
+        index, value = picked
+        record = {"index": index, "mean_val_objective": value, "params": candidate_list(model, args.budget)[index],
+                  "default_mean_val_objective": (sum(table[0][h] for h in tune_horizons) / len(tune_horizons)
+                                                 if all(h in table.get(0, {}) for h in tune_horizons) else None),
+                  "tune_horizons": list(tune_horizons), "budget": args.budget}
+        base = group(args.output_prefix, args.resolution, band, model)
+        client.put_object(Bucket=bucket, Key=f"{base}/winners.json", Body=json.dumps(record, indent=1).encode())
+        launched = 0
+        for horizon in final_horizons:
+            for seed in args.seeds:
+                if not _done(client, bucket, final_key(base, horizon, seed)):
+                    pending[submit({**base_spec, "kind": "final", "model": model, "band": band, "index": index, "horizon": horizon,
+                                    "seed": seed, "params": record["params"], "train_stride": stride(model)})] = ("final", (model, band))
+                    launched += 1
+        finals_total += launched
+        print(f"[tune-direct] winner {model}/{band}: candidate {index}; {launched} finals launched", flush=True)
+
+    trials_total = 0
     for model in args.models:
         for band in args.bands:
             base = group(args.output_prefix, args.resolution, band, model)
@@ -329,42 +365,36 @@ def main(argv=None) -> None:
                     if record:
                         scores.setdefault((model, band), {}).setdefault(index, {})[horizon] = float(record["objective"])
                     else:
-                        todo.append({**base_spec, "kind": "trial", "model": model, "band": band, "index": index, "horizon": horizon,
-                                     "seed": SEARCH_SEED, "params": params, "train_stride": stride(model)})
-    print(f"[tune-direct] {len(todo)} trials to run (training stride {({m: stride(m) for m in args.models})})", flush=True)
-    for r in _run_all(ray, todo, "trial"):
-        if r["ok"]:
-            scores.setdefault((r["model"], r["band"]), {}).setdefault(r["index"], {})[r["horizon"]] = float(r["objective"])
-    if args.trials_only:
-        return
-
-    winners: dict[tuple[str, str], dict[str, Any]] = {}
-    for (model, band), table in sorted(scores.items()):
-        picked = pick_winner(table, tune_horizons)
-        if picked is None:
-            print(f"[tune-direct] no complete candidate for {model} {band}", flush=True)
-            continue
-        index, value = picked
-        record = {"index": index, "mean_val_objective": value, "params": candidate_list(model, args.budget)[index],
-                  "default_mean_val_objective": (sum(table[0][h] for h in tune_horizons) / len(tune_horizons)
-                                                 if all(h in table.get(0, {}) for h in tune_horizons) else None),
-                  "tune_horizons": list(tune_horizons), "budget": args.budget}
-        winners[(model, band)] = record
-        client.put_object(Bucket=bucket, Key=f"{group(args.output_prefix, args.resolution, band, model)}/winners.json",
-                          Body=json.dumps(record, indent=1).encode())
-    print("[tune-direct] winners:", json.dumps({f"{m}/{b}": w["index"] for (m, b), w in winners.items()}), flush=True)
-
-    finals = []
-    for (model, band), win in winners.items():
-        base = group(args.output_prefix, args.resolution, band, model)
-        for horizon in final_horizons:
-            for seed in args.seeds:
-                if not _done(client, bucket, final_key(base, horizon, seed)):
-                    finals.append({**base_spec, "kind": "final", "model": model, "band": band, "index": win["index"], "horizon": horizon,
-                                   "seed": seed, "params": win["params"], "train_stride": stride(model)})
-    print(f"[tune-direct] {len(finals)} finals to run", flush=True)
-    _run_all(ray, finals, "final")
-
+                        pending[submit({**base_spec, "kind": "trial", "model": model, "band": band, "index": index, "horizon": horizon,
+                                        "seed": SEARCH_SEED, "params": params, "train_stride": stride(model)})] = ("trial", (model, band))
+                        trials_left[(model, band)] += 1
+                        trials_total += 1
+    print(f"[tune-direct] {trials_total} trials to run (training stride {({m: stride(m) for m in args.models})}), pipelined per group",
+          flush=True)
+    if not args.trials_only:
+        for model in args.models:
+            for band in args.bands:
+                if trials_left[(model, band)] == 0:
+                    finalize(model, band)                     # nothing to wait for: its trials were all done already
+    while pending:
+        done_refs, _ = ray.wait(list(pending), num_returns=1)
+        ref = done_refs[0]
+        kind, (model, band) = pending.pop(ref)
+        try:
+            r = ray.get(ref)
+        except Exception as error:                            # a task lost to a node dying more often than max_retries allows
+            print(f"[tune-direct] {kind} {args.resolution} {band} {model} LOST: {type(error).__name__}: {str(error)[:120]}", flush=True)
+            r = None
+        if r is not None:
+            print(f"[tune-direct] {kind} {r['resolution']} {r['band']} {r['model']} c{r.get('index')} h{r['horizon']} seed{r['seed']} "
+                  f"ok={r['ok']} obj={r.get('objective')} {r.get('error', '')} ({r['wall_seconds']}s) [{len(pending)} left]", flush=True)
+            if kind == "trial" and r["ok"]:
+                scores.setdefault((model, band), {}).setdefault(r["index"], {})[r["horizon"]] = float(r["objective"])
+        if kind == "trial":
+            trials_left[(model, band)] -= 1
+            if trials_left[(model, band)] == 0 and not args.trials_only:
+                finalize(model, band)
+    print(f"[tune-direct] done ({finals_total} finals launched)", flush=True)
 
 if __name__ == "__main__":
     main()
