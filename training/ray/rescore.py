@@ -40,6 +40,18 @@ def stride_for(entry: dict[str, Any], thin_1d_lstm: int = 10) -> int:
     return thin_1d_lstm if (one_minute and entry["rep"] == "1d" and entry["model"] in LSTM_1D) else 1
 
 
+def memory_gb(entry: dict[str, Any]) -> float:
+    """Memory to reserve for one task, so Ray never co-schedules more than a node holds (an unreserved batch of 4D and 1-minute 1D
+    tasks took a 250 GB node past the 95% kill threshold on 2026-11-08 and killed every job driver on it). 4D 1-minute windows alone
+    are about 48 GB at stride 1; the 1-minute 1D windows about 8 GB per 30 million series, plus predictions."""
+    one_minute = entry["source"] in ("oct", "band") or entry.get("resolution") == "1min"
+    if entry["rep"] == "4d" and one_minute:
+        return 110.0
+    if entry["rep"] == "1d" and one_minute:
+        return 45.0 if entry["model"] in LINEAR else 20.0
+    return 6.0
+
+
 def record_key(prefix: str, entry: dict[str, Any]) -> str:
     horizon = f"/h{entry['horizon']}" if entry.get("horizon") else ""
     source = entry["prefix"].replace("/", "_") if entry["source"] in ("oct",) else entry["source"]
@@ -146,6 +158,7 @@ def main(argv=None) -> None:
     p.add_argument("--gpu-fraction", type=float, default=0.25)
     p.add_argument("--device", default=None)
     p.add_argument("--skip-done", action="store_true", help="skip checkpoints that already have an ok record")
+    p.add_argument("--max-parallel", type=int, default=6, help="most tasks in flight at once (memory safety)")
     p.add_argument("--bucket", default=None)
     p.add_argument("--output-prefix", default="rescored")
     p.add_argument("--address", default="auto")
@@ -175,20 +188,28 @@ def main(argv=None) -> None:
 
     nodes = usable_nodes(ray)
     gpu_nodes = [n for n in nodes if n.get("Resources", {}).get("GPU", 0) > 0] or nodes
-    futures = []
-    for index, entry in enumerate(entries):
+    def submit(index: int, entry: dict[str, Any]):
         gpus = 0 if entry["model"] in LINEAR else args.gpu_fraction
         pool = gpu_nodes if gpus else nodes
         strategy = NodeAffinitySchedulingStrategy(node_id=pool[index % len(pool)]["NodeID"], soft=False)
-        futures.append(ray.remote(num_cpus=4, num_gpus=gpus, max_retries=1, scheduling_strategy=strategy)(rescore_entry).remote(entry, worker_args))
-    rows = []
-    pending = futures
+        return ray.remote(num_cpus=4, num_gpus=gpus, memory=int(memory_gb(entry) * 2 ** 30), max_retries=1,
+                          scheduling_strategy=strategy)(rescore_entry).remote(entry, worker_args)
+
+    # heaviest first, at most --max-parallel in flight, so memory use stays bounded and the long tasks do not end up last
+    order = sorted(enumerate(entries), key=lambda ie: -memory_gb(ie[1]))
+    queue = list(order)
+    rows: list[dict[str, Any]] = []
+    pending: list[Any] = [submit(*queue.pop(0)) for _ in range(min(args.max_parallel, len(queue)))]
+    remaining = len(queue) + len(pending)
     while pending:
         done_refs, pending = ray.wait(pending, num_returns=1)
         r = ray.get(done_refs[0])
         rows.append(r)
+        remaining -= 1
+        if queue:
+            pending.append(submit(*queue.pop(0)))
         print(f"[rescore] {r['source']} {r.get('band')} {r['rep']}/{r['model']} h={r.get('horizon')} seed{r['seed']} ok={r['ok']} "
-              f"mae={r.get('test_mean_horizon_mae_db')} {r.get('error', '')} ({r['wall_seconds']}s) [{len(pending)} left]", flush=True)
+              f"mae={r.get('test_mean_horizon_mae_db')} {r.get('error', '')} ({r['wall_seconds']}s) [{remaining} left]", flush=True)
     import pandas as pd
 
     buffer = io.StringIO()
