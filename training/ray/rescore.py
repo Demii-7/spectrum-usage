@@ -86,6 +86,32 @@ def rescore_entry(entry: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]
     return record
 
 
+def numpy_major(_=None) -> int:
+    import numpy
+
+    return int(numpy.__version__.split(".")[0])
+
+
+def usable_nodes(ray) -> list[dict[str, Any]]:
+    """Alive nodes that can run tasks, keeping only those whose numpy major version is the most common one.
+
+    Checkpoints are pickled with the writer's numpy; a worker with an older numpy (seen on one A100 host: 1.25 vs 2.1) cannot load
+    checkpoints written under numpy 2 (``No module named 'numpy._core'``), so tasks are pinned to the consistent nodes.
+    """
+    from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
+
+    nodes = [n for n in ray.nodes() if n.get("Alive") and n.get("Resources", {}).get("CPU", 0) >= 4]
+    probes = {n["NodeID"]: ray.remote(num_cpus=1, scheduling_strategy=NodeAffinitySchedulingStrategy(node_id=n["NodeID"], soft=False),
+                                      max_retries=0)(numpy_major).remote() for n in nodes}
+    majors = {node_id: ray.get(ref) for node_id, ref in probes.items()}
+    common = max(set(majors.values()), key=list(majors.values()).count)
+    keep = [n for n in nodes if majors[n["NodeID"]] == common]
+    dropped = len(nodes) - len(keep)
+    if dropped:
+        print(f"[rescore] avoiding {dropped} node(s) with a different numpy major version (using {common})", flush=True)
+    return keep
+
+
 def main(argv=None) -> None:
     import ray
 
@@ -124,10 +150,16 @@ def main(argv=None) -> None:
     ray.init(address=args.address, ignore_reinit_error=True)
     worker_args = {"repo_root": args.repo_root, "bucket": bucket, "test_start": args.test_start, "test_end": args.test_end,
                    "thin_1d_lstm": args.thin_1d_lstm, "device": args.device, "output_prefix": args.output_prefix}
+    from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
+
+    nodes = usable_nodes(ray)
+    gpu_nodes = [n for n in nodes if n.get("Resources", {}).get("GPU", 0) > 0] or nodes
     futures = []
-    for entry in entries:
+    for index, entry in enumerate(entries):
         gpus = 0 if entry["model"] in LINEAR else args.gpu_fraction
-        futures.append(ray.remote(num_cpus=4, num_gpus=gpus, max_retries=1)(rescore_entry).remote(entry, worker_args))
+        pool = gpu_nodes if gpus else nodes
+        strategy = NodeAffinitySchedulingStrategy(node_id=pool[index % len(pool)]["NodeID"], soft=False)
+        futures.append(ray.remote(num_cpus=4, num_gpus=gpus, max_retries=1, scheduling_strategy=strategy)(rescore_entry).remote(entry, worker_args))
     rows = []
     pending = futures
     while pending:
