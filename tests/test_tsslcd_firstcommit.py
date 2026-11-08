@@ -39,3 +39,22 @@ def test_score_grid_has_both_targets_and_both_averaging_settings_and_zero_error_
                          "raw_target__averaging_on", "raw_target__averaging_off", "persistence__raw_target"}
     assert grid["raw_target__averaging_off"]["mse"] < 1e-9           # predictions equal the raw ground truth
     assert grid["model_target__averaging_off"]["mse"] > 1e-6         # the filtered target differs from the raw one
+
+
+def test_score_steps_alignment_and_persistence():
+    import numpy as np
+
+    from training.ray.tsslcd_authors import MinMax
+    from training.ray.tsslcd_firstcommit import C, FH, score_steps
+
+    rng = np.random.default_rng(0)
+    norm = np.cumsum(rng.normal(size=(300, 5)), axis=0).astype(np.float32)
+    norm = (norm - norm.min()) / (norm.max() - norm.min())
+    scaler = MinMax().fit(norm)
+    starts = np.arange(20, 120)
+    perfect = np.stack([norm[starts + C + k] for k in range(FH)], axis=1)
+    steps = score_steps(perfect, norm, norm, starts, scaler)
+    assert list(steps) == [str(k) for k in range(1, FH + 1)]
+    assert all(steps[k]["raw_target__averaging_off"]["mse"] < 1e-9 for k in steps)         # prediction = the right future row at every step
+    persistence = [steps[str(k)]["persistence__raw_target"]["mse"] for k in range(1, FH + 1)]
+    assert persistence[-1] > persistence[0] > 0                                           # holding the last value gets worse further out

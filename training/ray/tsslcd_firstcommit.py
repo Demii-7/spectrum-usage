@@ -24,6 +24,11 @@ raw series.
 
     python -m training.ray.tsslcd_firstcommit score --arms paper_s0 paper_s1 paper_s2   # existing collaborator checkpoints, CPU
     python -m training.ray.tsslcd_firstcommit train --savgol off on --seeds 0 1 2       # retrain with the switches, GPU
+    python -m training.ray.tsslcd_firstcommit horizons                                   # score the saved retrains at steps 1-10
+
+The ``horizons`` mode loads the weights saved by ``train`` (``<weights-prefix>/weights/savgol-<on|off>-seed-<n>/``) and scores every
+one of the ten future steps (1 step = 1 minute) in the same 2 x 2 grid, plus persistence at each step, to see whether the filter's
+effect on the raw-measurement score changes with how far ahead the prediction is.
 """
 
 from __future__ import annotations
@@ -141,6 +146,43 @@ def predict_first_step(models, y: np.ndarray, test_idx: range, device, batch: in
     return np.concatenate(preds)
 
 
+def predict_all_steps(models, y: np.ndarray, test_idx: range, device, batch: int = BATCH) -> np.ndarray:
+    """All ``FH`` future steps for every test window, shape (n_test, FH, D); same masking and seeding as the first-step path."""
+    import torch
+    from models.tsslcd_authors.NoiseNet import inference
+
+    ae_ctx, ae_fut, diffusion = models
+    for m in models:
+        m.eval()
+    torch.manual_seed(MASK_SEED)
+    series = torch.as_tensor(y, dtype=torch.float32)
+    preds = []
+    with torch.no_grad():
+        for lo in range(0, len(test_idx), batch):
+            idx = torch.as_tensor(list(test_idx[lo:lo + batch]))
+            ctx = series[idx[:, None] + torch.arange(C)]
+            ctx = ctx.masked_fill(torch.rand_like(ctx) < MASK, 0.0)
+            preds.append(inference(ae_ctx, ae_fut, diffusion, ctx.to(device), device)[:, :FH, :])
+    return np.concatenate(preds)
+
+
+def score_steps(pred_all: np.ndarray, y: np.ndarray, norm: np.ndarray, starts: np.ndarray, scaler) -> dict[str, Any]:
+    """Per-step scores (step 1 = the first future step): the 2 x 2 grid and persistence (last context value held) at each step."""
+    out: dict[str, Any] = {}
+    for step in range(pred_all.shape[1]):
+        target_row = starts + C + step
+        persistence = (norm[starts + C - 1], norm[target_row])
+        out[str(step + 1)] = score_grid(pred_all[:, step, :], y[target_row], norm[target_row], scaler, persistence)
+    return out
+
+
+def evaluate_steps(models, source, savgol: str, device) -> dict[str, Any]:
+    scaler, norm, y = prepare(source, savgol)
+    _, test_idx = window_ranges(len(source))
+    starts = np.fromiter(test_idx, dtype=np.int64)
+    return score_steps(predict_all_steps(models, y, test_idx, device), y, norm, starts, scaler)
+
+
 def evaluate(models, source, savgol: str, device) -> dict[str, Any]:
     scaler, norm, y = prepare(source, savgol)
     _, test_idx = window_ranges(len(source))
@@ -221,7 +263,16 @@ def job(spec: dict[str, Any]) -> dict[str, Any]:
     try:
         source = load_source(client, bucket)
         record["rows"] = len(source)
-        if spec["mode"] == "score":
+        if spec["mode"] == "horizons":
+            savgol = "on" if name.startswith("savgol-on") else "off"
+            models = build_models(device)
+            with tempfile.TemporaryDirectory(prefix="tsslcd-ckpt-") as scratch:
+                for part, module in zip(("ae_ctx", "ae_fut", "diffusion"), models):
+                    path = Path(scratch) / f"{part}.pth"
+                    client.download_file(bucket, f"{spec['weights_prefix']}/weights/{name}/{part}.pth", str(path))
+                    module.load_state_dict(torch.load(path, map_location=device))
+            record.update(savgol=savgol)
+        elif spec["mode"] == "score":
             savgol = "on"                                     # the collaborator's arms were trained on the filtered series
             models = build_models(device)
             with tempfile.TemporaryDirectory(prefix="tsslcd-ckpt-") as scratch:
@@ -248,7 +299,10 @@ def job(spec: dict[str, Any]) -> dict[str, Any]:
                     if "artifact_error" in saved:
                         record["artifact_error"] = saved["artifact_error"]
         t0 = time.time()
-        record.update(evaluate(models, source, savgol, device))
+        if spec["mode"] == "horizons":
+            record["steps"] = evaluate_steps(models, source, savgol, device)
+        else:
+            record.update(evaluate(models, source, savgol, device))
         record["inference_seconds"] = round(time.time() - t0, 1)
         record["ok"] = True
     except Exception as error:
@@ -277,12 +331,15 @@ def main(argv=None) -> None:
     t.add_argument("--epochs-ctx", type=int, default=EPOCHS["ctx"])
     t.add_argument("--epochs-fut", type=int, default=EPOCHS["fut"])
     t.add_argument("--epochs-diff", type=int, default=EPOCHS["diff"])
-    for q in (s, t):
+    h = sub.add_parser("horizons", help="score saved retrains at every future step (GPU)")
+    h.add_argument("--names", nargs="+", default=[f"savgol-{sv}-seed-{seed}" for sv in ("off", "on") for seed in (0, 1, 2)])
+    h.add_argument("--weights-prefix", default="tsslcd-firstcommit-results-w")
+    for q in (s, t, h):
         q.add_argument("--cpus", type=int, default=8)
         q.add_argument("--gpu-fraction", type=float, default=None, help="default 0.5 for train, 0 for score")
         q.add_argument("--device", default=None)
         q.add_argument("--bucket", default=None)
-        q.add_argument("--output-prefix", default="tsslcd-firstcommit-results")
+        q.add_argument("--output-prefix", default="tsslcd-firstcommit-results" if q is not h else "tsslcd-firstcommit-horizons")
         q.add_argument("--address", default="auto")
         q.add_argument("--repo-root", default="/workspace/spectrum-usage")
     args = p.parse_args(argv)
@@ -293,6 +350,9 @@ def main(argv=None) -> None:
     if args.mode == "score":
         specs = [{**base, "name": arm, "arm": arm} for arm in args.arms]
         gpus = 0 if args.gpu_fraction is None else args.gpu_fraction
+    elif args.mode == "horizons":
+        specs = [{**base, "name": name, "weights_prefix": args.weights_prefix} for name in args.names]
+        gpus = 0.5 if args.gpu_fraction is None else args.gpu_fraction
     else:
         specs = [{**base, "name": f"savgol-{sv}-seed-{seed}", "savgol": sv, "seed": seed,
                   "epochs": {"ctx": args.epochs_ctx, "fut": args.epochs_fut, "diff": args.epochs_diff}}
@@ -305,6 +365,9 @@ def main(argv=None) -> None:
         done, pending = ray.wait(pending, num_returns=1)
         r = ray.get(done[0])
         g = r.get("grid", {})
+        if "steps" in r:
+            print(f"[tsslcd-firstcommit] {r['name']} ok={r.get('ok')} steps={len(r['steps'])} ({r.get('wall_seconds')}s)", flush=True)
+            continue
         print(f"[tsslcd-firstcommit] {r['name']} ok={r.get('ok')} "
               + " ".join(f"{k.split('__')[0][:12]}/{k.split('__')[-1]}={v['mse']:.4f}" for k, v in g.items() if 'persistence' not in k)
               + (f" error={r.get('error')}" if not r.get("ok") else "") + f" ({r.get('wall_seconds')}s)", flush=True)
