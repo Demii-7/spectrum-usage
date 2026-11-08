@@ -1,4 +1,4 @@
-from training.ray.inference_benchmark import parse_meta_key, pick_checkpoints, summarize_calls
+from training.ray.inference_benchmark import effective_stride, parse_meta_key, pick_checkpoints, spectra_per_window, summarize_calls
 
 
 def entry(source, rep, model, seed, band="600_800", horizon=None, prefix="p"):
@@ -28,3 +28,8 @@ def test_parse_meta_keys():
     tuned = parse_meta_key("tuning/powder15/2400_2600/1d/linearar1d/weights/seed-40/powder15_2400_2600_linearar1d.pt")
     assert tuned["prefix"] == "tuning/powder15" and tuned["model"] == "linearar1d" and tuned["horizon"] is None
     assert parse_meta_key("powder15-results-w/weights/600_800/2d/x/site-humanities/seed-40/f.pt") is None
+
+
+def test_stride_and_spectra_per_window():
+    assert effective_stride("1d", 20) == 400 and effective_stride("2d", 20) == 20 and effective_stride("4d", 1) == 1
+    assert spectra_per_window("1d") == 1 / 200 and spectra_per_window("2d") == 1.0 and spectra_per_window("4d") == 4.0

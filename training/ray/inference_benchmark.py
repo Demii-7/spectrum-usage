@@ -50,6 +50,18 @@ META_KEY = re.compile(
 TUNED_KEY = re.compile(
     r"^(?P<prefix>tuning/powder15)/(?P<band>\d+_\d+)/(?P<rep>[124]d)/(?P<model>[^/]+)/weights/seed-(?P<seed>\d+)/(?P<file>[^/]+\.pt)$")
 BAND_PREFIX = re.compile(r"(\d+_\d+)$")
+BINS = 200                  # 1 MHz bins in each 200 MHz band
+ONE_D_STRIDE_FACTOR = 20    # a 1D "window" is one (receiver, bin) series, about 800 per time window, so thin the time windows 20x
+
+
+def effective_stride(rep: str, stride: int) -> int:
+    """1D models are scored one bin at a time (about 800 series windows per time window), so use a larger stride to keep about 20,000 windows."""
+    return stride * ONE_D_STRIDE_FACTOR if rep == "1d" else stride
+
+
+def spectra_per_window(rep: str) -> float:
+    """How many receiver spectra one forecast window covers: 1D = one bin of one receiver, 2D = one receiver's 200 bins, 4D = the four core receivers."""
+    return {"1d": 1.0 / BINS, "2d": 1.0, "4d": 4.0}[rep]
 
 
 def parse_meta_key(key: str) -> dict[str, Any] | None:
@@ -125,7 +137,7 @@ def build_config(entry: dict[str, Any], args: dict[str, Any], client, bucket: st
 
     checkpoint = scratch / Path(entry["pt_key"]).name
     client.download_file(bucket, entry["pt_key"], str(checkpoint))
-    stride = args["strides"][entry["source"]]
+    stride = effective_stride(entry["rep"], args["strides"][entry["source"]])
     if entry["kind"] == "costs":
         costs = json.loads(client.get_object(Bucket=bucket, Key=entry["costs_key"])["Body"].read())
         base = yaml.safe_load(Path(config_file_for(entry["model"], entry["rep"])).read_text())
@@ -211,7 +223,10 @@ def benchmark_entry(entry: dict[str, Any], args: dict[str, Any]) -> dict[str, An
                              "params": info.get("params"), "trainable_params": info.get("trainable_params"),
                              "forward_passes_per_call": round(forward_calls["n"] / calls, 2),
                              "peak_gpu_mb": round(torch.cuda.max_memory_allocated() / 1e6, 1) if device.type == "cuda" else None,
-                             "idle": args["idle"], **summarize_calls(seconds, batch_rows)})
+                             "idle": args["idle"], "spectra_per_window": spectra_per_window(entry["rep"]),
+                             **summarize_calls(seconds, batch_rows)})
+                if rows[-1].get("ms_per_window") is not None:
+                    rows[-1]["ms_per_spectrum"] = rows[-1]["ms_per_window"] / rows[-1]["spectra_per_window"]
     except Exception as error:
         import traceback
 
