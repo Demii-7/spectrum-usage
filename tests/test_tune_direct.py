@@ -52,7 +52,7 @@ def test_build_config(model, resolution):
     for key, value in params.items():
         assert value in (section["model"].get(key), section["train"].get(key), section["train"].get({"learning_rate": "learning_rate"}.get(key, key)))
     assert config["windowing"]["horizons"] == [horizon]
-    assert (section["model"].get("channel_independent") is True) == (model in ("ofa", "timellm"))
+    assert (section["model"].get("channel_independent") is True) == (model in ("ofa", "ofa_rand", "ofa_scratch", "timellm"))
 
 
 def test_strides():
