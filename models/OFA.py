@@ -9,6 +9,12 @@ It differs from Time-LLM in three ways, all of which matter:
     contain "ln" (layer norms) or "wpe" (positional embeddings) are trainable, which is the
     rule in the released code [DAMO-DI-ML/NeurIPS2023-One-Fits-All @ 9f3875db].
 
+Two controls isolate what the pretrained language model contributes (``config["model"]`` keys; the defaults reproduce OFA exactly):
+
+  * ``backbone_init``: "pretrained" (default) or "random" -- the same GPT-2 architecture (same width, layers, heads, positional table)
+    initialized from scratch instead of from the language-model weights.
+  * ``backbone_trainable``: "ofa" (default; only layer norms and positional embeddings train) or "all" -- every backbone weight trains.
+
 Everything else is shared with our SpectrumLLM port so the comparison is like for like:
 the same RevIN, the same patch tokenizer, the same channel handling, the same raw-PSD loss.
 """
@@ -53,12 +59,19 @@ class OFAForecaster(nn.Module):
         elif hasattr(bc, "num_hidden_layers"):
             bc.num_hidden_layers = self.llm_layers
         bc.output_hidden_states = True
-        self.backbone = AutoModel.from_pretrained(self.backbone_name, config=bc)
+        init = str(mc.get("backbone_init", "pretrained")).lower()
+        trainable = str(mc.get("backbone_trainable", "ofa")).lower()
+        if init not in ("pretrained", "random") or trainable not in ("ofa", "all"):
+            raise ValueError(f"backbone_init must be pretrained|random and backbone_trainable ofa|all, got {init!r}, {trainable!r}")
+        if init == "random":
+            self.backbone = AutoModel.from_config(bc)                     # same architecture, no pretrained weights
+        else:
+            self.backbone = AutoModel.from_pretrained(self.backbone_name, config=bc)
         self.d_llm = int(getattr(bc, "n_embd", getattr(bc, "hidden_size", 0)))
 
-        # Partial fine-tuning: ln and wpe trainable, everything else frozen.
+        # Partial fine-tuning (the OFA rule): ln and wpe trainable, everything else frozen; "all" trains every backbone weight.
         for name, p in self.backbone.named_parameters():
-            p.requires_grad = any(s in name for s in TRAINABLE_SUBSTRINGS)
+            p.requires_grad = True if trainable == "all" else any(s in name for s in TRAINABLE_SUBSTRINGS)
 
         # Patch embedding straight to the backbone width -- no reprogramming stage.
         self.patch_embedding = nn.Linear(self.patch_length * self._series_width, self.d_llm)

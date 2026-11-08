@@ -39,11 +39,22 @@ TUNE_HORIZONS = {"15min": (4, 48), "1min": (1, 60)}
 FINAL_HORIZONS = {"15min": (4, 12, 24, 48), "1min": (1, 15, 60)}
 BANDS = ("600_800", "2400_2600")
 PIPELINE_NAME = {"ofa": "ofa", "timellm": "spectrumllm", "patchtst": "patchtst", "dlinear": "dlinear",
-                 "residualnonlinear2d": "residualnonlinear2d"}
+                 "residualnonlinear2d": "residualnonlinear2d", "ofa_rand": "ofa", "ofa_scratch": "ofa"}
+# Controls for what the pretrained language model contributes: the same OFA architecture, tuned with the same 16 candidates.
+#   ofa_rand    random initialization, only layer norms and positional embeddings train (OFA's rule, so the frozen rest is random)
+#   ofa_scratch random initialization, every backbone weight trains (a transformer trained from scratch, like PatchTST)
+CONTROLS = {"ofa_rand": {"backbone_init": "random", "backbone_trainable": "ofa"},
+            "ofa_scratch": {"backbone_init": "random", "backbone_trainable": "all"}}
+OFA_FAMILY = ("ofa", "ofa_rand", "ofa_scratch")
+
+
+def family(model: str) -> str:
+    """The model whose settings and candidate list ``model`` shares (the controls use OFA's)."""
+    return "ofa" if model in OFA_FAMILY else model
 # (CPUs, GPU share). Time-LLM peaks near 45-50 GB at the pipeline batch size, so it needs a share of 0.6 of a 93 GB H100; each task is also
 # capped to its share (torch memory fraction) so a task that outgrows it fails alone instead of starving its neighbours.
-RESOURCES = {"ofa": (4, 0.25), "timellm": (4, 0.6), "patchtst": (4, 0.25), "dlinear": (2, 0.125), "residualnonlinear2d": (2, 0.125)}
-EPOCHS = {"ofa": 10, "timellm": 10, "patchtst": 20, "dlinear": 20, "residualnonlinear2d": 10}
+RESOURCES = {"ofa": (4, 0.25), "ofa_rand": (4, 0.25), "ofa_scratch": (4, 0.25), "timellm": (4, 0.6), "patchtst": (4, 0.25), "dlinear": (2, 0.125), "residualnonlinear2d": (2, 0.125)}
+EPOCHS = {"ofa": 10, "ofa_rand": 10, "ofa_scratch": 10, "timellm": 10, "patchtst": 20, "dlinear": 20, "residualnonlinear2d": 10}
 PATIENCE = 5
 MODEL_KEYS = {"patch_length", "patch_stride", "d_model", "d_ff", "llm_layers", "n_heads", "e_layers", "dropout", "moving_avg",
               "mlp_hidden", "mlp_layers", "mlp_dropout", "ridge_alpha"}
@@ -51,6 +62,8 @@ TRAIN_KEYS = {"learning_rate": "learning_rate", "batch_size": "batch_size", "wei
 
 DEFAULTS: dict[str, dict[str, Any]] = {
     "ofa": {"learning_rate": 1e-4, "llm_layers": 6, "patch_length": 16, "patch_stride": 8},
+    "ofa_rand": {"learning_rate": 1e-4, "llm_layers": 6, "patch_length": 16, "patch_stride": 8},
+    "ofa_scratch": {"learning_rate": 1e-4, "llm_layers": 6, "patch_length": 16, "patch_stride": 8},
     "timellm": {"learning_rate": 1e-4, "llm_layers": 6, "patch_length": 16, "patch_stride": 8, "d_model": 32, "d_ff": 32},
     "patchtst": {"learning_rate": 5e-4, "d_model": 128, "n_heads": 4, "e_layers": 2, "d_ff": 256, "dropout": 0.1,
                  "patch_length": 16, "patch_stride": 8, "batch_size": 16},
@@ -69,7 +82,7 @@ def draw(model: str, rng: random.Random) -> dict[str, Any]:
     patch = rng.choice([8, 16, 32])
     llm = {"learning_rate": _loguniform(rng, 5e-5, 1e-3), "llm_layers": rng.choice([3, 6]), "patch_length": patch,
            "patch_stride": rng.choice([patch // 2, patch])}
-    if model == "ofa":
+    if model in OFA_FAMILY:
         return llm
     if model == "timellm":
         return {**llm, "d_model": rng.choice([16, 32, 64]), "d_ff": rng.choice([32, 64, 128])}
@@ -90,7 +103,7 @@ def draw(model: str, rng: random.Random) -> dict[str, Any]:
 
 def candidate_list(model: str, budget: int = BUDGET, seed: int = SEARCH_SEED) -> list[dict[str, Any]]:
     """Candidate 0 is the model's default; the rest are distinct seeded draws (same list for every resolution and band)."""
-    rng = random.Random(f"{seed}-{model}")
+    rng = random.Random(f"{seed}-{family(model)}")                    # the controls draw exactly OFA's candidates
     out = [dict(DEFAULTS[model])]
     seen = {json.dumps(out[0], sort_keys=True)}
     attempts = 0
@@ -128,8 +141,8 @@ def template(model: str, repo_root: str) -> tuple[dict[str, Any], dict[str, Any]
     """(model section, train section) defaults for ``model``."""
     from training.ray.llm_powder import ARMS
 
-    if model in ARMS:
-        name, path = ARMS[model]
+    if family(model) in ARMS:
+        name, path = ARMS[family(model)]
         arm = yaml.safe_load((Path(repo_root) / path).read_text())[name]
         return copy.deepcopy(arm["model"]), copy.deepcopy(arm["train"])
     train = {"val_fraction": 0.1, "weight_decay": 0.0, "optimizer": "adam", "gradient_clip_norm": 1.0, "batch_size": 32,
@@ -158,11 +171,12 @@ def build_config(model: str, resolution: str, band: str, horizon: int, seed: int
         config["data"]["chunks"] = [{"id": f"powder_{band}", "start_mhz": float(band.split("_")[0]), "end_mhz": float(band.split("_")[1])}]
         config["windowing"] = {"lookback": spec["lookback"], "horizons": [int(horizon)]}
     config[name]["model"].update(input_sequence_length=spec["lookback"], prediction_horizon=int(horizon))
-    if model in ("ofa", "timellm"):
+    if model in OFA_FAMILY or model == "timellm":
         config[name]["model"]["channel_independent"] = True
+        config[name]["model"].update(CONTROLS.get(model, {}))
     config[name]["train"].update(train_stride=int(train_stride), val_stride=int(train_stride), test_stride=int(test_stride),
                                  epochs=EPOCHS[model], seed=int(seed), early_stopping=True, early_stopping_patience=PATIENCE)
-    if model in ("ofa", "timellm"):
+    if model in OFA_FAMILY or model == "timellm":
         config[name]["train"]["batch_size"] = 4                          # the LLM runs' memory-safe default (llm_powder)
     return apply_params(config, name, params), name
 

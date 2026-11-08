@@ -13,6 +13,17 @@ def test_candidates_start_with_default_and_are_distinct(model):
     assert len({tuple(sorted(p.items())) for p in c}) == BUDGET
 
 
+def test_controls_use_exactly_ofas_candidates_and_flags():
+    assert candidate_list("ofa_rand") == candidate_list("ofa") == candidate_list("ofa_scratch")
+    for model, flags in (("ofa", {}), ("ofa_rand", {"backbone_init": "random", "backbone_trainable": "ofa"}),
+                         ("ofa_scratch", {"backbone_init": "random", "backbone_trainable": "all"})):
+        config, name = build_config(model, "15min", "600_800", 48, 42, candidate_list("ofa")[1], ROOT, train_stride=1, test_stride=1)
+        assert name == "ofa" and config["ofa"]["model"]["channel_independent"] is True and config["ofa"]["train"]["batch_size"] == 4
+        for key, value in flags.items():
+            assert config["ofa"]["model"][key] == value
+        assert ("backbone_init" in config["ofa"]["model"]) == bool(flags)
+
+
 def test_ofa_does_not_vary_unused_dims_and_timellm_does():
     assert all("d_model" not in p for p in candidate_list("ofa"))
     assert len({p["d_model"] for p in candidate_list("timellm")}) > 1
