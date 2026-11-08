@@ -43,6 +43,9 @@ SUPPORTED_MODELS = {
                      # handled this since the port but the name was never added here, so
                      # train_integrated refused it and the reproduction ran standalone.
     "ofa",           # GPT4TS arm: no reprogramming, no prompt, ln+wpe partially fine-tuned.
+    "dlinear",       # TSLib DLinear port (models/DLinear.py), direct multi-step
+    "patchtst",      # channel-independent PatchTST (models/PatchTST.py)
+    "residualnonlinear2d",  # ResidualLinearAR + nonlinear MLP correction head
     "vanillalstm",
     "vanillalstm1d",
     "convlstm",
@@ -99,6 +102,30 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
         }
         return SpectrumLLMForecaster(predictor_config)
 
+
+    if model_name in ("dlinear", "patchtst", "residualnonlinear2d"):
+        if train_data.ndim != 2:
+            raise ValueError(
+                f"Error! {model_name} expects training data shaped "
+                f"(time, features), got {train_data.shape}"
+            )
+        predictor_config = {
+            "model": {
+                **dict(model_cfg),
+                "input_size": int(train_data.shape[-1]),
+            }
+        }
+        if model_name == "dlinear":
+            from models.DLinear import DLinearForecaster
+
+            return DLinearForecaster(predictor_config)
+        if model_name == "patchtst":
+            from models.PatchTST import PatchTSTForecaster
+
+            return PatchTSTForecaster(predictor_config)
+        from models.ResidualNonlinearAutoregressive import ResidualNonlinearAutoregressiveForecaster
+
+        return ResidualNonlinearAutoregressiveForecaster(predictor_config)
 
     if model_name == "ofa":
         from models.OFA import OFAForecaster
