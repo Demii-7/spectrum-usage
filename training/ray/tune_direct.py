@@ -39,7 +39,9 @@ FINAL_HORIZONS = {"15min": (4, 12, 24, 48), "1min": (1, 15, 60)}
 BANDS = ("600_800", "2400_2600")
 PIPELINE_NAME = {"ofa": "ofa", "timellm": "spectrumllm", "patchtst": "patchtst", "dlinear": "dlinear",
                  "residualnonlinear2d": "residualnonlinear2d"}
-RESOURCES = {"ofa": (4, 0.25), "timellm": (4, 0.5), "patchtst": (4, 0.25), "dlinear": (2, 0.125), "residualnonlinear2d": (2, 0.125)}
+# (CPUs, GPU share). Time-LLM peaks near 45-50 GB at the pipeline batch size, so it needs a share of 0.6 of a 93 GB H100; each task is also
+# capped to its share (torch memory fraction) so a task that outgrows it fails alone instead of starving its neighbours.
+RESOURCES = {"ofa": (4, 0.25), "timellm": (4, 0.6), "patchtst": (4, 0.25), "dlinear": (2, 0.125), "residualnonlinear2d": (2, 0.125)}
 EPOCHS = {"ofa": 10, "timellm": 10, "patchtst": 20, "dlinear": 20, "residualnonlinear2d": 10}
 PATIENCE = 5
 MODEL_KEYS = {"patch_length", "patch_stride", "d_model", "d_ff", "llm_layers", "n_heads", "e_layers", "dropout", "moving_avg",
@@ -201,8 +203,13 @@ def job(spec: dict[str, Any]) -> dict[str, Any]:
     from training.ray.tune_fixed import train_prepared
 
     use_isolated_libs()
+    import torch
+
     client, bucket = spectrum_s3_client(), spec["bucket"]
     model, resolution, band, horizon, seed = spec["model"], spec["resolution"], spec["band"], int(spec["horizon"]), int(spec["seed"])
+    if torch.cuda.is_available():
+        torch.cuda.set_per_process_memory_fraction(min(0.95, RESOURCES[model][1]))
+        torch.cuda.reset_peak_memory_stats()
     base = group(spec["output_prefix"], resolution, band, model)
     record: dict[str, Any] = {"kind": spec["kind"], "model": model, "resolution": resolution, "band": band, "horizon": horizon,
                               "seed": seed, "index": spec.get("index"), "params": spec["params"],
@@ -229,6 +236,8 @@ def job(spec: dict[str, Any]) -> dict[str, Any]:
                 record.update(save_artifact(client, bucket, f"{base}/weights/h{horizon}/seed-{seed}", result["checkpoint"],
                                             {"config": config, "params": spec["params"], "seed": seed, "horizon": horizon, "model": model,
                                              "resolution": resolution, "band": band, "kind": "tuned_final"}, repo_root=root))
+        if torch.cuda.is_available():
+            record["peak_gpu_mb"] = round(torch.cuda.max_memory_allocated() / 1e6, 1)
         record["ok"] = math.isfinite(float(record["objective"]))
     except Exception as error:
         import traceback
