@@ -215,6 +215,7 @@ def main(argv=None) -> None:
     p.add_argument("--reps", nargs="+", default=["2d", "1d"], choices=("1d", "2d"))
     p.add_argument("--variants", nargs="+", default=list(VARIANTS), choices=list(VARIANTS))
     p.add_argument("--seeds", type=int, nargs="+", default=list(SEEDS))
+    p.add_argument("--seeds-1d", type=int, nargs="+", default=[42], help="1D runs take 10-60+ minutes each; one seed (linear models show no seed spread)")
     p.add_argument("--thin-1d-1min", type=int, default=10, help="test-window stride for the 1-minute 1D models (memory)")
     p.add_argument("--max-parallel", type=int, default=4, help="most tasks in flight at once (host memory)")
     p.add_argument("--skip-sweep", action="store_true", help="reuse finished sweep records instead of recomputing")
@@ -226,23 +227,17 @@ def main(argv=None) -> None:
     p.add_argument("--repo-root", default="/workspace/spectrum-usage")
     args = p.parse_args(argv)
     sys.path.insert(0, args.repo_root)
-    from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
-
     from training.ray.inference_benchmark import discover_sources, pick_checkpoints
-    from training.ray.rescore import usable_nodes
     from training.ray.storage import spectrum_s3_client
 
     bucket = args.bucket or os.environ.get("SPECTRUM_S3_BUCKET", "spectrum")
     client = spectrum_s3_client()
     ray.init(address=args.address, ignore_reinit_error=True)
-    nodes = usable_nodes(ray)
     shared = {"repo_root": args.repo_root, "bucket": bucket, "prefix": args.prefix, "thin_1d_1min": args.thin_1d_1min}
-    counter = {"n": 0}
 
     def submit(function, spec, gb):
-        counter["n"] += 1
-        strategy = NodeAffinitySchedulingStrategy(node_id=nodes[counter["n"] % len(nodes)]["NodeID"], soft=False)
-        return ray.remote(num_cpus=4, num_gpus=0, memory=int(gb * 2**30), max_retries=1, scheduling_strategy=strategy)(function).remote(spec, shared)
+        # No per-task node pinning: a hard pin made one task wait for a busy node while others were free. Memory is reserved instead.
+        return ray.remote(num_cpus=4, num_gpus=0, memory=int(gb * 2**30), max_retries=1)(function).remote(spec, shared)
 
     def run_queue(items, label):
         queue, pending, results = list(items), [], []
@@ -304,7 +299,7 @@ def main(argv=None) -> None:
             print(f"[median-study] no selected K for {resolution} {entry['band']}; skipping its variants", flush=True)
             continue
         for variant in args.variants:
-            for seed in args.seeds:
+            for seed in (args.seeds_1d if entry["rep"] == "1d" else args.seeds):
                 spec = {"entry": entry, "variant": variant, "seed": seed, "resolution": resolution,
                         "k": selected[(resolution, entry["band"])]["k"]}
                 base = f"{args.prefix.strip('/')}/variants/{resolution}/{entry['band']}/{entry['rep']}/{variant}/seed-{seed}.json"
