@@ -43,7 +43,9 @@ PIPELINE_NAME = {"ofa": "ofa", "timellm": "spectrumllm", "patchtst": "patchtst",
                  "residualnonlinear2d": "residualnonlinear2d", "ofa_rand": "ofa", "ofa_scratch": "ofa",
                  # simple baselines and PatchTST ablations (cheap tests of what makes OFA and PatchTST work)
                  "residuallinearar2d": "residuallinearar2d", "linearar2d": "linearar2d", "nlinear": "nlinear", "revinmlp": "revinmlp",
-                 "patchtst_noinorm": "patchtst", "patchtst_joint": "patchtst", "patchtst_nopatch": "patchtst"}
+                 "patchtst_noinorm": "patchtst", "patchtst_joint": "patchtst", "patchtst_nopatch": "patchtst",
+                 # TimeRAN (MOMENT continued-pretrained on RAN telemetry) and its controls; all MOMENT-1-small, 512-step padded context
+                 "timeran_lp": "timeran", "timeran_ff": "timeran", "moment_lp": "timeran", "moment_ff": "timeran", "moment_rand": "timeran"}
 # Controls for what the pretrained language model contributes: the same OFA architecture, tuned with the same 16 candidates.
 #   ofa_rand    random initialization, only layer norms and positional embeddings train (OFA's rule, so the frozen rest is random)
 #   ofa_scratch random initialization, every backbone weight trains (a transformer trained from scratch, like PatchTST)
@@ -55,28 +57,42 @@ CONTROLS = {"ofa_rand": {"backbone_init": "random", "backbone_trainable": "ofa"}
             "ofa_scratch": {"backbone_init": "random", "backbone_trainable": "all"},
             "patchtst_noinorm": {"instance_norm": False},
             "patchtst_joint": {"channel_mode": "joint"},
-            "patchtst_nopatch": {"patch_length": 1, "patch_stride": 1}}
+            "patchtst_nopatch": {"patch_length": 1, "patch_stride": 1},
+            # TimeRAN's two regimes (linear probing = head only, full fine-tuning) on the TimeRAN backbone, the same on plain MOMENT (what
+            # the RAN pretraining adds), and MOMENT's architecture from random initialization trained fully (what any pretraining adds)
+            "timeran_lp": {"backbone_init": "timeran", "backbone_trainable": "head"},
+            "timeran_ff": {"backbone_init": "timeran", "backbone_trainable": "all"},
+            "moment_lp": {"backbone_init": "moment", "backbone_trainable": "head"},
+            "moment_ff": {"backbone_init": "moment", "backbone_trainable": "all"},
+            "moment_rand": {"backbone_init": "random", "backbone_trainable": "all"}}
 OFA_FAMILY = ("ofa", "ofa_rand", "ofa_scratch")
 PATCHTST_FAMILY = ("patchtst", "patchtst_noinorm", "patchtst_joint", "patchtst_nopatch")
 LINEAR_FAMILY = ("residuallinearar2d", "linearar2d")
+TIMERAN_FAMILY = ("timeran_lp", "timeran_ff", "moment_lp", "moment_ff", "moment_rand")
+TIMERAN_SIZE = "small"
+TIMERAN_WEIGHTS_KEY = f"pretrained/timeran/TimeRAN_{TIMERAN_SIZE}.pth"           # in the source bucket (copied from the authors' release)
+TIMERAN_LOCAL = f"/workspace/pretrained/timeran/TimeRAN_{TIMERAN_SIZE}.pth"     # node-local copy
 
 
 def family(model: str) -> str:
     """The model whose settings and candidate list ``model`` shares (each control uses its parent's)."""
     if model in OFA_FAMILY:
         return "ofa"
+    if model in TIMERAN_FAMILY:
+        return "timeran"
     return "patchtst" if model in PATCHTST_FAMILY else model
 # (CPUs, GPU share). Time-LLM peaks near 45-50 GB at the pipeline batch size, so it needs a share of 0.6 of a 93 GB H100; each task is also
 # capped to its share (torch memory fraction) so a task that outgrows it fails alone instead of starving its neighbours.
 RESOURCES = {"ofa": (4, 0.25), "ofa_rand": (4, 0.25), "ofa_scratch": (4, 0.25), "timellm": (4, 0.6), "patchtst": (4, 0.25), "dlinear": (2, 0.125),
              "residualnonlinear2d": (2, 0.125), "residuallinearar2d": (2, 0.125), "linearar2d": (2, 0.125), "nlinear": (2, 0.125),
-             "revinmlp": (2, 0.125), "patchtst_noinorm": (4, 0.25), "patchtst_joint": (4, 0.25), "patchtst_nopatch": (4, 0.25)}
+             "revinmlp": (2, 0.125), "patchtst_noinorm": (4, 0.25), "patchtst_joint": (4, 0.25), "patchtst_nopatch": (4, 0.25),
+             **{m: (4, 1.0) for m in ("timeran_lp", "timeran_ff", "moment_lp", "moment_ff", "moment_rand")}}  # one 24 GB RTX 6000 each
 EPOCHS = {"ofa": 10, "ofa_rand": 10, "ofa_scratch": 10, "timellm": 10, "patchtst": 20, "dlinear": 20, "residualnonlinear2d": 10,
           "residuallinearar2d": 10, "linearar2d": 10, "nlinear": 20, "revinmlp": 20, "patchtst_noinorm": 20, "patchtst_joint": 20,
-          "patchtst_nopatch": 20}
+          "patchtst_nopatch": 20, **{m: 10 for m in ("timeran_lp", "timeran_ff", "moment_lp", "moment_ff", "moment_rand")}}
 PATIENCE = 5
 MODEL_KEYS = {"patch_length", "patch_stride", "d_model", "d_ff", "llm_layers", "n_heads", "e_layers", "dropout", "moving_avg",
-              "mlp_hidden", "mlp_layers", "mlp_dropout", "ridge_alpha"}
+              "mlp_hidden", "mlp_layers", "mlp_dropout", "ridge_alpha", "head_dropout"}
 TRAIN_KEYS = {"learning_rate": "learning_rate", "batch_size": "batch_size", "weight_decay": "weight_decay"}
 
 DEFAULTS: dict[str, dict[str, Any]] = {
@@ -94,6 +110,8 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "residualnonlinear2d": {"learning_rate": 1e-3, "ridge_alpha": 0.01, "mlp_hidden": 64, "mlp_layers": 2, "mlp_dropout": 0.0,
                             "batch_size": 64},
 }
+for _variant in ("timeran_lp", "timeran_ff", "moment_lp", "moment_ff", "moment_rand"):
+    DEFAULTS[_variant] = {"learning_rate": 1e-4, "batch_size": 16, "head_dropout": 0.1, "weight_decay": 0.0}
 for _control in ("patchtst_noinorm", "patchtst_joint", "patchtst_nopatch"):
     DEFAULTS[_control] = dict(DEFAULTS["patchtst"])
     if _control == "patchtst_nopatch":
@@ -131,6 +149,9 @@ def draw(model: str, rng: random.Random) -> dict[str, Any]:
     if model == "nlinear":
         return {"learning_rate": _loguniform(rng, 1e-4, 1e-2), "batch_size": rng.choice([16, 32, 64]),
                 "weight_decay": rng.choice([0.0, 1e-5, 1e-4])}
+    if model in TIMERAN_FAMILY:
+        return {"learning_rate": _loguniform(rng, 1e-5, 1e-3), "batch_size": rng.choice([8, 16, 32]),
+                "head_dropout": rng.choice([0.0, 0.1, 0.2]), "weight_decay": rng.choice([0.0, 1e-5, 1e-4])}
     if model == "revinmlp":
         return {"learning_rate": _loguniform(rng, 1e-4, 2e-3), "mlp_hidden": rng.choice([64, 128, 256]), "mlp_layers": rng.choice([1, 2, 3]),
                 "mlp_dropout": rng.choice([0.0, 0.1, 0.2]), "batch_size": rng.choice([16, 32, 64])}
@@ -187,9 +208,13 @@ def template(model: str, repo_root: str) -> tuple[dict[str, Any], dict[str, Any]
         name, path = ARMS[family(model)]
         arm = yaml.safe_load((Path(repo_root) / path).read_text())[name]
         return copy.deepcopy(arm["model"]), copy.deepcopy(arm["train"])
+    if model in TIMERAN_FAMILY:
+        model_section = {"checkpoint_size": TIMERAN_SIZE, "context_length": 512, "timeran_checkpoint_path": TIMERAN_LOCAL}
+    else:
+        model_section = {}
     train = {"val_fraction": 0.1, "weight_decay": 0.0, "optimizer": "adam", "gradient_clip_norm": 1.0, "batch_size": 32,
              "learning_rate": 1e-3}
-    return {}, train
+    return model_section, train
 
 
 def build_config(model: str, resolution: str, band: str, horizon: int, seed: int, params: dict[str, Any], repo_root: str, *,
@@ -274,6 +299,9 @@ def job(spec: dict[str, Any]) -> dict[str, Any]:
     use_isolated_libs()
     import torch
 
+    if spec["model"] in TIMERAN_FAMILY:
+        ensure_timeran_weights(spectrum_s3_client(), spec["bucket"])
+
     client, bucket = spectrum_s3_client(), spec["bucket"]
     model, resolution, band, horizon, seed = spec["model"], spec["resolution"], spec["band"], int(spec["horizon"]), int(spec["seed"])
     if torch.cuda.is_available():
@@ -340,6 +368,59 @@ def job(spec: dict[str, Any]) -> dict[str, Any]:
     return record
 
 
+def ensure_timeran_weights(client, bucket: str, local: str = TIMERAN_LOCAL, key: str = TIMERAN_WEIGHTS_KEY) -> str:
+    """Download the TimeRAN checkpoint to this node once (atomic rename, so concurrent tasks never read a partial file)."""
+    path = Path(local)
+    if path.is_file() and path.stat().st_size > 0:
+        return str(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    partial = path.with_name(f"{path.name}.{os.getpid()}.part")
+    client.download_file(bucket, key, str(partial))
+    os.replace(partial, path)
+    return str(path)
+
+
+MOMENTFM_VERSION = "0.1.4"
+
+
+def setup_timeran_node(bucket: str) -> dict[str, Any]:
+    """Remote worker: install momentfm (no dependencies, beside the isolated transformers in PYLIBS, so the system NumPy is untouched),
+    cache MOMENT-1-small from Hugging Face and the TimeRAN checkpoint from the bucket, and build one model of each backbone."""
+    import socket
+    import subprocess
+
+    from training.ray.llm_powder import PYLIBS, setup_node, use_isolated_libs
+    from training.ray.storage import spectrum_s3_client
+
+    row: dict[str, Any] = {"host": socket.gethostname()}
+    try:
+        base = setup_node()                                              # transformers in PYLIBS (also caches GPT-2; harmless)
+        if not base.get("ok"):
+            return {**row, **base}
+        marker = Path(PYLIBS) / f".installed-momentfm-{MOMENTFM_VERSION}"
+        if not marker.exists():
+            subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "--no-deps", "--target", PYLIBS,
+                            f"momentfm=={MOMENTFM_VERSION}"], check=True, capture_output=True, text=True, timeout=1800)
+            marker.write_text("ok")
+        use_isolated_libs()
+        ensure_timeran_weights(spectrum_s3_client(), bucket)
+        import numpy
+
+        from models.TimeRAN import TimeRANForecaster
+
+        for init in ("timeran", "moment", "random"):
+            model = TimeRANForecaster({"model": {"input_sequence_length": 60, "prediction_horizon": 15, "input_size": 3,
+                                                 "checkpoint_size": TIMERAN_SIZE, "backbone_init": init, "backbone_trainable": "head",
+                                                 "timeran_checkpoint_path": TIMERAN_LOCAL}})
+            row[f"{init}_report"] = model.load_report
+        row.update(ok=True, numpy=numpy.__version__, parameters=sum(p.numel() for p in model.parameters()))
+    except subprocess.CalledProcessError as error:
+        row.update(ok=False, error=f"pip failed: {(error.stderr or '')[-400:]}")
+    except Exception as error:
+        row.update(ok=False, error=f"{type(error).__name__}: {error}"[:400])
+    return row
+
+
 def _done(client, bucket: str, key: str) -> dict[str, Any] | None:
     try:
         record = json.loads(client.get_object(Bucket=bucket, Key=key)["Body"].read())
@@ -366,7 +447,8 @@ def main(argv=None) -> None:
     import ray
 
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--resolution", choices=("15min", "1min", "electrosense"), required=True)
+    p.add_argument("--resolution", choices=("15min", "1min", "electrosense"))
+    p.add_argument("--setup-timeran", action="store_true", help="install momentfm and cache MOMENT/TimeRAN weights on every GPU node, then exit")
     p.add_argument("--bands", nargs="+", help="POWDER bands (default both) or, with --resolution electrosense, datasets (default spec4 spec25)")
     p.add_argument("--models", nargs="+", default=list(PIPELINE_NAME), choices=list(PIPELINE_NAME))
     p.add_argument("--budget", type=int, default=BUDGET)
@@ -382,6 +464,26 @@ def main(argv=None) -> None:
     p.add_argument("--address", default="auto")
     p.add_argument("--repo-root", default="/workspace/spectrum-usage")
     args = p.parse_args(argv)
+    if args.setup_timeran:
+        sys.path.insert(0, args.repo_root)
+        ray.init(address=args.address, ignore_reinit_error=True)
+        bucket = args.bucket or os.environ.get("SPECTRUM_S3_BUCKET", "spectrum")
+        from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
+
+        nodes = [n for n in ray.nodes() if n.get("Alive") and n.get("Resources", {}).get("GPU", 0) > 0]
+
+        def on_node(bucket_name: str) -> dict[str, Any]:
+            os.chdir(args.repo_root)
+            sys.path.insert(0, args.repo_root)
+            return setup_timeran_node(bucket_name)
+
+        refs = [ray.remote(num_cpus=1, num_gpus=0)(on_node).options(
+            scheduling_strategy=NodeAffinitySchedulingStrategy(n["NodeID"], soft=False)).remote(bucket) for n in nodes]
+        for row in ray.get(refs):
+            print(json.dumps(row, default=str), flush=True)
+        return
+    if not args.resolution:
+        p.error("--resolution is required unless --setup-timeran is given")
     args.bands = args.bands or (["spec4", "spec25"] if args.resolution == "electrosense" else list(BANDS))
     allowed = ES_DATASETS if args.resolution == "electrosense" else BANDS
     if any(b not in allowed for b in args.bands):

@@ -99,3 +99,26 @@ def test_electrosense_horizons_and_strides():
 
     assert TUNE_HORIZONS["electrosense"] == (12, 192) and FINAL_HORIZONS["electrosense"] == (12, 24, 48, 96, 192)
     assert default_train_stride("patchtst", "electrosense") == 1 and default_train_stride("timellm", "electrosense") == 1
+
+
+class TimeRANVariantTests:
+    def test_variants_share_candidates_and_set_backbone_flags(self):
+        from training.ray import tune_direct as td
+
+        first = td.candidate_list("timeran_lp")
+        assert len(first) == td.BUDGET
+        for variant in td.TIMERAN_FAMILY:
+            assert td.candidate_list(variant) == first
+            assert td.PIPELINE_NAME[variant] == "timeran"
+        assert td.CONTROLS["moment_rand"] == {"backbone_init": "random", "backbone_trainable": "all"}
+        assert td.CONTROLS["timeran_lp"]["backbone_trainable"] == "head"
+
+    def test_params_land_in_the_right_sections(self):
+        from training.ray import tune_direct as td
+
+        model, train = td.template("timeran_ff", ".")
+        assert model["context_length"] == 512
+        config = td.apply_params({"timeran": {"model": model, "train": train}}, "timeran",
+                                 {"learning_rate": 1e-4, "batch_size": 8, "head_dropout": 0.2, "weight_decay": 1e-5})
+        assert config["timeran"]["model"]["head_dropout"] == 0.2
+        assert config["timeran"]["train"]["batch_size"] == 8

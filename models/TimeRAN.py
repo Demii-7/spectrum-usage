@@ -1,232 +1,151 @@
 """
-TimeRAN forecasting model.
+TimeRAN forecasting model (and its MOMENT controls).
 
-This module wraps the pretrained MOMENT forecasting pipeline so that it follows
-the common interface used by the integrated training and evaluation scripts.
+TimeRAN (Panitsas and Tassiulas, 2026) is MOMENT with continued masked-reconstruction pretraining on RAN telemetry. Forecasting
+always trains a new linear head on the flattened patch embeddings; the paper's two regimes are linear probing (head only) and full
+fine-tuning. There is no zero-shot forecasting.
 
 Integrated pipeline format:
     input:  (batch, lookback, features)
     output: (batch, prediction_horizon, features)
 
-MOMENT format:
-    input:  (batch, channels, sequence_length)
-    output: (batch, channels, forecast_horizon)
+Every feature is an independent channel (MOMENT reshapes channels into the batch), so the model is channel-independent.
+
+Model settings (``config["model"]``):
+    backbone_init       "timeran" (MOMENT weights, then the TimeRAN checkpoint), "moment" (MOMENT weights only) or "random"
+                        (same architecture, freshly initialized). Older configs: ``use_timeran_checkpoint`` true/false.
+    backbone_trainable  "head" (encoder and patch embedding frozen: linear probing) or "all" (full fine-tuning). Older configs:
+                        ``freeze_encoder`` / ``freeze_embedder``.
+    context_length      the window the backbone sees (default 512, as in pretraining). Shorter inputs are left-padded with their
+                        oldest value and the padding is masked out of the normalization and of attention, which is how MOMENT handles
+                        short series. 0 builds the backbone for the raw lookback instead (the old behaviour: the patching then drops
+                        the newest ``lookback % 8`` steps, so lookbacks must be a multiple of 8).
+    timeran_checkpoint_path  local path of ``TimeRAN_<size>.pth`` (required for "timeran"; loading fails if keys do not match).
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-import warnings
 
 import torch
 import torch.nn as nn
 
-from momentfm import MOMENTPipeline
-
-# Dictionary mapping friendly size names to their official Hugging Face repository identifiers
 VARIANT_TO_MODEL = {
     "small": "AutonLab/MOMENT-1-small",
     "base": "AutonLab/MOMENT-1-base",
     "large": "AutonLab/MOMENT-1-large",
 }
+PATCH_LENGTH = 8
+
+
+def _backbone_init(model_cfg: dict[str, Any]) -> str:
+    if "backbone_init" in model_cfg:
+        value = str(model_cfg["backbone_init"]).lower()
+    else:
+        value = "timeran" if bool(model_cfg.get("use_timeran_checkpoint", True)) else "moment"
+    if value not in {"timeran", "moment", "random"}:
+        raise ValueError(f"backbone_init must be timeran, moment or random, got {value!r}")
+    return value
+
+
+def _backbone_trainable(model_cfg: dict[str, Any]) -> str:
+    if "backbone_trainable" in model_cfg:
+        value = str(model_cfg["backbone_trainable"]).lower()
+    else:
+        frozen = bool(model_cfg.get("freeze_encoder", True)) or bool(model_cfg.get("freeze_embedder", True))
+        value = "head" if frozen else "all"
+    if value not in {"head", "all"}:
+        raise ValueError(f"backbone_trainable must be head or all, got {value!r}")
+    return value
+
+
+def load_timeran_weights(moment: nn.Module, checkpoint_path: str | Path) -> dict[str, Any]:
+    """Load a TimeRAN state dict into a MOMENT model; every backbone parameter must be covered. Returns a small report."""
+    path = Path(checkpoint_path).expanduser()
+    if not path.is_file():
+        raise FileNotFoundError(f"TimeRAN checkpoint not found at {path}")
+    state = torch.load(path, map_location="cpu", weights_only=True)
+    if isinstance(state, dict) and "model_state_dict" in state and isinstance(state["model_state_dict"], dict):
+        state = state["model_state_dict"]
+    if not isinstance(state, dict):
+        raise ValueError(f"TimeRAN checkpoint must contain a state dict, got {type(state).__name__} from {path}")
+    state = {key.removeprefix("module."): value for key, value in state.items()}
+    state = {key: value for key, value in state.items() if not key.startswith("head.")}     # the head depends on this run's horizon
+    backbone = {name for name, _ in moment.named_parameters() if not name.startswith("head.")}
+    missing = sorted(backbone - set(state))
+    if missing:
+        raise ValueError(f"TimeRAN checkpoint {path.name} does not cover {len(missing)} of {len(backbone)} backbone parameters "
+                         f"(first: {missing[:3]}); refusing to run with partly random weights")
+    result = moment.load_state_dict(state, strict=False)
+    return {"timeran_checkpoint": str(path), "loaded_tensors": len(state), "unexpected": list(result.unexpected_keys)[:10]}
 
 
 class TimeRANForecaster(nn.Module):
-    """
-    MOMENT-based forecasting model used by TimeRAN.
+    """MOMENT-based forecaster: TimeRAN, MOMENT or randomly initialized backbone; head-only or full training."""
 
-    The pretrained MOMENT encoder and embedder are frozen by default while the
-    forecasting head remains trainable.
-    """
-    
     def __init__(self, config: dict[str, Any]):
-        # Initialize the parent torch.nn.Module class
         super().__init__()
-        
-        # Extract the model-specific settings sub-dictionary from the configuration
+        from momentfm import MOMENTPipeline
+
         model_cfg = config["model"]
-        
-        # Parse and store the historical window length (lookback) as an integer
-        self.input_sequence_length = int(
-            model_cfg["input_sequence_length"]
-        )
-        # Parse and store the number of future timesteps to predict as an integer
-        self.prediction_horizon = int(
-            model_cfg["prediction_horizon"]
-        )
-        # Parse and store the number of input time-series features (channels) as an integer
-        self.input_size = int(
-            model_cfg["input_size"]
-        )
-        # Get the chosen model size, fallback to "base" if not provided, and convert to lowercase
-        checkpoint_size = str(
-            model_cfg.get("checkpoint_size", "base")
-        ).lower()
-        
-        # Retrieve the corresponding Hugging Face model repository path
-        pretrained_model_name = VARIANT_TO_MODEL.get(
-            checkpoint_size
-        )
-        
-        # Raise an informative error if the user provided an unsupported model size string
-        if pretrained_model_name is None:
-            raise ValueError(
-                "Unknown TimeRAN checkpoint_size "
-                f"{checkpoint_size!r}. Expected one of "
-                f"{sorted(VARIANT_TO_MODEL)}."
-            )
-            
-        # Download and instantiate the pretrained MOMENT pipeline with configuration parameters
+        self.input_sequence_length = int(model_cfg["input_sequence_length"])
+        self.prediction_horizon = int(model_cfg["prediction_horizon"])
+        self.input_size = int(model_cfg["input_size"])
+        self.context_length = int(model_cfg.get("context_length", 512))
+        if self.context_length and self.context_length < self.input_sequence_length:
+            raise ValueError(f"context_length {self.context_length} is shorter than the lookback {self.input_sequence_length}")
+        if not self.context_length and self.input_sequence_length % PATCH_LENGTH:
+            raise ValueError(f"without padding the lookback must be a multiple of {PATCH_LENGTH} (MOMENT drops the remainder, "
+                             f"which are the newest steps); got {self.input_sequence_length}")
+        size = str(model_cfg.get("checkpoint_size", "small")).lower()
+        if size not in VARIANT_TO_MODEL:
+            raise ValueError(f"Unknown TimeRAN checkpoint_size {size!r}; expected one of {sorted(VARIANT_TO_MODEL)}")
+        self.backbone_init = _backbone_init(model_cfg)
+        self.backbone_trainable = _backbone_trainable(model_cfg)
         self.moment = MOMENTPipeline.from_pretrained(
-            pretrained_model_name,
+            VARIANT_TO_MODEL[size],
             model_kwargs={
-                "task_name": "forecasting",                            # Instruct MOMENT to configure itself for forecasting tasks
-                "forecast_horizon": self.prediction_horizon,           # Set target forecasting steps
-                "seq_len": self.input_sequence_length,                 # Set historical context window length
-                "freeze_encoder": bool(                                # Determine whether to freeze core representation weights
-                    model_cfg.get("freeze_encoder", True)
-                ),
-                "freeze_embedder": bool(                               # Determine whether to freeze patch tokenization weights
-                    model_cfg.get("freeze_embedder", True)
-                ),
-                "freeze_head": bool(                                   # Determine whether to keep the linear projection head trainable
-                    model_cfg.get("freeze_head", False)
-                ),
+                "task_name": "forecasting",
+                "forecast_horizon": self.prediction_horizon,
+                "seq_len": self.context_length or self.input_sequence_length,
+                "head_dropout": float(model_cfg.get("head_dropout", 0.1)),
+                "freeze_encoder": False, "freeze_embedder": False, "freeze_head": False,
             },
         )
-
-        # Explicitly initialize the inner weights and configurations of the MOMENT pipeline
-        self.moment.init()
-
-        if bool(model_cfg.get("use_timeran_checkpoint", True)):
-            configured_path = model_cfg.get("timeran_checkpoint_path")
-            checkpoint_path = (
-                Path(configured_path).expanduser()
-                if configured_path
-                else Path(__file__).resolve().parents[1]
-                / "training"
-                / "TimeRAN"
-                / "checkpoints"
-                / checkpoint_size
-                / f"TimeRAN_{checkpoint_size}.pth"
-            )
-            if checkpoint_path.is_file():
-                state_dict = torch.load(
-                    checkpoint_path,
-                    map_location="cpu",
-                    weights_only=True,
-                )
-                if not isinstance(state_dict, dict):
-                    raise ValueError(
-                        "TimeRAN checkpoint must contain a state dictionary, "
-                        f"got {type(state_dict).__name__} from {checkpoint_path}."
-                    )
-                if any(key.startswith("module.") for key in state_dict):
-                    state_dict = {
-                        key.removeprefix("module."): value
-                        for key, value in state_dict.items()
-                    }
-
-                # The MOMENT forecasting head depends on this run's horizon.
-                state_dict.pop("head.linear.weight", None)
-                state_dict.pop("head.linear.bias", None)
-                self.moment.load_state_dict(state_dict, strict=False)
-            else:
-                warnings.warn(
-                    f"TimeRAN checkpoint not found at {checkpoint_path}; "
-                    "using raw MOMENT weights. Set use_timeran_checkpoint: false "
-                    "to request raw MOMENT explicitly.",
-                    stacklevel=2,
-                )
+        self.moment.init()                                               # replaces the reconstruction head with the forecasting head
+        self.load_report: dict[str, Any] = {"backbone_init": self.backbone_init, "backbone_trainable": self.backbone_trainable,
+                                             "moment": VARIANT_TO_MODEL[size]}
+        if self.backbone_init == "timeran":
+            if not model_cfg.get("timeran_checkpoint_path"):
+                raise ValueError("backbone_init 'timeran' needs model.timeran_checkpoint_path")
+            self.load_report.update(load_timeran_weights(self.moment, model_cfg["timeran_checkpoint_path"]))
+        elif self.backbone_init == "random":
+            encoder = self.moment.encoder
+            encoder.apply(encoder._init_weights)                         # T5's own initializer
+            self.moment.patch_embedding.value_embedding.reset_parameters()
+            with torch.no_grad():
+                self.moment.patch_embedding.mask_embedding.zero_()
+        if self.backbone_trainable == "head":
+            for name, parameter in self.moment.named_parameters():
+                parameter.requires_grad = name.startswith("head.")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forecast all configured future timesteps.
-
-        Parameters
-        ----------
-        x:
-            Input tensor shaped:
-
-                (batch, lookback, features)
-
-        Returns
-        -------
-        torch.Tensor
-            Forecast tensor shaped:
-
-                (batch, prediction_horizon, features)
-        """
-        # Ensure the incoming data is exactly 3-dimensional (Batch, Time, Features)
         if x.ndim != 3:
-            raise ValueError(
-                "TimeRAN expects input shaped "
-                "(batch, lookback, features), "
-                f"got {tuple(x.shape)}."
-            )
-        # Unpack the exact structural dimensions of the batch
+            raise ValueError(f"TimeRAN expects input shaped (batch, lookback, features), got {tuple(x.shape)}.")
         batch_size, lookback, input_size = x.shape
-        
-        # Verify that the sequence length matches what the model was constructed to receive
-        if lookback != self.input_sequence_length:
-            raise ValueError(
-                "TimeRAN received lookback length "
-                f"{lookback}, but the model was configured for "
-                f"{self.input_sequence_length}."
-            )
-        # Verify that the number of time-series features matches the configuration
-        if input_size != self.input_size:
-            raise ValueError(
-                "TimeRAN received "
-                f"{input_size} features, but the model was "
-                f"configured for {self.input_size}."
-            )
-
-        # Pivot data: from (batch, time, features) to MOMENT's format: (batch, features/channels, time)
-        # .contiguous() forces memory optimization after changing array layouts
-        moment_input = x.transpose(1, 2).contiguous()
-        
-        # Create an all-ones binary mask indicating that none of the time steps are padded/missing
-        # Ensures mask matches the data type and hardware device (CPU/GPU) of the input tensor
-        input_mask = torch.ones(
-            batch_size,
-            lookback,
-            dtype=moment_input.dtype,
-            device=moment_input.device,
-        )
-        
-        # Execute forward pass through the MOMENT underlying neural network architecture
-        model_output = self.moment(
-            x_enc=moment_input,
-            input_mask=input_mask,
-        )
-        # Extract the specialized forecast tensor object from the multi-attribute model output
-        forecast = model_output.forecast
-
-        # Confirm that the output of MOMENT contains exactly 3 dimensional axes
-        if forecast.ndim != 3:
-            raise ValueError(
-                "MOMENT returned an unexpected forecast shape: "
-                f"{tuple(forecast.shape)}."
-            )
-
-        # Pivot data back: from MOMENT's (batch, features, forecast_horizon) 
-        # to the pipeline's expected (batch, prediction_horizon, features)
+        if lookback != self.input_sequence_length or input_size != self.input_size:
+            raise ValueError(f"TimeRAN was configured for lookback {self.input_sequence_length} and {self.input_size} features, "
+                             f"got {lookback} and {input_size}.")
+        series = x.transpose(1, 2).contiguous()                          # (batch, channels, lookback)
+        mask = torch.ones(batch_size, lookback, dtype=series.dtype, device=series.device)
+        pad = (self.context_length - lookback) if self.context_length else 0
+        if pad:
+            series = torch.cat([series[..., :1].expand(-1, -1, pad), series], dim=-1)
+            mask = torch.cat([torch.zeros(batch_size, pad, dtype=series.dtype, device=series.device), mask], dim=-1)
+        forecast = self.moment(x_enc=series, input_mask=mask).forecast
         forecast = forecast.transpose(1, 2).contiguous()
-        
-        # Define expected shape configuration tuple for post-execution verification
-        expected_shape = (
-            batch_size,
-            self.prediction_horizon,
-            self.input_size,
-        )
-        # Guard check ensuring the resulting shape perfectly conforms to expected pipeline specifications
-        if tuple(forecast.shape) != expected_shape:
-            raise ValueError(
-                "TimeRAN forecast shape does not match the "
-                f"expected shape. Expected {expected_shape}, "
-                f"got {tuple(forecast.shape)}."
-            )
-        # Return the cleanly reformatted predictions array back to the wrapper pipeline execution engine
+        expected = (batch_size, self.prediction_horizon, self.input_size)
+        if tuple(forecast.shape) != expected:
+            raise ValueError(f"TimeRAN forecast shape {tuple(forecast.shape)} does not match {expected}.")
         return forecast
