@@ -1,0 +1,12 @@
+[
+ {
+  "id": "claude-final-h1-timellm-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_direct --resolution 15min --horizons 1 --models timellm --max-parallel 4\"",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-final-h1-ofa-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_direct --resolution 15min --horizons 1 --models ofa ofa_rand ofa_scratch --max-parallel 8\"",
+  "max_restarts": 4
+ }
+]
