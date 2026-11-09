@@ -307,6 +307,11 @@ def evaluate_condition(
         height=int(grid_cfg.get("height", 10)),
         width=int(grid_cfg.get("width", 10)),
         power=float(grid_cfg.get("power", 2.0)),
+        width_meters=grid_cfg.get("width_meters"),
+        height_meters=grid_cfg.get("height_meters"),
+        origin_lon=grid_cfg.get("origin_lon"),
+        origin_lat=grid_cfg.get("origin_lat"),
+        power_domain=str(grid_cfg.get("power_domain", "db")),
     )
     series, input_indices, target_indices = _condition_data(
         experiment, condition, frequencies, coordinates, root
@@ -337,10 +342,31 @@ def evaluate_condition(
         np.asarray([grid.origin_latitude]),
     )
     horizons = [int(value) for value in experiment.get("horizons", [1, 15, 60])]
+    if condition.startswith("geometry_"):
+        timing_key = "geometry_timing"
+    elif condition.endswith("_guesthouse"):
+        timing_key = "guesthouse_timing"
+    else:
+        timing_key = "new_receiver_timing"
+    timing = experiment.get(timing_key, {})
+
+    def in_scoring_range(candidates: np.ndarray) -> np.ndarray:
+        # The scoring range and stride, applied before the windows are stacked (the same rule _filter_origins applies after).
+        mask = np.ones(len(candidates), dtype=bool)
+        if timing.get("start"):
+            mask &= series.timestamps[candidates] >= pd.Timestamp(timing["start"])
+        if timing.get("end"):
+            mask &= series.timestamps[candidates + max(horizons)] <= pd.Timestamp(timing["end"])
+        if origin_stride <= 0:
+            raise ValueError("origin stride must be positive")
+        selected = np.flatnonzero(mask)[::origin_stride]
+        return selected if origin_limit is None else selected[:origin_limit]
+
     origins, windows, _ = select_window_origins(
         map_series,
         int(experiment.get("lookback", 60)),
         horizons,
+        keep=in_scoring_range,
     )
     raw_targets = np.stack(
         [series.values_dbm[origins + horizon][:, target_indices] for horizon in horizons],
@@ -355,13 +381,6 @@ def evaluate_condition(
         lookback,
     )
     origins, windows, raw_targets = origins[finite], windows[finite], raw_targets[finite]
-    if condition.startswith("geometry_"):
-        timing_key = "geometry_timing"
-    elif condition.endswith("_guesthouse"):
-        timing_key = "guesthouse_timing"
-    else:
-        timing_key = "new_receiver_timing"
-    timing = experiment.get(timing_key, {})
     origins, windows, raw_targets = _filter_origins(
         series,
         origins,
@@ -370,8 +389,8 @@ def evaluate_condition(
         horizons,
         score_start=timing.get("start"),
         score_end=timing.get("end"),
-        stride=origin_stride,
-        limit=origin_limit,
+        stride=1,                       # stride and limit were applied before stacking (in_scoring_range)
+        limit=None,
     )
     predictions = infer_frozen_model(
         checkpoint_path,

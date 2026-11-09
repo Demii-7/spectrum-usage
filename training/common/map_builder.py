@@ -45,11 +45,13 @@ def find_site_grid_indices(
         site_lons = np.asarray(archive["site_lons"], dtype=np.float64)
         site_lats = np.asarray(archive["site_lats"], dtype=np.float64)
         perm = np.asarray(archive["position_permutation"], dtype=np.intp)
+        grid_cfg = {}
+        if "metadata" in archive.files:
+            grid_cfg = json.loads(str(archive["metadata"].item())).get("grid") or {}
 
     site_lons = site_lons[perm]
     site_lats = site_lats[perm]
-    origin_lon = float(np.mean(site_lons))
-    origin_lat = float(np.mean(site_lats))
+    origin_lon, origin_lat = grid_origin(site_lons, site_lats, grid_cfg)
     sx, sy = _local_xy(site_lons, site_lats, origin_lon, origin_lat)
 
     result: dict[str, tuple[int, int]] = {}
@@ -60,14 +62,20 @@ def find_site_grid_indices(
     return result
 
 
+def grid_origin(site_lons, site_lats, grid) -> tuple[float, float]:
+    """Grid centre: ``grid["origin_lon"]``/``["origin_lat"]`` if given (a grid fixed across receiver subsets), else the sites' mean."""
+    if grid.get("origin_lon") is not None and grid.get("origin_lat") is not None:
+        return float(grid["origin_lon"]), float(grid["origin_lat"])
+    return float(np.mean(site_lons)), float(np.mean(site_lats))
+
+
 def _map_from_sites(site_data, site_x, site_y, grid):
     height = int(grid.get("height", grid.get("grid_height", 50)))
     width = int(grid.get("width", grid.get("grid_width", 50)))
     print(f"[DEBUG] _map_from_sites: site_data.shape={site_data.shape}, grid={height}x{width}, n_sites={len(site_x)}")
     if height <= 0 or width <= 0:
         raise ValueError("map grid dimensions must be positive")
-    origin_lon = float(np.mean(site_x))
-    origin_lat = float(np.mean(site_y))
+    origin_lon, origin_lat = grid_origin(site_x, site_y, grid)
     x, y = _local_xy(site_x, site_y, origin_lon, origin_lat)
     width_m = float(grid.get("width_meters", max(np.ptp(x), 1.0)))
     height_m = float(grid.get("height_meters", max(np.ptp(y), 1.0)))

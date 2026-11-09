@@ -20,6 +20,7 @@ class FrozenGrid:
     origin_longitude: float
     origin_latitude: float
     power: float = 2.0
+    power_domain: str = "db"
 
     @property
     def shape(self) -> tuple[int, int]:
@@ -53,6 +54,9 @@ def derive_frozen_grid(
     width_meters: float | None = None,
     height_meters: float | None = None,
     power: float = 2.0,
+    origin_lon: float | None = None,
+    origin_lat: float | None = None,
+    power_domain: str = "db",
 ) -> FrozenGrid:
     """Derive the fixed grid using the exact geometry of map_builder._map_from_sites."""
     lons = np.asarray(longitudes, dtype=np.float64)
@@ -63,7 +67,9 @@ def derive_frozen_grid(
         raise ValueError("grid dimensions and IDW power must be positive")
     order = _permutation(coordinate_permutation, len(lons))
     lons, lats = lons[order], lats[order]
-    origin_lon, origin_lat = float(np.mean(lons)), float(np.mean(lats))
+    from training.common.map_builder import grid_origin
+
+    origin_lon, origin_lat = grid_origin(lons, lats, {"origin_lon": origin_lon, "origin_lat": origin_lat})
     site_x, site_y = _local_xy(lons, lats, origin_lon, origin_lat)
     width_m = float(max(np.ptp(site_x), 1.0) if width_meters is None else width_meters)
     height_m = float(max(np.ptp(site_y), 1.0) if height_meters is None else height_meters)
@@ -71,7 +77,9 @@ def derive_frozen_grid(
         np.linspace(-width_m / 2.0, width_m / 2.0, width),
         np.linspace(-height_m / 2.0, height_m / 2.0, height),
     )
-    return FrozenGrid(gx, gy, origin_lon, origin_lat, float(power))
+    if power_domain not in {"db", "linear"}:
+        raise ValueError("power_domain must be db or linear")
+    return FrozenGrid(gx, gy, origin_lon, origin_lat, float(power), power_domain)
 
 
 def _idw_weights(target_x: np.ndarray, target_y: np.ndarray, source_x: np.ndarray,
@@ -102,10 +110,14 @@ def build_idw_maps(
     site_x, site_y = _local_xy(lons[order], lats[order], grid.origin_longitude, grid.origin_latitude)
     weights = _idw_weights(grid.x, grid.y, site_x, site_y, grid.power)
     valid = np.isfinite(values)
-    weighted = np.einsum("...rf,hwr->...hwf", np.where(valid, values, 0.0), weights)
+    linear = grid.power_domain == "linear"                     # interpolate linear power, as map_builder does with power_domain linear
+    source = np.power(10.0, np.where(valid, values, 0.0) / 10.0) if linear else np.where(valid, values, 0.0)
+    weighted = np.einsum("...rf,hwr->...hwf", source, weights)
     denominator = np.einsum("...rf,hwr->...hwf", valid, weights)
-    return np.divide(weighted, denominator, out=np.full_like(weighted, np.nan, dtype=np.float64),
-                     where=denominator > 0).astype(np.float32)
+    mapped = np.divide(weighted, denominator, out=np.full_like(weighted, np.nan, dtype=np.float64), where=denominator > 0)
+    if linear:
+        mapped = 10.0 * np.log10(np.maximum(mapped, 1e-30))
+    return mapped.astype(np.float32)
 
 
 def sample_forecast_grid(
@@ -190,8 +202,15 @@ def select_window_origins(
     horizons: Sequence[int],
     *,
     model_values: np.ndarray | None = None,
+    keep=None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return valid origins, model inputs, and untouched physical targets."""
+    """Return valid origins, model inputs, and untouched physical targets.
+
+    A window is valid when its input and target timestamps are evenly spaced at the series' own step (the median spacing, so
+    1-minute and 15-minute traces both work). ``keep``, if given, maps the valid origins to a boolean mask or an index array and
+    is applied *before* the windows are stacked, so only the scored windows are ever materialized (a full week of 1-minute map
+    windows is about 50 GB; stacking every origin first and filtering afterwards doubled that).
+    """
     horizon = np.asarray(horizons, dtype=np.int64)
     if input_length <= 0 or horizon.ndim != 1 or not len(horizon) or np.any(horizon <= 0):
         raise ValueError("input_length and horizons must be positive")
@@ -199,15 +218,20 @@ def select_window_origins(
     if inputs.shape != series.values_dbm.shape:
         raise ValueError("model_values must match receiver series shape")
     stamps = series.timestamps.view("i8")
-    minute = pd.Timedelta(minutes=1).value
+    step = int(np.median(np.diff(stamps))) if len(stamps) > 1 else pd.Timedelta(minutes=1).value
     origins = []
     for origin in range(input_length - 1, len(stamps) - int(horizon.max())):
         indices = np.concatenate((np.arange(origin - input_length + 1, origin + 1), origin + horizon))
-        if np.all(np.diff(stamps[indices]) == np.diff(indices) * minute):
+        if np.all(np.diff(stamps[indices]) == np.diff(indices) * step):
             origins.append(origin)
     origin_array = np.asarray(origins, dtype=np.int64)
-    x = np.stack([inputs[o - input_length + 1:o + 1] for o in origins]) if origins else np.empty((0, input_length, *inputs.shape[1:]))
-    y = np.stack([series.values_dbm[o + horizon] for o in origins]) if origins else np.empty((0, len(horizon), *inputs.shape[1:]))
+    if keep is not None and len(origin_array):
+        selection = np.asarray(keep(origin_array))
+        origin_array = origin_array[selection]
+    x = (np.stack([inputs[o - input_length + 1:o + 1] for o in origin_array]) if len(origin_array)
+         else np.empty((0, input_length, *inputs.shape[1:])))
+    y = (np.stack([series.values_dbm[o + horizon] for o in origin_array]) if len(origin_array)
+         else np.empty((0, len(horizon), *inputs.shape[1:])))
     return origin_array, x, y
 
 

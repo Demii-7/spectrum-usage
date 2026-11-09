@@ -1,0 +1,251 @@
+"""15-minute spatial (4D) experiments on the six October receivers: map sensitivity (S2), held-out receivers (S3), receiver count (S5).
+
+Every run trains one 4D model on maps interpolated from a chosen receiver set, on a grid fixed to the six-receiver area (origin and
+extent of humanities, madsen, moran, sage point, guest house and law 73), so removing a receiver never moves the grid. Hyperparameters
+are inherited from the October 1-minute 600-800 winners (seed-42 run_costs of ``checkpoints-oct2026/4d``), as for the other inherited
+15-minute results. Each trained model is then scored
+
+* on its own maps (``map__*``: full grid against the interpolated target, all 100 cells), and
+* at the physical receivers with ``spatial_ablation_eval.evaluate_condition``: every receiver in its input set (``geometry_correct``)
+  and each of the six receivers it did not see, both left out of the input map and added to it without retraining.
+
+Variants (``--experiments``):
+    s2   core four; IDW power 1, 2, 4, 16 (16 ~ nearest neighbour), linear-power interpolation, grids 5x5 and 20x20
+    s3   leave one receiver out of the six (six folds)
+    s5   receiver count: 2 and 3 of the core four (three subsets each); evaluated at guest house and law 73
+         (the full core four is s2's default)
+
+Outputs (durable bucket): ``<prefix>/<band>/<variant>/<model>/seed-<n>/{result.json, eval/<condition>-<receiver>/...}`` plus
+weights and the training config, saved with ``save_run``.
+
+    python -m training.ray.spatial15 --experiments s2 s3 --models lookbackmean4d linearar4d residuallinearar4d residualconvlstm convlstm
+"""
+
+from __future__ import annotations
+
+import argparse
+import copy
+import itertools
+import json
+import os
+import sys
+import tempfile
+import time
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+SIX = {"humanities-nuc1": "humanities", "madsen-nuc1": "madsen", "moran-nuc1": "moran", "sagepoint-nuc1": "sage point",
+       "guesthouse-nuc1": "guest house", "law73-nuc1": "law 73"}
+CORE = ("humanities-nuc1", "madsen-nuc1", "moran-nuc1", "sagepoint-nuc1")
+HORIZONS = (4, 12, 24, 48)
+SEEDS = (40, 41, 42)
+CPU_MODELS = {"lookbackmean4d", "linearar4d", "residuallinearar4d"}
+GRID_DEFAULT = {"height": 10, "width": 10, "power": 2.0, "power_domain": "db"}
+
+
+def six_receiver_frame(repo_root: str) -> dict[str, float]:
+    """Origin and extent of the six receivers (the fixed grid every variant shares)."""
+    import numpy as np
+
+    from training.common.map_builder import _local_xy
+
+    entries = json.loads((Path(repo_root) / "data/locations/powder.json").read_text())["endpoints"]
+    by_name = {e["name"]: e for e in entries}
+    lons = np.asarray([by_name[name]["longitude"] for name in SIX.values()])
+    lats = np.asarray([by_name[name]["latitude"] for name in SIX.values()])
+    lon0, lat0 = float(lons.mean()), float(lats.mean())
+    x, y = _local_xy(lons, lats, lon0, lat0)
+    return {"origin_lon": lon0, "origin_lat": lat0, "width_meters": float(np.ptp(x)), "height_meters": float(np.ptp(y))}
+
+
+def variants(experiments: list[str]) -> list[dict[str, Any]]:
+    """(name, receiver nodes, grid overrides) for each requested experiment."""
+    out = []
+    if "s2" in experiments:
+        out.append({"name": "core4-p2", "nodes": list(CORE), "grid": {}})
+        for power in (1.0, 4.0, 16.0):
+            out.append({"name": f"core4-p{power:g}", "nodes": list(CORE), "grid": {"power": power}})
+        out.append({"name": "core4-p2-linear", "nodes": list(CORE), "grid": {"power_domain": "linear"}})
+        for size in (5, 20):
+            out.append({"name": f"core4-p2-g{size}", "nodes": list(CORE), "grid": {"height": size, "width": size}})
+    if "s3" in experiments:
+        for held in SIX:
+            out.append({"name": f"loo-{SIX[held].replace(' ', '')}", "nodes": [n for n in SIX if n != held], "grid": {}})
+    if "s5" in experiments:
+        for k in (2, 3):
+            for index, subset in enumerate(itertools.combinations(CORE, k)):
+                if index < 3:
+                    out.append({"name": f"k{k}-{index}", "nodes": list(subset), "grid": {}})
+    return out
+
+
+def grid_for(variant: dict[str, Any], frame: dict[str, float]) -> dict[str, Any]:
+    return {**GRID_DEFAULT, **frame, **variant["grid"]}
+
+
+def experiment_yaml(band: str, nodes: list[str], held: str | None, grid: dict[str, Any]) -> dict[str, Any]:
+    """An evaluate_condition experiment: ``nodes`` are the map's receivers, ``held`` the receiver scored outside the map."""
+    from training.ray.powder15 import OUT_NAME, OUT_ROOT, TEST_RUN
+
+    test = {"start": "2026-10-27T20:00:00Z", "end": "2026-11-03T20:00:00Z"}
+    files = {SIX[n]: f"{OUT_ROOT}/{n}/{TEST_RUN}/{band}/{OUT_NAME}" for n in SIX}
+    names = [SIX[n] for n in nodes]
+    exp = {"locations": "data/locations/powder.json", "collection_key": "endpoints",
+           "regions": f"evaluation/analysis/plan_regions_{band}_wholeband.csv", "baseline_receivers": names, "added_receivers": [],
+           "grid": grid, "lookback": 96, "horizons": list(HORIZONS), "max_missing_gap": 16,
+           "geometry_timing": test, "geometry_files": {name: files[name] for name in names}}
+    if held:
+        exp["guesthouse_receiver"] = SIX[held]
+        exp["guesthouse_timing"] = test
+        exp["guesthouse_files"] = {name: files[name] for name in names + [SIX[held]]}
+    return exp
+
+
+def run_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    """Remote worker: train one (variant, model, seed), score it on its maps and at the physical receivers, upload everything."""
+    root = args["repo_root"]
+    os.chdir(root)
+    sys.path.insert(0, root)
+    import pandas as pd
+
+    from training.common.evaluation_integrated import evaluate_one_model
+    from training.common.spatial_ablation_eval import evaluate_condition
+    from training.common.train_integrated import train_one_model
+    from training.ray.artifacts import save_run
+    from training.ray.final_eval import build_eval_config, config_file_for, summarize_metrics
+    from training.ray.powder15 import apply_powder15_4d, ensure_powder15, set_lookback_and_horizon
+    from training.ray.storage import spectrum_s3_client
+
+    client, bucket, band = spectrum_s3_client(), args["bucket"], args["band"]
+    variant, model, seed = job["variant"], job["model"], int(job["seed"])
+    base = f"{args['prefix'].strip('/')}/{band}/{variant['name']}/{model}/seed-{seed}"
+    result: dict[str, Any] = {"band": band, "variant": variant["name"], "nodes": variant["nodes"], "model": model, "seed": seed,
+                              "grid": job["grid"], "hyperparameters": "inherited (1-minute 600-800 seed-42 winner)"}
+    started = time.time()
+    try:
+        ensure_powder15(band, root, tuple(SIX))
+        config_base = yaml.safe_load(Path(config_file_for(model, "4d")).read_text())
+        if model == "lookbackmean4d":
+            config = copy.deepcopy(config_base)
+            config["training"] = {**config.get("training", {}), "models": [model], "device": "cpu"}
+        else:
+            costs = json.loads(client.get_object(Bucket=bucket, Key=f"checkpoints-oct2026/4d/{model}/seed-42/"
+                                                 f"powder_600_800_t4t6_run_costs.json")["Body"].read())
+            config = build_eval_config(config_base, model, costs, test_start="2026-10-27T20:00:00Z", test_end="2026-11-03T20:00:00Z",
+                                       device="cpu" if model in CPU_MODELS else None)
+        map_name = f"p15_{band}_{variant['name']}"
+        config = apply_powder15_4d(config, band, list(HORIZONS), variant["nodes"], job["grid"], map_name)
+        config = set_lookback_and_horizon(config, model, None)
+        config[model]["train"]["seed"] = seed
+        with tempfile.TemporaryDirectory(prefix="spatial15-") as scratch:
+            scratch = Path(scratch)
+            run_dir, eval_dir = scratch / "run", scratch / "eval"
+            train_one_model(config, model, run_dir)
+            checkpoint = next((run_dir / "checkpoints").glob("*.pt"), None)
+            eval_dir.mkdir()
+            evaluate_one_model(config, model, eval_dir, checkpoint, skip_plots=True)
+            result.update({f"map__{k}": v for k, v in summarize_metrics(pd.read_csv(eval_dir / "aggregate_metrics.csv")
+                                                                        .to_dict("records")).items()})
+            if checkpoint is not None:
+                result.update(save_run(client, bucket, f"{base}/weights", run_dir, config,
+                                       {"result_kind": "spatial15", "variant": variant, "seed": seed}))
+            model_config = scratch / "models.yaml"
+            model_config.write_text(yaml.safe_dump({"windowing": config["windowing"], model: config[model]}))
+            held_out = [n for n in SIX if n not in variant["nodes"]]
+            scored = {}
+            for held in held_out or [None]:
+                exp_path = Path(root) / "training/configs" / f".spatial15-{os.getpid()}-{variant['name']}.yaml"
+                exp_path.write_text(yaml.safe_dump(experiment_yaml(band, variant["nodes"], held, job["grid"])))
+                try:
+                    conditions = ["geometry_correct"] if held is None or held == held_out[0] else []
+                    if held:
+                        conditions += ["six_to_guesthouse", "seven_to_guesthouse"]
+                    for condition in conditions:
+                        label = condition if condition == "geometry_correct" else f"{condition}-{SIX[held].replace(' ', '')}"
+                        out = scratch / "cond" / label
+                        summary = evaluate_condition(experiment_path=exp_path, model_config_path=model_config,
+                                                     checkpoint_path=checkpoint, model_name=model, seed=seed, condition=condition,
+                                                     output_directory=out, batch_size=args["batch_size"],
+                                                     device="cpu" if model in CPU_MODELS else "cuda")
+                        scored[label] = {k: summary.get(k) for k in ("mean_horizon_mae_db", "n_origins", "target_receivers",
+                                                                       *[f"mae_db_t{h}" for h in HORIZONS])}
+                        for name in ("result.json", "metadata.json", "region_metrics.csv", "map_metrics.csv"):
+                            if (out / name).exists():
+                                client.upload_file(str(out / name), bucket, f"{base}/eval/{label}/{name}")
+                finally:
+                    exp_path.unlink(missing_ok=True)
+            result["receivers"] = scored
+        result["ok"] = True
+    except Exception as error:
+        import traceback
+
+        result.update(ok=False, error=f"{type(error).__name__}: {error}"[:400], trace=traceback.format_exc()[-1500:])
+    result["wall_seconds"] = round(time.time() - started, 1)
+    client.put_object(Bucket=bucket, Key=f"{base}/result.json", Body=json.dumps(result, default=str).encode())
+    return result
+
+
+def main(argv=None) -> None:
+    import ray
+
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--band", default="600_800", choices=("600_800", "2400_2600"))
+    p.add_argument("--experiments", nargs="+", default=["s2"], choices=("s2", "s3", "s5"))
+    p.add_argument("--variants", nargs="+", help="only these variant names")
+    p.add_argument("--models", nargs="+", default=["lookbackmean4d", "linearar4d", "residuallinearar4d", "residualconvlstm"])
+    p.add_argument("--seeds", type=int, nargs="+", default=list(SEEDS))
+    p.add_argument("--batch-size", type=int, default=8)
+    p.add_argument("--memory-gb", type=float, default=24.0)
+    p.add_argument("--max-parallel", type=int, default=8)
+    p.add_argument("--skip-done", action="store_true")
+    p.add_argument("--bucket", default=None)
+    p.add_argument("--prefix", default="spatial15-oct2026")
+    p.add_argument("--address", default="auto")
+    p.add_argument("--repo-root", default="/workspace/spectrum-usage")
+    args = p.parse_args(argv)
+    sys.path.insert(0, args.repo_root)
+    from training.ray.storage import spectrum_s3_client
+
+    bucket = args.bucket or os.environ.get("SPECTRUM_S3_BUCKET", "spectrum")
+    client = spectrum_s3_client()
+    frame = six_receiver_frame(args.repo_root)
+    chosen = [v for v in variants(args.experiments) if not args.variants or v["name"] in args.variants]
+    jobs = [{"variant": v, "grid": grid_for(v, frame), "model": m, "seed": s}
+            for v in chosen for m in args.models for s in ([42] if m == "lookbackmean4d" else args.seeds)]
+    if args.skip_done:
+        def done(job):
+            key = f"{args.prefix.strip('/')}/{args.band}/{job['variant']['name']}/{job['model']}/seed-{job['seed']}/result.json"
+            try:
+                return bool(json.loads(client.get_object(Bucket=bucket, Key=key)["Body"].read()).get("ok"))
+            except Exception:
+                return False
+        jobs = [j for j in jobs if not done(j)]
+    print(f"[spatial15] {len(jobs)} runs over {len(chosen)} variants; grid frame {frame}", flush=True)
+    shared = {"repo_root": args.repo_root, "bucket": bucket, "prefix": args.prefix, "band": args.band, "batch_size": args.batch_size}
+    ray.init(address=args.address, ignore_reinit_error=True)
+    memory = int(args.memory_gb * 2**30)
+    cpu_task = ray.remote(num_cpus=4, num_gpus=0, memory=memory, max_retries=2)(run_job)
+    gpu_task = ray.remote(num_cpus=4, num_gpus=0.5, memory=memory, max_retries=2)(run_job)
+    queue, pending, ok = list(jobs), [], 0
+    while queue or pending:
+        while queue and len(pending) < args.max_parallel:
+            job = queue.pop(0)
+            pending.append((cpu_task if job["model"] in CPU_MODELS else gpu_task).remote(job, shared))
+        done_refs, pending = ray.wait(pending, num_returns=1)
+        try:
+            row = ray.get(done_refs[0])
+        except Exception as error:
+            row = {"ok": False, "error": f"{type(error).__name__}: {str(error)[:200]}"}
+        ok += bool(row.get("ok"))
+        receivers = {k: round(v["mean_horizon_mae_db"], 3) for k, v in (row.get("receivers") or {}).items()
+                     if v.get("mean_horizon_mae_db") is not None}
+        print(f"[spatial15] {row.get('variant')} {row.get('model')} seed{row.get('seed')} ok={row.get('ok')} "
+              f"map={row.get('map__test_mean_horizon_mae_db')} receivers={receivers} {row.get('error', '')} "
+              f"({row.get('wall_seconds')}s) [{len(queue) + len(pending)} left]", flush=True)
+    print(f"[spatial15] done: {ok} of {len(jobs)} ok", flush=True)
+
+
+if __name__ == "__main__":
+    main()

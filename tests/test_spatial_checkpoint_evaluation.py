@@ -118,3 +118,37 @@ def test_map_metrics_report_full_grid_and_receiver_grid_scopes():
     values = {row["metric_scope"]: row["mae_db"] for row in rows}
     assert values["full_grid_idw"] == 0.5
     assert values["receiver_grid_idw"] == 2.0
+
+
+def test_fixed_origin_and_linear_domain():
+    import numpy as np
+
+    from training.common.map_builder import grid_origin
+    from training.common.spatial_checkpoint_evaluation import build_idw_maps, derive_frozen_grid
+
+    lons, lats = [-111.84, -111.83], [40.76, 40.77]
+    assert grid_origin(np.asarray(lons), np.asarray(lats), {}) == (float(np.mean(lons)), float(np.mean(lats)))
+    grid = derive_frozen_grid(lons, lats, height=3, width=3, origin_lon=-111.835, origin_lat=40.765, power_domain="linear")
+    assert (grid.origin_longitude, grid.origin_latitude) == (-111.835, 40.765)
+    values = np.asarray([[-100.0, -100.0], [-90.0, -110.0]])[..., None].transpose(0, 1, 2)   # (time, receiver, freq)
+    maps = build_idw_maps(values, lons, lats, grid)
+    assert np.allclose(maps[0], -100.0, atol=1e-4)                       # equal inputs stay equal in either domain
+    centre = maps[1, 1, 1, 0]                                             # equidistant cell: linear mean of -90 and -110 dB
+    assert abs(centre - 10 * np.log10((10 ** -9 + 10 ** -11) / 2)) < 1e-3
+    db_grid = derive_frozen_grid(lons, lats, height=3, width=3)
+    assert abs(build_idw_maps(values, lons, lats, db_grid)[1, 1, 1, 0] + 100.0) < 1e-3
+
+
+def test_window_origins_fifteen_minute_step_and_keep():
+    import numpy as np
+    import pandas as pd
+
+    from training.common.spatial_checkpoint_evaluation import ReceiverSeries, select_window_origins
+
+    stamps = pd.date_range("2026-10-27", periods=20, freq="15min", tz="UTC")
+    values = np.arange(20, dtype=np.float32).reshape(20, 1, 1)
+    series = ReceiverSeries(values, stamps, np.asarray([600.5]), ("a",), np.asarray([0.0]), np.asarray([0.0]))
+    origins, x, y = select_window_origins(series, 4, [1, 2])
+    assert list(origins) == list(range(3, 18))                    # every 15-minute window is valid
+    origins, x, y = select_window_origins(series, 4, [1, 2], keep=lambda o: np.flatnonzero(o >= 10)[::2])
+    assert list(origins) == [10, 12, 14, 16] and x.shape == (4, 4, 1, 1) and y[0, 0, 0, 0] == 11

@@ -89,10 +89,10 @@ def convert_trace(raw_csv: Path, out_csv: Path) -> dict[str, Any]:
     return {"blocks": len(out), "imputed_share": missing}
 
 
-def ensure_powder15(band: str, repo_root: str) -> dict[str, Any]:
+def ensure_powder15(band: str, repo_root: str, nodes: tuple[str, ...] = CORE_NODES) -> dict[str, Any]:
     """Convert every needed trace once per worker; returns the imputed share per file."""
     report = {}
-    for node in CORE_NODES:
+    for node in nodes:
         for run in (TRAIN_RUN, TEST_RUN):
             raw = Path(repo_root) / RAW_ROOT / node / run / band / RAW_NAME
             out = Path(repo_root) / OUT_ROOT / node / run / band / OUT_NAME
@@ -113,6 +113,33 @@ def apply_powder15(config: dict[str, Any], band: str, repo_root: str, horizons: 
     config["windowing"] = {"lookback": LOOKBACK, "horizons": sorted(int(h) for h in horizons)}
     config["preprocessing"] = {**config.get("preprocessing", {}), "normalize": True, "impute": False,
                                "max_missing_gap": 0}
+    return config
+
+
+SPATIAL_NODES = CORE_NODES + ("guesthouse-nuc1", "law73-nuc1")
+
+
+def apply_powder15_4d(config: dict[str, Any], band: str, horizons: list[int], nodes: list[str] | tuple[str, ...],
+                      grid: dict[str, Any], map_name: str) -> dict[str, Any]:
+    """A 15-minute 4D config: maps interpolated from ``nodes`` (15-minute traces) on ``grid``, lookback 96.
+
+    ``map_name`` should identify the map variant (receiver set and grid settings); the cache key also hashes the files and grid,
+    so two variants never share a cache. Maps are written to data/maps15 so they never mix with the 1-minute caches.
+    """
+    config = copy.deepcopy(config)
+    files = []
+    for partition, run in (("train", TRAIN_RUN), ("validation", TEST_RUN), ("test", TEST_RUN)):
+        for node in nodes:
+            files.append({"path": f"{OUT_ROOT}/{node}/{run}/{band}/{OUT_NAME}", "partition": partition})
+    config["data"]["files"] = files
+    config["data"]["representation"] = "4d"
+    config["data"]["chunks"] = [{"id": f"powder15_{band}", "start_mhz": float(band.split("_")[0]),
+                                 "end_mhz": float(band.split("_")[1])}]
+    config["data"]["map"] = {"name": map_name, "locations": "data/locations/powder.json", "collection_key": "endpoints",
+                             "output_dir": "data/maps15", "grid": dict(grid), "force_rebuild": False, "permute": False,
+                             "permute_seed": 42}
+    config["windowing"] = {"lookback": LOOKBACK, "horizons": sorted(int(h) for h in horizons)}
+    config["preprocessing"] = {**config.get("preprocessing", {}), "normalize": True, "impute": False, "max_missing_gap": 0}
     return config
 
 
