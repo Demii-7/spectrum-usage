@@ -8,5 +8,10 @@
   "id": "claude-final-h1-ofa-1",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_direct --resolution 15min --horizons 1 --models ofa ofa_rand ofa_scratch --max-parallel 8\"",
   "max_restarts": 4
+ },
+ {
+  "id": "claude-final-h1-cheap-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_direct --resolution 15min --horizons 1 --models residuallinearar2d linearar2d residualnonlinear2d nlinear dlinear revinmlp patchtst patchtst_noinorm patchtst_joint patchtst_nopatch --max-parallel 16\"",
+  "max_restarts": 4
  }
 ]
