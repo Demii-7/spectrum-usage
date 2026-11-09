@@ -196,8 +196,12 @@ def train_model(
             if bool(model_cfg.get("freeze_backbone_after_pretrain", False)):
                 model.freeze_backbone()
 
-    # Mean squared error between predictions and targets.
-    criterion = nn.MSELoss()
+    # Mean squared error between predictions and targets (train.loss: mae selects the absolute error instead; the metric
+    # we report is MAE in dB, so this removes the loss/metric mismatch for models that are otherwise unchanged).
+    loss_name = str(train_cfg.get("loss", "mse")).lower()
+    if loss_name not in {"mse", "mae"}:
+        raise ValueError(f"train.loss must be 'mse' or 'mae', got {loss_name!r}")
+    criterion = nn.L1Loss() if loss_name == "mae" else nn.MSELoss()
 
     # Shared default optimizer settings.
     learning_rate = float(

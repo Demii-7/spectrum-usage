@@ -15,6 +15,10 @@ Optional variants (model config keys; the defaults reproduce the original model 
                   "last": persistence, the last observation of the window repeated over the horizon. The correction
                   head then sees the window centred on that last observation (x - x_last) instead of on the mean, so
                   the model is still level-shift equivariant and starts as exactly persistence.
+                  "median": the median of the newest ``baseline_window`` window values (default the whole window), repeated
+                  over the horizon; like "last" the correction head sees the window centred on it, so the model starts as
+                  exactly that median and stays level-shift equivariant. The median ignores spikes, which revert almost
+                  completely on one-minute spectrum data, while dips persist.
 ``window_norm``   "none" (default), or "std": the deviations are divided by the window's standard deviation and the
                   head's output is multiplied back by it (instance normalization of the correction, as in RevIN
                   without the affine terms). The model is then equivariant to affine rescaling of the window.
@@ -51,8 +55,11 @@ class ResidualLinearAutoregressiveForecaster(nn.Module):
         model_config = config["model"]
         self.baseline_kind = str(model_config.get("baseline", "mean")).lower()
         self.window_norm = str(model_config.get("window_norm", "none")).lower()
-        if self.baseline_kind not in {"mean", "seasonal", "last"}:
-            raise ValueError(f"baseline must be 'mean', 'seasonal' or 'last', got {self.baseline_kind!r}")
+        if self.baseline_kind not in {"mean", "seasonal", "last", "median"}:
+            raise ValueError(f"baseline must be 'mean', 'seasonal', 'last' or 'median', got {self.baseline_kind!r}")
+        self.baseline_window = int(model_config.get("baseline_window") or model_config["input_sequence_length"])
+        if not 1 <= self.baseline_window <= int(model_config["input_sequence_length"]):
+            raise ValueError("baseline_window must be in [1, input_sequence_length]")
         if self.window_norm not in {"none", "std"}:
             raise ValueError(f"window_norm must be 'none' or 'std', got {self.window_norm!r}")
         self.baseline = LookbackMeanForecaster(config)
@@ -78,6 +85,10 @@ class ResidualLinearAutoregressiveForecaster(nn.Module):
             anchor = x[:, -1:]                                           # (B, 1, ...), the last observation
             base = anchor.expand(-1, self.residual.prediction_horizon, *([-1] * (x.dim() - 2)))
             mean = anchor                                                # centre the correction input on it
+        elif self.baseline_kind == "median":
+            anchor = x[:, -self.baseline_window:].median(dim=1, keepdim=True).values
+            base = anchor.expand(-1, self.residual.prediction_horizon, *([-1] * (x.dim() - 2)))
+            mean = anchor
         else:
             base = mean
         deviations = x - mean
