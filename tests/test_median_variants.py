@@ -35,3 +35,14 @@ def test_default_residual_model_is_unchanged():
     x = torch.randn(3, 6, 2)
     model = ResidualLinearAutoregressiveForecaster(_config(ridge_alpha=0.0))
     assert torch.allclose(model(x)[:, 0], x.mean(dim=1))
+
+
+def test_pick_k_selects_on_validation_only():
+    from training.ray.median_study import pick_k
+
+    rows = [{"statistic": "median", "k": 5, "range": "validation", "mae_t1": 1.0, "mae_t15": 2.0},
+            {"statistic": "median", "k": 30, "range": "validation", "mae_t1": 1.2, "mae_t15": 1.4},
+            {"statistic": "median", "k": 5, "range": "test", "mae_t1": 0.1, "mae_t15": 0.1},       # test rows never influence the pick
+            {"statistic": "mean", "k": 60, "range": "validation", "mae_t1": 0.0, "mae_t15": 0.0}]
+    assert pick_k(rows, "median", (1, 15)) == 30
+    assert pick_k(rows, "median", (1, 15), per_horizon=True) == {1: 5, 15: 30}
