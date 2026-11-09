@@ -124,6 +124,8 @@ def launch(args: argparse.Namespace) -> None:
                 if body.get("ok"):
                     done.add(obj["Key"])
     todo = [j for j in jobs if record_key(args.output_prefix, j) not in done]
+    if args.reverse:
+        todo.reverse()                 # a second driver on another cluster works from the other end, so two drivers rarely meet on a cell
     print(f"[spectral_context] {len(entries)} models, {len(regions)} regions, {len(args.seeds)} seeds: "
           f"{len(jobs)} cells, {len(jobs) - len(todo)} already done, {len(todo)} to run", flush=True)
     ray.init(address=args.address, ignore_reinit_error=True)
@@ -178,6 +180,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--max-parallel", type=int, default=8, help="most cells in flight at once (keeps the queue short for other jobs)")
     parser.add_argument("--gpu-fraction", type=float, default=0.25)
     parser.add_argument("--skip-done", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--reverse", action="store_true", help="process the remaining cells in reverse order (for a second driver on another cluster)")
     parser.add_argument("--bucket", default=None)
     parser.add_argument("--output-prefix", default="oct2026-spectral-context")
     parser.add_argument("--address", default="auto")

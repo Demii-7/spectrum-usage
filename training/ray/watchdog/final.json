@@ -13,5 +13,20 @@
   "id": "claude-final-h1-cheap-1",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_direct --resolution 15min --horizons 1 --models residuallinearar2d linearar2d residualnonlinear2d nlinear dlinear revinmlp patchtst patchtst_noinorm patchtst_joint patchtst_nopatch --max-parallel 16\"",
   "max_restarts": 4
+ },
+ {
+  "id": "claude-final-spectral-1min-r",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.spectral_context_fixed --bucket spectrum --max-parallel 6 --seeds 40 41 42 --reverse\"",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-final-spectral-15min-r",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.spectral_context_fixed --bucket spectrum --resolution 15min --output-prefix oct2026-spectral-context-15min --max-parallel 6 --seeds 40 41 42 --reverse\"",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-final-rescore-1dlstm-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.rescore --bucket spectrum --sources oct band --models vanillalstm1d residualvanillalstm --thin-1d-lstm 1 --output-prefix rescored-stride1 --skip-done --max-parallel 8\"",
+  "max_restarts": 3
  }
 ]
