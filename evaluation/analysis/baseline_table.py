@@ -34,7 +34,8 @@ def choose(rows: list[dict], horizons, mode: str, horizon: int):
         raise ValueError("no validation rows")
     if mode == "per_horizon":
         return min(val, key=lambda r: (r[f"mae_t{horizon}"], r["k"]))["k"]
-    return min(val, key=lambda r: (sum(r[f"mae_t{h}"] for h in horizons) / len(horizons), r["k"]))["k"]
+    present = [h for h in horizons if f"mae_t{h}" in val[0]] or [h for h in sorted(horizons)[:1]]
+    return min(val, key=lambda r: (sum(r[f"mae_t{h}"] for h in present) / len(present), r["k"]))["k"]
 
 
 def table(sweeps: dict[tuple, dict]) -> pd.DataFrame:
