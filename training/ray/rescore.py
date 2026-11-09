@@ -32,11 +32,15 @@ LINEAR = {"linearar1d", "linearar2d", "linearar4d", "residuallinearar1d", "resid
 LSTM_1D = {"vanillalstm1d", "residualvanillalstm"}
 
 
-def stride_for(entry: dict[str, Any], thin_1d_lstm: int = 10) -> int:
-    """1 everywhere; the 1-minute 1D LSTMs are thinned (one bin per window makes stride 1 about 30 million windows)."""
+def stride_for(entry: dict[str, Any], thin_1d_lstm: int = 10, thin_direct_1min: int = 1) -> int:
+    """1 everywhere; the 1-minute 1D LSTMs are thinned (one bin per window makes stride 1 about 30 million windows).
+
+    The 1-minute ``direct`` finals were first scored on every 15th test window (``tune_direct`` thinned them); the default here, 1,
+    re-scores them on every window from their saved weights. ``thin_direct_1min`` restores the old thinning if ever needed.
+    """
     one_minute = entry["source"] in ("oct", "band") or entry.get("resolution") == "1min"
     if entry["source"] == "direct" and entry.get("resolution") == "1min":
-        return 15                                    # as in tune_direct: the 1-minute test windows are thinned 15x (disclosed)
+        return thin_direct_1min
     return thin_1d_lstm if (one_minute and entry["rep"] == "1d" and entry["model"] in LSTM_1D) else 1
 
 
@@ -47,6 +51,8 @@ def memory_gb(entry: dict[str, Any]) -> float:
     one_minute = entry["source"] in ("oct", "band") or entry.get("resolution") == "1min"
     if entry["rep"] == "4d" and one_minute:
         return 110.0
+    if entry["rep"] == "2d" and one_minute:
+        return 12.0                                  # about 40,000 windows x 60 steps x 200 bins at stride 1, plus forecasts
     if entry["rep"] == "1d" and one_minute:
         return 45.0 if entry["model"] in LINEAR else 20.0
     return 6.0
@@ -79,7 +85,7 @@ def rescore_entry(entry: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]
 
     client, bucket = spectrum_s3_client(), args["bucket"]
     record: dict[str, Any] = {k: entry.get(k) for k in ("source", "prefix", "band", "rep", "model", "horizon", "seed", "pt_key")}
-    stride = stride_for(entry, args["thin_1d_lstm"])
+    stride = stride_for(entry, args["thin_1d_lstm"], args["thin_direct_1min"])
     record.update(test_start=args["test_start"], test_end=args["test_end"], test_stride=stride)
     started = time.time()
     try:
@@ -155,6 +161,8 @@ def main(argv=None) -> None:
     p.add_argument("--test-start", default=RANGE[0])
     p.add_argument("--test-end", default=RANGE[1])
     p.add_argument("--thin-1d-lstm", type=int, default=10)
+    p.add_argument("--thin-direct-1min", type=int, default=1, help="test-window stride for the 1-minute direct finals (1 = every window)")
+    p.add_argument("--resolution", choices=("1min", "15min"), help="only entries of this resolution (direct source)")
     p.add_argument("--gpu-fraction", type=float, default=0.25)
     p.add_argument("--device", default=None)
     p.add_argument("--skip-done", action="store_true", help="skip checkpoints that already have an ok record")
@@ -173,6 +181,8 @@ def main(argv=None) -> None:
     entries = discover_sources(client, bucket, args.sources, args.models)
     if args.seeds:
         entries = [e for e in entries if e["seed"] in args.seeds]
+    if args.resolution:
+        entries = [e for e in entries if e.get("resolution") == args.resolution]
     if args.skip_done:
         def done(entry):
             try:
@@ -183,7 +193,7 @@ def main(argv=None) -> None:
     print(f"[rescore] {len(entries)} checkpoints from {args.sources}", flush=True)
     ray.init(address=args.address, ignore_reinit_error=True)
     worker_args = {"repo_root": args.repo_root, "bucket": bucket, "test_start": args.test_start, "test_end": args.test_end,
-                   "thin_1d_lstm": args.thin_1d_lstm, "device": args.device, "output_prefix": args.output_prefix}
+                   "thin_1d_lstm": args.thin_1d_lstm, "thin_direct_1min": args.thin_direct_1min, "device": args.device, "output_prefix": args.output_prefix}
     from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 
     nodes = usable_nodes(ray)
