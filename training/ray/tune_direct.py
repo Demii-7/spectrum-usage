@@ -150,7 +150,8 @@ def draw(model: str, rng: random.Random) -> dict[str, Any]:
         return {"learning_rate": _loguniform(rng, 1e-4, 1e-2), "batch_size": rng.choice([16, 32, 64]),
                 "weight_decay": rng.choice([0.0, 1e-5, 1e-4])}
     if model in TIMERAN_FAMILY:
-        return {"learning_rate": _loguniform(rng, 1e-5, 1e-3), "batch_size": rng.choice([8, 16, 32]),
+        # batch 16 already uses 20.6 GB of a 24 GB RTX 6000 under full fine-tuning (smoke test 2026-11-09), so 32 is not offered
+        return {"learning_rate": _loguniform(rng, 1e-5, 1e-3), "batch_size": rng.choice([8, 16]),
                 "head_dropout": rng.choice([0.0, 0.1, 0.2]), "weight_decay": rng.choice([0.0, 1e-5, 1e-4])}
     if model == "revinmlp":
         return {"learning_rate": _loguniform(rng, 1e-4, 2e-3), "mlp_hidden": rng.choice([64, 128, 256]), "mlp_layers": rng.choice([1, 2, 3]),

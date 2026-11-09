@@ -1,0 +1,2 @@
+band_id,start_mhz,end_mhz,bin_count,behavior_category,is_noise_floor
+ALL,2400.5,2599.5,200,whole_band,false

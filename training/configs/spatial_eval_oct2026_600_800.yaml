@@ -1,0 +1,49 @@
+# October 2026 spatial evaluation, 600_800 MHz, 1-minute frozen checkpoints trained on the core four receivers.
+# Condition names are inherited from the July evaluator: six_to_new = core four -> law 73 (law 73 not in the input map),
+# eight_to_new = law 73 added to the input map; six_to_guesthouse / seven_to_guesthouse likewise for guest house.
+# All conditions are scored on the common test week; the grid stays the core-four grid the checkpoints were trained on,
+# so law 73 (outside it) is scored by extrapolation and flagged in the output. The validation_period_overlap flag in
+# the metadata is a leftover of the July setup and does not apply here.
+locations: data/locations/powder.json
+collection_key: endpoints
+regions: evaluation/analysis/plan_regions_600_800.csv
+baseline_receivers:
+- humanities
+- madsen
+- moran
+- sage point
+added_receivers:
+- law 73
+guesthouse_receiver: guest house
+grid:
+  height: 10
+  width: 10
+  power: 2.0
+lookback: 60
+horizons:
+- 1
+- 15
+- 60
+max_missing_gap: 9
+geometry_timing: &id001
+  start: '2026-10-27T20:00:00Z'
+  end: '2026-11-03T20:00:00Z'
+geometry_files:
+  humanities: data/powder/humanities-nuc1/20261025T1355Z/600_800/power_1mhz_avg_per_minute.csv
+  madsen: data/powder/madsen-nuc1/20261025T1355Z/600_800/power_1mhz_avg_per_minute.csv
+  moran: data/powder/moran-nuc1/20261025T1355Z/600_800/power_1mhz_avg_per_minute.csv
+  sage point: data/powder/sagepoint-nuc1/20261025T1355Z/600_800/power_1mhz_avg_per_minute.csv
+new_receiver_timing: *id001
+new_receiver_files:
+  humanities: data/powder/humanities-nuc1/20261025T1355Z/600_800/power_1mhz_avg_per_minute.csv
+  madsen: data/powder/madsen-nuc1/20261025T1355Z/600_800/power_1mhz_avg_per_minute.csv
+  moran: data/powder/moran-nuc1/20261025T1355Z/600_800/power_1mhz_avg_per_minute.csv
+  sage point: data/powder/sagepoint-nuc1/20261025T1355Z/600_800/power_1mhz_avg_per_minute.csv
+  law 73: data/powder/law73-nuc1/20261025T1355Z/600_800/power_1mhz_avg_per_minute.csv
+guesthouse_timing: *id001
+guesthouse_files:
+  humanities: data/powder/humanities-nuc1/20261025T1355Z/600_800/power_1mhz_avg_per_minute.csv
+  madsen: data/powder/madsen-nuc1/20261025T1355Z/600_800/power_1mhz_avg_per_minute.csv
+  moran: data/powder/moran-nuc1/20261025T1355Z/600_800/power_1mhz_avg_per_minute.csv
+  sage point: data/powder/sagepoint-nuc1/20261025T1355Z/600_800/power_1mhz_avg_per_minute.csv
+  guest house: data/powder/guesthouse-nuc1/20261025T1355Z/600_800/power_1mhz_avg_per_minute.csv
