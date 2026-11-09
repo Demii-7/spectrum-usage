@@ -18,5 +18,20 @@
   "id": "claude-rescore-direct15-3",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.rescore --bucket spectrum --output-prefix rescored --sources direct --resolution 15min --skip-done --max-parallel 4\"",
   "max_restarts": 3
+ },
+ {
+  "id": "claude-rescore-h1-p15tuned-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.rescore --bucket spectrum --sources p15tuned --horizons 1 4 12 24 48 --output-prefix rescored-h1 --skip-done --max-parallel 6\"",
+  "max_restarts": 3
+ },
+ {
+  "id": "claude-es-check-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_direct --resolution electrosense --bands spec25 --models ofa ofa_rand ofa_scratch --horizons 12 192 --seeds 40 41 42 --fixed-params '{\\\"learning_rate\\\": 0.000159, \\\"llm_layers\\\": 3, \\\"patch_length\\\": 32, \\\"patch_stride\\\": 32}' --output-prefix direct-tuning-es-check --max-parallel 6\"",
+  "max_restarts": 3
+ },
+ {
+  "id": "claude-rescore-direct1min-3",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.rescore --bucket spectrum --output-prefix rescored --sources direct --resolution 1min --models ofa --skip-done --max-parallel 2\"",
+  "max_restarts": 3
  }
 ]

@@ -80,3 +80,15 @@ def test_baseline_table_selects_on_validation_per_horizon():
     per = frame[(frame.selection == "per_horizon") & (frame.family == "median")].set_index("horizon")
     assert per.loc[1, "parameter_key"] == 5 and per.loc[4, "parameter_key"] == 30          # each horizon picks its own validation winner
     assert per.loc[1, "mae_db"] == 0.9 and per.loc[4, "mae_db"] == 1.1                        # test numbers at the chosen parameter
+
+
+def test_t15_table_summary():
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "evaluation" / "analysis"))
+    from t15_table import METRICS, summarize
+
+    records = [{key: 1.0 + i for key in METRICS.values()} for i in range(3)]
+    out = summarize(records, METRICS)
+    assert out["mae_db"] == 2.0 and out["n_seeds"] == 3 and abs(out["mae_sd"] - (2 / 3) ** 0.5) < 1e-9
