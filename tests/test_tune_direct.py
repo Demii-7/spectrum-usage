@@ -122,3 +122,16 @@ class TimeRANVariantTests:
                                  {"learning_rate": 1e-4, "batch_size": 8, "head_dropout": 0.2, "weight_decay": 1e-5})
         assert config["timeran"]["model"]["head_dropout"] == 0.2
         assert config["timeran"]["train"]["batch_size"] == 8
+
+
+def test_fixed_params_are_valid_for_the_ofa_family():
+    import json
+
+    from training.ray.tune_direct import MODEL_KEYS, TRAIN_KEYS, apply_params, template
+
+    params = json.loads('{"learning_rate": 0.000159, "llm_layers": 3, "patch_length": 32, "patch_stride": 32}')
+    assert set(params) <= MODEL_KEYS | set(TRAIN_KEYS)                    # every key is one apply_params knows
+    model, train = template("ofa", ".")
+    config = apply_params({"ofa": {"model": model, "train": train}}, "ofa", params)
+    assert config["ofa"]["model"]["llm_layers"] == 3 and config["ofa"]["model"]["patch_length"] == 32
+    assert config["ofa"]["train"]["learning_rate"] == 0.000159

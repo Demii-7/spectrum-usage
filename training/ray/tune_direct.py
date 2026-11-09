@@ -458,6 +458,9 @@ def main(argv=None) -> None:
     p.add_argument("--train-stride", action="append", default=[], metavar="MODEL=N", help="override a model's training-window stride")
     p.add_argument("--test-stride-1min", type=int, default=15, help="thinning of the 1-minute test windows")
     p.add_argument("--trials-only", action="store_true")
+    p.add_argument("--fixed-params", help="JSON object of hyperparameters: skip the search and run the finals of every model with exactly these "
+                   "settings (an equal-configuration comparison, or a pipeline check against a winner found elsewhere); use a separate "
+                   "--output-prefix")
     p.add_argument("--max-parallel", type=int, default=0, help="most tasks in flight at once (0 = no limit); keeps the queue short for other jobs")
     p.add_argument("--max-retries", type=int, default=3, help="Ray retries for a task whose node died (a lease ending mid-run)")
     p.add_argument("--bucket", default=None)
@@ -530,15 +533,20 @@ def main(argv=None) -> None:
     def finalize(model: str, band: str) -> None:
         nonlocal finals_total
         table = scores.get((model, band), {})
-        picked = pick_winner(table, tune_horizons)
-        if picked is None:
-            print(f"[tune-direct] no complete candidate for {model} {band}", flush=True)
-            return
-        index, value = picked
-        record = {"index": index, "mean_val_objective": value, "params": candidate_list(model, args.budget)[index],
-                  "default_mean_val_objective": (sum(table[0][h] for h in tune_horizons) / len(tune_horizons)
-                                                 if all(h in table.get(0, {}) for h in tune_horizons) else None),
-                  "tune_horizons": list(tune_horizons), "budget": args.budget}
+        if args.fixed_params:
+            index = "fixed"
+            record = {"index": index, "params": json.loads(args.fixed_params), "tune_horizons": None, "budget": None,
+                      "note": "no search: every model uses exactly these hyperparameters"}
+        else:
+            picked = pick_winner(table, tune_horizons)
+            if picked is None:
+                print(f"[tune-direct] no complete candidate for {model} {band}", flush=True)
+                return
+            index, value = picked
+            record = {"index": index, "mean_val_objective": value, "params": candidate_list(model, args.budget)[index],
+                      "default_mean_val_objective": (sum(table[0][h] for h in tune_horizons) / len(tune_horizons)
+                                                     if all(h in table.get(0, {}) for h in tune_horizons) else None),
+                      "tune_horizons": list(tune_horizons), "budget": args.budget}
         base = group(args.output_prefix, args.resolution, band, model)
         client.put_object(Bucket=bucket, Key=f"{base}/winners.json", Body=json.dumps(record, indent=1).encode())
         launched = 0
@@ -556,7 +564,7 @@ def main(argv=None) -> None:
     for model in args.models:
         for band in args.bands:
             base = group(args.output_prefix, args.resolution, band, model)
-            for index, params in enumerate(candidate_list(model, args.budget)):
+            for index, params in enumerate([] if args.fixed_params else candidate_list(model, args.budget)):
                 for horizon in tune_horizons:
                     record = _done(client, bucket, trial_key(base, index, horizon))
                     if record:
