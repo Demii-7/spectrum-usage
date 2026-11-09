@@ -36,8 +36,14 @@ from pathlib import Path
 from typing import Any
 
 BANDS = ("600_800", "2400_2600")
-GRID = {"1min": (5, 10, 15, 20, 30, 45, 60), "15min": (1, 2, 3, 4, 6, 8, 12, 24, 48, 96)}
-HORIZONS = {"1min": (1, 15, 60), "15min": (4, 12, 24, 48)}
+GRID = {"1min": (1, 5, 10, 15, 20, 30, 45, 60), "15min": (1, 2, 3, 4, 6, 8, 12, 24, 48, 96)}      # K = 1 is persistence
+HORIZONS = {"1min": (1, 15, 60), "15min": (1, 4, 12, 24, 48)}                                      # 15 minutes: the 1-step horizon (t+15 min) added
+SELECT_HORIZONS = {"1min": (1, 15, 60), "15min": (4, 12, 24, 48)}   # window selection uses the original horizons, so earlier selected K stay valid
+EWMA_GAINS = (0.5, 0.3, 0.2, 0.1, 0.05, 0.03, 0.02, 0.01)
+STATISTICS = ("median", "mean", "train_mean", "ewma", "kalman")
+TRAIN_RUN = "20261015T1434Z"
+TRAIN_RANGE = ("2026-10-15T14:34:00Z", "2026-10-22T13:13:00Z")
+CORE = ("humanities-nuc1", "madsen-nuc1", "moran-nuc1", "sagepoint-nuc1")
 VALIDATION = {"start": "2026-10-25T13:55:00Z", "end": "2026-10-27T13:55:00Z"}
 TEST = {"start": "2026-10-27T20:00:00Z", "end": "2026-11-03T20:00:00Z"}
 VARIANTS = {"ref": ("mean", "mse"), "mae": ("mean", "mae"), "median": ("median", "mse"), "median_mae": ("median", "mae")}
@@ -60,6 +66,38 @@ def pick_k(rows: list[dict[str, Any]], statistic: str, horizons, per_horizon: bo
     if per_horizon:
         return {h: min(table, key=lambda r: (r[f"mae_t{h}"], r["k"]))["k"] for h in horizons}
     return min(table, key=lambda r: (sum(r[f"mae_t{h}"] for h in horizons) / len(horizons), r["k"]))["k"]
+
+
+def train_gains(resolution: str, band: str, root: str) -> list[float]:
+    """Per-bin steady-state gain of the local-level Kalman filter, fitted on the training run of each core receiver and averaged
+    over the receivers (the pooled 2D model has one weight set per bin). Same fit as the level diagnostics (``fit_local_level``)."""
+    import numpy as np
+    import pandas as pd
+
+    from training.ray.level_diagnostics import fit_local_level
+
+    gains = []
+    for node in CORE:
+        path = (Path(root) / "data/powder" / node / TRAIN_RUN / band / "power_1mhz_avg_per_minute.csv" if resolution == "1min"
+                else Path(root) / "data/powder15" / node / TRAIN_RUN / band / "power_15min.csv")
+        frame = pd.read_csv(path)
+        stamps = pd.to_datetime(frame.iloc[:, 0], utc=True).dt.floor("min")
+        keep = (stamps >= pd.Timestamp(TRAIN_RANGE[0])) & (stamps <= pd.Timestamp(TRAIN_RANGE[1]))
+        gains.append(fit_local_level(frame.loc[keep].iloc[:, 1:].to_numpy(dtype=np.float64))["gain"])
+    return [float(v) for v in np.mean(gains, axis=0)]
+
+
+def parameter_grid(statistic: str, resolution: str, lookback: int, gains: list[float] | None) -> list[tuple[dict, int]]:
+    """(model settings, integer key stored as ``k``) for each parameter value of a statistic."""
+    if statistic in ("median", "mean"):
+        return [({"statistic": statistic, "window": int(k)}, int(k)) for k in sorted(set(GRID[resolution]) | {lookback})]
+    if statistic == "train_mean":
+        return [({"statistic": "train_mean"}, 0)]
+    if statistic == "ewma":                                                    # key = gain x 1000
+        return [({"statistic": "ewma", "gain": g, "window": lookback}, int(round(1000 * g))) for g in EWMA_GAINS]
+    if statistic == "kalman":                                                  # one fitted gain per bin
+        return [({"statistic": "ewma", "gain": gains, "window": lookback}, 0)]
+    raise ValueError(f"unknown statistic {statistic!r}")
 
 
 def sweep_config(resolution: str, band: str, root: str) -> tuple[dict[str, Any], str]:
@@ -119,11 +157,12 @@ def sweep_job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
             train_one_model(config, model, scratch / "run")
             checkpoint = next((scratch / "run" / "checkpoints").glob("*.pt"))
             horizons = HORIZONS[resolution]
-            for k in sorted(set(GRID[resolution]) | {lookback}):
+            gains = train_gains(resolution, band, root) if statistic == "kalman" else None
+            for params, k in parameter_grid(statistic, resolution, lookback, gains):
                 for range_name, window in (("validation", VALIDATION), ("test", TEST)):
                     trial = copy.deepcopy(config)
                     trial["data"]["split"]["ranges"]["test"] = dict(window)
-                    trial[model]["model"].update(statistic=statistic, window=int(k))
+                    trial[model]["model"].update(params)
                     out = scratch / f"eval-{statistic}-{k}-{range_name}"
                     out.mkdir()
                     evaluate_one_model(trial, model, out, checkpoint, skip_plots=True)
@@ -224,6 +263,8 @@ def main(argv=None) -> None:
     p.add_argument("--bands", nargs="+", default=list(BANDS), choices=BANDS)
     p.add_argument("--reps", nargs="+", default=["2d", "1d"], choices=("1d", "2d"))
     p.add_argument("--variants", nargs="+", default=list(VARIANTS), choices=list(VARIANTS))
+    p.add_argument("--statistics", nargs="+", default=list(STATISTICS), choices=list(STATISTICS),
+                   help="baseline statistics to sweep (median/mean over a window K; train mean; EWMA over gains; per-bin Kalman gain)")
     p.add_argument("--seeds", type=int, nargs="+", default=list(SEEDS))
     p.add_argument("--seeds-1d", type=int, nargs="+", default=[42], help="1D runs take 10-60+ minutes each; one seed (linear models show no seed spread)")
     p.add_argument("--thin-1d-1min", type=int, default=10, help="test-window stride for the 1-minute 1D models (memory)")
@@ -275,7 +316,7 @@ def main(argv=None) -> None:
     sweep_items, sweeps = [], {}
     for resolution in args.resolutions:
         for band in args.bands:
-            for statistic in ("median", "mean"):
+            for statistic in args.statistics:
                 key = f"{args.prefix.strip('/')}/sweep/{resolution}/{band}/{statistic}.json"
                 done = load(key) if (args.skip_sweep or args.skip_done) else None
                 if done and done.get("ok"):
@@ -290,7 +331,7 @@ def main(argv=None) -> None:
     selected = {}
     for (resolution, band, statistic), record in sorted(sweeps.items()):
         if statistic == "median":
-            horizons = HORIZONS[resolution]
+            horizons = SELECT_HORIZONS[resolution]
             selected[(resolution, band)] = {"k": pick_k(record["rows"], "median", horizons),
                                             "k_per_horizon": pick_k(record["rows"], "median", horizons, per_horizon=True)}
             print(f"[median-study] selected K {resolution} {band}: {selected[(resolution, band)]}", flush=True)
