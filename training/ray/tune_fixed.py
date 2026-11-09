@@ -35,7 +35,8 @@ DEFAULT_MODELS = (
     "vanillalstm:2d", "residualvanillalstm:2d", "lstmattn:2d", "temporalconvnet:2d", "autoformer_csa:2d",
     "linearar2d:2d", "residuallinearar2d:2d", "linearar1d:1d", "residuallinearar1d:1d",
 )
-SOURCE_DATASETS = {"electrosense": ("spec4", "spec25", "spec151"), "powder15": ("600_800", "2400_2600")}
+SOURCE_DATASETS = {"electrosense": ("spec4", "spec25", "spec151"), "powder15": ("600_800", "2400_2600"),
+                   "powder15_4d": ("600_800", "2400_2600")}    # 15-minute maps of the four core receivers (default IDW map, six-receiver grid frame)
 
 
 # ------------------------------------------------------------------------------------- search space
@@ -87,6 +88,18 @@ def base_config(source: str, dataset: str, model: str, rep: str, repo_root: str,
     from .final_eval import config_file_for, summarize_metrics
 
     base = yaml.safe_load(Path(config_file_for(model, rep)).read_text())
+    if source == "powder15_4d":
+        from .powder15 import CORE_NODES, HORIZONS, SPATIAL_NODES, apply_powder15_4d, ensure_powder15
+        from .spatial15 import GRID_DEFAULT, six_receiver_frame
+
+        ensure_powder15(dataset, repo_root, SPATIAL_NODES)
+        grid = {**GRID_DEFAULT, **six_receiver_frame(repo_root)}
+        # the map name matches spatial15's default variant, so both runners share one map cache per band
+        config = apply_powder15_4d(base, dataset, list(HORIZONS), CORE_NODES, grid, f"p15_{dataset}_core4-p2")
+
+        def metrics(eval_dir: Path) -> dict[str, Any]:
+            return summarize_metrics(pd.read_csv(eval_dir / "aggregate_metrics.csv").to_dict("records"))
+        return config, metrics
     if source == "electrosense":
         from .electrosense import HORIZONS, apply_dataset, ensure_dataset, standardized_from_per_frequency
 
@@ -231,8 +244,8 @@ def parse_models(tokens: list[str]) -> list[tuple[str, str]]:
     out = []
     for token in tokens:
         model, _, rep = token.partition(":")
-        if rep not in ("1d", "2d"):
-            raise ValueError(f"model token {token!r} must look like model:rep (rep 1d or 2d)")
+        if rep not in ("1d", "2d", "4d"):
+            raise ValueError(f"model token {token!r} must look like model:rep (rep 1d, 2d or 4d)")
         out.append((model, rep))
     return out
 
@@ -251,10 +264,29 @@ def launch(args: argparse.Namespace) -> None:
     def options(model: str) -> dict[str, Any]:
         resources = dict(get_model_spec(model).resources.as_ray())
         gpu = args.gpu_fraction if resources.get("gpu", 0) > 0 else 0
-        return {"num_cpus": resources["cpu"], "num_gpus": gpu, "max_retries": 1}
+        opts = {"num_cpus": resources["cpu"], "num_gpus": gpu, "max_retries": 1}
+        if args.memory_gb:
+            opts["memory"] = int(args.memory_gb * 2 ** 30)           # reserved host memory, so Ray never oversubscribes a node
+        return opts
+
+    def run_bounded(calls: list) -> list:
+        """Run (remote function, options, job) calls with at most --max-parallel in flight (0 = all at once, as before)."""
+        if args.max_parallel <= 0:
+            return ray.get([ray.remote(**opts)(fn).remote(job, worker_args) for fn, opts, job in calls])
+        queue, pending, results = list(calls), [], []
+        while queue or pending:
+            while queue and len(pending) < args.max_parallel:
+                fn, opts, job = queue.pop(0)
+                pending.append(ray.remote(**opts)(fn).remote(job, worker_args))
+            done_refs, pending = ray.wait(pending, num_returns=1)
+            results.append(ray.get(done_refs[0]))
+            row = results[-1]
+            print(f"[tune] {row.get('kind')} {row.get('dataset')} {row.get('rep')}/{row.get('model')} ok={row.get('ok')} "
+                  f"obj={row.get('objective')} ({row.get('wall_seconds')}s) [{len(queue) + len(pending)} left]", flush=True)
+        return results
 
     groups = []
-    trial_futures = []
+    trial_calls = []
     for dataset in args.datasets:
         for model, rep in parse_models(args.models):
             spec = get_model_spec(model, require_executable=True)
@@ -270,11 +302,11 @@ def launch(args: argparse.Namespace) -> None:
                     continue
                 job = {"source": args.source, "dataset": dataset, "model": model, "rep": rep, "prefix": prefix,
                        "parameters": params, "index": index}
-                trial_futures.append(ray.remote(**options(model))(trial_job).remote(job, worker_args))
-    print(f"[tune] {len(groups)} (dataset, model) groups; {len(trial_futures)} trials to run", flush=True)
-    ray.get(trial_futures)
+                trial_calls.append((trial_job, options(model), job))
+    print(f"[tune] {len(groups)} (dataset, model) groups; {len(trial_calls)} trials to run", flush=True)
+    run_bounded(trial_calls)
 
-    final_futures = []
+    final_calls = []
     winners = []
     for group in groups:
         trials = [r for r in read_records(client, bucket, group["prefix"]) if r.get("kind") == "trial"]
@@ -296,9 +328,9 @@ def launch(args: argparse.Namespace) -> None:
                    "prefix": group["prefix"], "parameters": winner["parameters"], "seed": seed,
                    "candidate_id": winner["candidate_id"], "search_objective": winner["objective"],
                    "budget": group["n"]}
-            final_futures.append(ray.remote(**options(group["model"]))(final_job).remote(job, worker_args))
-    print(f"[tune] {len(final_futures)} final seed runs", flush=True)
-    results = ray.get(final_futures)
+            final_calls.append((final_job, options(group["model"]), job))
+    print(f"[tune] {len(final_calls)} final seed runs", flush=True)
+    results = run_bounded(final_calls)
     stamp = time.strftime("%Y%m%dT%H%MZ", time.gmtime())
     for name, rows in (("winners", winners), ("finals", results)):
         buffer = io.StringIO()
@@ -317,6 +349,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--models", nargs="+", default=list(DEFAULT_MODELS), help="model:rep tokens")
     parser.add_argument("--budget", type=int, default=16)
     parser.add_argument("--gpu-fraction", type=float, default=0.25)
+    parser.add_argument("--max-parallel", type=int, default=0, help="most tasks in flight at once (0 = all at once)")
+    parser.add_argument("--memory-gb", type=float, default=0.0, help="host memory to reserve per task (0 = none)")
     parser.add_argument("--bucket", default=None)
     parser.add_argument("--output-prefix", default="tuning")
     parser.add_argument("--address", default="auto")
