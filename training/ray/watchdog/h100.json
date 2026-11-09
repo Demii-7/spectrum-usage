@@ -1,0 +1,12 @@
+[
+ {
+  "id": "claude-direct1min-timellm-2",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_direct --resolution 1min --bucket spectrum --output-prefix direct-tuning --models timellm\"",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-direct15-timellm-3",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_direct --resolution 15min --bucket spectrum --output-prefix direct-tuning --models timellm\"",
+  "max_restarts": 4
+ }
+]

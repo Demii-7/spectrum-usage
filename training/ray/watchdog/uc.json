@@ -1,0 +1,27 @@
+[
+ {
+  "id": "claude-uc-spatial-oct-2",
+  "entrypoint": "python -u -m training.ray.spatial_oct --max-parallel 12 --memory-gb 80 --permutations 5 --skip-done",
+  "max_restarts": 6
+ },
+ {
+  "id": "claude-uc-tune4d-linear-1",
+  "entrypoint": "python -u -m training.ray.tune_fixed --source powder15_4d --models linearar4d:4d residuallinearar4d:4d --max-parallel 16 --memory-gb 12",
+  "max_restarts": 6
+ },
+ {
+  "id": "claude-uc-tune4d-neural-1",
+  "entrypoint": "python -u -m training.ray.tune_fixed --source powder15_4d --models residualconvlstm:4d convlstm:4d --max-parallel 6 --gpu-fraction 0.5 --memory-gb 12",
+  "max_restarts": 6
+ },
+ {
+  "id": "claude-uc-tune4d-sts-1",
+  "entrypoint": "python -u -m training.ray.tune_fixed --source powder15_4d --models stsprednet:4d --max-parallel 2 --gpu-fraction 0.5 --memory-gb 12",
+  "max_restarts": 3
+ },
+ {
+  "id": "claude-uc-timeran15-2",
+  "entrypoint": "python -u -m training.ray.tune_direct --resolution 15min --models timeran_lp moment_lp --max-parallel 4",
+  "max_restarts": 6
+ }
+]
