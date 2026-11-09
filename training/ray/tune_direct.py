@@ -35,26 +35,45 @@ import yaml
 
 SEARCH_SEED, BUDGET = 42, 16
 FINAL_SEEDS = (40, 41, 42, 43, 44)
-TUNE_HORIZONS = {"15min": (4, 48), "1min": (1, 60)}
-FINAL_HORIZONS = {"15min": (4, 12, 24, 48), "1min": (1, 15, 60)}
+TUNE_HORIZONS = {"15min": (4, 48), "1min": (1, 60), "electrosense": (12, 192)}
+FINAL_HORIZONS = {"15min": (4, 12, 24, 48), "1min": (1, 15, 60), "electrosense": (12, 24, 48, 96, 192)}
+ES_DATASETS = ("spec4", "spec25", "spec151")
 BANDS = ("600_800", "2400_2600")
 PIPELINE_NAME = {"ofa": "ofa", "timellm": "spectrumllm", "patchtst": "patchtst", "dlinear": "dlinear",
-                 "residualnonlinear2d": "residualnonlinear2d", "ofa_rand": "ofa", "ofa_scratch": "ofa"}
+                 "residualnonlinear2d": "residualnonlinear2d", "ofa_rand": "ofa", "ofa_scratch": "ofa",
+                 # simple baselines and PatchTST ablations (cheap tests of what makes OFA and PatchTST work)
+                 "residuallinearar2d": "residuallinearar2d", "linearar2d": "linearar2d", "nlinear": "nlinear", "revinmlp": "revinmlp",
+                 "patchtst_noinorm": "patchtst", "patchtst_joint": "patchtst", "patchtst_nopatch": "patchtst"}
 # Controls for what the pretrained language model contributes: the same OFA architecture, tuned with the same 16 candidates.
 #   ofa_rand    random initialization, only layer norms and positional embeddings train (OFA's rule, so the frozen rest is random)
 #   ofa_scratch random initialization, every backbone weight trains (a transformer trained from scratch, like PatchTST)
+# PatchTST ablations, each with PatchTST's own 16 candidates and exactly one ingredient removed:
+#   patchtst_noinorm  no per-window normalization
+#   patchtst_joint    every patch token spans all channels (instead of one shared model per channel)
+#   patchtst_nopatch  one token per time step (patch length 1, stride 1)
 CONTROLS = {"ofa_rand": {"backbone_init": "random", "backbone_trainable": "ofa"},
-            "ofa_scratch": {"backbone_init": "random", "backbone_trainable": "all"}}
+            "ofa_scratch": {"backbone_init": "random", "backbone_trainable": "all"},
+            "patchtst_noinorm": {"instance_norm": False},
+            "patchtst_joint": {"channel_mode": "joint"},
+            "patchtst_nopatch": {"patch_length": 1, "patch_stride": 1}}
 OFA_FAMILY = ("ofa", "ofa_rand", "ofa_scratch")
+PATCHTST_FAMILY = ("patchtst", "patchtst_noinorm", "patchtst_joint", "patchtst_nopatch")
+LINEAR_FAMILY = ("residuallinearar2d", "linearar2d")
 
 
 def family(model: str) -> str:
-    """The model whose settings and candidate list ``model`` shares (the controls use OFA's)."""
-    return "ofa" if model in OFA_FAMILY else model
+    """The model whose settings and candidate list ``model`` shares (each control uses its parent's)."""
+    if model in OFA_FAMILY:
+        return "ofa"
+    return "patchtst" if model in PATCHTST_FAMILY else model
 # (CPUs, GPU share). Time-LLM peaks near 45-50 GB at the pipeline batch size, so it needs a share of 0.6 of a 93 GB H100; each task is also
 # capped to its share (torch memory fraction) so a task that outgrows it fails alone instead of starving its neighbours.
-RESOURCES = {"ofa": (4, 0.25), "ofa_rand": (4, 0.25), "ofa_scratch": (4, 0.25), "timellm": (4, 0.6), "patchtst": (4, 0.25), "dlinear": (2, 0.125), "residualnonlinear2d": (2, 0.125)}
-EPOCHS = {"ofa": 10, "ofa_rand": 10, "ofa_scratch": 10, "timellm": 10, "patchtst": 20, "dlinear": 20, "residualnonlinear2d": 10}
+RESOURCES = {"ofa": (4, 0.25), "ofa_rand": (4, 0.25), "ofa_scratch": (4, 0.25), "timellm": (4, 0.6), "patchtst": (4, 0.25), "dlinear": (2, 0.125),
+             "residualnonlinear2d": (2, 0.125), "residuallinearar2d": (2, 0.125), "linearar2d": (2, 0.125), "nlinear": (2, 0.125),
+             "revinmlp": (2, 0.125), "patchtst_noinorm": (4, 0.25), "patchtst_joint": (4, 0.25), "patchtst_nopatch": (4, 0.25)}
+EPOCHS = {"ofa": 10, "ofa_rand": 10, "ofa_scratch": 10, "timellm": 10, "patchtst": 20, "dlinear": 20, "residualnonlinear2d": 10,
+          "residuallinearar2d": 10, "linearar2d": 10, "nlinear": 20, "revinmlp": 20, "patchtst_noinorm": 20, "patchtst_joint": 20,
+          "patchtst_nopatch": 20}
 PATIENCE = 5
 MODEL_KEYS = {"patch_length", "patch_stride", "d_model", "d_ff", "llm_layers", "n_heads", "e_layers", "dropout", "moving_avg",
               "mlp_hidden", "mlp_layers", "mlp_dropout", "ridge_alpha"}
@@ -68,9 +87,17 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "patchtst": {"learning_rate": 5e-4, "d_model": 128, "n_heads": 4, "e_layers": 2, "d_ff": 256, "dropout": 0.1,
                  "patch_length": 16, "patch_stride": 8, "batch_size": 16},
     "dlinear": {"learning_rate": 1e-3, "moving_avg": 25, "batch_size": 32, "weight_decay": 0.0},
+    "residuallinearar2d": {"learning_rate": 1e-3, "ridge_alpha": 0.01, "batch_size": 64},
+    "linearar2d": {"learning_rate": 1e-3, "ridge_alpha": 0.01, "batch_size": 64},
+    "nlinear": {"learning_rate": 1e-3, "batch_size": 32, "weight_decay": 0.0},
+    "revinmlp": {"learning_rate": 5e-4, "mlp_hidden": 128, "mlp_layers": 2, "mlp_dropout": 0.1, "batch_size": 32},
     "residualnonlinear2d": {"learning_rate": 1e-3, "ridge_alpha": 0.01, "mlp_hidden": 64, "mlp_layers": 2, "mlp_dropout": 0.0,
                             "batch_size": 64},
 }
+for _control in ("patchtst_noinorm", "patchtst_joint", "patchtst_nopatch"):
+    DEFAULTS[_control] = dict(DEFAULTS["patchtst"])
+    if _control == "patchtst_nopatch":
+        DEFAULTS[_control].update(patch_length=1, patch_stride=1)
 
 
 def _loguniform(rng: random.Random, low: float, high: float) -> float:
@@ -86,7 +113,7 @@ def draw(model: str, rng: random.Random) -> dict[str, Any]:
         return llm
     if model == "timellm":
         return {**llm, "d_model": rng.choice([16, 32, 64]), "d_ff": rng.choice([32, 64, 128])}
-    if model == "patchtst":
+    if model in PATCHTST_FAMILY:
         patch = rng.choice([8, 16])
         return {"learning_rate": _loguniform(rng, 1e-4, 2e-3), "d_model": rng.choice([64, 128, 256]), "n_heads": rng.choice([4, 8]),
                 "e_layers": rng.choice([1, 2, 3]), "d_ff": rng.choice([128, 256, 512]), "dropout": rng.choice([0.0, 0.1, 0.2]),
@@ -98,6 +125,15 @@ def draw(model: str, rng: random.Random) -> dict[str, Any]:
         return {"learning_rate": _loguniform(rng, 1e-4, 1e-2), "ridge_alpha": rng.choice([1e-3, 1e-2, 1e-1]),
                 "mlp_hidden": rng.choice([32, 64, 128]), "mlp_layers": rng.choice([1, 2]), "mlp_dropout": rng.choice([0.0, 0.1]),
                 "batch_size": rng.choice([32, 64, 128])}
+    if model in LINEAR_FAMILY:                                       # the registry's space for the linear models (training/ray/registry.py)
+        return {"learning_rate": _loguniform(rng, 1e-5, 1e-2), "ridge_alpha": rng.choice([1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1.0, 10.0]),
+                "batch_size": rng.choice([32, 64, 128])}
+    if model == "nlinear":
+        return {"learning_rate": _loguniform(rng, 1e-4, 1e-2), "batch_size": rng.choice([16, 32, 64]),
+                "weight_decay": rng.choice([0.0, 1e-5, 1e-4])}
+    if model == "revinmlp":
+        return {"learning_rate": _loguniform(rng, 1e-4, 2e-3), "mlp_hidden": rng.choice([64, 128, 256]), "mlp_layers": rng.choice([1, 2, 3]),
+                "mlp_dropout": rng.choice([0.0, 0.1, 0.2]), "batch_size": rng.choice([16, 32, 64])}
     raise ValueError(f"unknown model {model!r}")
 
 
@@ -105,11 +141,15 @@ def candidate_list(model: str, budget: int = BUDGET, seed: int = SEARCH_SEED) ->
     """Candidate 0 is the model's default; the rest are distinct seeded draws (same list for every resolution and band)."""
     rng = random.Random(f"{seed}-{family(model)}")                    # the controls draw exactly OFA's candidates
     out = [dict(DEFAULTS[model])]
+    if model == "patchtst_nopatch":
+        out[0].update(patch_length=1, patch_stride=1)
     seen = {json.dumps(out[0], sort_keys=True)}
     attempts = 0
     while len(out) < budget and attempts < budget * 100:
         attempts += 1
         candidate = draw(model, rng)
+        if model == "patchtst_nopatch":                              # patching is removed: the patch draws are replaced, the rest is PatchTST's
+            candidate.update(patch_length=1, patch_stride=1)
         key = json.dumps(candidate, sort_keys=True)
         if key not in seen:
             seen.add(key)
@@ -121,6 +161,8 @@ def default_train_stride(model: str, resolution: str) -> int:
     """Disclosed thinning of the training windows: Time-LLM 2 at 15 minutes; 15 for every model at 1 minute."""
     if resolution == "1min":
         return 15
+    if resolution == "electrosense":
+        return 1                                                      # a tiny dataset: every window is used
     return 2 if model == "timellm" else 1
 
 
@@ -151,17 +193,28 @@ def template(model: str, repo_root: str) -> tuple[dict[str, Any], dict[str, Any]
 
 
 def build_config(model: str, resolution: str, band: str, horizon: int, seed: int, params: dict[str, Any], repo_root: str, *,
-                 train_stride: int, test_stride: int, device: str | None = None) -> tuple[dict[str, Any], str]:
-    """Pipeline config for one run of ``model``; returns (config, pipeline model name)."""
+                 train_stride: int, test_stride: int, device: str | None = None, client=None, bucket: str | None = None
+                 ) -> tuple[dict[str, Any], str]:
+    """Pipeline config for one run of ``model``; returns (config, pipeline model name).
+
+    ``resolution`` is "15min" or "1min" (POWDER, ``band`` = "600_800" or "2400_2600") or "electrosense" (``band`` = "spec4", "spec25" or
+    "spec151", the SpectrumLLM paper's protocol: 70/10/20 split, lookback 192; needs ``client`` and ``bucket`` to fetch the data).
+    """
     from training.ray.llm_powder import BASE_CONFIG, FINAL_TEST, RESOLUTIONS
 
-    name, spec = PIPELINE_NAME[model], RESOLUTIONS[resolution]
+    name = PIPELINE_NAME[model]
+    spec = RESOLUTIONS.get(resolution, {"lookback": 192})
     config = yaml.safe_load((Path(repo_root) / BASE_CONFIG).read_text())
     model_section, train_section = template(model, repo_root)
     config[name] = {"model": model_section, "train": train_section}
     config["training"] = {"models": [name], "device": device or "auto"}
     config["data"]["split"]["ranges"]["test"] = dict(FINAL_TEST)
-    if resolution == "15min":
+    if resolution == "electrosense":
+        from training.ray.electrosense import apply_dataset, ensure_dataset
+
+        series_path, stats = ensure_dataset(band, repo_root, bucket, client)
+        config = apply_dataset(config, series_path, stats, band, [horizon])
+    elif resolution == "15min":
         from training.ray.powder15 import apply_powder15
 
         config = apply_powder15(config, band, repo_root, [horizon])
@@ -173,12 +226,13 @@ def build_config(model: str, resolution: str, band: str, horizon: int, seed: int
     config[name]["model"].update(input_sequence_length=spec["lookback"], prediction_horizon=int(horizon))
     if model in OFA_FAMILY or model == "timellm":
         config[name]["model"]["channel_independent"] = True
-        config[name]["model"].update(CONTROLS.get(model, {}))
     config[name]["train"].update(train_stride=int(train_stride), val_stride=int(train_stride), test_stride=int(test_stride),
                                  epochs=EPOCHS[model], seed=int(seed), early_stopping=True, early_stopping_patience=PATIENCE)
     if model in OFA_FAMILY or model == "timellm":
         config[name]["train"]["batch_size"] = 4                          # the LLM runs' memory-safe default (llm_powder)
-    return apply_params(config, name, params), name
+    config = apply_params(config, name, params)
+    config[name]["model"].update(CONTROLS.get(model, {}))              # ablation flags last, so they win over a candidate's value
+    return config, name
 
 
 def pick_winner(scores: dict[int, dict[int, float]], horizons) -> tuple[int, float] | None:
@@ -231,12 +285,17 @@ def job(spec: dict[str, Any]) -> dict[str, Any]:
                               "train_stride": spec["train_stride"], "test_stride": spec["test_stride"]}
     started = time.time()
     try:
+        stats = None
         if resolution == "15min":
             from training.ray.powder15 import ensure_powder15
 
             ensure_powder15(band, root)
+        elif resolution == "electrosense":
+            from training.ray.electrosense import ensure_dataset
+
+            _, stats = ensure_dataset(band, root, bucket, client)
         config, name = build_config(model, resolution, band, horizon, seed, spec["params"], root, train_stride=spec["train_stride"],
-                                    test_stride=spec["test_stride"])
+                                    test_stride=spec["test_stride"], client=client, bucket=bucket)
         with tempfile.TemporaryDirectory(prefix="tune-direct-") as scratch:
             result = train_prepared(config, name, Path(scratch) / "run")
             record.update(objective=result["objective"], objective_name=result["objective_name"])
@@ -247,6 +306,10 @@ def job(spec: dict[str, Any]) -> dict[str, Any]:
                 eval_dir.mkdir()
                 evaluate_one_model(config, name, eval_dir, result["checkpoint"], skip_plots=True)
                 record.update(summarize_metrics(pd.read_csv(eval_dir / "aggregate_metrics.csv").to_dict("records")))
+                if stats is not None:                                    # ElectroSense: the paper's metric is raw MSE (and standardized, per bin)
+                    from training.ray.electrosense import standardized_from_per_frequency
+
+                    record.update(standardized_from_per_frequency(pd.read_csv(eval_dir / "per_frequency_metrics.csv"), stats))
                 import io
 
                 from training.ray.final_eval import per_bin_test_rows
@@ -303,8 +366,8 @@ def main(argv=None) -> None:
     import ray
 
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--resolution", choices=("15min", "1min"), required=True)
-    p.add_argument("--bands", nargs="+", default=list(BANDS), choices=list(BANDS))
+    p.add_argument("--resolution", choices=("15min", "1min", "electrosense"), required=True)
+    p.add_argument("--bands", nargs="+", help="POWDER bands (default both) or, with --resolution electrosense, datasets (default spec4 spec25)")
     p.add_argument("--models", nargs="+", default=list(PIPELINE_NAME), choices=list(PIPELINE_NAME))
     p.add_argument("--budget", type=int, default=BUDGET)
     p.add_argument("--seeds", type=int, nargs="+", default=list(FINAL_SEEDS))
@@ -312,12 +375,17 @@ def main(argv=None) -> None:
     p.add_argument("--train-stride", action="append", default=[], metavar="MODEL=N", help="override a model's training-window stride")
     p.add_argument("--test-stride-1min", type=int, default=15, help="thinning of the 1-minute test windows")
     p.add_argument("--trials-only", action="store_true")
+    p.add_argument("--max-parallel", type=int, default=0, help="most tasks in flight at once (0 = no limit); keeps the queue short for other jobs")
     p.add_argument("--max-retries", type=int, default=3, help="Ray retries for a task whose node died (a lease ending mid-run)")
     p.add_argument("--bucket", default=None)
     p.add_argument("--output-prefix", default="direct-tuning")
     p.add_argument("--address", default="auto")
     p.add_argument("--repo-root", default="/workspace/spectrum-usage")
     args = p.parse_args(argv)
+    args.bands = args.bands or (["spec4", "spec25"] if args.resolution == "electrosense" else list(BANDS))
+    allowed = ES_DATASETS if args.resolution == "electrosense" else BANDS
+    if any(b not in allowed for b in args.bands):
+        p.error(f"--bands must be among {allowed} for {args.resolution}")
     sys.path.insert(0, args.repo_root)
     from training.ray.storage import spectrum_s3_client
 
@@ -325,7 +393,7 @@ def main(argv=None) -> None:
     ray.init(address=args.address, ignore_reinit_error=True)
     client = spectrum_s3_client()
     overrides = {kv.split("=")[0]: int(kv.split("=")[1]) for kv in args.train_stride}
-    test_stride = 1 if args.resolution == "15min" else args.test_stride_1min
+    test_stride = args.test_stride_1min if args.resolution == "1min" else 1
     tune_horizons = TUNE_HORIZONS[args.resolution]
     final_horizons = tuple(args.horizons) if args.horizons else FINAL_HORIZONS[args.resolution]
     base_spec = {"repo_root": args.repo_root, "bucket": bucket, "output_prefix": args.output_prefix, "resolution": args.resolution,
@@ -341,9 +409,20 @@ def main(argv=None) -> None:
     trials_left: collections.Counter = collections.Counter()
     finals_total = 0
 
+    queue: list[tuple[str, tuple[str, str], dict[str, Any]]] = []
+
     def submit(spec: dict[str, Any]):
         cpus, gpus = RESOURCES[spec["model"]]
         return ray.remote(num_cpus=cpus, num_gpus=gpus, max_retries=args.max_retries)(job).remote(spec)
+
+    def pump() -> None:
+        while queue and (args.max_parallel <= 0 or len(pending) < args.max_parallel):
+            kind, grp, spec = queue.pop(0)
+            pending[submit(spec)] = (kind, grp)
+
+    def enqueue(kind: str, grp: tuple[str, str], spec: dict[str, Any]) -> None:
+        queue.append((kind, grp, spec))
+        pump()
 
     def finalize(model: str, band: str) -> None:
         nonlocal finals_total
@@ -363,8 +442,9 @@ def main(argv=None) -> None:
         for horizon in final_horizons:
             for seed in args.seeds:
                 if not _done(client, bucket, final_key(base, horizon, seed)):
-                    pending[submit({**base_spec, "kind": "final", "model": model, "band": band, "index": index, "horizon": horizon,
-                                    "seed": seed, "params": record["params"], "train_stride": stride(model)})] = ("final", (model, band))
+                    enqueue("final", (model, band), {**base_spec, "kind": "final", "model": model, "band": band, "index": index,
+                                                     "horizon": horizon, "seed": seed, "params": record["params"],
+                                                     "train_stride": stride(model)})
                     launched += 1
         finals_total += launched
         print(f"[tune-direct] winner {model}/{band}: candidate {index}; {launched} finals launched", flush=True)
@@ -379,8 +459,9 @@ def main(argv=None) -> None:
                     if record:
                         scores.setdefault((model, band), {}).setdefault(index, {})[horizon] = float(record["objective"])
                     else:
-                        pending[submit({**base_spec, "kind": "trial", "model": model, "band": band, "index": index, "horizon": horizon,
-                                        "seed": SEARCH_SEED, "params": params, "train_stride": stride(model)})] = ("trial", (model, band))
+                        enqueue("trial", (model, band), {**base_spec, "kind": "trial", "model": model, "band": band, "index": index,
+                                                         "horizon": horizon, "seed": SEARCH_SEED, "params": params,
+                                                         "train_stride": stride(model)})
                         trials_left[(model, band)] += 1
                         trials_total += 1
     print(f"[tune-direct] {trials_total} trials to run (training stride {({m: stride(m) for m in args.models})}), pipelined per group",
@@ -390,7 +471,7 @@ def main(argv=None) -> None:
             for band in args.bands:
                 if trials_left[(model, band)] == 0:
                     finalize(model, band)                     # nothing to wait for: its trials were all done already
-    while pending:
+    while pending or queue:
         done_refs, _ = ray.wait(list(pending), num_returns=1)
         ref = done_refs[0]
         kind, (model, band) = pending.pop(ref)
@@ -408,6 +489,7 @@ def main(argv=None) -> None:
             trials_left[(model, band)] -= 1
             if trials_left[(model, band)] == 0 and not args.trials_only:
                 finalize(model, band)
+        pump()
     print(f"[tune-direct] done ({finals_total} finals launched)", flush=True)
 
 if __name__ == "__main__":

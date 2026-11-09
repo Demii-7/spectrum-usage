@@ -66,3 +66,36 @@ def test_pick_winner_and_keys():
     b = group("p/", "15min", "600_800", "ofa")
     assert trial_key(b, 3, 4) == "p/15min/600_800/ofa/trials/c03_h4.json" and final_key(b, 48, 40) == "p/15min/600_800/ofa/finals/h48/seed-40.json"
     assert FINAL_HORIZONS["15min"] == (4, 12, 24, 48)
+
+
+def test_patchtst_ablations_share_patchtsts_candidates_except_the_removed_ingredient():
+    base = candidate_list("patchtst")
+    for model, flag in (("patchtst_noinorm", {"instance_norm": False}), ("patchtst_joint", {"channel_mode": "joint"})):
+        assert candidate_list(model) == base
+        config, name = build_config(model, "15min", "600_800", 48, 42, base[2], ROOT, train_stride=1, test_stride=1)
+        assert name == "patchtst" and all(config["patchtst"]["model"][k] == v for k, v in flag.items())
+    nopatch = candidate_list("patchtst_nopatch")
+    assert all(p["patch_length"] == 1 and p["patch_stride"] == 1 for p in nopatch) and len(nopatch) == BUDGET
+    assert [{k: v for k, v in p.items() if not k.startswith("patch_")} for p in nopatch] == \
+           [{k: v for k, v in p.items() if not k.startswith("patch_")} for p in base] or len({tuple(sorted(p.items())) for p in nopatch}) == BUDGET
+    config, _ = build_config("patchtst_nopatch", "1min", "2400_2600", 60, 42, nopatch[3], ROOT, train_stride=15, test_stride=15)
+    assert config["patchtst"]["model"]["patch_length"] == 1 and "instance_norm" not in config["patchtst"]["model"]
+
+
+def test_linear_models_use_the_registry_space():
+    from training.ray.registry import get_model_spec  # the campaign's own space, for reference
+
+    for model in ("residuallinearar2d", "linearar2d"):
+        cands = candidate_list(model)
+        assert cands[0] == {"learning_rate": 1e-3, "ridge_alpha": 0.01, "batch_size": 64}
+        assert {c["ridge_alpha"] for c in cands} <= {1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1.0, 10.0}
+        assert all(1e-5 <= c["learning_rate"] <= 1e-2 and c["batch_size"] in (32, 64, 128) for c in cands[1:])
+        config, name = build_config(model, "15min", "600_800", 4, 42, cands[1], ROOT, train_stride=1, test_stride=1)
+        assert name == model and config[model]["model"]["ridge_alpha"] == cands[1]["ridge_alpha"] and config[model]["train"]["weight_decay"] == 0.0
+
+
+def test_electrosense_horizons_and_strides():
+    from training.ray.tune_direct import TUNE_HORIZONS
+
+    assert TUNE_HORIZONS["electrosense"] == (12, 192) and FINAL_HORIZONS["electrosense"] == (12, 24, 48, 96, 192)
+    assert default_train_stride("patchtst", "electrosense") == 1 and default_train_stride("timellm", "electrosense") == 1

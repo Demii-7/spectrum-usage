@@ -46,6 +46,8 @@ SUPPORTED_MODELS = {
     "dlinear",       # TSLib DLinear port (models/DLinear.py), direct multi-step
     "patchtst",      # channel-independent PatchTST (models/PatchTST.py)
     "residualnonlinear2d",  # ResidualLinearAR + nonlinear MLP correction head
+    "nlinear",       # linear forecaster with last-value normalization (models/NLinear.py)
+    "revinmlp",      # instance-normalized channel-shared MLP (models/RevINMLP.py)
     "vanillalstm",
     "vanillalstm1d",
     "convlstm",
@@ -103,7 +105,7 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
         return SpectrumLLMForecaster(predictor_config)
 
 
-    if model_name in ("dlinear", "patchtst", "residualnonlinear2d"):
+    if model_name in ("dlinear", "patchtst", "residualnonlinear2d", "nlinear", "revinmlp"):
         if train_data.ndim != 2:
             raise ValueError(
                 f"Error! {model_name} expects training data shaped "
@@ -119,6 +121,14 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
             from models.DLinear import DLinearForecaster
 
             return DLinearForecaster(predictor_config)
+        if model_name == "nlinear":
+            from models.NLinear import NLinearForecaster
+
+            return NLinearForecaster(predictor_config)
+        if model_name == "revinmlp":
+            from models.RevINMLP import RevINMLPForecaster
+
+            return RevINMLPForecaster(predictor_config)
         if model_name == "patchtst":
             from models.PatchTST import PatchTSTForecaster
 
