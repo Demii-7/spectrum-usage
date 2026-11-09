@@ -76,6 +76,9 @@ def rescore_entry(entry: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]
     """Remote worker: download one checkpoint, evaluate it on the common range, return a record."""
     sys.path.insert(0, args["repo_root"])
     os.chdir(args["repo_root"])
+    from training.ray.llm_powder import use_isolated_libs
+
+    use_isolated_libs()                  # transformers lives in /workspace/pylibs on workers (OFA / Time-LLM checkpoints need it)
     import pandas as pd
 
     from training.common import evaluation_integrated as ei
