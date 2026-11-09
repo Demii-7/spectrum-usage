@@ -528,6 +528,12 @@ def evaluate_condition(
     summary["mean_horizon_mae_db"] = float(
         np.mean([summary[f"mae_db_t{horizon}"] for horizon in horizons])
     )
+    # The same error over ALL bins (the definition every other benchmark table uses), count-weighted across regions.
+    for horizon in horizons:
+        rows = [row for row in metric_rows if row["horizon"] == horizon]
+        weights = np.asarray([row["count"] for row in rows], dtype=np.float64)
+        summary[f"mae_db_all_bins_t{horizon}"] = float(np.average([row["mae_db"] for row in rows], weights=weights))
+    summary["mean_horizon_mae_db_all_bins"] = float(np.mean([summary[f"mae_db_all_bins_t{h}"] for h in horizons]))
     (output_directory / "result.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )

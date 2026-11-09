@@ -39,6 +39,30 @@ SOURCE_DATASETS = {"electrosense": ("spec4", "spec25", "spec151"), "powder15": (
                    "powder15_4d": ("600_800", "2400_2600")}    # 15-minute maps of the four core receivers (default IDW map, six-receiver grid frame)
 
 
+# STS-PredNet keeps its own flat config (training/STS-PredNet/train_integrated.py reads batch_size, epochs, learning_rate ... directly
+# from the model's section). Only the recent-history (closeness) branch is enabled, with ``lc`` set to the dataset's lookback so it sees
+# the same input window as every other model; the daily and weekly branches stay off (``daily history`` is a separate experiment).
+STS_SECTION = {
+    "use_closeness": True, "use_period": False, "use_trend": False, "allow_unavailable_branches": False,
+    "lc": 96, "lp": 1, "lq": 1, "period_interval": 1, "trend_interval": 1, "prediction_offset": 1, "share_branch_weights": False,
+    "batch_size": 2, "epochs": 20, "learning_rate": 2e-4, "weight_decay": 0.0, "gradient_clip_norm": 5.0,
+    "early_stopping_patience": 20, "seed": 42,
+    "model": {"input_channels": 1, "map_height": 1, "hidden_dim": 32, "num_layers": 1, "kernel_size": [3, 3],
+              "output_activation": "none", "fusion_weight_shape": "per_location", "output_channels": 1},
+}
+
+
+def tuning_base(model: str, rep: str) -> dict[str, Any]:
+    """The October tuning config for ``model``; STS-PredNet has no entry in the campaign plan, so its section is added here."""
+    from .final_eval import config_file_for
+
+    if model == "stsprednet":
+        base = yaml.safe_load(Path(config_file_for("residualconvlstm", "4d")).read_text())
+        base["stsprednet"] = json.loads(json.dumps(STS_SECTION))
+        return base
+    return yaml.safe_load(Path(config_file_for(model, rep)).read_text())
+
+
 # ------------------------------------------------------------------------------------- search space
 def draw(domain, rng: random.Random):
     """One sample from a registry Domain (choice / uniform / loguniform / randint)."""
@@ -87,7 +111,7 @@ def base_config(source: str, dataset: str, model: str, rep: str, repo_root: str,
     """(config, metric_fn): the model's tuning config pointed at the dataset, plus a test-metrics extractor."""
     from .final_eval import config_file_for, summarize_metrics
 
-    base = yaml.safe_load(Path(config_file_for(model, rep)).read_text())
+    base = tuning_base(model, rep)
     if source == "powder15_4d":
         from .powder15 import CORE_NODES, HORIZONS, SPATIAL_NODES, apply_powder15_4d, ensure_powder15
         from .spatial15 import GRID_DEFAULT, six_receiver_frame

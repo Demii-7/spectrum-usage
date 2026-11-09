@@ -147,8 +147,9 @@ def set_lookback_and_horizon(config: dict[str, Any], model: str, direct_horizon:
     config = copy.deepcopy(config)
     config[model]["model"]["input_sequence_length"] = LOOKBACK
     config[model]["model"]["prediction_horizon"] = int(direct_horizon) if direct_horizon else 1
-    for key in ("train_stride", "val_stride", "test_stride"):
-        config[model]["train"][key] = 1
+    if "train" in config[model]:        # STS-PredNet has a flat section without one (it samples its own windows)
+        for key in ("train_stride", "val_stride", "test_stride"):
+            config[model]["train"][key] = 1
     return config
 
 
