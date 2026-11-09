@@ -33,12 +33,16 @@ def upload_node(args: dict) -> dict:
 
     client, bucket = spectrum_s3_client(), args["bucket"]
     root = Path(args["root"])
-    counts = {"present": 0, "uploaded": 0, "conflict": 0, "failed": 0}
+    counts = {"present": 0, "uploaded": 0, "conflict": 0, "failed": 0, "vanished": 0}
     bytes_up, conflicts, failures = 0, [], []
     started = time.time()
     for path in sorted(p for p in root.rglob("*") if p.is_file()):
         key = f"{args['prefix'].strip('/')}/{path.relative_to(root).as_posix()}"
-        size = path.stat().st_size
+        try:
+            size = path.stat().st_size
+        except FileNotFoundError:           # removed by someone else after the directory walk (for example a cleanup running at the same time)
+            counts["vanished"] += 1
+            continue
         try:
             try:
                 remote = client.head_object(Bucket=bucket, Key=key)["ContentLength"]
