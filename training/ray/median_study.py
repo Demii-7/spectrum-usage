@@ -128,9 +128,19 @@ def sweep_job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
                     out.mkdir()
                     evaluate_one_model(trial, model, out, checkpoint, skip_plots=True)
                     summary = summarize_metrics(pd.read_csv(out / "aggregate_metrics.csv").to_dict("records"))
+                    # every metric (MAE, MSE, RMSE, both MAPEs; per horizon and mean) is kept, not only the MAE used for selection
                     rows.append({"statistic": statistic, "k": int(k), "range": range_name,
                                  **{f"mae_t{h}": summary[f"test_mae_db_t{h}"] for h in horizons},
-                                 "mae_mean": summary["test_mean_horizon_mae_db"]})
+                                 "mae_mean": summary["test_mean_horizon_mae_db"], "metrics": summary})
+                    if range_name == "test":
+                        from training.ray.final_eval import per_bin_test_rows
+
+                        table = per_bin_test_rows(pd.read_csv(out / "per_frequency_metrics.csv"),
+                                                  {"resolution": resolution, "band": band, "statistic": statistic, "k": int(k)})
+                        buffer = io.StringIO()
+                        table.to_csv(buffer, index=False)
+                        client.put_object(Bucket=bucket, Key=f"{args['prefix'].strip('/')}/sweep/{resolution}/{band}/per-bin/"
+                                                             f"{statistic}_k{int(k)}.csv", Body=buffer.getvalue().encode())
         record.update(rows=rows, lookback=lookback, ok=True)
     except Exception as error:
         import traceback
