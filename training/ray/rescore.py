@@ -100,6 +100,10 @@ def rescore_entry(entry: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]
             name = entry.get("pipeline", entry["model"])
             config["data"]["split"]["ranges"]["test"] = {"start": args["test_start"], "end": args["test_end"]}
             config[name].setdefault("train", {})["test_stride"] = int(stride)
+            if args.get("horizons") and int(config[name]["model"].get("prediction_horizon", 1)) == 1:
+                # one-step models are rolled out, so any horizon can be scored (direct models only have the one they were trained for)
+                config["windowing"]["horizons"] = sorted({int(h) for h in args["horizons"]})
+                record["horizons"] = config["windowing"]["horizons"]
             out_dir = scratch / "eval"
             out_dir.mkdir()
             ei.evaluate_one_model(config, name, out_dir, checkpoint, skip_plots=True)
@@ -164,6 +168,8 @@ def main(argv=None) -> None:
     p.add_argument("--test-start", default=RANGE[0])
     p.add_argument("--test-end", default=RANGE[1])
     p.add_argument("--thin-1d-lstm", type=int, default=10)
+    p.add_argument("--horizons", type=int, nargs="+", help="override the windowing horizons for one-step (rolled-out) models, "
+                   "for example 1 4 12 24 48 to add t+15 minutes at 15-minute resolution; direct models keep their own")
     p.add_argument("--thin-direct-1min", type=int, default=1, help="test-window stride for the 1-minute direct finals (1 = every window)")
     p.add_argument("--resolution", choices=("1min", "15min"), help="only entries of this resolution (direct source)")
     p.add_argument("--gpu-fraction", type=float, default=0.25)
@@ -196,7 +202,8 @@ def main(argv=None) -> None:
     print(f"[rescore] {len(entries)} checkpoints from {args.sources}", flush=True)
     ray.init(address=args.address, ignore_reinit_error=True)
     worker_args = {"repo_root": args.repo_root, "bucket": bucket, "test_start": args.test_start, "test_end": args.test_end,
-                   "thin_1d_lstm": args.thin_1d_lstm, "thin_direct_1min": args.thin_direct_1min, "device": args.device, "output_prefix": args.output_prefix}
+                   "thin_1d_lstm": args.thin_1d_lstm, "thin_direct_1min": args.thin_direct_1min, "device": args.device, "output_prefix": args.output_prefix,
+                   "horizons": args.horizons}
     from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 
     nodes = usable_nodes(ray)
