@@ -46,7 +46,7 @@ T_IN = 20
 K_OUT = 20
 SAMPLE_EVERY = 50
 DATASETS = {"fm": "FM-Spectrum-Dataset", "crossval": "Cross-Validation-Spectrum-Dataset"}
-WINDOWS = ("hann126", "hamm128", "rect126", "tukey126", "tukey126d", "tukey224", "tukey224d", "rect126d")
+WINDOWS = ("hann126", "hamm128", "rect126", "tukey126", "tukey126d", "tukey224", "tukey224d", "rect126d", "hann128s")
 VARIANTS = [
     # (name, window, scaling, post, gray)
     ("hann126_glob_raw", "hann126", "glob", "raw", False),        # collaborator raw (sanity: persistence ~1559-1615)
@@ -121,11 +121,21 @@ def spectrogram_db(x: np.ndarray, window: str) -> np.ndarray:
         eps = 10.0 ** (-int(e))
     detrend = window.endswith("d")
     base = window[:-1] if detrend else window
+    stft_style = base.endswith("s")  # scipy.signal.stft(boundary='zeros', padded=True): zero-pad nper//2 each side, then to a whole number of hops
+    if stft_style:
+        base = base[:-1]
     center = base.endswith("c")  # torch.stft(center=True): reflect-pad nper//2 each side, 1 + len//hop frames
     if center:
         base = base[:-1]
     tail = int(base.lstrip("abcdefghijklmnopqrstuvwxyz"))
-    if center:
+    if stft_style:
+        hop = tail
+        x = np.concatenate([np.zeros(nper // 2, x.dtype), x, np.zeros(nper // 2, x.dtype)])
+        rem = (len(x) - nper) % hop
+        if rem:
+            x = np.concatenate([x, np.zeros(hop - rem, x.dtype)])
+        starts = np.arange((len(x) - nper) // hop + 1) * hop
+    elif center:
         n0 = len(x)
         x = np.pad(x, nper // 2, mode="reflect")
         hop = tail
