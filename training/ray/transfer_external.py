@@ -9,7 +9,8 @@ Targets are frozen BEFORE any model is scored (``freeze`` writes ``evaluation/an
 that file and never recomputes it):
 * one target per (platform, site, run, band) whose files exist for a band we have checkpoints for (600_800, 2400_2600; 3500_3700 has no
   checkpoint and is skipped);
-* the longest segment of the raw 1-minute trace with no gap longer than 10 minutes (the 1-minute trace is first cut to that segment, so no
+* the longest segment of the raw 1-minute trace with no gap longer than 10 minutes, where a row with every bin NaN counts as a missing
+  minute (the 1-minute trace is first cut to that segment, so no
   15-minute interpolation ever has to bridge a long gap);
 * converted with the core experiments' 15-minute preprocessing (UTC-aligned 15-minute blocks, mean in linear power converted back to dB,
   a block needs 12 of its 15 minutes, interpolation in dB over at most 16 blocks); the share of blocks interpolated is recorded;
@@ -102,6 +103,9 @@ def convert(repo_root: str, target: dict[str, Any], start: pd.Timestamp | None =
     stamps = pd.to_datetime(frame.pop("timestamp_utc"), utc=True).dt.floor("min")
     frame.index = stamps
     frame = frame[~frame.index.duplicated(keep="first")].sort_index()
+    frame = frame.dropna(how="all")                 # a row with no valid bin is a missing minute, not a sample
+    if frame.empty:
+        raise ValueError("no valid rows in the band")
     seg_start, seg_end = (start, end) if start is not None else longest_segment(frame.index)
     frame = frame.loc[seg_start:seg_end].reindex(pd.date_range(seg_start, seg_end, freq="min"))
     blocks = block_average_db(frame)
@@ -121,11 +125,39 @@ def convert(repo_root: str, target: dict[str, Any], start: pd.Timestamp | None =
     return facts
 
 
+def diagnose(target: dict[str, Any]) -> str:
+    """Why a conversion failed: minutes present in the longest raw segment and the share of 15-minute blocks that are valid."""
+    try:
+        from training.ray.powder15 import MIN_VALID_FRACTION
+
+        header = pd.read_csv(target["raw"], nrows=0).columns
+        first_col = next(c for c in header if c != "timestamp_utc")
+        frame = pd.read_csv(target["raw"], usecols=["timestamp_utc", first_col])
+        stamps = pd.to_datetime(frame.pop("timestamp_utc"), utc=True).dt.floor("min")
+        frame.index = stamps
+        frame = frame[~frame.index.duplicated(keep="first")].sort_index()
+        start, end = longest_segment(frame.index)
+        seg = frame.loc[start:end].iloc[:, 0]
+        minutes = int((end - start).total_seconds() // 60) + 1
+        counts = seg.notna().groupby(seg.index.floor("15min")).sum()
+        need = int(np.ceil(MIN_VALID_FRACTION * 15))
+        return (f"longest segment {minutes} min with {len(seg)} samples ({len(seg) / minutes:.2f} per minute); "
+                f"{float((counts >= need).mean()):.2f} of 15-minute blocks have >= {need} valid minutes")
+    except Exception as error:
+        return f"diagnosis failed: {error}"
+
+
 def freeze(repo_root: str, out_csv: str) -> pd.DataFrame:
     """Write the frozen target table (every candidate, with the reason when it is excluded)."""
     rows = []
     for target in raw_files(repo_root):
-        facts = convert(repo_root, target)
+        try:
+            facts = convert(repo_root, target)
+        except Exception as error:                      # recorded with the reason, never scored
+            rows.append({**{k: target[k] for k in ("platform", "site", "run", "band")},
+                         "raw": str(Path(target["raw"]).relative_to(repo_root)), "blocks": 0, "n_origins": 0, "use": False,
+                         "reason": f"15-minute conversion failed: {type(error).__name__}: {error}"[:300] + " | " + diagnose(target)})
+            continue
         first, last = pd.Timestamp(facts["first_block"]), pd.Timestamp(facts["last_block"])
         n_origins = facts["blocks"] - LOOKBACK - MAX_HORIZON + 1
         use = n_origins >= MIN_ORIGINS
