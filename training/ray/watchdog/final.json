@@ -28,5 +28,10 @@
   "id": "claude-final-rescore-1dlstm-1",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.rescore --bucket spectrum --sources oct band --models vanillalstm1d residualvanillalstm --thin-1d-lstm 1 --output-prefix rescored-stride1 --skip-done --max-parallel 8\"",
   "max_restarts": 3
+ },
+ {
+  "id": "claude-final-es-repro-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.es_repro_seeds --arms ofa_gpt2 timellm_gpt2 timellm_bert --seeds 0 1 2 3 4 --skip-done --max-parallel 8\"",
+  "max_restarts": 3
  }
 ]
