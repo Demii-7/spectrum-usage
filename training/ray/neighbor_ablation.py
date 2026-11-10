@@ -124,7 +124,7 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
                                            model_name=model, seed=seed, condition="geometry_correct", output_directory=out,
                                            batch_size=args["batch_size"], device="cpu",
                                            series_transform=make_transform(receiver_index, mode, shift))
-                        with np.load(out / "receiver_forecasts.npz") as npz:
+                        with np.load(out / "receiver_forecasts.npz", allow_pickle=True) as npz:
                             errors = per_origin_errors(npz, receiver_index, normalization)
                         for name, array in errors.items():
                             collected[f"{receiver}|{mode_name}|{name}"] = array
