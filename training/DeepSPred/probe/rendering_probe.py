@@ -46,7 +46,7 @@ T_IN = 20
 K_OUT = 20
 SAMPLE_EVERY = 50
 DATASETS = {"fm": "FM-Spectrum-Dataset", "crossval": "Cross-Validation-Spectrum-Dataset"}
-WINDOWS = ("hann126", "hamm128", "rect126", "tukey126", "tukey126d", "tukey224")
+WINDOWS = ("hann126", "hamm128", "rect126", "tukey126", "tukey126d", "tukey224", "tukey224d")
 VARIANTS = [
     # (name, window, scaling, post, gray)
     ("hann126_glob_raw", "hann126", "glob", "raw", False),        # collaborator raw (sanity: persistence ~1559-1615)

@@ -74,6 +74,10 @@ TUKEY_VARIANTS = {
     "tukey126_glob_raw": ("tukey126", 0, "glob", "raw"),
     "tukey126d_glob_raw": ("tukey126d", 0, "glob", "raw"),
     "tukey224_glob_raw": ("tukey224", 0, "glob", "raw"),
+    "tukey224d_glob_raw": ("tukey224d", 0, "glob", "raw"),  # scipy.signal.spectrogram defaults (tukey .25, hop 224, detrend)
+    "tukey224d_frame_raw": ("tukey224d", 0, "frame", "raw"),
+    "tukey224d_glob_jpeg95": ("tukey224d", 0, "glob", "jpeg95"),
+    "tukey224d_glob_jpeg75": ("tukey224d", 0, "glob", "jpeg75"),
     "tukey126_glob_jpeg95": ("tukey126", 0, "glob", "jpeg95"),
     "tukey126_glob_jpeg75": ("tukey126", 0, "glob", "jpeg75"),
     "tukey126_frame_raw": ("tukey126", 0, "frame", "raw"),
