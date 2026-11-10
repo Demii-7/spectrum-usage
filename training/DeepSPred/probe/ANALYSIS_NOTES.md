@@ -32,7 +32,8 @@ horizon shape together; (c) the one rendering that matched the FM level (rectang
 cross-validation ratio (2.1 vs the paper's about 1.2), and its detrended variant (78) is an artifact of a 1e-12 floor in the dB
 conversion. Normalising with the true full-dataset dB range brings the scipy-default rendering to FM 482 (7% above the paper, with the paper's horizon
 shape) and a scipy-default variant without detrend to a cross-validation/FM ratio of 1.16 (paper about 1.18) with both levels about 25% high, but no single
-configuration matches level, ratio and shape together. The honest conclusion available today is "not reproduced from the released data and the paper's text, though
+configuration matches level, ratio and shape together. Cropping to the stated 90-110 MHz band brings both datasets' levels to within about 10-17% of the paper
+at once (Tukey hop 224: FM +6%, cross-validation -12%), at the cost of a larger FM horizon rise (+6% vs about +3.4%). The honest conclusion available today is "not reproduced from the released data and the paper's text, though
 the residual disagreement under the best candidates is within what the remaining unstated choices could plausibly produce".
 
 ---
@@ -332,6 +333,47 @@ What this shows:
 spans needed under span^-2 were about 166 dB (FM) and 147 dB (cross-validation); the measured full spans of 156 and 117 dB were short of these, which is
 consistent with the measured levels landing above the paper's.)
 
+### 5.6 Band crop to the stated 90-110 MHz [V]
+
+The paper states the FM band as 90-110 MHz (20 MHz) but the recording spans 31.25 MHz (83.4-114.6 MHz). Job `claude-uc-deepspred-crop-probe-1`
+(`results/acf_probe_crop_20261110T191214.json`, `TABLES.md` section 8) keeps only the bins in that band and resizes the frequency axis back to 256
+columns (bilinear, `scipy.ndimage.zoom`), under full-dataset normalisation. Three readings of the band, at 0.1221 MHz per bin with bin 128 = 99 MHz:
+**A** = bins 54-218 (90-110 MHz, spectrum not mirrored); **B** = bins 38-202 (the same band if the baseband is mirrored); **C** = bins 46-210 (+-10 MHz around the stated 99 MHz centre).
+
+Ceiling at k=8 (rise k=1 to 20); paper: FM 448.8 (+3.4%), cross-validation 531.4, ratio about 1.18.
+
+| Window, crop | FM | CV own range | CV with FM's range | CV/FM (own) |
+|---|---|---|---|---|
+| Tukey .25, hop 224, **A** | 475.6 (6.2%) | 466.5 (3.5%) | 333.9 | 0.98 |
+| Hamming 128, **A** | 524.3 (4.6%) | 569.0 (3.5%) | 449.0 | 1.09 |
+| Tukey .25, hop 224, detrend, **A** | 590.0 (6.9%) | 674.1 (3.6%) | 434.8 | 1.14 |
+| Hann 126, **A** | 782.6 (1.9%) | 532.0 (2.7%) | 519.6 | 0.68 |
+| Tukey hop 224, **C** | 481.6 (6.8%) | 447.3 (3.2%) | 369.6 | 0.93 |
+| Hamming 128, **C** | 525.3 (5.3%) | 590.2 (3.0%) | 474.2 | 1.12 |
+| Hann 126, **C** | 616.8 (2.1%) | 529.8 (2.3%) | 414.1 | 0.86 |
+| Tukey hop 224, detrend, **C** | 343.4 (6.9%) | 603.3 (3.3%) | 267.9 | 1.76 |
+| Tukey hop 224, **B** | 391.3 (7.1%) | 710.4 (14.2%) | 499.7 | 1.82 |
+| Hamming 128, **B** | 418.2 (5.8%) | 679.6 (8.7%) | 558.8 | 1.63 |
+| (uncropped: Tukey hop 224 / Hamming, for comparison) | 571.7 (3.4%) / 581.2 (2.8%) | 660.7 / 712.0 | 539.9 / 604.0 | 1.16 / 1.23 |
+
+What this shows:
+
+1. **The crop moves both levels toward the paper at once.** For the literal band (A) with Tukey hop 224: FM +6% and cross-validation -12% relative to the paper
+   (475.6 vs 448.8; 466.5 vs 531.4); with Hamming: +17% and +7%. Uncropped, the same windows were about 25-30% high on both. This is the first change that
+   brings both levels within about 10-17% together, and it is motivated by a statement in the paper's text, not a free knob.
+2. **The horizon rise got worse on FM.** Cropped FM rises are +4.6% to +6.9% against the paper's about +3.4% (read from a plot; cross-validation +3.0-3.6% against
+   about +2.3%, also a plot reading). Level improved while shape moved away.
+3. **The ratio is 0.98 (Tukey) and 1.09 (Hamming) against the paper's about 1.18**: closer than the scipy-default uncropped (1.68) but not matching.
+4. **Reading B (mirrored) is worse** on the ratio (1.6-2.0) and gives very large cross-validation rises (9-14%), so it is less consistent with the paper than A or C.
+5. **Selection caution as before.** About 50 renderings have now been examined; the crop is a step with a textual basis but still has several unfixed details (exact
+   bin boundaries to +-1-2 bins, centre of the band, resize interpolation, whether the DC spike is kept).
+
+Mean spectrum (Hann, FM, mean dB over frames and STFT rows, same JSON): the floor is about 40-45 dB at both band edges and the in-band mean peaks near 62 dB; the strongest
+bins are 46-48 (-10 MHz from centre, i.e. about 89 MHz if the baseband is not mirrored), the DC bin 128 (99 MHz, a spike), and 143. **There is no visible roll-off at the band
+edges** (edge bins 0-4 average 42 dB, similar to the floor elsewhere), so the hypothesis that the global minimum comes from filter roll-off is not supported. The strong
+~89 MHz station lies just outside reading A (bins 54-218) and inside reading C. Cross-validation's strongest bins are 41-43, 52, 66, 128 and 140. The collaborator's remark
+that the strongest bins are real FM stations near 89 MHz [C] is consistent with the spectrum not being mirrored; I did not verify the orientation independently.
+
 ---
 
 ## 6. What can and cannot be claimed
@@ -405,6 +447,7 @@ Code synced with `training/ray/scripts/sync-cluster-code.py --cluster uc` (commi
 | `claude-uc-deepspred-tukey-probe-2` | `acf_probe.py --set tukey` (adds tukey224d) | `acf_probe_tukey_20261110T183333.json`  |
 | `claude-uc-deepspred-rect-probe-1` | `acf_probe.py --set rect` | `acf_probe_rect_20261110T183943.json`  |
 | `claude-uc-deepspred-fullrange-probe-1` | `acf_probe.py --set range` | `acf_probe_range_20261110T185554.json` |
+| `claude-uc-deepspred-crop-probe-1` | `acf_probe.py --set crop` | `acf_probe_crop_20261110T191214.json` |
 | `claude-uc-deepspred-range-probe-1` | `range_probe.py` | `range_probe_20261110T184251.json`  |
 
 Commits (local branch `integrate`): `d39e018`, `fd1f42d`, `7fde749`, `831b6d8`, `63f5eca`, `38befbd`, `3d77d4f`, `86cca82`, plus this
@@ -420,8 +463,8 @@ and FM-range normalisation were each tried once; no band crop; no full-range nor
 ## 10. Open items ranked by value per cost
 
 1. ~~Re-run the ceiling with full-range and train-only normalisation~~ Done (5.5).
-2. **Band crop** to the stated 90-110 MHz (central 164 of 256 bins, resized to 256), under the full-range convention (minutes, CPU). It shifts both level and
-   shape and is the most likely remaining unstated step.
+2. ~~Band crop~~ Done (5.6): both levels within about 10-17% of the paper, FM rise too large. Still open within this item: bin-boundary sensitivity (+-1-2 bins), a crop
+   done by choosing the FFT length instead of resizing, whether the DC spike is kept, and the resize interpolation.
 3. **Range scope and margin:** all frames vs train-only vs a fixed or padded range; the scipy-default levels move 30% with scope alone (5.5, point 4).
 4. **Resize method** for the hop-224 case (bilinear vs bicubic vs area) and image-save path (matplotlib `savefig` vs direct array).
 5. **FM-trained model evaluated on cross-validation** (domain-shift reading of the paper's Fig. 8). Only the trivial-predictor version is cheap.

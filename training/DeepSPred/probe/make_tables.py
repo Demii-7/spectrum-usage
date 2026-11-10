@@ -78,6 +78,17 @@ def main():
     for ds, v in rng["datasets"].items():
         if v.get("range"):
             parts.append(f"- **{ds}**: " + "; ".join(f"{w} {lo:.1f}..{hi:.1f}" for w, (lo, hi) in v["range"].items()))
+    parts.append("\n\n## 8. Band crop to 90-110 MHz readings A/B/C (acf_probe_crop_20261110T191214.json)\n")
+    crop = load("acf_probe_crop_20261110T191214.json")
+    parts.append(acf_table(crop))
+    parts.append("\n\nRanges used (lo..hi dB) per window:\n")
+    for ds, v in crop["datasets"].items():
+        if v.get("range"):
+            parts.append(f"- **{ds}**: " + "; ".join(f"{w} {lo:.1f}..{hi:.1f}" for w, (lo, hi) in v["range"].items()))
+    for ds in ("fm_full", "crossval_full"):
+        ms = crop["datasets"][ds].get("mean_spectrum_db_hann126")
+        if ms:
+            parts.append(f"\n**{ds}** mean dB spectrum (Hann), 16-bin block averages: " + " ".join(f"{sum(ms[i:i+16]) / 16:.1f}" for i in range(0, 256, 16)))
     (R / "TABLES.md").write_text("\n".join(parts) + "\n")
     print("wrote", R / "TABLES.md")
 
