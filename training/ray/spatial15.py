@@ -213,6 +213,68 @@ def eval_only_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def permuted_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    """Remote worker (S4): the frozen base model scored with the four core receivers' coordinates permuted before interpolation.
+
+    One job per (model, seed, permutation seed). The weights are the tuning finals' (the same tuned model as ``core4-p2``);
+    ``lookbackmean4d`` has none. Output: ``<prefix>/<band>/permuted/<model>/seed-<n>/p<perm>/result.json`` (+ the evaluator's files).
+    """
+    root = args["repo_root"]
+    os.chdir(root)
+    sys.path.insert(0, root)
+    from training.common.spatial_ablation_eval import evaluate_condition
+    from training.ray.powder15 import ensure_powder15
+    from training.ray.storage import spectrum_s3_client
+
+    client, bucket, band = spectrum_s3_client(), args["bucket"], args["band"]
+    variant, model, seed, perm = job["variant"], job["model"], int(job["seed"]), int(job["permutation_seed"])
+    base = f"{args['prefix'].strip('/')}/{band}/permuted/{model}/seed-{seed}/p{perm}"
+    result: dict[str, Any] = {"band": band, "model": model, "seed": seed, "permutation_seed": perm, "condition": "geometry_permuted"}
+    started = time.time()
+    try:
+        ensure_powder15(band, root, tuple(SIX))
+        with tempfile.TemporaryDirectory(prefix="spatial15-perm-") as scratch:
+            scratch = Path(scratch)
+            checkpoint, config = None, None
+            if model == "lookbackmean4d":
+                config = {"windowing": {"lookback": 96, "horizons": list(HORIZONS)}}
+            else:
+                prefix = f"{args['tuning_prefix']}/powder15_4d/{band}/4d/{model}/weights/seed-{seed}/"
+                keys = [o["Key"] for page in client.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=prefix)
+                        for o in page.get("Contents", []) if o["Key"].endswith(".pt")]
+                if not keys:
+                    raise FileNotFoundError(f"no tuning final weights under {prefix}")
+                checkpoint = scratch / Path(keys[0]).name
+                client.download_file(bucket, keys[0], str(checkpoint))
+                meta = json.loads(client.get_object(Bucket=bucket, Key=keys[0] + ".meta.json")["Body"].read())
+                config = meta["config"]
+                result.update(weights_key=keys[0], weights_sha256=meta.get("sha256"))
+            model_config = scratch / "models.yaml"
+            model_config.write_text(yaml.safe_dump(model_config_for(config, model) if model != "lookbackmean4d" else config))
+            exp_path = Path(root) / "training/configs" / f".spatial15-perm-{os.getpid()}-{perm}.yaml"
+            exp_path.write_text(yaml.safe_dump(experiment_yaml(band, variant["nodes"], None, job["grid"])))
+            try:
+                summary = evaluate_condition(experiment_path=exp_path, model_config_path=model_config, checkpoint_path=checkpoint,
+                                             model_name=model, seed=seed, condition="geometry_permuted", permutation_seed=perm,
+                                             output_directory=scratch / "out", batch_size=args["batch_size"],
+                                             device="cpu" if model in CPU_MODELS else "cuda")
+            finally:
+                exp_path.unlink(missing_ok=True)
+            result.update({k: summary.get(k) for k in ("mean_horizon_mae_db", "n_origins", "target_receivers",
+                                                        *[f"mae_db_t{h}" for h in HORIZONS])})
+            for name in ("result.json", "metadata.json", "region_metrics.csv", "map_metrics.csv"):
+                if (scratch / "out" / name).exists():
+                    client.upload_file(str(scratch / "out" / name), bucket, f"{base}/eval/{name}")
+        result["ok"] = True
+    except Exception as error:
+        import traceback
+
+        result.update(ok=False, error=f"{type(error).__name__}: {error}"[:400], trace=traceback.format_exc()[-1500:])
+    result["wall_seconds"] = round(time.time() - started, 1)
+    client.put_object(Bucket=bucket, Key=f"{base}/result.json", Body=json.dumps(result, default=str).encode())
+    return result
+
+
 def run_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     """Remote worker: train one (variant, model, seed), score it on its maps and at the physical receivers, upload everything."""
     root = args["repo_root"]
@@ -305,6 +367,8 @@ def main(argv=None) -> None:
     p.add_argument("--tuned", action="store_true",
                    help="train with each model's tuned 15-minute 4D winner (tuning/powder15_4d) instead of the inherited 1-minute settings")
     p.add_argument("--tuning-prefix", default="tuning")
+    p.add_argument("--permuted", type=int, default=0,
+                   help="S4: score the frozen base models (tuning finals) with this many permutations of the four core receivers' coordinates")
     p.add_argument("--eval-only", action="store_true", help="score saved weights at the physical receivers; no training")
     p.add_argument("--eval-from-tuning", action="store_true",
                    help="with --eval-only: the base variant core4-p2 is scored from the tuning finals' weights (same tuned model, same seed)")
@@ -323,9 +387,18 @@ def main(argv=None) -> None:
     chosen = [v for v in variants(args.experiments) if not args.variants or v["name"] in args.variants]
     jobs = [{"variant": v, "grid": grid_for(v, frame), "model": m, "seed": s}
             for v in chosen for m in args.models for s in ([42] if m == "lookbackmean4d" else args.seeds)]
+    if args.permuted:
+        from training.ray.spatial_ablation import unique_permutation_seeds
+
+        base_variant = {"name": "core4-p2", "nodes": list(CORE), "grid": {}}
+        perms = unique_permutation_seeds(args.permuted, receiver_count=4)
+        jobs = [{"variant": base_variant, "grid": grid_for(base_variant, frame), "model": m, "seed": s, "permutation_seed": ps}
+                for m in args.models for s in ([42] if m == "lookbackmean4d" else args.seeds) for ps in perms]
     if args.skip_done:
         def done(job):
-            key = f"{args.prefix.strip('/')}/{args.band}/{job['variant']['name']}/{job['model']}/seed-{job['seed']}/result.json"
+            key = (f"{args.prefix.strip('/')}/{args.band}/permuted/{job['model']}/seed-{job['seed']}/p{job['permutation_seed']}/result.json"
+                   if args.permuted else
+                   f"{args.prefix.strip('/')}/{args.band}/{job['variant']['name']}/{job['model']}/seed-{job['seed']}/result.json")
             try:
                 return bool(json.loads(client.get_object(Bucket=bucket, Key=key)["Body"].read()).get("ok"))
             except Exception:
@@ -337,7 +410,7 @@ def main(argv=None) -> None:
               "eval_from_tuning": args.eval_from_tuning}
     ray.init(address=args.address, ignore_reinit_error=True)
     memory = int(args.memory_gb * 2**30)
-    worker = eval_only_job if args.eval_only else run_job
+    worker = permuted_job if args.permuted else (eval_only_job if args.eval_only else run_job)
     cpu_task = ray.remote(num_cpus=4, num_gpus=0, memory=memory, max_retries=2)(worker)
     gpu_task = ray.remote(num_cpus=4, num_gpus=args.gpu_fraction, memory=memory, max_retries=2)(worker)
     queue, pending, ok = list(jobs), [], 0
@@ -354,7 +427,7 @@ def main(argv=None) -> None:
         receivers = {k: round(v["mean_horizon_mae_db"], 3) for k, v in (row.get("receivers") or {}).items()
                      if v.get("mean_horizon_mae_db") is not None}
         print(f"[spatial15] {row.get('variant')} {row.get('model')} seed{row.get('seed')} ok={row.get('ok')} "
-              f"map={row.get('map__test_mean_horizon_mae_db')} receivers={receivers} {row.get('error', '')} "
+              f"map={row.get('map__test_mean_horizon_mae_db')} perm_mae={row.get('mean_horizon_mae_db')} receivers={receivers} {row.get('error', '')} "
               f"({row.get('wall_seconds')}s) [{len(queue) + len(pending)} left]", flush=True)
     print(f"[spatial15] done: {ok} of {len(jobs)} ok", flush=True)
 
