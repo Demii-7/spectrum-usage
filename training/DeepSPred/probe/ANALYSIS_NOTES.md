@@ -290,8 +290,8 @@ All numbers: `results/TABLES.md`.
 Rectangular window with per-segment mean subtraction gives a ceiling of 78 on FM (vs 433 without detrend). The range probe shows
 why: with a rectangular window and the mean removed, the DC bin is exactly zero, `10*log10(0 + 1e-12) = -120.0 dB`, and the
 dataset minimum becomes exactly -120.0 (FM full range -120.0..119.4, span 239.4 vs 132.0 without detrend). The same exact -120.0
-floor appears for rectangular *without* detrend on the full cross-validation set (span 225.2 vs 117.6 sampled), so a few frames
-contain an exact-zero bin there, which the 1-in-50 sample missed. These are artifacts of our epsilon, not properties of the data.
+floor appears for rectangular *without* detrend on the full cross-validation set (span 225.2 vs 117.6 sampled). Section 5.9 traces that to **a single pixel**
+in one cross-validation file, which the 1-in-50 sample missed. These are artifacts of the epsilon and of min-max scaling, not general properties of the data.
 In the authors' pipeline exact zeros would give -inf dB, so this reading cannot be what they did without additional handling.
 
 ### 5.5 Full-dataset normalisation: measured, and the scaling estimate was close [V]
@@ -414,7 +414,7 @@ Job `claude-uc-deepspred-torch-probe-1` (`results/acf_probe_torch_20261110T19332
 What this shows:
 
 1. **Reflect padding matters at the 5-15% level.** Against the unpadded `rect126`, FM falls from 433 to 409 (sampled range) and from 334 to 289 (full range), because the padded edge frames change the extreme values (full-range minimum -19.4 dB vs -12.6).
-2. **The FM numbers do not depend on the floor** (FM has no exact-zero bins), but **cross-validation does, by almost 2x** (210 to 379), because a few cross-validation frames contain exact-zero bins and the floor then sets the range minimum
+2. **The FM numbers do not depend on the floor** (FM has no exact-zero bins), but **cross-validation does, by almost 2x** (210 to 379), because one cross-validation pixel is exactly zero (section 5.9) and the floor then sets the range minimum
    (full-range cross-validation: -120.0, -100.0, -80.0, -60.0 dB minimum for the four floors; maximum 105.2 dB).
    The 1-in-50 sample missed those frames, which is why the sampled-range cross-validation value (979) differs so much from the full-range ones.
 3. **The paper's ratio (about 1.18) falls between the -80 dB and -60 dB floors (about -70 dB, epsilon about 1e-7), where both levels are about 0.64x the paper's** (FM 288.5 vs 448.8; cross-validation about 340 vs 531). Because the
@@ -422,6 +422,23 @@ What this shows:
 4. **FM-only evidence is mixed:** the sampled-range level is 9% below the paper's (409 vs 448.8, the closest of any rendering with a simple, unadjusted pipeline), the full-range level is 36% below, and the rise (+2.5-2.9%) is
    0.7-1.1 points below the paper's +3.6% (a plot reading). **The cross-validation rise (+2.6% full range, floor-independent) is close to the paper's +2.3%.**
 5. **Whether the authors normalised with the full dataset or a sample, and how they handled exact-zero bins, would then determine their cross-validation number**; neither is stated.
+
+### 5.9 The "zero frames" are one pixel in one file [V]
+
+Job `claude-uc-deepspred-zero-probe-1` (`results/zero_probe_20261110T194302.json`) inspected every file of both datasets under the rectangular hop-126 STFT (floor 1e-12) and under Hann on the same files.
+
+- **FM:** 0 of 10,800 files have any entry at or below -100 dB (minimum -12.6 dB rectangular, -34.9 Hann).
+- **Cross-validation:** 1 of 6,600 files has any such entry, and it has exactly one: `172.19.220.12-2024-0710-144230.xls` (2024-07-10 14:42:30 UTC), STFT row 184, frequency index 0 after `fftshift`
+  (FFT bin 128, the Nyquist edge at -fs/2). Hann on the same file has no such entry (its minimum in that file is +1.2 dB).
+- **That pixel is genuinely zero, not a loading error:** the alternating sum of the 256 complex samples in that segment is exactly 0 in both I and Q (float64 and complex64 FFT both give `0j` for the bin). The samples are
+  integers (ADC counts, e.g. 593-160j, -473-193j); the file has no zero samples and no repeated consecutive values (longest identical run 1, 32,368 distinct values of 32,508).
+  Exact integer cancellation at the Nyquist bin is possible for a rectangular window, whose bin value is an unweighted integer sum; a tapered window weights the samples with non-integers, so the same bin is never
+  exactly zero. This is why only the rectangular window shows it.
+- **Context [D]:** that file's Nyquist-bin power is generally low (the smallest five over its 256 frames are 0, 1882, 2560, 3042, 14170, against a median of 623,199), consistent with the weak band edge in the mean spectrum (5.6).
+  Why exact cancellation occurred once in 6,600 x 256 frames but never in FM's 10,800 x 256 is not explained.
+- **Consequence:** one pixel out of about 4.3e8 (6,600 x 256 x 256) in the cross-validation set sets the minimum of the full-range min-max under a rectangular window, and through the epsilon moves the cross-validation ceiling by up to 2x
+  (210 to 379 across floors 1e-12 to 1e-6; 899 with the 1-in-50 sample that missed it). Full-dataset min-max is therefore fragile to single pixels. The same applies to any extreme pixel (5.5, point 4).
+- **Earlier wording corrected:** I had written that "a few frames contain an exact-zero bin" before checking; the check shows one pixel.
 
 ---
 
@@ -521,7 +538,7 @@ and FM-range normalisation were each tried once; no band crop; no full-range nor
 6. **One trained model** on the best candidate (scipy defaults, full range; or the no-detrend variant), only after 2-4 narrow the choices: the ceiling already
    predicts roughly 1.01-1.06x the ceiling for a trained Swin (846 vs 837 raw; 267 vs 252 JPEG), so training would add little discrimination at this
    point and costs hours of GPU.
-7. **Identify the exact-zero cross-validation frames** (which files, why: dropouts or padding?) and decide whether they should be excluded; they set the cross-validation range under rectangular windows (5.4, 5.8).
+7. ~~Identify the exact-zero cross-validation frames~~ Done (5.9): one pixel, in one file. Still open: whether the authors' pipeline would have hit it, and how they would have handled a -inf.
 8. **Check `torch.stft` defaults on PyTorch 1.8.0** (the paper's version); I verified only 2.5.1.
 9. **Overfit/sanity run** of the collaborator's Swin model on a tiny set, and a loss curve for the raw run (their histories are lost). The ceiling already
    argues the 846 is not an optimisation failure (846 vs 837).

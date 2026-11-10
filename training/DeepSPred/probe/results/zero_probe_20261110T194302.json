@@ -1,0 +1,45 @@
+{
+ "created": "2026-11-10T19:42:07.519747Z",
+ "host": "ray-uc-1",
+ "threshold_db": -100.0,
+ "datasets": {
+  "fm": {
+   "n_files": 10800,
+   "n_files_rect_low": 0,
+   "n_files_hann_low": 0,
+   "rect_min_overall": -12.577409744262695,
+   "hann_min_overall": -34.88509750366211,
+   "files": []
+  },
+  "crossval": {
+   "n_files": 6600,
+   "n_files_rect_low": 1,
+   "n_files_hann_low": 0,
+   "rect_min_overall": -120.00000762939453,
+   "hann_min_overall": -33.38454818725586,
+   "files": [
+    {
+     "file": "172.19.220.12-2024-0710-144230.xls",
+     "n": 32508,
+     "rect126_min": -120.00000762939453,
+     "rect126_n_low": 1,
+     "rect126_frames": [
+      184
+     ],
+     "rect126_bins": [
+      0
+     ],
+     "hann126_min": 1.205288052558899,
+     "hann126_n_low": 0,
+     "zero_samples": 0,
+     "longest_identical_run": 1,
+     "distinct_samples": 32368,
+     "max_abs": 2318.27880859375,
+     "mean_I": 47.75165939331055,
+     "mean_Q": 369.27264404296875,
+     "time": "2024-07-10T14:42:30"
+    }
+   ]
+  }
+ }
+}
