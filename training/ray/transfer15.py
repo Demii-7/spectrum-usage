@@ -58,7 +58,9 @@ LOOKBACK = 96
 STEP = pd.Timedelta(minutes=15)
 TARGET_START, TARGET_END = pd.Timestamp("2026-10-27T20:00:00Z"), pd.Timestamp("2026-11-03T20:00:00Z")
 RAW_START = TARGET_START - LOOKBACK * STEP                      # history for the first origin
-RECEIVERS = {"guesthouse": "guesthouse-nuc1", "law73": "law73-nuc1"}
+RECEIVERS = {"guesthouse": "guesthouse-nuc1", "law73": "law73-nuc1", "humanities": "humanities-nuc1", "madsen": "madsen-nuc1",
+             "moran": "moran-nuc1", "sagepoint": "sagepoint-nuc1"}      # the last four are the core (training) receivers, scored in distribution
+HELD_OUT = ("guesthouse", "law73")
 BAND_LIMITS = {"600_800": (600.0, 800.0), "2400_2600": (2400.0, 2600.0)}
 BASELINES = ("persistence", "lookbackmean")
 NORMALIZATION_POLICY = "source_checkpoint_statistics_by_bin_position; never fitted on target; no post-hoc centering"
@@ -112,7 +114,7 @@ def target_task(band: str, receiver: str):
     from training.common.transfer_2d import TransferTask
 
     low, high = BAND_LIMITS[band]
-    return TransferTask(task_id=f"powder15-{band}-{receiver}", evaluation="held-out receiver, same band, same October test week",
+    return TransferTask(task_id=f"powder15-{band}-{receiver}", evaluation=("held-out receiver" if receiver in HELD_OUT else "core receiver, in distribution") + ", same band, same October test week",
                         platform="powder", raw_start=RAW_START, raw_end=TARGET_END, target_start=TARGET_START, target_end=TARGET_END,
                         frequency_start_mhz=low, frequency_end_mhz=high, sites=(receiver,))
 
@@ -430,7 +432,8 @@ def main(argv=None) -> None:
 
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--bands", nargs="+", default=["600_800", "2400_2600"], choices=list(BAND_LIMITS))
-    p.add_argument("--receivers", nargs="+", default=list(RECEIVERS), choices=list(RECEIVERS))
+    p.add_argument("--receivers", nargs="+", default=list(HELD_OUT), choices=list(RECEIVERS),
+                   help="default: the two held-out receivers; the four core receivers give the in-distribution comparison")
     p.add_argument("--reps", nargs="+", default=["1d", "2d"], choices=["1d", "2d"])
     p.add_argument("--models", nargs="+")
     p.add_argument("--seeds", type=int, nargs="+", default=[40, 41, 42, 43, 44])
