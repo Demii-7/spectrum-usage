@@ -159,6 +159,10 @@ def run_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         map_name = f"p15_{band}_{variant['name']}"
         config = apply_powder15_4d(config, band, list(HORIZONS), variant["nodes"], job["grid"], map_name)
         config = set_lookback_and_horizon(config, model, None)
+        if args.get("smoke_epochs"):          # a few minutes end to end (training, map scoring, all five physical-receiver evaluations)
+            section = config[model]
+            (section["train"] if "train" in section else section)["epochs"] = int(args["smoke_epochs"])
+            result["smoke_epochs"] = int(args["smoke_epochs"])
         if "train" in config[model]:
             config[model]["train"]["seed"] = seed          # STS-PredNet's flat section already carries it (inject_parameters)
         with tempfile.TemporaryDirectory(prefix="spatial15-") as scratch:
@@ -226,6 +230,7 @@ def main(argv=None) -> None:
     p.add_argument("--tuned", action="store_true",
                    help="train with each model's tuned 15-minute 4D winner (tuning/powder15_4d) instead of the inherited 1-minute settings")
     p.add_argument("--tuning-prefix", default="tuning")
+    p.add_argument("--smoke-epochs", type=int, default=0, help="override the epoch count for a quick end-to-end test (use another --prefix)")
     p.add_argument("--bucket", default=None)
     p.add_argument("--prefix", default="spatial15-oct2026")
     p.add_argument("--address", default="auto")
@@ -250,7 +255,7 @@ def main(argv=None) -> None:
         jobs = [j for j in jobs if not done(j)]
     print(f"[spatial15] {len(jobs)} runs over {len(chosen)} variants; grid frame {frame}", flush=True)
     shared = {"repo_root": args.repo_root, "bucket": bucket, "prefix": args.prefix, "band": args.band, "batch_size": args.batch_size,
-              "tuned": args.tuned, "tuning_prefix": args.tuning_prefix}
+              "tuned": args.tuned, "tuning_prefix": args.tuning_prefix, "smoke_epochs": args.smoke_epochs}
     ray.init(address=args.address, ignore_reinit_error=True)
     memory = int(args.memory_gb * 2**30)
     cpu_task = ray.remote(num_cpus=4, num_gpus=0, memory=memory, max_retries=2)(run_job)
