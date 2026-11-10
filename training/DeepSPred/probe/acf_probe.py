@@ -86,7 +86,16 @@ TUKEY_VARIANTS = {
     "hann126_glob_raw": ("hann126", 0, "glob", "raw"),
     "hamm128_glob_raw": ("hamm128", 0, "glob", "raw"),
 }
-ALL_VARIANTS = {**VARIANTS, **TUKEY_VARIANTS}
+# Rectangular window, 256 columns (hop 126), everything else scipy-style (detrend='constant'), with references.
+RECT_VARIANTS = {
+    "rect126d_glob_raw": ("rect126d", 0, "glob", "raw"),
+    "rect126d_frame_raw": ("rect126d", 0, "frame", "raw"),
+    "rect126d_glob_jpeg95": ("rect126d", 0, "glob", "jpeg95"),
+    "rect126d_glob_jpeg75": ("rect126d", 0, "glob", "jpeg75"),
+    "rect126_glob_raw": ("rect126", 0, "glob", "raw"),
+    "tukey224d_glob_raw": ("tukey224d", 0, "glob", "raw"),
+}
+ALL_VARIANTS = {**VARIANTS, **TUKEY_VARIANTS, **RECT_VARIANTS}
 
 G: dict = {}  # filled in the parent before the pool forks (read-only in the workers)
 
@@ -223,7 +232,8 @@ def run_dataset(root: Path, name: str, workers: int, pool_size: int, names, stat
 
 def work(data_root: str, out_dir: str, workers: int, pool_size: int, variant_set: str = "all") -> dict:
     root = Path(data_root)
-    names = list(VARIANTS) if variant_set == "all" else list(TUKEY_VARIANTS)
+    names = {"all": VARIANTS, "tukey": TUKEY_VARIANTS, "rect": RECT_VARIANTS}[variant_set]
+    names = list(names)
     result = {"created": datetime.utcnow().isoformat() + "Z", "host": os.uname().nodename, "n_pix": N_PIX,
               "L_in": L_IN, "variant_set": variant_set, "datasets": {}}
     fm_stats = None
@@ -250,7 +260,7 @@ def main():
     ap.add_argument("--out-dir", default="data/deepspred/probe")
     ap.add_argument("--cpus", type=int, default=16)
     ap.add_argument("--pool", type=int, default=6)
-    ap.add_argument("--set", dest="variant_set", choices=["all", "tukey"], default="all")
+    ap.add_argument("--set", dest="variant_set", choices=["all", "tukey", "rect"], default="all")
     ap.add_argument("--local", action="store_true")
     args = ap.parse_args()
     data_root = str(Path(args.data_root).resolve())
