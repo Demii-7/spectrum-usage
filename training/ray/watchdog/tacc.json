@@ -38,5 +38,15 @@
   "id": "claude-rescore-direct1min-3",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.rescore --bucket spectrum --output-prefix rescored --sources direct --resolution 1min --models ofa --skip-done --max-parallel 2\"",
   "max_restarts": 3
+ },
+ {
+  "id": "claude-tacc-s15tuned-600-1",
+  "entrypoint": "python -u -m training.ray.spatial15 --tuned --band 600_800 --experiments s2 s3 s5 --models linearar4d residuallinearar4d --seeds 40 41 42 --prefix spatial15-tuned-oct2026 --max-parallel 6 --skip-done",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-tacc-s15tuned-2400-1",
+  "entrypoint": "python -u -m training.ray.spatial15 --tuned --band 2400_2600 --experiments s2 s3 s5 --models linearar4d residuallinearar4d --seeds 40 41 42 --prefix spatial15-tuned-oct2026 --max-parallel 6 --skip-done",
+  "max_restarts": 4
  }
 ]
