@@ -60,6 +60,16 @@ def six_receiver_frame(repo_root: str) -> dict[str, float]:
     return {"origin_lon": lon0, "origin_lat": lat0, "width_meters": float(np.ptp(x)), "height_meters": float(np.ptp(y))}
 
 
+def tuned_winner(client, bucket: str, tuning_prefix: str, band: str, model: str) -> dict[str, Any]:
+    """The best completed trial of the 15-minute 4D search for ``model`` (best so far if the search is still running)."""
+    from training.ray.tune_fixed import group_prefix, pick_winner, read_records
+
+    records = [r for r in read_records(client, bucket, group_prefix(tuning_prefix, "powder15_4d", band, "4d", model))
+               if r.get("kind") == "trial"]
+    best = pick_winner(records)
+    return {**best, "n_trials": sum(1 for r in records if r.get("ok"))}
+
+
 def variants(experiments: list[str]) -> list[dict[str, Any]]:
     """(name, receiver nodes, grid overrides) for each requested experiment."""
     out = []
@@ -130,6 +140,17 @@ def run_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         if model == "lookbackmean4d":
             config = copy.deepcopy(config_base)
             config["training"] = {**config.get("training", {}), "models": [model], "device": "cpu"}
+        elif args.get("tuned"):
+            from training.ray.config import inject_parameters
+            from training.ray.tune_fixed import tuning_base
+
+            winner = tuned_winner(client, bucket, args["tuning_prefix"], band, model)
+            result.update(hyperparameters=f"tuned 15-minute 4D winner ({winner['n_trials']} trials, search seed 42)",
+                          tuned_candidate_id=winner["candidate_id"], tuned_parameters=winner["parameters"],
+                          tuned_search_objective=winner["objective"], tuned_n_trials=winner["n_trials"])
+            config = inject_parameters(tuning_base(model, "4d"), model, winner["parameters"], seed=seed)
+            if model in CPU_MODELS:
+                config["training"]["device"] = "cpu"
         else:
             costs = json.loads(client.get_object(Bucket=bucket, Key=f"checkpoints-oct2026/4d/{model}/seed-42/"
                                                  f"powder_600_800_t4t6_run_costs.json")["Body"].read())
@@ -200,6 +221,9 @@ def main(argv=None) -> None:
     p.add_argument("--memory-gb", type=float, default=24.0)
     p.add_argument("--max-parallel", type=int, default=8)
     p.add_argument("--skip-done", action="store_true")
+    p.add_argument("--tuned", action="store_true",
+                   help="train with each model's tuned 15-minute 4D winner (tuning/powder15_4d) instead of the inherited 1-minute settings")
+    p.add_argument("--tuning-prefix", default="tuning")
     p.add_argument("--bucket", default=None)
     p.add_argument("--prefix", default="spatial15-oct2026")
     p.add_argument("--address", default="auto")
@@ -223,7 +247,8 @@ def main(argv=None) -> None:
                 return False
         jobs = [j for j in jobs if not done(j)]
     print(f"[spatial15] {len(jobs)} runs over {len(chosen)} variants; grid frame {frame}", flush=True)
-    shared = {"repo_root": args.repo_root, "bucket": bucket, "prefix": args.prefix, "band": args.band, "batch_size": args.batch_size}
+    shared = {"repo_root": args.repo_root, "bucket": bucket, "prefix": args.prefix, "band": args.band, "batch_size": args.batch_size,
+              "tuned": args.tuned, "tuning_prefix": args.tuning_prefix}
     ray.init(address=args.address, ignore_reinit_error=True)
     memory = int(args.memory_gb * 2**30)
     cpu_task = ray.remote(num_cpus=4, num_gpus=0, memory=memory, max_retries=2)(run_job)
