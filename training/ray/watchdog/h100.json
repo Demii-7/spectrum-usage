@@ -18,5 +18,10 @@
   "id": "claude-h100-t15-stageB-1",
   "entrypoint": "python -u -m training.ray.transfer15 --stage B --bands 600_800 2400_2600 --receivers guesthouse law73 --reps 1d 2d --seeds 40 41 42 43 44 --skip-done --max-parallel 8 --code-revision 29e443f3ed6b2233b21edbfee7fb1b9720bc44f2",
   "max_restarts": 4
+ },
+ {
+  "id": "claude-h100-tsslcd-tune-r2a",
+  "entrypoint": "python -u -m training.ray.tune_tsslcd --budget 16 --from-index 8 --trials-only --max-parallel 3 --gpu-fraction 0.25",
+  "max_restarts": 4
  }
 ]
