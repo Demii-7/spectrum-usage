@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 
 R = Path(__file__).resolve().parent / "results"
-N = "acf_probe_overview_20261110T200458.json"
+N = "acf_probe_overview_20261110T202601.json"
 d = json.loads((R / N).read_text())["datasets"]
 fm, cv, cf = d["fm_full"]["variants"], d["crossval_full"]["variants"], d["crossval_fmfull"]["variants"]
 P_FM, P_CV = 448.76, 531.43
@@ -53,18 +53,19 @@ out = ["# Lookback-mean MSE (headline) and linear ceiling, full dB range, k=8\n"
        "**Linear** = best linear predictor (the 'ceiling' of earlier tables) from 5 frames fitted on the validation block (fixed mean image from that block). MSE in uint8 units. "
        "Paper (trained model): FM 448.76 at k=8 [T], cross-validation 531.43 at k=12 [T], rises +3.6% / +2.3% [P]. 'rise' = k=20 over k=1 for the lookback mean. "
        "'CV own' = cross-validation normalised with its own range; 'CV FM-rng' = with FM's range (what an FM-trained model would see).\n",
-       "| option | FM LBM | FM linear | CV own LBM | CV own linear | CV FM-rng LBM | CV FM-rng linear | FM rise LBM | FM rise linear | CV rise LBM | CV rise linear | FM vs paper (LBM) |",
-       "|---|---|---|---|---|---|---|---|---|---|---|---|",
-       f"| **PAPER (trained 3D-SwinSTB)** | {P_FM} [T] | - | {P_CV} [T] | - | - | - | +3.6% [P] | - | +2.3% [P] | - | 1.00x |"]
+       "| option | FM LBM | FM resid-lin | FM 5-lag linear | CV own LBM | CV own resid-lin | CV own 5-lag | CV FM-rng LBM | CV FM-rng resid-lin | FM rise LBM | FM rise linear | CV rise LBM | CV rise linear | FM vs paper (LBM) |",
+       "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+       f"| **PAPER (trained 3D-SwinSTB)** | {P_FM} [T] | - | - | {P_CV} [T] | - | - | - | - | +3.6% [P] | - | +2.3% [P] | - | 1.00x |"]
 for g in sorted(rows):
-    out.append(f"| *{g}* | | | | | | | | | | |")
+    out.append(f"| *{g}* |" + " |" * 13)
     for n in sorted(rows[g], key=lambda x: fm[x]["lbm_mse"][7]):
         a, b, c = fm[n], cv[n], cf[n]
         L = lambda v: v["lbm_mse"][7]
         Q = lambda v: v["ridge_mse"][7]
         rl = lambda v: 100 * (v["lbm_mse"][19] / v["lbm_mse"][0] - 1)
         rq = lambda v: 100 * (v["ridge_mse"][19] / v["ridge_mse"][0] - 1)
-        out.append(f"| {lab(n)} | {L(a):.0f} | {Q(a):.0f} | {L(b):.0f} | {Q(b):.0f} | {L(c):.0f} | {Q(c):.0f} | "
+        RL = lambda v: v["rlin_mse"][7]
+        out.append(f"| {lab(n)} | {L(a):.0f} | {RL(a):.0f} | {Q(a):.0f} | {L(b):.0f} | {RL(b):.0f} | {Q(b):.0f} | {L(c):.0f} | {RL(c):.0f} | "
                    f"{rl(a):+.1f}% | {rq(a):+.1f}% | {rl(b):+.1f}% | {rq(b):+.1f}% | {L(a) / P_FM:.2f}x |")
 (R / "OVERVIEW_LBM.md").write_text("\n".join(out) + "\n")
 print("wrote", R / "OVERVIEW_LBM.md")

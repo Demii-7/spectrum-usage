@@ -487,6 +487,44 @@ and is what the collaborator's trained Swin converges to; it is **not a bound** 
 - **Closest FM levels (lookback mean at k=8, paper 448.8):** Tukey hop 224 crop A 464 and crop C 468 (1.03-1.04x), scipy defaults 481 (1.07x), then Hamming crops 515-519 (1.15-1.16x). Rectangular 340 and torch-style 294 are below the paper (0.76x, 0.65x).
 - Because the lookback mean is not a bound, "FM vs paper" below 1 is no longer an inconsistency (and above 1 only means the paper's model beat a 20-frame average).
 
+### 5.12 The residual linear model, and standardization instead of min-max [V]
+
+**Residual linear model** (the structure of the repo's `ResidualLinearAutoregressive`: lookback mean plus a linear correction over all 20 lags of deviations from that mean, coefficients fitted on the validation block and shared across pixels).
+Job `claude-uc-deepspred-overview-probe-2` (`results/acf_probe_overview_20261110T202601.json`; table `results/OVERVIEW_LBM.md`) gives lookback mean / 5-lag linear / residual linear at k=8 (FM):
+
+| Rendering | lookback mean | 5-lag linear | residual linear | residual vs lookback mean at k=1 |
+|---|---|---|---|---|
+| scipy defaults | 481 | 482 | 481 | 465.4 vs 469.1 (-0.8%) |
+| Tukey hop 224, crop A | 464 | 476 | 464 | 444.0 vs 448.6 (-1.0%) |
+| Tukey hop 224 | 571 | 572 | 571 | 552.8 vs 557.4 (-0.8%) |
+| Hamming 128 | 584 | 581 | 584 | 567.3 vs 571.5 (-0.7%) |
+| Rectangular 126 / torch-style | 340 / 294 | 334 / 288 | 340 / 294 | -0.2% / -0.2% |
+| Hann 126 | 831 | 816 | 831 | -0.2% |
+| Hann, JPEG q95 | 244 | 245 | 244 | 231.5 vs 235.4 (-1.7%) |
+
+- **Beyond a 20-frame mean a linear model finds almost nothing:** the gain is 0.2-1.7% at k=1 and about zero from k of about 4 (identical to the lookback mean at k=8 for every rendering, on cross-validation too). The residual model's coefficients were fitted correctly (the synthetic AR(1) test recovers the
+  innovation variance, 1.04 vs 1.0), so this is a property of the data: frames at different seconds have independent noise, and what is predictable is mostly slow level drift, which the lookback mean already tracks.
+- **Correction to 5.1.** The "short-term skill" there (for example 8-12% below the mean-image reference at k=1 on JPEG renderings) was measured against a fixed validation-block mean image and is mostly slow drift, not frame-to-frame structure. Against the lookback mean, genuine
+  short-term predictability is about 1-2%. The horizon rise of the lookback mean is the 20-frame mean going stale (its centre is 10-30 frames old at k=1-20), not decaying short-term skill.
+- **Rises of the residual linear model (FM / cross-validation, k=1 to 20) against the paper's +3.6% / +2.3% (plot readings):** Hamming +3.9% / +2.2%, Tukey hop 224 +4.6% / +2.2%, scipy defaults +4.7% / +2.3%, rectangular +3.5% / +1.7%, torch-style +3.4% / +1.6%, Tukey hop 126 +2.6% / +1.9%, Hann +2.1% / +1.7%,
+  Tukey crop A +6.9% / +4.5%, Hann JPEG q95 +6.7% / +4.5%. The raw windows other than Hann and Tukey hop 126 are within about 1 point of the paper on both datasets; the rise does not separate them.
+- **Unexplained:** the paper's ConvLSTM is about 5% better than its 3D-SwinSTB at k=1 (418 vs 439, plot readings) and rises +11.7%; the linear gain available at k=1 here is 0.2-1.7%. Either that is a nonlinear gain, or the authors' frames contain much more short-term structure than any of these renderings.
+
+**Standardization instead of min-max** (job `claude-uc-deepspred-zscore-probe-2`, `results/acf_probe_zscore_20261110T204131.json`). The dB range is set to the whole-dataset mean +- k standard deviations (k = 2 to 5), or each frame is standardized separately at +-3 std, then clipped to [0,1], jet, uint8. Measured dataset dB mean / standard deviation on FM:
+Hann 49.9 / 14.2, Hamming 53.5 / 12.0, Tukey hop 224 and hop 126 (detrend) 57.1 / 14.7 and 57.1 / 15.1. **My earlier estimate of about 17 dB was wrong.** FM lookback-mean MSE at k=8 (paper 448.8), with the dB span in brackets:
+
+| Rendering | full min-max | mean +- 5 std | +- 4 std | +- 3 std | +- 2 std | per-frame +- 3 std |
+|---|---|---|---|---|---|---|
+| scipy defaults (Tukey .25, hop 224, detrend) | 481 (156 dB) | 575 (147) | 865 (118) | 1,419 (88) | 2,596 (59) | 1,440 |
+| Tukey .25, hop 126, detrend | 552 (166) | 775 (151) | 1,152 (121) | 1,851 (91) | 3,253 (60) | 1,877 |
+| Hamming 128 | 584 (139) | 791 (120) | 1,172 (96) | 1,848 (72) | 3,151 (48) | 1,890 |
+| Hann 126 | 831 (148) | 957 (142) | 1,408 (113) | 2,207 (85) | 3,773 (57) | 2,262 |
+
+- **Conventional standardization (+- 2 or 3 std, or per frame) gives 1,400-3,800, three to eight times the paper's 449; even +- 4 std gives 865-1,408.** Only a clip of about +- 5 std (span 120-150 dB) comes close (scipy defaults 575, 1.28x). Matching the paper's low MSE needs a wide range: min-max over the dataset, or a standardization clip of at least about +- 5 std.
+  This follows the span^-2 relation of 5.2 and holds if the paper's MSE is on the same 0-255 pixel scale as ours. It is one weak signal.
+- **The rise barely depends on the normalization** (scipy defaults +4.0% to +4.4% across all clips; Hamming +3.1% to +3.5%).
+- **Cross-validation under standardization no longer depends on the dB floor** (one pixel barely moves a mean or a standard deviation), so the zero-pixel sensitivity of 5.8 is a min-max artifact.
+
 ---
 
 ## 6. What can and cannot be claimed
@@ -529,6 +567,8 @@ Included so the report does not inherit them.
 | "MSE is about 1/span^2" | Rough: measured exponents 1.3-2.5 (5.2) |
 | "scipy's default hop and detrend don't help" (before the exact default was run) | Premature: the exact default (tukey224d) has been run since; FM 725.5 |
 | The scipy default "needs spans of 187 / 177 dB", and the lead might close it | Measured (5.5): full spans 156 / 117 dB give 482 / 810; the predicted 508 / 837 were within 5% |
+| FM dB standard deviation is about 17 dB, so +-3 std is about 100 dB | Measured 12.0-15.1 dB (5.12), so +-3 std spans 72-91 dB |
+| Short-term skill of 8-12% below the mean-image reference at k=1 is genuine frame-to-frame structure | Mostly slow drift (5.12): a linear model beyond the 20-frame lookback mean gains only 0.2-1.7% at k=1 |
 | The 5-lag linear "ceiling" is a bound on the error a model can reach | Retracted (5.11): on cross-validation the 20-frame lookback mean is 10-40% below it (the validation-block mean image is stale for the test block) |
 | The cross-validation/FM ratio of 1.18 is a target the data's ceilings should match | Retracted (5.10): the paper's model, not the data, scored worse; only a one-sided check applies |
 | The collaborator's grayscale anchors are 5294.5 / 11.32 | Disputed: the IEEE text gives 5185.25 / 11.339 and its percentages match those (1.5) |
@@ -564,6 +604,8 @@ Code synced with `training/ray/scripts/sync-cluster-code.py --cluster uc` (commi
 | `claude-uc-deepspred-fullrange-probe-1` | `acf_probe.py --set range` | `acf_probe_range_20261110T185554.json` |
 | `claude-uc-deepspred-crop-probe-1` | `acf_probe.py --set crop` | `acf_probe_crop_20261110T191214.json` |
 | `claude-uc-deepspred-torch-probe-1` | `acf_probe.py --set torch` | `acf_probe_torch_20261110T193321.json` |
+| `claude-uc-deepspred-overview-probe-2` | `acf_probe.py --set overview` (adds the residual linear model) | `acf_probe_overview_20261110T202601.json` |
+| `claude-uc-deepspred-zscore-probe-2` | `acf_probe.py --set zscore` | `acf_probe_zscore_20261110T204131.json` |
 | `claude-uc-deepspred-range-probe-1` | `range_probe.py` | `range_probe_20261110T184251.json`  |
 
 Commits (local branch `integrate`): `d39e018`, `fd1f42d`, `7fde749`, `831b6d8`, `63f5eca`, `38befbd`, `3d77d4f`, `86cca82`, plus this
