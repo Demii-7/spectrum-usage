@@ -203,6 +203,11 @@ def render(db: np.ndarray, scaling: str, post: str, gray: bool, stats: dict) -> 
     elif scaling == "lin":
         p = np.power(10.0, db / 10.0, dtype=np.float64)
         n = (p - stats["plo"]) / (stats["phi"] - stats["plo"])
+    elif scaling.startswith("zf"):  # per-frame standardisation, clipped to mean +- K std
+        kk = float(scaling[2:])
+        mu = db.mean(axis=(1, 2), keepdims=True)
+        sd = db.std(axis=(1, 2), keepdims=True)
+        n = (db - mu) / np.maximum(2.0 * kk * sd, 1e-12) + 0.5
     elif scaling == "frame":
         lo = db.min(axis=(1, 2), keepdims=True)
         hi = db.max(axis=(1, 2), keepdims=True)

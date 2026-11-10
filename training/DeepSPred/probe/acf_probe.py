@@ -133,7 +133,12 @@ for _e in (12, 8):
 for _base in ("tukey224", "tukey224d", "hamm128", "hann126"):
     for _k in ("A", "C"):
         OVERVIEW_VARIANTS[f"{_base}_crop{_k}_glob_raw"] = (f"{_base}@{CROPS[_k]}", 0, "glob", "raw")
-ALL_VARIANTS = {**VARIANTS, **TUKEY_VARIANTS, **RECT_VARIANTS, **RANGE_VARIANTS, **CROP_VARIANTS, **TORCH_VARIANTS, **OVERVIEW_VARIANTS}
+# Standardisation instead of min-max: dB range = dataset mean +- K std (modes z2..z5), plus per-frame standardisation (zf3).
+ZSCORE_VARIANTS = {}
+for _w in ("tukey224d", "tukey126d", "hamm128", "hann126"):
+    ZSCORE_VARIANTS[f"{_w}_glob_raw"] = (_w, 0, "glob", "raw")
+    ZSCORE_VARIANTS[f"{_w}_zf3_raw"] = (_w, 0, "zf3", "raw")
+ALL_VARIANTS = {**VARIANTS, **TUKEY_VARIANTS, **RECT_VARIANTS, **RANGE_VARIANTS, **CROP_VARIANTS, **TORCH_VARIANTS, **OVERVIEW_VARIANTS, **ZSCORE_VARIANTS}
 
 G: dict = {}  # filled in the parent before the pool forks (read-only in the workers)
 
@@ -212,8 +217,8 @@ def file_minmax(path_str: str) -> dict:
     x = rp.read_iq(Path(path_str))
     out = {}
     for w in G["range_windows"]:
-        db = rp.spectrogram_db(x, w)
-        out[w] = (float(db.min()), float(db.max()))
+        db = rp.spectrogram_db(x, w).astype(np.float64)
+        out[w] = (float(db.min()), float(db.max()), float(db.sum()), float((db * db).sum()), int(db.size))
     return out
 
 
@@ -238,6 +243,40 @@ def lookback_mean_curve(D: np.ndarray, segs, T: int = 20, K: int = K_MAX) -> lis
     return (se / max(n, 1)).tolist()
 
 
+def residual_linear_curve(Df: np.ndarray, segs_fit, Dt: np.ndarray, segs_te, L: int = 20, K: int = K_MAX, lam: float = 1e-3) -> list:
+    """The repo's ResidualLinearAutoregressive idea on our images: prediction(t+k) = lookback mean + sum_j a[k, j] * (x[t-j] - lookback mean),
+    j = 0..L-1 over the full 20-frame window, one coefficient set per horizon k shared across pixels, fitted by ridge least squares on the
+    fit (validation) block and scored on the test block. It contains the lookback mean as the special case a = 0, and, unlike the 5-lag
+    'ceiling', it is centred on the local mean so it follows slow drift."""
+    P = Df.shape[1]
+
+    def windows(D, segs):
+        for a, b in segs:
+            X = D[a:b]
+            for st in range(0, len(X) - L - K + 1):
+                inp = X[st:st + L][::-1].astype(np.float64)       # row j = frame t-j (j = 0 newest)
+                m = inp.mean(axis=0)
+                yield inp - m, X[st + L:st + L + K].astype(np.float64) - m
+
+    G = np.zeros((L, L))
+    R = np.zeros((K, L))
+    n = 0
+    for Z, Y in windows(Df, segs_fit):
+        G += Z @ Z.T
+        R += Y @ Z.T
+        n += P
+    G /= max(n, 1)
+    R /= max(n, 1)
+    A = np.linalg.solve(G + lam * np.trace(G) / L * np.eye(L), R.T).T   # (K, L)
+    se = np.zeros(K)
+    cnt = 0
+    for Z, Y in windows(Dt, segs_te):
+        e = Y - A @ Z
+        se += np.einsum("ij,ij->i", e, e)
+        cnt += P
+    return (se / max(cnt, 1)).tolist()
+
+
 def variant_worker(name: str) -> dict:
     window, avg_m, scaling, post = ALL_VARIANTS[name]
     g = G
@@ -257,8 +296,9 @@ def variant_worker(name: str) -> dict:
     rho = (c_te[1:] / c_te[0]).tolist()
     skill = [1.0 - r / clim for r in ridge]
     lbm = lookback_mean_curve(Dt, g["segs_te"])
+    rlin = residual_linear_curve(Df, g["segs_fit"], Dt, g["segs_te"])
     return {"name": name, "clim_mse": round(clim, 2), "ridge_mse": [round(x, 2) for x in ridge],
-            "lbm_mse": [round(x, 2) for x in lbm],
+            "lbm_mse": [round(x, 2) for x in lbm], "rlin_mse": [round(x, 2) for x in rlin],
             "skill": [round(x, 4) for x in skill], "rho": [round(x, 4) for x in rho],
             "var_fit": round(float(c_fit[0]), 2), "seconds": round(time.time() - t0, 1)}
 
@@ -318,16 +358,26 @@ def run_dataset(root: Path, name: str, workers: int, pool_size: int, names, stat
         print(f"[{label}] per-file min/max done in {time.time() - t0:.0f}s", flush=True)
         results, mode_stats = {}, {}
         for mode in range_modes:
-            sel = masks[mode]
+            sel = masks.get(mode, masks["full"])
             st = dict(own_stats)
             for w in wins:
-                lo = min(r[w][0] for r, k in zip(mm, sel) if k)
-                hi = max(r[w][1] for r, k in zip(mm, sel) if k)
+                if mode.startswith("z"):  # standardisation over the whole dataset, clipped to mean +- K std
+                    n_ = sum(r[w][4] for r in mm)
+                    mu_ = sum(r[w][2] for r in mm) / n_
+                    sd_ = (sum(r[w][3] for r in mm) / n_ - mu_ * mu_) ** 0.5
+                    kk = float(mode[1:])
+                    lo, hi = mu_ - kk * sd_, mu_ + kk * sd_
+                else:
+                    lo = min(r[w][0] for r, k in zip(mm, sel) if k)
+                    hi = max(r[w][1] for r, k in zip(mm, sel) if k)
                 st[(w, 0)] = {**own_stats[(w, 0)], "lo": lo, "hi": hi}
             mode_stats[mode] = st
             mod.G["stats"] = st
             res = run_pool(f"{label}_{mode}")
             res["range"] = {w: [round(st[(w, 0)]["lo"], 2), round(st[(w, 0)]["hi"], 2)] for w in wins}
+            res["dataset_db_mean_std"] = {w: [round(sum(r[w][2] for r in mm) / sum(r[w][4] for r in mm), 3),
+                                              round((sum(r[w][3] for r in mm) / sum(r[w][4] for r in mm) - (sum(r[w][2] for r in mm) / sum(r[w][4] for r in mm)) ** 2) ** 0.5, 3)]
+                                          for w in wins}
             results[mode] = res
         return results, mode_stats
     return run_pool(label), own_stats
@@ -336,13 +386,16 @@ def run_dataset(root: Path, name: str, workers: int, pool_size: int, names, stat
 def work(data_root: str, out_dir: str, workers: int, pool_size: int, variant_set: str = "all") -> dict:
     root = Path(data_root)
     names = {"all": VARIANTS, "tukey": TUKEY_VARIANTS, "rect": RECT_VARIANTS, "range": RANGE_VARIANTS,
-             "crop": CROP_VARIANTS, "torch": TORCH_VARIANTS, "overview": OVERVIEW_VARIANTS}[variant_set]
+             "crop": CROP_VARIANTS, "torch": TORCH_VARIANTS, "overview": OVERVIEW_VARIANTS,
+             "zscore": ZSCORE_VARIANTS}[variant_set]
     names = list(names)
     result = {"created": datetime.utcnow().isoformat() + "Z", "host": os.uname().nodename, "n_pix": N_PIX,
               "L_in": L_IN, "variant_set": variant_set, "datasets": {}}
     fm_stats = None
-    if variant_set in ("range", "crop", "torch", "overview"):
+    if variant_set in ("range", "crop", "torch", "overview", "zscore"):
         modes = ("full",) if variant_set in ("crop", "overview") else ("full", "train")
+        if variant_set == "zscore":
+            modes = ("full", "z2", "z3", "z4", "z5")
         for name in rp.DATASETS:
             if (root / rp.DATASETS[name]).exists():
                 res, mstats = run_dataset(root, name, workers, pool_size, names, range_modes=modes)
@@ -350,7 +403,12 @@ def work(data_root: str, out_dir: str, workers: int, pool_size: int, variant_set
                     result["datasets"][f"{name}_{mode}"] = out
                 if name == "fm":
                     fm_stats = mstats["full"]
-        if fm_stats is not None and "crossval_full" in result["datasets"]:
+                    fm_mode_stats = mstats
+        if variant_set == "zscore" and "crossval_full" in result["datasets"]:
+            for mode in modes:  # cross-validation rendered with FM's range/standardisation of the same kind
+                result["datasets"][f"crossval_fm_{mode}"], _ = run_dataset(root, "crossval", workers, pool_size, names,
+                                                                          stats_override=fm_mode_stats[mode], label=f"crossval_fm_{mode}")
+        elif fm_stats is not None and "crossval_full" in result["datasets"]:
             # cross-validation rendered with FM's full-dataset dB range
             result["datasets"]["crossval_fmfull"], _ = run_dataset(root, "crossval", workers, pool_size, names,
                                                                   stats_override=fm_stats, label="crossval_fmfull")
@@ -383,7 +441,7 @@ def main():
     ap.add_argument("--out-dir", default="data/deepspred/probe")
     ap.add_argument("--cpus", type=int, default=16)
     ap.add_argument("--pool", type=int, default=6)
-    ap.add_argument("--set", dest="variant_set", choices=["all", "tukey", "rect", "range", "crop", "torch", "overview"], default="all")
+    ap.add_argument("--set", dest="variant_set", choices=["all", "tukey", "rect", "range", "crop", "torch", "overview", "zscore"], default="all")
     ap.add_argument("--local", action="store_true")
     args = ap.parse_args()
     data_root = str(Path(args.data_root).resolve())
