@@ -126,9 +126,16 @@ def _file_db(path_str: str):
 
 
 def load_db(paths, workers: int):
+    import importlib
     import multiprocessing as mp
+    # Inside a Ray task this module is not importable as __main__, so hand the pool the function
+    # from the file imported under its own name.
+    probe_dir = str(Path(__file__).resolve().parent)
+    if probe_dir not in sys.path:
+        sys.path.insert(0, probe_dir)
+    fn = importlib.import_module("rendering_probe")._file_db
     with mp.get_context("fork").Pool(workers) as pool:
-        res = pool.map(_file_db, [str(p) for p in paths], chunksize=8)
+        res = pool.map(fn, [str(p) for p in paths], chunksize=8)
     return {w: np.stack([r[w] for r in res]) for w in WINDOWS}
 
 
