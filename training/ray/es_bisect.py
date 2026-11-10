@@ -58,7 +58,7 @@ def run_one(spec: dict) -> dict:
             if not out.exists():
                 raise RuntimeError("no result: " + (run.stdout + run.stderr)[-400:])
             row = json.loads(out.read_text())[-1]
-            record.update({k: row.get(k) for k in ("test_mse_raw", "test_mse_std", "best_val_mse_std", "epochs_run", "train_wall_s")})
+            record.update({k: row.get(k) for k in ("test_mse_raw", "test_mse_std", "test_mse_raw_endpoint", "test_mse_std_endpoint", "best_val_mse_std", "epochs_run", "train_wall_s")})
             record["command_extra"] = extra
         record["ok"] = True
     except Exception as error:
@@ -92,8 +92,10 @@ def main() -> None:
         for h in args.horizons:
             ok = [r for r in rows if r["variant"] == v and r["horizon"] == h and r.get("ok")]
             if ok:
-                print(f"[es-bisect] {v:14s} h{h:<3d} n={len(ok)} raw {sum(r['test_mse_raw'] for r in ok) / len(ok):.3f} "
-                      f"std {sum(r['test_mse_std'] for r in ok) / len(ok):.3f}", flush=True)
+                end = [r["test_mse_raw_endpoint"] for r in ok if r.get("test_mse_raw_endpoint") is not None]
+                print(f"[es-bisect] {v:14s} h{h:<3d} n={len(ok)} window-averaged raw {sum(r['test_mse_raw'] for r in ok) / len(ok):.3f} "
+                      f"std {sum(r['test_mse_std'] for r in ok) / len(ok):.3f}"
+                      + (f" | endpoint-only raw {sum(end) / len(end):.3f}" if end else ""), flush=True)
             else:
                 print(f"[es-bisect] {v:14s} h{h:<3d} FAILED {[r.get('error') for r in rows if r['variant'] == v and r['horizon'] == h][:1]}", flush=True)
 

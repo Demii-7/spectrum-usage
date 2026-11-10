@@ -139,6 +139,13 @@ def run_one(csv_path, horizon, seed, args, device):
         else:
             mse_std = float(((pred - Y) ** 2).mean())
             mse_raw = float((((pred - Y) * sd_t) ** 2).mean())
+        # Endpoint-only error (the single step t+H, the convention of the repo's own evaluation), next to the window-averaged one
+        # above (steps 1..H, the Time-Series-Library and article convention); the two differ whenever the error grows with the step.
+        last_err = (pred[:, -1] - Y[:, -1]) ** 2
+        if args.space == "raw":
+            evaluate.endpoint = {"raw": float(last_err.mean()), "std": float((last_err / sd_t ** 2).mean())}
+        else:
+            evaluate.endpoint = {"std": float(last_err.mean()), "raw": float((last_err * sd_t ** 2).mean())}
         return mse_std, mse_raw, pred
 
     best_val, best_state, bad, history = float("inf"), None, 0, []
@@ -186,6 +193,7 @@ def run_one(csv_path, horizon, seed, args, device):
         model.load_state_dict(best_state)
 
     test_std, test_raw, _ = evaluate(Xte, Yte)
+    test_endpoint = dict(evaluate.endpoint)             # endpoint-only (step t+H) MSE of the same predictions
 
     # Persist the trained weights. Only the trainable tensors are stored: the frozen backbone is
     # reconstructible from `backbone` + `llm_layers`, and storing it would triple the file for no
@@ -279,6 +287,7 @@ def run_one(csv_path, horizon, seed, args, device):
         "params_total": total, "params_trainable": trainable,
         "best_val_mse_std": best_val,
         "test_mse_std": test_std, "test_mse_raw": test_raw,
+        "test_mse_raw_endpoint": test_endpoint["raw"], "test_mse_std_endpoint": test_endpoint["std"],
         "train_wall_s": round(train_s, 1), "infer_s_per_sample": round(infer_s, 5),
         "peak_gpu_mb": (round(torch.cuda.max_memory_allocated() / 1e6, 1)
                         if device.type == "cuda" else None),
