@@ -23,5 +23,10 @@
   "id": "claude-uc-timeran15-2",
   "entrypoint": "python -u -m training.ray.tune_direct --resolution 15min --models timeran_lp moment_lp --max-parallel 4",
   "max_restarts": 6
+ },
+ {
+  "id": "claude-uc-tsslcd-finals-1",
+  "entrypoint": "python -u -m training.ray.tune_tsslcd --budget 16 --skip-trials --max-parallel 5 --gpu-fraction 1.0",
+  "max_restarts": 3
  }
 ]
