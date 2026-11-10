@@ -20,8 +20,8 @@
   "max_restarts": 4
  },
  {
-  "id": "claude-h100-tsslcd-tune-r2a",
-  "entrypoint": "python -u -m training.ray.tune_tsslcd --budget 16 --from-index 8 --trials-only --max-parallel 3 --gpu-fraction 0.25",
+  "id": "claude-h100-tsslcd-tune-r2b",
+  "entrypoint": "python -u -m training.ray.tune_tsslcd --budget 16 --from-index 8 --trials-only --max-parallel 2 --gpu-fraction 0.25",
   "max_restarts": 4
  }
 ]
