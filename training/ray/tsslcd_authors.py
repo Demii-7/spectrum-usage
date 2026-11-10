@@ -232,16 +232,22 @@ def run_one(args: dict[str, Any]) -> dict[str, Any]:
 
     device = torch.device("cuda" if torch.cuda.is_available() and args.get("device") != "cpu" else "cpu")
     seed, savgol = int(args["seed"]), args["savgol"]
+    hp = {"latent_dim": LATENT_DIM, "learning_rate": LEARNING_RATE, "batch_size": BATCH, "train_mask_ratio": TRAIN_MASK,
+          **(args.get("hparams") or {})}          # the authors' defaults unless a tuning trial overrides them (constructor / optimiser settings only)
+    latent_dim, learning_rate, batch_size, train_mask = (int(hp["latent_dim"]), float(hp["learning_rate"]), int(hp["batch_size"]),
+                                                         float(hp["train_mask_ratio"]))
+    score_partition = args.get("score_partition", "test")      # "validation" for tuning trials
     torch.manual_seed(seed)
     np.random.seed(seed)
     started = time.time()
     result: dict[str, Any] = {"savgol": savgol, "seed": seed, "epochs": args["epochs"], "device": str(device),
-                              "context": CONTEXT, "future": FUTURE, "latent_dim": LATENT_DIM, "n_timesteps": N_TIMESTEPS,
-                              "batch_size": BATCH, "train_mask_ratio": TRAIN_MASK,
+                              "context": CONTEXT, "future": FUTURE, "latent_dim": latent_dim, "n_timesteps": N_TIMESTEPS,
+                              "batch_size": batch_size, "train_mask_ratio": train_mask, "learning_rate": learning_rate,
+                              "score_partition": score_partition,
                               "eval_mask_ratio": args["eval_mask_ratio"], "sites": list(SITES)}
 
     train_raw, train_model, train_bounds, scaler = build_partition(root, "train", None, savgol)
-    test_raw, test_model, test_bounds, _ = build_partition(root, "test", scaler, savgol)
+    test_raw, test_model, test_bounds, _ = build_partition(root, score_partition, scaler, savgol)
     n_cols = train_model.shape[1]
     train_starts = window_starts(train_bounds, CONTEXT + FUTURE)
     test_starts = window_starts(test_bounds, CONTEXT + FUTURE, args["test_stride"])
@@ -258,10 +264,10 @@ def run_one(args: dict[str, Any]) -> dict[str, Any]:
     def masked(ctx, ratio):
         return ctx.masked_fill(torch.rand_like(ctx) < ratio, 0.0) if ratio > 0 else ctx
 
-    ae_ctx = ContextTransformerAE(seq_len=CONTEXT, input_dim=n_cols, latent_dim=LATENT_DIM,
+    ae_ctx = ContextTransformerAE(seq_len=CONTEXT, input_dim=n_cols, latent_dim=latent_dim,
                                   n_locations=len(SITES)).to(device)
-    ae_fut = FutureAutoencoder(FUTURE, n_cols, LATENT_DIM).to(device)
-    diffusion = DiffusionModel(cond_dim=LATENT_DIM, latent_dim=LATENT_DIM, n_timestep=N_TIMESTEPS, device=device).to(device)
+    ae_fut = FutureAutoencoder(FUTURE, n_cols, latent_dim).to(device)
+    diffusion = DiffusionModel(cond_dim=latent_dim, latent_dim=latent_dim, n_timestep=N_TIMESTEPS, device=device).to(device)
     result["parameters"] = {"ae_ctx": sum(p.numel() for p in ae_ctx.parameters()),
                             "ae_fut": sum(p.numel() for p in ae_fut.parameters()),
                             "diffusion": sum(p.numel() for p in diffusion.parameters())}
@@ -273,9 +279,9 @@ def run_one(args: dict[str, Any]) -> dict[str, Any]:
         for _ in range(epochs):
             order = starts_all[torch.randperm(len(starts_all), device=device)]
             total, count = 0.0, 0
-            for lo in range(0, len(order), BATCH):
-                ctx, fut = batch(train_series, order[lo:lo + BATCH])
-                loss = step_fn(masked(ctx, TRAIN_MASK), fut)
+            for lo in range(0, len(order), batch_size):
+                ctx, fut = batch(train_series, order[lo:lo + batch_size])
+                loss = step_fn(masked(ctx, train_mask), fut)
                 optimiser.zero_grad()
                 loss.backward()
                 optimiser.step()
@@ -285,9 +291,9 @@ def run_one(args: dict[str, Any]) -> dict[str, Any]:
                                     "seconds_per_epoch": round((time.time() - t0) / max(epochs, 1), 2), "final_loss": last}
 
     ae_ctx.train()
-    epochs_of("ctx", ae_ctx, lambda ctx, fut: F.mse_loss(ae_ctx(ctx)[0], ctx), args["epochs"]["ctx"], LEARNING_RATE)
+    epochs_of("ctx", ae_ctx, lambda ctx, fut: F.mse_loss(ae_ctx(ctx)[0], ctx), args["epochs"]["ctx"], learning_rate)
     ae_fut.train()
-    epochs_of("fut", ae_fut, lambda ctx, fut: F.mse_loss(ae_fut(fut)[0], fut), args["epochs"]["fut"], LEARNING_RATE)
+    epochs_of("fut", ae_fut, lambda ctx, fut: F.mse_loss(ae_fut(fut)[0], fut), args["epochs"]["fut"], learning_rate)
     ae_ctx.eval()
     ae_fut.eval()
 
@@ -299,7 +305,7 @@ def run_one(args: dict[str, Any]) -> dict[str, Any]:
         return F.mse_loss(diffusion(diffusion.q_sample(z_fut, t, noise), z_ctx, t), noise)
 
     diffusion.train()
-    epochs_of("diff", diffusion, diffusion_loss, args["epochs"]["diff"], LEARNING_RATE)
+    epochs_of("diff", diffusion, diffusion_loss, args["epochs"]["diff"], learning_rate)
     diffusion.eval()
 
     import tempfile
@@ -308,7 +314,7 @@ def run_one(args: dict[str, Any]) -> dict[str, Any]:
     from training.ray.storage import spectrum_s3_client
 
     with tempfile.TemporaryDirectory(prefix="tsslcd-authors-save-") as scratch:
-        for part, module in (("ae_ctx", ae_ctx), ("ae_fut", ae_fut), ("diffusion", diffusion)):
+        for part, module in ((("ae_ctx", ae_ctx), ("ae_fut", ae_fut), ("diffusion", diffusion)) if args.get("save_weights", True) else ()):
             path = Path(scratch) / f"{part}.pth"
             torch.save(module.state_dict(), path)
             saved = save_artifact(spectrum_s3_client(), args["bucket"],
@@ -338,6 +344,9 @@ def run_one(args: dict[str, Any]) -> dict[str, Any]:
     segment_of_window = np.searchsorted([b for _, b in test_bounds], test_starts, side="right")
     result["metrics"] = score_grid(pred_h, gt_model_h, gt_raw_h, segment_of_window, args["eval_smooth"],
                                    consecutive=args["test_stride"] == 1)
+    result["hparams"] = {"latent_dim": latent_dim, "learning_rate": learning_rate, "batch_size": batch_size,
+                         "train_mask_ratio": train_mask}
+    result["objective"] = result["metrics"].get("raw_target__off__mean_horizon_mae_db")    # tuning objective: raw-target MAE, no smoothing
     result["wall_seconds"] = round(time.time() - started, 1)
     result["ok"] = True
     return result

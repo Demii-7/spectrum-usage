@@ -329,6 +329,10 @@ def launch(args: argparse.Namespace) -> None:
                 trial_calls.append((trial_job, options(model), job))
     print(f"[tune] {len(groups)} (dataset, model) groups; {len(trial_calls)} trials to run", flush=True)
     run_bounded(trial_calls)
+    if getattr(args, "trials_only", False):
+        print("[tune] --trials-only: finals skipped (rerun without it, with the full --budget, to pick the winner and train the finals)",
+              flush=True)
+        return
 
     final_calls = []
     winners = []
@@ -372,6 +376,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--datasets", nargs="+")
     parser.add_argument("--models", nargs="+", default=list(DEFAULT_MODELS), help="model:rep tokens")
     parser.add_argument("--budget", type=int, default=16)
+    parser.add_argument("--trials-only", action="store_true",
+                        help="run the search trials only (no winner, no finals); a later run with a larger --budget resumes from these records")
     parser.add_argument("--gpu-fraction", type=float, default=0.25)
     parser.add_argument("--max-parallel", type=int, default=0, help="most tasks in flight at once (0 = all at once)")
     parser.add_argument("--memory-gb", type=float, default=0.0, help="host memory to reserve per task (0 = none)")
