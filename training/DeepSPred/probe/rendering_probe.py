@@ -94,13 +94,18 @@ def read_iq(path: Path) -> np.ndarray:
     return (a[:, 0] + 1j * a[:, 1]).astype(np.complex64)
 
 
-def _win(name: str, n: int) -> np.ndarray:
+def _win(name: str, n: int, par=None) -> np.ndarray:
+    """Window by shape name (digits ignored): rect, hann, hamm, blackman, blackmanharris, nuttall, flattop, triang, bartlett, parzen, bohman, cosine,
+    tukey (par = alpha, default 0.25 = scipy.signal.spectrogram's default) and kaiser (par = beta, default 5). Periodic windows (scipy get_window)."""
     from scipy.signal import get_window
-    if name.startswith("rect"):
+    shape = re.match(r"[a-z]+", name).group(0)
+    if shape == "rect":
         return np.ones(n, dtype=np.float32)
-    if name.startswith("tukey"):  # scipy.signal.spectrogram's default window, ('tukey', 0.25)
-        return get_window(("tukey", 0.25), n).astype(np.float32)
-    return get_window("hann" if name.startswith("hann") else "hamming", n).astype(np.float32)
+    if shape == "tukey":
+        return get_window(("tukey", 0.25 if par is None else par), n).astype(np.float32)
+    if shape == "kaiser":
+        return get_window(("kaiser", 5.0 if par is None else par), n).astype(np.float32)
+    return get_window({"hann": "hann", "hamm": "hamming"}.get(shape, shape), n).astype(np.float32)
 
 
 def spectrogram_db(x: np.ndarray, window: str) -> np.ndarray:
@@ -119,6 +124,10 @@ def spectrogram_db(x: np.ndarray, window: str) -> np.ndarray:
     if "~" in window:  # "<window>~<n>": the dB floor is 10**-n instead of 1e-12 (it only matters for exact-zero bins)
         window, e = window.split("~")
         eps = 10.0 ** (-int(e))
+    par = None  # window shape parameter: "<window>%<x>" (tukey alpha, kaiser beta)
+    if "%" in window:
+        window, p_ = window.split("%")
+        par = float(p_)
     order = 1  # interpolation order of the time-axis resize to 256 rows ("^0" nearest, "^1" bilinear (default), "^3" cubic)
     if "^" in window:
         window, o = window.split("^")
@@ -150,7 +159,7 @@ def spectrogram_db(x: np.ndarray, window: str) -> np.ndarray:
     else:  # fixed hop, then resize the time axis to 256 (MATLAB default 128, scipy default 224)
         hop = tail
         starts = np.arange((len(x) - nper) // hop + 1) * hop
-    w = _win(base, nper)
+    w = _win(base, nper, par)
     if detrend:
         seg = np.stack([(x[s:s + nper] - x[s:s + nper].mean()) * w for s in starts])
     else:

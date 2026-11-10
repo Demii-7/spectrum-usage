@@ -167,7 +167,15 @@ DEFAULTS_VARIANTS = {}
 for _w, _tag in (("rect64c", "torchdef"), ("tukey224d", "scipyspecdef"), ("hann128s", "scipystftdef"), ("hann128", "mpldef")):
     for _o in (0, 1, 3):
         DEFAULTS_VARIANTS[f"{_w}_resize{_o}_glob_raw"] = (f"{_w}^{_o}", 0, "glob", "raw")
-ALL_VARIANTS = {**VARIANTS, **TUKEY_VARIANTS, **RECT_VARIANTS, **RANGE_VARIANTS, **CROP_VARIANTS, **TORCH_VARIANTS, **OVERVIEW_VARIANTS, **ZSCORE_VARIANTS, **STFT_VARIANTS, **TORCHZ_VARIANTS, **RESIZE_VARIANTS, **HOPDIAG_VARIANTS, **DEFAULTS_VARIANTS}
+# Window-shape sweep at hop 126 (exactly 256 rows, no resize, no padding, no detrend), whole-dataset min-max: your colab's list plus extra shapes.
+WINDOWS_VARIANTS = {}
+for _sh in ("hann", "hamm", "rect", "blackman", "blackmanharris", "nuttall", "flattop", "triang", "bartlett", "parzen", "bohman", "cosine"):
+    WINDOWS_VARIANTS[f"{_sh}126_win_glob_raw"] = (f"{_sh}126", 0, "glob", "raw")
+for _a in (0.05, 0.1, 0.25, 0.5, 0.75):
+    WINDOWS_VARIANTS[f"tukey126_alpha{_a}_win_glob_raw"] = (f"tukey126%{_a}", 0, "glob", "raw")
+for _b in (1, 2, 5, 8):
+    WINDOWS_VARIANTS[f"kaiser126_beta{_b}_win_glob_raw"] = (f"kaiser126%{_b}", 0, "glob", "raw")
+ALL_VARIANTS = {**VARIANTS, **TUKEY_VARIANTS, **RECT_VARIANTS, **RANGE_VARIANTS, **CROP_VARIANTS, **TORCH_VARIANTS, **OVERVIEW_VARIANTS, **ZSCORE_VARIANTS, **STFT_VARIANTS, **TORCHZ_VARIANTS, **RESIZE_VARIANTS, **HOPDIAG_VARIANTS, **DEFAULTS_VARIANTS, **WINDOWS_VARIANTS}
 
 G: dict = {}  # filled in the parent before the pool forks (read-only in the workers)
 
@@ -416,13 +424,13 @@ def work(data_root: str, out_dir: str, workers: int, pool_size: int, variant_set
     root = Path(data_root)
     names = {"all": VARIANTS, "tukey": TUKEY_VARIANTS, "rect": RECT_VARIANTS, "range": RANGE_VARIANTS,
              "crop": CROP_VARIANTS, "torch": TORCH_VARIANTS, "overview": OVERVIEW_VARIANTS,
-             "zscore": ZSCORE_VARIANTS, "stft": STFT_VARIANTS, "torchz": TORCHZ_VARIANTS, "resize": RESIZE_VARIANTS, "hopdiag": HOPDIAG_VARIANTS, "defaults": DEFAULTS_VARIANTS}[variant_set]
+             "zscore": ZSCORE_VARIANTS, "stft": STFT_VARIANTS, "torchz": TORCHZ_VARIANTS, "resize": RESIZE_VARIANTS, "hopdiag": HOPDIAG_VARIANTS, "defaults": DEFAULTS_VARIANTS, "windows": WINDOWS_VARIANTS}[variant_set]
     names = list(names)
     result = {"created": datetime.utcnow().isoformat() + "Z", "host": os.uname().nodename, "n_pix": N_PIX,
               "L_in": L_IN, "variant_set": variant_set, "datasets": {}}
     fm_stats = None
-    if variant_set in ("range", "crop", "torch", "overview", "zscore", "stft", "torchz", "resize", "hopdiag", "defaults"):
-        modes = ("full",) if variant_set in ("crop", "overview", "resize", "hopdiag", "defaults") else ("full", "train")
+    if variant_set in ("range", "crop", "torch", "overview", "zscore", "stft", "torchz", "resize", "hopdiag", "defaults", "windows"):
+        modes = ("full",) if variant_set in ("crop", "overview", "resize", "hopdiag", "defaults", "windows") else ("full", "train")
         if variant_set in ("zscore", "stft", "torchz"):
             modes = ("full", "z2", "z3", "z4", "z5")
         for name in rp.DATASETS:
@@ -470,7 +478,7 @@ def main():
     ap.add_argument("--out-dir", default="data/deepspred/probe")
     ap.add_argument("--cpus", type=int, default=16)
     ap.add_argument("--pool", type=int, default=6)
-    ap.add_argument("--set", dest="variant_set", choices=["all", "tukey", "rect", "range", "crop", "torch", "overview", "zscore", "stft", "torchz", "resize", "hopdiag", "defaults"], default="all")
+    ap.add_argument("--set", dest="variant_set", choices=["all", "tukey", "rect", "range", "crop", "torch", "overview", "zscore", "stft", "torchz", "resize", "hopdiag", "defaults", "windows"], default="all")
     ap.add_argument("--local", action="store_true")
     args = ap.parse_args()
     data_root = str(Path(args.data_root).resolve())
