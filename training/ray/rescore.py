@@ -178,6 +178,9 @@ def main(argv=None) -> None:
     p.add_argument("--no-pin", action="store_true",
                    help="let Ray place tasks anywhere with free resources (node pinning, even soft, waits on a busy pinned node; "
                         "only needed when a node has an incompatible numpy)")
+    p.add_argument("--require-resource", default=None, metavar="NAME[=AMOUNT]",
+                   help="also request this custom Ray resource per task (default amount 0.001), e.g. accelerator_type:V100 to keep "
+                        "tasks on the 32 GB cards")
     p.add_argument("--max-parallel", type=int, default=6, help="most tasks in flight at once (memory safety)")
     p.add_argument("--bucket", default=None)
     p.add_argument("--output-prefix", default="rescored")
@@ -215,6 +218,9 @@ def main(argv=None) -> None:
         gpus = 0 if entry["model"] in LINEAR else args.gpu_fraction
         pool = gpu_nodes if gpus else nodes
         options = {"num_cpus": 4, "num_gpus": gpus, "memory": int(memory_gb(entry) * 2 ** 30), "max_retries": 1}
+        if args.require_resource:
+            name, _, amount = args.require_resource.partition("=")
+            options["resources"] = {name: float(amount or 0.001)}
         if not args.no_pin:
             options["scheduling_strategy"] = NodeAffinitySchedulingStrategy(node_id=pool[index % len(pool)]["NodeID"], soft=True)
         return ray.remote(**options)(rescore_entry).remote(entry, worker_args)
