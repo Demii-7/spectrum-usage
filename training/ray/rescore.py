@@ -175,6 +175,9 @@ def main(argv=None) -> None:
     p.add_argument("--gpu-fraction", type=float, default=0.25)
     p.add_argument("--device", default=None)
     p.add_argument("--skip-done", action="store_true", help="skip checkpoints that already have an ok record")
+    p.add_argument("--no-pin", action="store_true",
+                   help="let Ray place tasks anywhere with free resources (node pinning, even soft, waits on a busy pinned node; "
+                        "only needed when a node has an incompatible numpy)")
     p.add_argument("--max-parallel", type=int, default=6, help="most tasks in flight at once (memory safety)")
     p.add_argument("--bucket", default=None)
     p.add_argument("--output-prefix", default="rescored")
@@ -211,9 +214,10 @@ def main(argv=None) -> None:
     def submit(index: int, entry: dict[str, Any]):
         gpus = 0 if entry["model"] in LINEAR else args.gpu_fraction
         pool = gpu_nodes if gpus else nodes
-        strategy = NodeAffinitySchedulingStrategy(node_id=pool[index % len(pool)]["NodeID"], soft=True)    # soft: a pinned node with no free GPU must not block the task (it stalled behind full nodes)
-        return ray.remote(num_cpus=4, num_gpus=gpus, memory=int(memory_gb(entry) * 2 ** 30), max_retries=1,
-                          scheduling_strategy=strategy)(rescore_entry).remote(entry, worker_args)
+        options = {"num_cpus": 4, "num_gpus": gpus, "memory": int(memory_gb(entry) * 2 ** 30), "max_retries": 1}
+        if not args.no_pin:
+            options["scheduling_strategy"] = NodeAffinitySchedulingStrategy(node_id=pool[index % len(pool)]["NodeID"], soft=True)
+        return ray.remote(**options)(rescore_entry).remote(entry, worker_args)
 
     # heaviest first, at most --max-parallel in flight, so memory use stays bounded and the long tasks do not end up last
     order = sorted(enumerate(entries), key=lambda ie: -memory_gb(ie[1]))
