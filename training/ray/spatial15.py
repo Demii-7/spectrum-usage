@@ -113,6 +113,106 @@ def experiment_yaml(band: str, nodes: list[str], held: str | None, grid: dict[st
     return exp
 
 
+STS_BRANCH_KEYS = ("use_closeness", "use_period", "use_trend", "lc", "lp", "lq", "period_interval", "trend_interval",
+                   "prediction_offset", "share_branch_weights", "allow_unavailable_branches")
+
+
+def model_config_for(config: dict[str, Any], model: str) -> dict[str, Any]:
+    """The {windowing, model section} file ``evaluate_condition`` reads. STS-PredNet keeps its branch settings flat in training, but the
+    shared model factory reads them from ``branches``, so they are copied there."""
+    section = copy.deepcopy(config[model])
+    if model == "stsprednet" and "branches" not in section:
+        section["branches"] = {k: section[k] for k in STS_BRANCH_KEYS if k in section}
+    return {"windowing": config["windowing"], model: section}
+
+
+def physical_scores(client, bucket: str, base: str, root: str, args: dict[str, Any], band: str, variant: dict[str, Any],
+                    grid: dict[str, Any], model: str, seed: int, checkpoint: Path | None, config: dict[str, Any],
+                    scratch: Path) -> dict[str, Any]:
+    """Score one trained model at the physical receivers (geometry_correct plus each held-out receiver, left out of and added to the map)."""
+    from training.common.spatial_ablation_eval import evaluate_condition
+
+    model_config = scratch / "models.yaml"
+    model_config.write_text(yaml.safe_dump(model_config_for(config, model)))
+    held_out = [n for n in SIX if n not in variant["nodes"]]
+    scored: dict[str, Any] = {}
+    for held in held_out or [None]:
+        exp_path = Path(root) / "training/configs" / f".spatial15-{os.getpid()}-{variant['name']}.yaml"
+        exp_path.write_text(yaml.safe_dump(experiment_yaml(band, variant["nodes"], held, grid)))
+        try:
+            conditions = ["geometry_correct"] if held is None or held == held_out[0] else []
+            if held:
+                conditions += ["six_to_guesthouse", "seven_to_guesthouse"]
+            for condition in conditions:
+                label = condition if condition == "geometry_correct" else f"{condition}-{SIX[held].replace(' ', '')}"
+                out = scratch / "cond" / label
+                summary = evaluate_condition(experiment_path=exp_path, model_config_path=model_config, checkpoint_path=checkpoint,
+                                             model_name=model, seed=seed, condition=condition, output_directory=out,
+                                             batch_size=args["batch_size"], device="cpu" if model in CPU_MODELS else "cuda")
+                scored[label] = {k: summary.get(k) for k in ("mean_horizon_mae_db", "n_origins", "target_receivers",
+                                                               *[f"mae_db_t{h}" for h in HORIZONS])}
+                for name in ("result.json", "metadata.json", "region_metrics.csv", "map_metrics.csv"):
+                    if (out / name).exists():
+                        client.upload_file(str(out / name), bucket, f"{base}/eval/{label}/{name}")
+        finally:
+            exp_path.unlink(missing_ok=True)
+    return scored
+
+
+def eval_only_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    """Remote worker: score an already trained cell at the physical receivers from its saved weights (no training).
+
+    Weights come from the cell's own ``<base>/weights`` or, with ``eval_from_tuning`` and the base variant ``core4-p2``, from the tuning
+    finals of the same seed (the same model: tuned winner, core-four default map). The cell's earlier result.json (map metrics and
+    provenance from the training run) is kept and extended.
+    """
+    root = args["repo_root"]
+    os.chdir(root)
+    sys.path.insert(0, root)
+    from training.ray.storage import spectrum_s3_client
+
+    client, bucket, band = spectrum_s3_client(), args["bucket"], args["band"]
+    variant, model, seed = job["variant"], job["model"], int(job["seed"])
+    base = f"{args['prefix'].strip('/')}/{band}/{variant['name']}/{model}/seed-{seed}"
+    try:
+        result = json.loads(client.get_object(Bucket=bucket, Key=f"{base}/result.json")["Body"].read())
+    except Exception:
+        result = {"band": band, "variant": variant["name"], "nodes": variant["nodes"], "model": model, "seed": seed, "grid": job["grid"]}
+    started = time.time()
+    try:
+        from training.ray.powder15 import ensure_powder15
+
+        ensure_powder15(band, root, tuple(SIX))
+        if args.get("eval_from_tuning") and variant["name"] == "core4-p2":
+            prefix = f"{args['tuning_prefix']}/powder15_4d/{band}/4d/{model}/weights/seed-{seed}/"
+            result["hyperparameters"] = "tuned 15-minute 4D winner (tuning final of this seed; weights not retrained)"
+        else:
+            prefix = f"{base}/weights/"
+        keys = [o["Key"] for page in client.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=prefix)
+                for o in page.get("Contents", []) if o["Key"].endswith(".pt")]
+        if not keys:
+            raise FileNotFoundError(f"no saved weights under {prefix}")
+        with tempfile.TemporaryDirectory(prefix="spatial15-eval-") as scratch:
+            scratch = Path(scratch)
+            checkpoint = scratch / Path(keys[0]).name
+            client.download_file(bucket, keys[0], str(checkpoint))
+            meta = json.loads(client.get_object(Bucket=bucket, Key=keys[0] + ".meta.json")["Body"].read())
+            config = meta["config"]
+            result["receivers"] = physical_scores(client, bucket, base, root, args, band, variant, job["grid"], model, seed,
+                                                  checkpoint, config, scratch)
+            result.update(eval_only=True, eval_weights_key=keys[0], eval_weights_sha256=meta.get("sha256"))
+        result.pop("error", None)
+        result.pop("trace", None)
+        result["ok"] = True
+    except Exception as error:
+        import traceback
+
+        result.update(ok=False, error=f"{type(error).__name__}: {error}"[:400], trace=traceback.format_exc()[-1500:])
+    result["eval_wall_seconds"] = round(time.time() - started, 1)
+    client.put_object(Bucket=bucket, Key=f"{base}/result.json", Body=json.dumps(result, default=str).encode())
+    return result
+
+
 def run_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     """Remote worker: train one (variant, model, seed), score it on its maps and at the physical receivers, upload everything."""
     root = args["repo_root"]
@@ -121,7 +221,6 @@ def run_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     import pandas as pd
 
     from training.common.evaluation_integrated import evaluate_one_model
-    from training.common.spatial_ablation_eval import evaluate_condition
     from training.common.train_integrated import train_one_model
     from training.ray.artifacts import save_run
     from training.ray.final_eval import build_eval_config, config_file_for, summarize_metrics
@@ -177,32 +276,8 @@ def run_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
             if checkpoint is not None:
                 result.update(save_run(client, bucket, f"{base}/weights", run_dir, config,
                                        {"result_kind": "spatial15", "variant": variant, "seed": seed}))
-            model_config = scratch / "models.yaml"
-            model_config.write_text(yaml.safe_dump({"windowing": config["windowing"], model: config[model]}))
-            held_out = [n for n in SIX if n not in variant["nodes"]]
-            scored = {}
-            for held in held_out or [None]:
-                exp_path = Path(root) / "training/configs" / f".spatial15-{os.getpid()}-{variant['name']}.yaml"
-                exp_path.write_text(yaml.safe_dump(experiment_yaml(band, variant["nodes"], held, job["grid"])))
-                try:
-                    conditions = ["geometry_correct"] if held is None or held == held_out[0] else []
-                    if held:
-                        conditions += ["six_to_guesthouse", "seven_to_guesthouse"]
-                    for condition in conditions:
-                        label = condition if condition == "geometry_correct" else f"{condition}-{SIX[held].replace(' ', '')}"
-                        out = scratch / "cond" / label
-                        summary = evaluate_condition(experiment_path=exp_path, model_config_path=model_config,
-                                                     checkpoint_path=checkpoint, model_name=model, seed=seed, condition=condition,
-                                                     output_directory=out, batch_size=args["batch_size"],
-                                                     device="cpu" if model in CPU_MODELS else "cuda")
-                        scored[label] = {k: summary.get(k) for k in ("mean_horizon_mae_db", "n_origins", "target_receivers",
-                                                                       *[f"mae_db_t{h}" for h in HORIZONS])}
-                        for name in ("result.json", "metadata.json", "region_metrics.csv", "map_metrics.csv"):
-                            if (out / name).exists():
-                                client.upload_file(str(out / name), bucket, f"{base}/eval/{label}/{name}")
-                finally:
-                    exp_path.unlink(missing_ok=True)
-            result["receivers"] = scored
+            result["receivers"] = physical_scores(client, bucket, base, root, args, band, variant, job["grid"], model, seed,
+                                                  checkpoint, config, scratch)
         result["ok"] = True
     except Exception as error:
         import traceback
@@ -230,6 +305,9 @@ def main(argv=None) -> None:
     p.add_argument("--tuned", action="store_true",
                    help="train with each model's tuned 15-minute 4D winner (tuning/powder15_4d) instead of the inherited 1-minute settings")
     p.add_argument("--tuning-prefix", default="tuning")
+    p.add_argument("--eval-only", action="store_true", help="score saved weights at the physical receivers; no training")
+    p.add_argument("--eval-from-tuning", action="store_true",
+                   help="with --eval-only: the base variant core4-p2 is scored from the tuning finals' weights (same tuned model, same seed)")
     p.add_argument("--smoke-epochs", type=int, default=0, help="override the epoch count for a quick end-to-end test (use another --prefix)")
     p.add_argument("--bucket", default=None)
     p.add_argument("--prefix", default="spatial15-oct2026")
@@ -255,11 +333,13 @@ def main(argv=None) -> None:
         jobs = [j for j in jobs if not done(j)]
     print(f"[spatial15] {len(jobs)} runs over {len(chosen)} variants; grid frame {frame}", flush=True)
     shared = {"repo_root": args.repo_root, "bucket": bucket, "prefix": args.prefix, "band": args.band, "batch_size": args.batch_size,
-              "tuned": args.tuned, "tuning_prefix": args.tuning_prefix, "smoke_epochs": args.smoke_epochs}
+              "tuned": args.tuned, "tuning_prefix": args.tuning_prefix, "smoke_epochs": args.smoke_epochs,
+              "eval_from_tuning": args.eval_from_tuning}
     ray.init(address=args.address, ignore_reinit_error=True)
     memory = int(args.memory_gb * 2**30)
-    cpu_task = ray.remote(num_cpus=4, num_gpus=0, memory=memory, max_retries=2)(run_job)
-    gpu_task = ray.remote(num_cpus=4, num_gpus=args.gpu_fraction, memory=memory, max_retries=2)(run_job)
+    worker = eval_only_job if args.eval_only else run_job
+    cpu_task = ray.remote(num_cpus=4, num_gpus=0, memory=memory, max_retries=2)(worker)
+    gpu_task = ray.remote(num_cpus=4, num_gpus=args.gpu_fraction, memory=memory, max_retries=2)(worker)
     queue, pending, ok = list(jobs), [], 0
     while queue or pending:
         while queue and len(pending) < args.max_parallel:
