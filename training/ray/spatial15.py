@@ -136,9 +136,8 @@ def run_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     started = time.time()
     try:
         ensure_powder15(band, root, tuple(SIX))
-        config_base = yaml.safe_load(Path(config_file_for(model, "4d")).read_text())
         if model == "lookbackmean4d":
-            config = copy.deepcopy(config_base)
+            config = yaml.safe_load(Path(config_file_for(model, "4d")).read_text())
             config["training"] = {**config.get("training", {}), "models": [model], "device": "cpu"}
         elif args.get("tuned"):
             from training.ray.config import inject_parameters
@@ -152,6 +151,7 @@ def run_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
             if model in CPU_MODELS:
                 config["training"]["device"] = "cpu"
         else:
+            config_base = yaml.safe_load(Path(config_file_for(model, "4d")).read_text())
             costs = json.loads(client.get_object(Bucket=bucket, Key=f"checkpoints-oct2026/4d/{model}/seed-42/"
                                                  f"powder_600_800_t4t6_run_costs.json")["Body"].read())
             config = build_eval_config(config_base, model, costs, test_start="2026-10-27T20:00:00Z", test_end="2026-11-03T20:00:00Z",
