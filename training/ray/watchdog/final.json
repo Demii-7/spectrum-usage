@@ -38,5 +38,10 @@
   "id": "claude-final-tsslcd-tune-r1",
   "entrypoint": "python -u -m training.ray.tune_tsslcd --budget 8 --trials-only --max-parallel 4",
   "max_restarts": 4
+ },
+ {
+  "id": "claude-final-timellm1min-finals-1",
+  "entrypoint": "bash -c 'cd /workspace/spectrum-usage && while true; do s=$(ray job status --address http://127.0.0.1:8265 claude-final-rescore-timellm15-1 2>&1 | grep \"Status for job\"); case \"$s\" in *SUCCEEDED*|*FAILED*|*STOPPED*) break;; esac; sleep 120; done; python -u -m training.ray.tune_direct --resolution 1min --bucket spectrum --output-prefix direct-tuning --models timellm --max-parallel 3'",
+  "max_restarts": 3
  }
 ]
