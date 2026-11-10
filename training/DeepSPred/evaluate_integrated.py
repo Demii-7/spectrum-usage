@@ -70,7 +70,7 @@ def predict_frame_windows(model: SwinSTB3D, frame_pad: np.ndarray, starts: list[
 def evaluate_chunk(config: dict[str, Any], chunk, bands, out: Path, checkpoint_path: Path):
     dcfg = build_runner_config(config, 1)["train"]
     horizons = [int(h) for h in config["windowing"]["horizons"]]
-    data = load_chunk(config, chunk)
+    data = load_chunk(config, chunk, val_fraction=float(dcfg.get("val_fraction", 0.1)))
     test_splits = config["data"].get("test_splits", [data.test_split])
     train_raw = data.splits[data.train_split].raw_dbm
     ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
