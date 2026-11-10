@@ -55,16 +55,28 @@ LATENT_DIM, N_TIMESTEPS, BATCH, LEARNING_RATE = 32, 1000, 256, 1e-4        # the
 EPOCHS = {"ctx": 300, "fut": 300, "diff": 2000}                              # the authors' config.py defaults
 TRAIN_MASK = 0.1
 DEFAULT_EVAL_SMOOTH = ("1:1:centered", "6:3:centered", "6:3:causal")
+# Resolution profiles. "1min" is the original setting. "15min" uses the benchmark's 15-minute windowing (lookback 96, future 48,
+# horizons 1/4/12/24/48) on the converted ``data/powder15`` traces; the test partition is loaded ``context - 1`` blocks early so the
+# forecast origins are exactly the benchmark's (first origin = first block of the test week); everything else (model, stages, epochs,
+# masking, savgol switch) is unchanged.
+PROFILES = {
+    "1min": {"root": "data/powder", "raw": RAW_NAME, "freq": "min", "context": CONTEXT, "future": FUTURE, "horizons": HORIZONS, "pad_test": False},
+    "15min": {"root": "data/powder15", "raw": "power_15min.csv", "freq": "15min", "context": 96, "future": 48,
+              "horizons": (1, 4, 12, 24, 48), "pad_test": True},
+}
 
 
 # ----------------------------------------------------------------------------------------------------------- data
-def load_partition(root: str, partition: str, band: str = "600_800", sites=SITES, max_gap: int = MAX_GAP):
+def load_partition(root: str, partition: str, band: str = "600_800", sites=SITES, max_gap: int = MAX_GAP, profile: str = "1min"):
     """(values (T, sites*bins) dBm, minute index, valid mask). Receivers joined on common minutes; short gaps filled."""
+    prof = PROFILES[profile]
     start, end = (pd.Timestamp(t) for t in RANGES[partition])
+    if prof["pad_test"] and partition == "test":
+        start = pd.Timestamp(start).ceil(prof["freq"]) - (prof["context"] - 1) * pd.Timedelta(prof["freq"])
     frames = []
     for site in sites:
-        raw = pd.read_csv(Path(root) / "data" / "powder" / site / RUNS[partition] / band / RAW_NAME)
-        stamps = pd.to_datetime(raw.pop("timestamp_utc"), utc=True).dt.floor("min")
+        raw = pd.read_csv(Path(root) / prof["root"] / site / RUNS[partition] / band / prof["raw"])
+        stamps = pd.to_datetime(raw.pop("timestamp_utc"), utc=True).dt.floor(prof["freq"])
         raw.index = stamps
         raw = raw[~raw.index.duplicated(keep="first")].sort_index()
         raw = raw.loc[(raw.index >= start) & (raw.index <= end)]
@@ -73,7 +85,7 @@ def load_partition(root: str, partition: str, band: str = "600_800", sites=SITES
     bins = {f.shape[1] for f in frames}
     if len(bins) != 1:
         raise ValueError(f"receivers differ in bin count: {sorted(bins)}")
-    grid = pd.date_range(start, end, freq="min")
+    grid = pd.date_range(start, end, freq=prof["freq"])
     joined = pd.concat([f.reindex(grid) for f in frames], axis=1)
     both = joined.interpolate(method="linear", limit=max_gap, limit_area="inside")
     valid = np.isfinite(both.to_numpy()).all(axis=1)
@@ -134,13 +146,14 @@ def window_starts(segments: list[tuple[int, int]], length: int, stride: int = 1)
     return np.concatenate(starts) if starts else np.zeros(0, dtype=np.int64)
 
 
-def build_partition(root: str, partition: str, scaler: MinMax | None, savgol: str, band: str = "600_800"):
+def build_partition(root: str, partition: str, scaler: MinMax | None, savgol: str, band: str = "600_800", profile: str = "1min"):
     """Series for one partition: min-max normalized raw (``raw``) and filtered (``model``), concatenated over valid
     segments, plus the segment boundaries in that concatenated coordinate. The scaler is fit here on the training rows."""
-    values, _, valid = load_partition(root, partition, band)
-    segments = contiguous_segments(valid, CONTEXT + FUTURE)
+    prof = PROFILES[profile]
+    values, _, valid = load_partition(root, partition, band, profile=profile)
+    segments = contiguous_segments(valid, prof["context"] + prof["future"])
     if not segments:
-        raise ValueError(f"no gap-free run of {CONTEXT + FUTURE} minutes in the {partition} partition")
+        raise ValueError(f"no gap-free run of {prof['context'] + prof['future']} steps in the {partition} partition")
     if scaler is None:
         scaler = MinMax().fit(np.concatenate([values[a:b] for a, b in segments]))
     raw_parts, model_parts, bounds, offset = [], [], [], 0
@@ -183,20 +196,20 @@ def smooth_windows(series: np.ndarray, segment_of_window: np.ndarray, window: in
     return out
 
 
-def score(pred_h: np.ndarray, gt_h: np.ndarray) -> dict[str, float]:
+def score(pred_h: np.ndarray, gt_h: np.ndarray, horizons=HORIZONS) -> dict[str, float]:
     """MAE and MSE in dB per horizon for (N, len(HORIZONS), D) arrays, plus the mean over horizons."""
     out: dict[str, float] = {}
-    for j, h in enumerate(HORIZONS):
+    for j, h in enumerate(horizons):
         err = pred_h[:, j] - gt_h[:, j]
         out[f"mae_db_t{h}"] = float(np.abs(err).mean())
         out[f"mse_db2_t{h}"] = float((err ** 2).mean())
-    out["mean_horizon_mae_db"] = float(np.mean([out[f"mae_db_t{h}"] for h in HORIZONS]))
-    out["mean_horizon_mse_db2"] = float(np.mean([out[f"mse_db2_t{h}"] for h in HORIZONS]))
+    out["mean_horizon_mae_db"] = float(np.mean([out[f"mae_db_t{h}"] for h in horizons]))
+    out["mean_horizon_mse_db2"] = float(np.mean([out[f"mse_db2_t{h}"] for h in horizons]))
     return out
 
 
 def score_grid(pred_h: np.ndarray, gt_model_h: np.ndarray, gt_raw_h: np.ndarray, segment_of_window: np.ndarray,
-               eval_smooth: list[tuple[int, int, str]], consecutive: bool) -> dict[str, float]:
+               eval_smooth: list[tuple[int, int, str]], consecutive: bool, horizons=HORIZONS) -> dict[str, float]:
     """Metrics for every eval-smoothing setting against both ground truths (all arrays in dB, (N, horizons, D)).
 
     ``model_target``: the series the model was trained on, with the setting's GT smoothing applied (authors' protocol).
@@ -213,7 +226,7 @@ def score_grid(pred_h: np.ndarray, gt_model_h: np.ndarray, gt_raw_h: np.ndarray,
         pred = smooth_windows(pred_h, segment_of_window, pred_w, mode)
         gt_model = smooth_windows(gt_model_h, segment_of_window, gt_w, mode)
         for target, gt in (("model_target", gt_model), ("raw_target", gt_raw_h)):
-            for key, value in score(pred, gt).items():
+            for key, value in score(pred, gt, horizons).items():
                 out[f"{target}__{name}__{key}"] = value
     return out
 
@@ -232,6 +245,8 @@ def run_one(args: dict[str, Any]) -> dict[str, Any]:
 
     device = torch.device("cuda" if torch.cuda.is_available() and args.get("device") != "cpu" else "cpu")
     seed, savgol = int(args["seed"]), args["savgol"]
+    profile = args.get("resolution", "1min")
+    CONTEXT, FUTURE, HORIZONS = (PROFILES[profile][k] for k in ("context", "future", "horizons"))      # shadow the 1-minute module constants
     hp = {"latent_dim": LATENT_DIM, "learning_rate": LEARNING_RATE, "batch_size": BATCH, "train_mask_ratio": TRAIN_MASK,
           **(args.get("hparams") or {})}          # the authors' defaults unless a tuning trial overrides them (constructor / optimiser settings only)
     latent_dim, learning_rate, batch_size, train_mask = (int(hp["latent_dim"]), float(hp["learning_rate"]), int(hp["batch_size"]),
@@ -243,11 +258,14 @@ def run_one(args: dict[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {"savgol": savgol, "seed": seed, "epochs": args["epochs"], "device": str(device),
                               "context": CONTEXT, "future": FUTURE, "latent_dim": latent_dim, "n_timesteps": N_TIMESTEPS,
                               "batch_size": batch_size, "train_mask_ratio": train_mask, "learning_rate": learning_rate,
-                              "score_partition": score_partition,
+                              "score_partition": score_partition, "resolution": profile, "horizons": list(HORIZONS),
                               "eval_mask_ratio": args["eval_mask_ratio"], "sites": list(SITES)}
 
-    train_raw, train_model, train_bounds, scaler = build_partition(root, "train", None, savgol)
-    test_raw, test_model, test_bounds, _ = build_partition(root, score_partition, scaler, savgol)
+    if profile != "1min":
+        from training.ray.powder15 import ensure_powder15
+        ensure_powder15(args.get("band", "600_800"), root, tuple(SITES))
+    train_raw, train_model, train_bounds, scaler = build_partition(root, "train", None, savgol, profile=profile)
+    test_raw, test_model, test_bounds, _ = build_partition(root, score_partition, scaler, savgol, profile=profile)
     n_cols = train_model.shape[1]
     train_starts = window_starts(train_bounds, CONTEXT + FUTURE)
     test_starts = window_starts(test_bounds, CONTEXT + FUTURE, args["test_stride"])
@@ -343,7 +361,7 @@ def run_one(args: dict[str, Any]) -> dict[str, Any]:
     gt_raw_h = scaler.inverse(test_raw[horizon_rows])
     segment_of_window = np.searchsorted([b for _, b in test_bounds], test_starts, side="right")
     result["metrics"] = score_grid(pred_h, gt_model_h, gt_raw_h, segment_of_window, args["eval_smooth"],
-                                   consecutive=args["test_stride"] == 1)
+                                   consecutive=args["test_stride"] == 1, horizons=HORIZONS)
     result["hparams"] = {"latent_dim": latent_dim, "learning_rate": learning_rate, "batch_size": batch_size,
                          "train_mask_ratio": train_mask}
     result["objective"] = result["metrics"].get("raw_target__off__mean_horizon_mae_db")    # tuning objective: raw-target MAE, no smoothing
@@ -381,6 +399,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--epochs-ctx", type=int, default=EPOCHS["ctx"])
     p.add_argument("--epochs-fut", type=int, default=EPOCHS["fut"])
     p.add_argument("--epochs-diff", type=int, default=EPOCHS["diff"])
+    p.add_argument("--resolution", default="1min", choices=sorted(PROFILES), help="15min: benchmark windowing on data/powder15")
+    p.add_argument("--hparams", default=None, help="JSON of constructor/optimiser overrides (latent_dim, learning_rate, batch_size, train_mask_ratio)")
     p.add_argument("--test-stride", type=int, default=1, help="1 for real results; larger only for timing runs")
     p.add_argument("--eval-mask-ratio", type=float, default=0.0)
     p.add_argument("--gpu-fraction", type=float, default=0.5)
@@ -415,7 +435,8 @@ def main(argv=None) -> None:
             specs.append({"savgol": savgol, "seed": seed, "repo_root": args.repo_root, "bucket": bucket,
                           "output_prefix": args.output_prefix, "device": args.device,
                           "epochs": {"ctx": args.epochs_ctx, "fut": args.epochs_fut, "diff": args.epochs_diff},
-                          "test_stride": args.test_stride, "eval_mask_ratio": args.eval_mask_ratio,
+                          "test_stride": args.test_stride, "eval_mask_ratio": args.eval_mask_ratio, "resolution": args.resolution,
+                          "hparams": json.loads(args.hparams) if args.hparams else None,
                           "eval_smooth": eval_smooth})
     print(f"[tsslcd-authors] {len(specs)} runs", flush=True)
     remote = ray.remote(num_cpus=4, num_gpus=args.gpu_fraction, max_retries=1)(job)
