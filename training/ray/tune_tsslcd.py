@@ -125,6 +125,9 @@ def main(argv=None) -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--budget", type=int, default=16)
     p.add_argument("--trials-only", action="store_true", help="trials only: no winner, no finals (a later larger --budget resumes)")
+    p.add_argument("--skip-trials", action="store_true",
+                   help="do not run or wait for trials; pick the winner from the finished ones (a later run without this flag picks up "
+                        "late trials and redoes the finals if the winner changes)")
     p.add_argument("--from-index", type=int, default=0,
                    help="run only candidates from this index on (a second cluster takes the other half of the budget while the first is in flight)")
     p.add_argument("--epochs-ctx", type=int, default=300)
@@ -159,7 +162,8 @@ def main(argv=None) -> None:
                "run": {**base, "eval_smooth": [parse_eval_smooth("1:1:centered")]}}
               for i, c in enumerate(candidates) if i >= args.from_index and candidate_id(c) not in done]
     print(f"[tune-tsslcd] {len(candidates)} candidates, {len(trials)} trials to run", flush=True)
-    run_bounded(ray, trial_job, trials, options, args.max_parallel)
+    if not args.skip_trials:
+        run_bounded(ray, trial_job, trials, options, args.max_parallel)
     if args.trials_only:
         print("[tune-tsslcd] --trials-only: finals skipped", flush=True)
         return

@@ -38,5 +38,10 @@
   "id": "claude-final-tsslcd-tune-r1",
   "entrypoint": "python -u -m training.ray.tune_tsslcd --budget 8 --trials-only --max-parallel 4",
   "max_restarts": 4
+ },
+ {
+  "id": "claude-final-tsslcd-finals-1",
+  "entrypoint": "python -u -m training.ray.tune_tsslcd --budget 16 --skip-trials --max-parallel 5 --gpu-fraction 0.5",
+  "max_restarts": 3
  }
 ]
