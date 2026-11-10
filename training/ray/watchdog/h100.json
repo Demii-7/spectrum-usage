@@ -25,8 +25,8 @@
   "max_restarts": 4
  },
  {
-  "id": "claude-h100-ext-1",
-  "entrypoint": "python -u -m training.ray.transfer_external run --skip-done --max-parallel 8 --code-revision 80d2269a092354a238ef7358fe0ece6bf6d7683c",
+  "id": "claude-h100-ext-2",
+  "entrypoint": "python -u -m training.ray.transfer_external run --skip-done --max-parallel 8 --code-revision 461ec85e2caff289f52a1938c49624b397a77c13",
   "max_restarts": 4
  }
 ]
