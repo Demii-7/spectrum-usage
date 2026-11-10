@@ -364,7 +364,7 @@ and is limited by JPEG damage and clipping at the range limits.
 Cluster: UC (8x RTX 6000), CPU-only jobs on `ray-uc-1`, submitted with `ray job submit` from the head container, 16 CPUs each.
 Code synced with `training/ray/scripts/sync-cluster-code.py --cluster uc` (committed tree). **Nothing pushed.**
 
-| Job | Script | Result file (sha256) |
+| Job | Script | Result file (sums in results/SHA256SUMS) |
 |---|---|---|
 | `claude-uc-deepspred-render-probe-4` (-1 to -3 failed on setup bugs, fixed) | `rendering_probe.py` | `rendering_probe_20261110T172330.json`  |
 | `claude-uc-deepspred-acf-probe-1` | `acf_probe.py` | `acf_probe_20261110T172942.json`  |
