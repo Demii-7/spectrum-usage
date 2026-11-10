@@ -10,8 +10,13 @@
   "max_restarts": 6
  },
  {
-  "id": "claude-spectral-15min-3",
+  "id": "claude-spectral-15min-4",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.spectral_context_fixed --bucket spectrum --resolution 15min --output-prefix oct2026-spectral-context-15min --max-parallel 4 --seeds 40 41 42\"",
+  "max_restarts": 6
+ },
+ {
+  "id": "claude-spectral-15min-seeds4344-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.spectral_context_fixed --bucket spectrum --resolution 15min --output-prefix oct2026-spectral-context-15min --max-parallel 4 --seeds 43 44\"",
   "max_restarts": 6
  },
  {
