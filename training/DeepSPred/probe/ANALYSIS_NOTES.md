@@ -27,10 +27,9 @@ images, and the result depends on that more than on anything else. With the most
 dataset-wide min-max, jet) the trained model scores 846 [C], 1.9x the paper. We then characterised what any model
 could reach under 20+ candidate renderings with a linear-predictor ceiling, and found that (a) the absolute MSE level
 is close to a free parameter, because it scales roughly as 1/(dB span)^k with k between 1.3 and 2.5 and the paper does
-not state the span; (b) no rendering we tried reproduces the paper's FM level, FM-to-cross-validation ratio and
-horizon shape together; (c) the one rendering that matched the FM level (rectangular window, 433) fails the
-cross-validation ratio (2.1 vs the paper's about 1.2), and its detrended variant (78) is an artifact of a 1e-12 floor in the dB
-conversion. Normalising with the true full-dataset dB range brings the scipy-default rendering to FM 482 (7% above the paper, with the paper's horizon
+not state the span; (b) no rendering we tried reproduces the paper's FM level and horizon shape together with the one valid
+cross-validation constraint, which is one-sided (section 5.10: the paper's higher cross-validation error does not mean harder data); (c) the rectangular window (FM 433 with the sampled range, 334 with the
+full range) is inconsistent with an FM-trained cross-validation model (its cross-validation ceiling with FM's range is 2.5x FM), and its detrended variant (78) is an artifact of a 1e-12 floor in the dB conversion. Normalising with the true full-dataset dB range brings the scipy-default rendering to FM 482 (7% above the paper, with the paper's horizon
 shape) and a scipy-default variant without detrend to a cross-validation/FM ratio of 1.16 (paper about 1.18) with both levels about 25% high, but no single
 configuration matches level, ratio and shape together. Cropping to the stated 90-110 MHz band brings both datasets' levels to within about 10-17% of the paper
 at once (Tukey hop 224: FM +6%, cross-validation -12%), at the cost of a larger FM horizon rise (+6% vs about +3.4%). A torch.stft-style rectangular rendering gives FM 409 with the
@@ -440,6 +439,37 @@ Job `claude-uc-deepspred-zero-probe-1` (`results/zero_probe_20261110T194302.json
   (210 to 379 across floors 1e-12 to 1e-6; 899 with the 1-in-50 sample that missed it). Full-dataset min-max is therefore fragile to single pixels. The same applies to any extreme pixel (5.5, point 4).
 - **Earlier wording corrected:** I had written that "a few frames contain an exact-zero bin" before checking; the check shows one pixel.
 
+### 5.10 Correction: the cross-validation ratio is a one-sided check, not a target [V for the arithmetic, D for the logic]
+
+The paper's model scores 531 on cross-validation and 449 on FM. That does not mean the cross-validation data is harder: the paper never says whether its cross-validation figure comes from a model trained on FM and
+applied to the cross-validation set (a domain shift) or trained locally, and the two datasets may be normalised differently. The collaborator found zero-shot transfer far worse than local training on their JPEG q95 rendering
+(849 vs 205) [C], so a transferred model can sit far above the data's own ceiling. Sections 5.3, 5.5 (point 3), 5.6 (point 3), 5.8 (point 3) and the "ratio" columns of `TABLES.md` treated the paper's 1.18 as a value to match;
+read them with this correction. (An earlier remark of mine that a candidate "fails the cross-validation ratio" was an over-reading for the same reason.)
+
+What survives is an inequality. A model cannot beat the data's ceiling, so ceiling(cross-validation) / ceiling(FM) should be at most about 1.18, times about 1.0-1.1 for how close the paper's FM model is to its own ceiling:
+- **local reading** (cross-validation trained on cross-validation, its own range): "CV own range / FM" at most about 1.25;
+- **transfer reading** (FM-trained model applied to cross-validation, so inputs scaled with FM's range): "CV rendered with FM's range / FM" at most 1.18.
+
+Results (full range, k=8 ceilings; `results/OVERVIEW.md` has all rows, with `local ok?` and `transfer ok?` columns):
+
+| Rendering | FM | CV own / FM | local | CV with FM range / FM | transfer |
+|---|---|---|---|---|---|
+| scipy defaults (Tukey .25, hop 224, detrend) | 482 | 1.68 | **no** | 0.98 | ok |
+| Tukey .25, hop 224 | 572 | 1.16 | ok | 0.94 | ok |
+| Tukey .25, hop 126 | 543 | 1.04 | ok | 0.91 | ok |
+| Hamming 128 | 581 | 1.23 | ok | 1.04 | ok |
+| Hann 126 | 816 | 0.89 | ok | 0.83 | ok |
+| Rectangular 126 | 334 | 0.63 (zero-pixel artifact) | ok | 2.48 | **no** |
+| torch-style (rect, hop 127, reflect) | 288 | 0.73-1.31 (floor-dependent) | ok | 2.54 | **no** |
+| Tukey hop 224, crop A / crop C | 476 / 482 | 0.98 / 0.93 | ok | 0.70 / 0.77 | ok |
+| Hamming 128, crop A / crop C | 524 / 525 | 1.09 / 1.12 | ok | 0.86 / 0.90 | ok |
+| scipy defaults, crop A / crop C | 590 / 343 | 1.14 / 1.76 | ok / **no** | 0.74 / 0.78 | ok |
+
+Consequences: (a) the scipy-default rendering with full-range normalisation (FM 482, rise +3.5%) is no longer penalised: its own-range cross-validation ratio of 1.68 is not a failure under the transfer reading, where it needs
+a domain-shift penalty of about 20% to reach the paper's 1.18; (b) the rectangular and torch-style renderings pass the local reading but fail the transfer reading by a wide margin (2.5x); (c) which reading is correct is unknown, so a candidate's
+status on this check depends on it; (d) the check is weak: most renderings pass, and a transferred model's penalty could be much larger than 20% (the collaborator's 4x), so it excludes few candidates.
+With the ratio demoted, FM alone carries the discrimination, and FM level is itself nearly free through the dB range (5.2), leaving the horizon shape (5.1, 5.7) as the most informative scale-free quantity.
+
 ---
 
 ## 6. What can and cannot be claimed
@@ -482,6 +512,7 @@ Included so the report does not inherit them.
 | "MSE is about 1/span^2" | Rough: measured exponents 1.3-2.5 (5.2) |
 | "scipy's default hop and detrend don't help" (before the exact default was run) | Premature: the exact default (tukey224d) has been run since; FM 725.5 |
 | The scipy default "needs spans of 187 / 177 dB", and the lead might close it | Measured (5.5): full spans 156 / 117 dB give 482 / 810; the predicted 508 / 837 were within 5% |
+| The cross-validation/FM ratio of 1.18 is a target the data's ceilings should match | Retracted (5.10): the paper's model, not the data, scored worse; only a one-sided check applies |
 | The collaborator's grayscale anchors are 5294.5 / 11.32 | Disputed: the IEEE text gives 5185.25 / 11.339 and its percentages match those (1.5) |
 
 ---

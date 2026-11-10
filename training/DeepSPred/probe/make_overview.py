@@ -105,9 +105,13 @@ def main():
            "paper: FM 448.76 [T] (+3.6% rise [P]), cross-validation 531.43 at k=12 [T] (about 530 at k=8 [P], +2.3% [P]), CV/FM about 1.18. "
            "**Primary conventions: full and train-only range. 'sampled' is the collaborator's compute shortcut (range from every 50th frame) and is shown only for reference.** "
            "Rise = k=1 to k=20 under the full range (sampled if full was not run). `-` = not run. FM/CV 'FM-range' = cross-validation rendered with FM's full range.\n",
-           "| option | FM full | FM train-only | CV full | CV train-only | CV/FM (full) | FM rise | CV rise | FM vs paper (full) | FM (sampled, ref.) | CV (sampled, ref.) |",
-           "|---|---|---|---|---|---|---|---|---|---|---|",
-           f"| **PAPER (3D-SwinSTB)** | {PAPER['fm_k8']} [T] | - | {PAPER['cv_k12']} [T] | - | {PAPER['ratio']} | +{PAPER['fm_rise']}% [P] | +{PAPER['cv_rise']}% [P] | 1.00x | - | - |"]
+           "The paper's cross-validation model error (531) exceeding its FM error (449) does NOT mean the cross-validation data is harder: the model may have been trained on FM and tested on cross-validation (domain shift), "
+           "or the two datasets may use different normalisation. The valid check is one-sided: a model cannot beat the data's ceiling, so CV ceiling / FM ceiling should be at most about 1.18 "
+           "(x about 1.0-1.1 for how close the paper's FM model is to its ceiling). Two readings: **local** = CV trained on CV with its own range (use 'CV own / FM'); **transfer** = FM-trained model applied to CV, "
+           "which uses FM's range ('CV with FM range / FM'). 'ok' = ratio <= 1.25 (local) or <= 1.18 (transfer).\n",
+           "| option | FM full | FM train-only | CV own range | CV with FM range | CV own / FM | local ok? | CV FM-range / FM | transfer ok? | FM rise | CV rise | FM vs paper | FM (sampled, ref.) | CV (sampled, ref.) |",
+           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+           f"| **PAPER (3D-SwinSTB)** | {PAPER['fm_k8']} [T] | - | {PAPER['cv_k12']} [T] (model) | - | {PAPER['ratio']} (model) | - | - | - | +{PAPER['fm_rise']}% [P] | +{PAPER['cv_rise']}% [P] | 1.00x | - | - |"]
     for g in sorted(rows):
         out.append(f"| *{g}* | | | | | | | | | | |")
         for lab, vname, c in sorted(rows[g], key=lambda r: (cell(r[2], "fm", "full") or cell(r[2], "fm", "sampled") or 0)):
@@ -117,9 +121,13 @@ def main():
             fmq = c.get(("fm", ref)); cvq = c.get(("cv", ref))
             fr = f"{100 * (fmq[19] / fmq[0] - 1):+.1f}%" if fmq else "-"
             cr = f"{100 * (cvq[19] / cvq[0] - 1):+.1f}%" if cvq else "-"
+            cvfm = cell(c, "cv", "fmfull")
             ratio = f"{cvf / fmf:.2f}" if (fmf and cvf) else "-"
+            ratio_fm = f"{cvfm / fmf:.2f}" if (fmf and cvfm) else "-"
+            ok_loc = "-" if not (fmf and cvf) else ("ok" if cvf / fmf <= 1.25 else "NO")
+            ok_tr = "-" if not (fmf and cvfm) else ("ok" if cvfm / fmf <= 1.18 else "NO")
             vs = f"{fmf / PAPER['fm_k8']:.2f}x" if fmf else "-"
-            out.append(f"| {lab} | {f(fmf)} | {f(fmt_)} | {f(cvf)} | {f(cvt)} | {ratio} | {fr} | {cr} | {vs} | {f(fms)} | {f(cvs)} |")
+            out.append(f"| {lab} | {f(fmf)} | {f(fmt_)} | {f(cvf)} | {f(cvfm)} | {ratio} | {ok_loc} | {ratio_fm} | {ok_tr} | {fr} | {cr} | {vs} | {f(fms)} | {f(cvs)} |")
     (R / "OVERVIEW.md").write_text("\n".join(out) + "\n")
     print("wrote", R / "OVERVIEW.md", "rows:", sum(len(v) for v in rows.values()))
 
