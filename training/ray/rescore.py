@@ -211,7 +211,7 @@ def main(argv=None) -> None:
     def submit(index: int, entry: dict[str, Any]):
         gpus = 0 if entry["model"] in LINEAR else args.gpu_fraction
         pool = gpu_nodes if gpus else nodes
-        strategy = NodeAffinitySchedulingStrategy(node_id=pool[index % len(pool)]["NodeID"], soft=False)
+        strategy = NodeAffinitySchedulingStrategy(node_id=pool[index % len(pool)]["NodeID"], soft=True)    # soft: a pinned node with no free GPU must not block the task (it stalled behind full nodes)
         return ray.remote(num_cpus=4, num_gpus=gpus, memory=int(memory_gb(entry) * 2 ** 30), max_retries=1,
                           scheduling_strategy=strategy)(rescore_entry).remote(entry, worker_args)
 
