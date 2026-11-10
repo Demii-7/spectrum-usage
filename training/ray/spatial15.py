@@ -220,6 +220,7 @@ def main(argv=None) -> None:
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--memory-gb", type=float, default=24.0)
     p.add_argument("--max-parallel", type=int, default=8)
+    p.add_argument("--gpu-fraction", type=float, default=0.5, help="GPU share of each neural cell")
     p.add_argument("--skip-done", action="store_true")
     p.add_argument("--tuned", action="store_true",
                    help="train with each model's tuned 15-minute 4D winner (tuning/powder15_4d) instead of the inherited 1-minute settings")
@@ -252,7 +253,7 @@ def main(argv=None) -> None:
     ray.init(address=args.address, ignore_reinit_error=True)
     memory = int(args.memory_gb * 2**30)
     cpu_task = ray.remote(num_cpus=4, num_gpus=0, memory=memory, max_retries=2)(run_job)
-    gpu_task = ray.remote(num_cpus=4, num_gpus=0.5, memory=memory, max_retries=2)(run_job)
+    gpu_task = ray.remote(num_cpus=4, num_gpus=args.gpu_fraction, memory=memory, max_retries=2)(run_job)
     queue, pending, ok = list(jobs), [], 0
     while queue or pending:
         while queue and len(pending) < args.max_parallel:
