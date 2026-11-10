@@ -8,5 +8,10 @@
   "id": "claude-direct15-timellm-3",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_direct --resolution 15min --bucket spectrum --output-prefix direct-tuning --models timellm\"",
   "max_restarts": 4
+ },
+ {
+  "id": "claude-h100-t15-stageA-1",
+  "entrypoint": "python -u -m training.ray.transfer15 --bands 600_800 2400_2600 --receivers guesthouse law73 --reps 1d 2d --seeds 40 41 42 43 44 --skip-done --max-parallel 8 --code-revision e7d420b5ae05c2efec4cd4f83bb356d96996f306",
+  "max_restarts": 4
  }
 ]
