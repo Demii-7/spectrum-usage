@@ -15,6 +15,15 @@ Frozen protocol (what the code does, not just what we intend):
 * 1D models are flattened to one scalar series per frequency bin, and a series never crosses a segment boundary;
 * per-receiver results only (a job is one checkpoint on one receiver).
 
+Stage B (``--stage B``): per-window centering. The weights and the source normalization stay frozen; for each input window and
+frequency bin the window's own mean over the lookback is removed before prediction (so the model sees the window at the source's mean
+level, in the source's normalization), and added back to the forecast. Only observed input history is used. Stage A and B run on
+identical windows and origins (a B job also recomputes A with centering off, on the same windows, and checks the origins match; the
+stage A run, produced by the earlier evaluator, should agree with that recomputation, which the analysis checks).
+Models with full intrinsic window normalization (RevIN: RevIN-MLP, PatchTST, OFA, Time-LLM) are not centered a second time; their
+treatment is recorded. The residual-head models scale their correction by the window's scale (RevIN-like, level untouched), recorded
+as ``partial``; they are centered like the others.
+
 Baselines on the same origins: persistence and the 96-step lookback mean (parameter-free). Source-validation-selected mean / median /
 EWMA settings are NOT part of this stage (they need frozen validation selections from the core receivers; see CAMPAIGN).
 
@@ -171,6 +180,143 @@ def origin_times(source, rows: np.ndarray, horizon: int) -> np.ndarray:
     return np.asarray((source.timestamps[rows] - horizon * STEP).values, dtype="datetime64[ns]")
 
 
+INTRINSIC = {"revinmlp": "full", "patchtst": "full", "ofa": "full", "timellm": "full",
+             "residuallinearar1d": "partial", "residuallinearar2d": "partial", "residualvanillalstm": "partial"}
+
+
+def evaluate_frozen(module, rep: str, task, source, name: str, checkpoint_path: Path, config: dict[str, Any], seed: int,
+                    center: bool) -> dict[str, Any]:
+    """Frozen forecasts on the stage's origins. ``center`` removes each window's per-bin lookback mean before prediction (in the
+    source normalization, so the model sees the window at the source's mean level) and restores it afterwards."""
+    import torch
+
+    from training.common.evaluation_integrated import calculate_errors_and_export_arrays, evaluation_parameters
+    from training.common.forecasting import forecast
+    from training.common.model_factory import build_model
+    from training.common.windowing import make_window_batch_array
+
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    normalization = checkpoint.get("normalization")
+    if normalization is None:
+        raise ValueError("checkpoint lacks normalization")
+    parameters = evaluation_parameters(config, name)
+    flattened = rep == "1d"
+    normalized = (module.apply_flattened_source_normalization(source.data, normalization, source.segments) if flattened
+                  else module.apply_source_normalization(source.data, normalization))
+    model = build_model(name, config, normalized)
+    model.load_state_dict(checkpoint["model_state_dict"], strict=True)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device).eval()
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    starts = module.target_window_starts(source.timestamps, source.segments, lookback=parameters["lookback"],
+                                         max_horizon=parameters["max_horizon"], stride=parameters["test_stride"],
+                                         target_start=task.target_start, target_end=task.target_end)
+    if not len(starts):
+        raise ValueError("no origins")
+    windows = make_window_batch_array(full_x=normalized, start_rows=starts, lookback=parameters["lookback"])
+    level = windows.mean(axis=1) if center else None                      # (N, F) window mean in normalized units
+    if center:
+        windows = windows - level[:, None, :]
+    parts = {h: [] for h in parameters["horizons"]}
+    with torch.no_grad():
+        for offset in range(0, len(windows), parameters["batch_size"]):
+            values = torch.from_numpy(windows[offset:offset + parameters["batch_size"]]).float().to(device)
+            predicted = forecast(model=model, x=values, prediction_horizon=parameters["prediction_horizon"],
+                                 rollout_horizon=parameters["max_horizon"], targets=None)
+            for h in parts:
+                parts[h].append(predicted[:, h - 1].cpu().numpy())
+    predictions, targets, bins, times, rows_by_h = {}, {}, {}, {}, {}
+    for h, chunk in parts.items():
+        rows = starts + parameters["lookback"] + h - 1
+        norm_pred = np.concatenate(chunk)
+        if center:
+            norm_pred = norm_pred + level                                    # restore the window's level
+        if flattened:
+            payload, frequency_indices = module.row_normalization(normalization, source.segments, rows)
+            bins[h] = frequency_indices.reshape(-1, 1)
+        else:
+            payload, bins[h] = dict(normalization), np.empty(0)
+        predictions[h], targets[h], _, _ = calculate_errors_and_export_arrays(
+            prediction_normalized=norm_pred, target_raw_model_layout=source.data[rows], normalization=payload)
+        times[h], rows_by_h[h] = origin_times(source, rows, h), rows
+    return {"predictions": predictions, "targets": targets, "bins": bins, "times": times, "rows": rows_by_h}
+
+
+def save_forecasts(client, bucket: str, base: str, result: dict[str, Any]) -> None:
+    payload = {f"t_plus_{h}": result["predictions"][h].astype(np.float32) for h in result["predictions"]}
+    payload.update({f"target_t_plus_{h}": result["targets"][h].astype(np.float32) for h in result["targets"]})
+    payload.update({f"rows_t_plus_{h}": result["rows"][h].astype(np.int32) for h in result["rows"]})
+    buffer = io.BytesIO()
+    np.savez_compressed(buffer, **payload)
+    client.put_object(Bucket=bucket, Key=f"{base}/forecasts/predictions_targets.npz", Body=buffer.getvalue())
+
+
+def stage_b_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    """Remote worker: stage B (per-window centering) of one checkpoint on one held-out receiver, with A recomputed on the same windows."""
+    root = args["repo_root"]
+    os.chdir(root)
+    sys.path.insert(0, root)
+    entry, receiver, band = job["entry"], job["receiver"], job["band"]
+    from training.ray.storage import spectrum_s3_client
+
+    client, bucket = spectrum_s3_client(), args["bucket"]
+    base = output_base(args["prefix"], band, receiver, entry["rep"], entry["model"], entry["seed"])
+    name = entry["model"]
+    intrinsic = INTRINSIC.get(name, "none")
+    record = {"kind": "transfer15_stageB", "source_band": entry["band"], "target_band": band, "target_receiver": receiver,
+              "rep": entry["rep"], "model": name, "seed": entry["seed"], "checkpoint_key": entry["pt_key"], "key": base,
+              "intrinsic_window_normalization": intrinsic}
+    started = time.time()
+    try:
+        from training.common import transfer_1d, transfer_2d
+        from training.ray.powder15 import SPATIAL_NODES, ensure_powder15
+
+        if entry["band"] != band:
+            raise ValueError("combined site-and-band transfer is outside this stage")
+        ensure_powder15(band, root, SPATIAL_NODES)
+        meta = json.loads(client.get_object(Bucket=bucket, Key=entry["meta_key"])["Body"].read())
+        config = meta["config"]
+        config["windowing"] = {"lookback": LOOKBACK, "horizons": list(HORIZONS)}
+        config[name].setdefault("train", {})["test_stride"] = 1
+        module = transfer_2d if entry["rep"] == "2d" else transfer_1d
+        task = target_task(band, receiver)
+        center = intrinsic != "full"
+        with tempfile.TemporaryDirectory(prefix="transfer15b-") as scratch_dir:
+            scratch = Path(scratch_dir)
+            checkpoint = scratch / Path(entry["pt_key"]).name
+            client.download_file(bucket, entry["pt_key"], str(checkpoint))
+            source = module.load_target(task, [target_file(root, band, receiver)], impute=False, max_missing_gap=0)
+            seed = int(entry["seed"])
+            plain = evaluate_frozen(module, entry["rep"], task, source, name, checkpoint, config, seed, center=False)
+            centered = evaluate_frozen(module, entry["rep"], task, source, name, checkpoint, config, seed, center=center)
+            same_origins = all(np.array_equal(plain["rows"][h], centered["rows"][h]) for h in HORIZONS)
+            if not same_origins:
+                raise RuntimeError("stage A and B origins differ")
+            scored = score_all(centered["predictions"], centered["targets"], centered["bins"], centered["times"])
+            scored_a = score_all(plain["predictions"], plain["targets"], plain["bins"], plain["times"])
+            checkpoint_meta = {"checkpoint_sha256": meta.get("sha256"), "training_code_revision": meta.get("code_revision"),
+                               "source_config_candidate_id": meta.get("candidate_id"), "source_parameters": meta.get("parameters"),
+                               "source_train_files": [f["path"] for f in meta["config"]["data"]["files"] if f["partition"] == "train"]}
+            summary = {**record, **provenance(root, band, receiver, entry["band"], args["code_revision"]), **checkpoint_meta,
+                       "stage": "B", "centering_applied": center,
+                       "centering": "per window and frequency bin: subtract the lookback mean (source normalization), add it back to the forecast; "
+                                    "weights and source normalization frozen" if center else
+                                    "not applied: the model normalizes each window itself (RevIN)",
+                       "stage_a_recomputed_metrics": scored_a["metrics"], "same_origins_as_stage_a_recomputation": same_origins,
+                       "metrics": scored["metrics"], "n_origins": scored["metrics"][str(HORIZONS[0])]["n_origins"]}
+            upload(client, bucket, base, summary, scored)
+            save_forecasts(client, bucket, base, centered)
+        record.update(ok=True, metrics=scored["metrics"], metrics_a=scored_a["metrics"])
+    except Exception as error:
+        import traceback
+
+        record.update(ok=False, error=f"{type(error).__name__}: {error}"[:400], trace=traceback.format_exc()[-1200:])
+        client.put_object(Bucket=bucket, Key=f"{base}/error.json", Body=json.dumps(record, default=str).encode())
+    record["wall_seconds"] = round(time.time() - started, 1)
+    return record
+
+
 def checkpoint_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     """Remote worker: one saved checkpoint on one held-out receiver."""
     root = args["repo_root"]
@@ -288,17 +434,21 @@ def main(argv=None) -> None:
     p.add_argument("--reps", nargs="+", default=["1d", "2d"], choices=["1d", "2d"])
     p.add_argument("--models", nargs="+")
     p.add_argument("--seeds", type=int, nargs="+", default=[40, 41, 42, 43, 44])
+    p.add_argument("--stage", choices=["A", "B"], default="A", help="A: frozen zero-shot; B: per-window centering (own prefix, own outputs)")
     p.add_argument("--no-baselines", action="store_true")
     p.add_argument("--gpu-fraction", type=float, default=0.1)
     p.add_argument("--memory-gb", type=float, default=12.0)
     p.add_argument("--max-parallel", type=int, default=8)
     p.add_argument("--skip-done", action="store_true")
     p.add_argument("--bucket", default=None)
-    p.add_argument("--prefix", default="transfer15-oct2026")
+    p.add_argument("--prefix", default=None, help="default transfer15-oct2026 (stage A) or transfer15-oct2026-B (stage B)")
     p.add_argument("--code-revision", default=None)
     p.add_argument("--address", default="auto")
     p.add_argument("--repo-root", default="/workspace/spectrum-usage")
     args = p.parse_args(argv)
+    args.prefix = args.prefix or ("transfer15-oct2026" if args.stage == "A" else "transfer15-oct2026-B")
+    if args.stage == "B":
+        args.no_baselines = True          # persistence and the lookback mean are invariant to window centering; stage A's baselines apply
     sys.path.insert(0, args.repo_root)
     from training.ray.inference_benchmark import discover_sources
     from training.ray.storage import spectrum_s3_client
@@ -335,7 +485,7 @@ def main(argv=None) -> None:
     shared = {"repo_root": args.repo_root, "bucket": bucket, "prefix": args.prefix, "code_revision": revision}
     ray.init(address=args.address, ignore_reinit_error=True)
     memory = int(args.memory_gb * 2 ** 30)
-    model_task = ray.remote(num_cpus=2, num_gpus=args.gpu_fraction, memory=memory, max_retries=1)(checkpoint_job)
+    model_task = ray.remote(num_cpus=2, num_gpus=args.gpu_fraction, memory=memory, max_retries=1)(checkpoint_job if args.stage == "A" else stage_b_job)
     base_task = ray.remote(num_cpus=2, num_gpus=0, memory=memory, max_retries=1)(baseline_job)
     queue, pending, ok, failed = list(jobs), [], 0, 0
     while queue or pending:
