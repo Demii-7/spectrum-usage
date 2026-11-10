@@ -525,6 +525,24 @@ Hann 49.9 / 14.2, Hamming 53.5 / 12.0, Tukey hop 224 and hop 126 (detrend) 57.1 
 - **The rise barely depends on the normalization** (scipy defaults +4.0% to +4.4% across all clips; Hamming +3.1% to +3.5%).
 - **Cross-validation under standardization no longer depends on the dB floor** (one pixel barely moves a mean or a standard deviation), so the zero-pixel sensitivity of 5.8 is a min-max artifact.
 
+### 5.13 Window alignment, resize and standardization: the min-max level is set by a few extreme pixels [V]
+
+**Hann alignment diagnostic** (job `claude-uc-deepspred-hopdiag-probe-1`, `results/acf_probe_hopdiag_20261110T210804.json`): Hann window, nearest-neighbour resize, whole-dataset min-max. FM lookback-mean MSE at k=8, dB span, rise:
+hop 128 (zero-padded, reflect-padded or unpadded) 602-604 / 166.7 dB / +1.8-1.9%; hop 120, 136, 129, 130: 651, 652, 655, 664 / 161-162 dB; hop 127 (reflect-padded, unpadded) 687, 725 / 159, 156 dB; hop 125 703 / 157.8; hop 132, 124: 741, 748 / 155, 154 dB;
+hop 126 zero-padded 759 / 153.1; hop 126 as used throughout (derived, unpadded) **831 / 148.3 dB**. The dataset dB mean and standard deviation are identical in all variants (49.9-50.1 / 14.2-14.3), and so is the horizon rise (+1.8-1.9%).
+
+- **The level varies by 38% with window alignment alone**, tracking the min-max span (148-167 dB; effective exponent about 2.7). The range is fixed by one or two extreme pixels, and different hops and paddings capture different ones.
+- **Consequence:** under min-max, levels carry roughly +-20% of arbitrary noise before any normalization-convention effect. Level differences between renderings of that size (scipy defaults 1.07x vs Tukey hop 126 1.23x vs Hamming 1.30x, the Tukey crops 1.03-1.04x) are not evidence. The hop-126 Hann used elsewhere in these notes is the high end of this spread; a typical Hann gives about 600-700.
+- **The rise is the stable quantity**: Hann gives +1.8-1.9% in every alignment, so Hann cannot produce the paper's +3.6% (plot reading). The rise does depend on resize interpolation (below).
+
+**`scipy.signal.stft`-style Hann** (hop 128, zero-padded boundaries, 255 rows resized to 256; `results/acf_probe_stft_20261110T205034.json`): full min-max FM 584 (span 151 dB, +2.7%), cross-validation 645 (own range) / 408 (FM's range). Standardization at +-5, 4, 3, 2 std: 733, 1,095, 1,760, 3,112; per-frame +-3 std 1,802.
+
+**Resize interpolation** (`results/acf_probe_resize_20261110T205833.json`): FM lookback mean at k=8, nearest / bilinear / cubic: scipy defaults (Tukey .25, hop 224, detrend) 579 / 481 / 534 (rises +2.6 / +4.0 / +2.9%); Hann stft-style 602 / 584 / 586 (+1.9 / +2.7 / +2.0%);
+Hamming 128 615 / 584 / 604 (+2.2 / +3.2 / +2.5%). Bilinear lowers the pixel noise (adjacent-row difference std 5.5 dB vs 7.8 dB nearest on synthetic noise) and raises the rise by about one point; because the range is taken from the resized images it also changes the span. The scipy-default level of 481 (1.07x) therefore depends on a bilinear resize the paper does not state.
+
+**`torch.stft` defaults under standardization** (rectangular, hop 127, reflect padding; `results/acf_probe_torchz_20261110T205034.json`): dataset dB mean / standard deviation 69.7 / 9.3 dB (narrower than the Hann, Hamming and Tukey windows). FM lookback mean: full min-max 294 (span 138.8 dB, +3.2%); mean +- 5, 4, 3, 2 std: 664, 968, 1,522, 2,555;
+per-frame +-3 std 1,535 (+3.4%). Reaching 449 would need a span of about 112 dB (about +-6 std). Cross-validation under standardization is independent of the dB floor (+-3 std: 2,531).
+
 ---
 
 ## 6. What can and cannot be claimed
@@ -567,6 +585,7 @@ Included so the report does not inherit them.
 | "MSE is about 1/span^2" | Rough: measured exponents 1.3-2.5 (5.2) |
 | "scipy's default hop and detrend don't help" (before the exact default was run) | Premature: the exact default (tukey224d) has been run since; FM 725.5 |
 | The scipy default "needs spans of 187 / 177 dB", and the lead might close it | Measured (5.5): full spans 156 / 117 dB give 482 / 810; the predicted 508 / 837 were within 5% |
+| The scipy-default / Tukey-crop FM levels (1.03-1.07x) are the closest to the paper and favour those renderings | Not evidence (5.13): window alignment alone moves the min-max level by 38% (Hann 602-831); the scipy-default level also depends on bilinear resize (481 vs 579 nearest) |
 | FM dB standard deviation is about 17 dB, so +-3 std is about 100 dB | Measured 12.0-15.1 dB (5.12), so +-3 std spans 72-91 dB |
 | Short-term skill of 8-12% below the mean-image reference at k=1 is genuine frame-to-frame structure | Mostly slow drift (5.12): a linear model beyond the 20-frame lookback mean gains only 0.2-1.7% at k=1 |
 | The 5-lag linear "ceiling" is a bound on the error a model can reach | Retracted (5.11): on cross-validation the 20-frame lookback mean is 10-40% below it (the validation-block mean image is stale for the test block) |
@@ -606,6 +625,10 @@ Code synced with `training/ray/scripts/sync-cluster-code.py --cluster uc` (commi
 | `claude-uc-deepspred-torch-probe-1` | `acf_probe.py --set torch` | `acf_probe_torch_20261110T193321.json` |
 | `claude-uc-deepspred-overview-probe-2` | `acf_probe.py --set overview` (adds the residual linear model) | `acf_probe_overview_20261110T202601.json` |
 | `claude-uc-deepspred-zscore-probe-2` | `acf_probe.py --set zscore` | `acf_probe_zscore_20261110T204131.json` |
+| `claude-uc-deepspred-stft-probe-1` | `acf_probe.py --set stft` | `acf_probe_stft_20261110T205034.json` |
+| `claude-uc-deepspred-torchz-probe-1` | `acf_probe.py --set torchz` | `acf_probe_torchz_20261110T205034.json` |
+| `claude-uc-deepspred-resize-probe-1` | `acf_probe.py --set resize` | `acf_probe_resize_20261110T205833.json` |
+| `claude-uc-deepspred-hopdiag-probe-1` | `acf_probe.py --set hopdiag` | `acf_probe_hopdiag_20261110T210804.json` |
 | `claude-uc-deepspred-range-probe-1` | `range_probe.py` | `range_probe_20261110T184251.json`  |
 
 Commits (local branch `integrate`): `d39e018`, `fd1f42d`, `7fde749`, `831b6d8`, `63f5eca`, `38befbd`, `3d77d4f`, `86cca82`, plus this
