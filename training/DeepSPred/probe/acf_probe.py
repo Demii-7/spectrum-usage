@@ -68,6 +68,22 @@ VARIANTS = {
     "hann126_avg4_glob_jpeg75": ("hann126", 4, "glob", "jpeg75"),
 }
 
+# Window study (scipy.signal.spectrogram's default window is Tukey(0.25), default hop 224 = nperseg - nperseg//8;
+# 'd' = scipy's default detrend='constant'), with the earlier front-runners as references.
+TUKEY_VARIANTS = {
+    "tukey126_glob_raw": ("tukey126", 0, "glob", "raw"),
+    "tukey126d_glob_raw": ("tukey126d", 0, "glob", "raw"),
+    "tukey224_glob_raw": ("tukey224", 0, "glob", "raw"),
+    "tukey126_glob_jpeg95": ("tukey126", 0, "glob", "jpeg95"),
+    "tukey126_glob_jpeg75": ("tukey126", 0, "glob", "jpeg75"),
+    "tukey126_frame_raw": ("tukey126", 0, "frame", "raw"),
+    "tukey126_avg4_glob_raw": ("tukey126", 4, "glob", "raw"),
+    "rect126_glob_raw": ("rect126", 0, "glob", "raw"),
+    "hann126_glob_raw": ("hann126", 0, "glob", "raw"),
+    "hamm128_glob_raw": ("hamm128", 0, "glob", "raw"),
+}
+ALL_VARIANTS = {**VARIANTS, **TUKEY_VARIANTS}
+
 G: dict = {}  # filled in the parent before the pool forks (read-only in the workers)
 
 
@@ -141,7 +157,7 @@ def ridge_curve(c_fit: np.ndarray, D_te: np.ndarray, segs_te) -> list:
 
 
 def variant_worker(name: str) -> dict:
-    window, avg_m, scaling, post = VARIANTS[name]
+    window, avg_m, scaling, post = ALL_VARIANTS[name]
     g = G
     t0 = time.time()
     stats = g["stats"][(window, avg_m)]
@@ -163,7 +179,10 @@ def variant_worker(name: str) -> dict:
             "var_fit": round(float(c_fit[0]), 2), "seconds": round(time.time() - t0, 1)}
 
 
-def run_dataset(root: Path, name: str, workers: int, pool_size: int) -> dict:
+def run_dataset(root: Path, name: str, workers: int, pool_size: int, names, stats_override=None, label=None):
+    """Returns (result, stats). With `stats_override` (e.g. FM's dB range) the dataset is rendered with those
+    normalisation statistics instead of its own."""
+    label = label or name
     t0 = time.time()
     seconds = rp.list_seconds(root / rp.DATASETS[name])
     times = [t for t, _ in seconds]
@@ -178,33 +197,44 @@ def run_dataset(root: Path, name: str, workers: int, pool_size: int) -> dict:
          "segs_fit": segs_fit, "segs_te": segs_te}
     g["pix"] = np.sort(np.random.default_rng(SEED).choice(rp.SIZE * rp.SIZE * 3, size=N_PIX, replace=False))
     g["stats"] = {}
-    for (window, avg_m, _, _) in set(VARIANTS.values()):
+    for (window, avg_m, _, _) in {ALL_VARIANTS[n] for n in names}:
         g["stats"][(window, avg_m)] = stats_of(smooth_rows(rng_db[window], avg_m))
-    print(f"[{name}] loaded in {time.time() - t0:.0f}s", flush=True)
+    own_stats = dict(g["stats"])
+    if stats_override is not None:
+        g["stats"] = stats_override
+    print(f"[{label}] loaded in {time.time() - t0:.0f}s", flush=True)
     mod = importlib.import_module("acf_probe")  # the module the pool workers will see (not __main__)
     mod.G.update(g)
     import multiprocessing as mp
     out = {"n_files": len(paths), "n_fit": len(fit_idx), "n_test": len(te_idx), "variants": {}}
     with mp.get_context("fork").Pool(pool_size) as pool:
-        for res in pool.imap_unordered(mod.variant_worker, list(VARIANTS)):
+        for res in pool.imap_unordered(mod.variant_worker, list(names)):
             out["variants"][res["name"]] = res
             s, r = res["skill"], res["rho"]
-            print(f"[{name}] {res['name']:26s} clim {res['clim_mse']:8.1f} ridge k1/8/20 "
+            print(f"[{label}] {res['name']:26s} clim {res['clim_mse']:8.1f} ridge k1/8/20 "
                   f"{res['ridge_mse'][0]:8.1f} {res['ridge_mse'][7]:8.1f} {res['ridge_mse'][19]:8.1f} | "
                   f"skill {s[0]:.3f} {s[7]:.3f} {s[19]:.3f} | rho {r[0]:.3f} {r[7]:.3f} {r[19]:.3f} ({res['seconds']:.0f}s)", flush=True)
-    return out
+    return out, own_stats
 
 
-def work(data_root: str, out_dir: str, workers: int, pool_size: int) -> dict:
+def work(data_root: str, out_dir: str, workers: int, pool_size: int, variant_set: str = "all") -> dict:
     root = Path(data_root)
+    names = list(VARIANTS) if variant_set == "all" else list(TUKEY_VARIANTS)
     result = {"created": datetime.utcnow().isoformat() + "Z", "host": os.uname().nodename, "n_pix": N_PIX,
-              "L_in": L_IN, "datasets": {}}
+              "L_in": L_IN, "variant_set": variant_set, "datasets": {}}
+    fm_stats = None
     for name in rp.DATASETS:
         if (root / rp.DATASETS[name]).exists():
-            result["datasets"][name] = run_dataset(root, name, workers, pool_size)
+            result["datasets"][name], stats = run_dataset(root, name, workers, pool_size, names)
+            if name == "fm":
+                fm_stats = stats
+    if variant_set != "all" and fm_stats is not None and "crossval" in result["datasets"]:
+        # cross-validation rendered with FM's dB range instead of its own (does the paper's ratio then hold?)
+        result["datasets"]["crossval_fmnorm"], _ = run_dataset(root, "crossval", workers, pool_size, names,
+                                                               stats_override=fm_stats, label="crossval_fmnorm")
     od = Path(out_dir)
     od.mkdir(parents=True, exist_ok=True)
-    path = od / f"acf_probe_{datetime.utcnow().strftime('%Y%m%dT%H%M%S')}.json"
+    path = od / f"acf_probe_{variant_set}_{datetime.utcnow().strftime('%Y%m%dT%H%M%S')}.json"
     path.write_text(json.dumps(result, indent=1))
     print(f"wrote {path} on {result['host']}", flush=True)
     return result
@@ -216,12 +246,13 @@ def main():
     ap.add_argument("--out-dir", default="data/deepspred/probe")
     ap.add_argument("--cpus", type=int, default=16)
     ap.add_argument("--pool", type=int, default=6)
+    ap.add_argument("--set", dest="variant_set", choices=["all", "tukey"], default="all")
     ap.add_argument("--local", action="store_true")
     args = ap.parse_args()
     data_root = str(Path(args.data_root).resolve())
     out_dir = str(Path(args.out_dir).resolve())
     if args.local:
-        work(data_root, out_dir, args.cpus, args.pool)
+        work(data_root, out_dir, args.cpus, args.pool, args.variant_set)
         return
     import ray
     from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
@@ -233,12 +264,12 @@ def main():
         import os.path
         return os.path.isdir(os.path.join(path, "FM-Spectrum-Dataset"))
 
-    def remote_entry(pdir, data_root, out_dir, cpus, pool_size):
+    def remote_entry(pdir, data_root, out_dir, cpus, pool_size, variant_set):
         import importlib
         import sys
         if pdir not in sys.path:
             sys.path.insert(0, pdir)
-        return importlib.import_module("acf_probe").work(data_root, out_dir, cpus, pool_size)
+        return importlib.import_module("acf_probe").work(data_root, out_dir, cpus, pool_size, variant_set)
 
     probes = {n["NodeID"]: ray.remote(num_cpus=0.01, scheduling_strategy=NodeAffinitySchedulingStrategy(n["NodeID"], soft=False))(has_data).remote(data_root)
               for n in nodes}
@@ -253,7 +284,7 @@ def main():
         sys.exit(f"no node has {data_root}/{rp.DATASETS['fm']}")
     print(f"data present on {len(ok)} node(s); using {ok[0]}", flush=True)
     task = ray.remote(num_cpus=args.cpus, num_gpus=0, scheduling_strategy=NodeAffinitySchedulingStrategy(ok[0], soft=False))(remote_entry)
-    ray.get(task.remote(probe_dir, data_root, out_dir, args.cpus, args.pool))
+    ray.get(task.remote(probe_dir, data_root, out_dir, args.cpus, args.pool, args.variant_set))
 
 
 if __name__ == "__main__":

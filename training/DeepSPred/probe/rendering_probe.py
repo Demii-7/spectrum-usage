@@ -46,7 +46,7 @@ T_IN = 20
 K_OUT = 20
 SAMPLE_EVERY = 50
 DATASETS = {"fm": "FM-Spectrum-Dataset", "crossval": "Cross-Validation-Spectrum-Dataset"}
-WINDOWS = ("hann126", "hamm128", "rect126")
+WINDOWS = ("hann126", "hamm128", "rect126", "tukey126", "tukey126d", "tukey224")
 VARIANTS = [
     # (name, window, scaling, post, gray)
     ("hann126_glob_raw", "hann126", "glob", "raw", False),        # collaborator raw (sanity: persistence ~1559-1615)
@@ -98,20 +98,33 @@ def _win(name: str, n: int) -> np.ndarray:
     from scipy.signal import get_window
     if name.startswith("rect"):
         return np.ones(n, dtype=np.float32)
+    if name.startswith("tukey"):  # scipy.signal.spectrogram's default window, ('tukey', 0.25)
+        return get_window(("tukey", 0.25), n).astype(np.float32)
     return get_window("hann" if name.startswith("hann") else "hamming", n).astype(np.float32)
 
 
 def spectrogram_db(x: np.ndarray, window: str) -> np.ndarray:
-    """10*log10 |STFT|^2 as (time, freq) = (256, 256); two-sided, fftshifted (complex I/Q)."""
+    """10*log10 |STFT|^2 as (time, freq) = (256, 256); two-sided, fftshifted (complex I/Q).
+
+    `window` = <shape><hop>[d]: shape in rect/hann/hamm/tukey, hop 126 = derived so that exactly 256
+    columns fit in the file, any other number = that hop with the time axis resized to 256 columns;
+    a trailing 'd' subtracts each segment's complex mean first (scipy detrend='constant').
+    """
     nper = SIZE
-    if window.endswith("126"):
+    detrend = window.endswith("d")
+    base = window[:-1] if detrend else window
+    tail = int(base.lstrip("abcdefghijklmnopqrstuvwxyz"))
+    if tail == 126:
         hop = (len(x) - nper) // (SIZE - 1)
         starts = np.arange(SIZE) * hop
-    else:  # MATLAB default: 50 % overlap, then resize the time axis to 256
-        hop = nper // 2
+    else:  # fixed hop, then resize the time axis to 256 (MATLAB default 128, scipy default 224)
+        hop = tail
         starts = np.arange((len(x) - nper) // hop + 1) * hop
-    w = _win(window, nper)
-    seg = np.stack([x[s:s + nper] * w for s in starts])
+    w = _win(base, nper)
+    if detrend:
+        seg = np.stack([(x[s:s + nper] - x[s:s + nper].mean()) * w for s in starts])
+    else:
+        seg = np.stack([x[s:s + nper] * w for s in starts])
     S = np.fft.fftshift(np.fft.fft(seg, axis=1), axes=1)
     db = 10.0 * np.log10(np.abs(S) ** 2 + 1e-12).astype(np.float32)  # (n_time, 256)
     if db.shape[0] != SIZE:
