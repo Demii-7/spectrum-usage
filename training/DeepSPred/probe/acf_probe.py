@@ -152,7 +152,15 @@ RESIZE_VARIANTS = {"tukey126d_glob_raw": ("tukey126d", 0, "glob", "raw"), "hann1
 for _w in ("tukey224d", "hann128s", "hamm128"):
     for _o in (0, 1, 3):
         RESIZE_VARIANTS[f"{_w}_resize{_o}_glob_raw"] = (f"{_w}^{_o}", 0, "glob", "raw")
-ALL_VARIANTS = {**VARIANTS, **TUKEY_VARIANTS, **RECT_VARIANTS, **RANGE_VARIANTS, **CROP_VARIANTS, **TORCH_VARIANTS, **OVERVIEW_VARIANTS, **ZSCORE_VARIANTS, **STFT_VARIANTS, **TORCHZ_VARIANTS, **RESIZE_VARIANTS}
+# Diagnostic: why does Hann hop 128 with zero-padded edges (255 rows, resized) give 584-602 while Hann hop 126 (256 rows, no resize) gives 831?
+# All with nearest-neighbour resize (^0) so the interpolation cannot smooth; hop and padding are varied one at a time.
+HOPDIAG_VARIANTS = {"hann126_glob_raw": ("hann126", 0, "glob", "raw"), "hann128s_resize0_glob_raw": ("hann128s^0", 0, "glob", "raw")}
+for _h in (120, 124, 125, 127, 128, 129, 130, 132, 136):
+    HOPDIAG_VARIANTS[f"hann{_h}_nopad_r0_glob_raw"] = (f"hann{_h}^0", 0, "glob", "raw")
+HOPDIAG_VARIANTS["hann126s_resize0_glob_raw"] = ("hann126s^0", 0, "glob", "raw")
+HOPDIAG_VARIANTS["hann127c_resize0_glob_raw"] = ("hann127c^0", 0, "glob", "raw")
+HOPDIAG_VARIANTS["hann128c_resize0_glob_raw"] = ("hann128c^0", 0, "glob", "raw")
+ALL_VARIANTS = {**VARIANTS, **TUKEY_VARIANTS, **RECT_VARIANTS, **RANGE_VARIANTS, **CROP_VARIANTS, **TORCH_VARIANTS, **OVERVIEW_VARIANTS, **ZSCORE_VARIANTS, **STFT_VARIANTS, **TORCHZ_VARIANTS, **RESIZE_VARIANTS, **HOPDIAG_VARIANTS}
 
 G: dict = {}  # filled in the parent before the pool forks (read-only in the workers)
 
@@ -401,13 +409,13 @@ def work(data_root: str, out_dir: str, workers: int, pool_size: int, variant_set
     root = Path(data_root)
     names = {"all": VARIANTS, "tukey": TUKEY_VARIANTS, "rect": RECT_VARIANTS, "range": RANGE_VARIANTS,
              "crop": CROP_VARIANTS, "torch": TORCH_VARIANTS, "overview": OVERVIEW_VARIANTS,
-             "zscore": ZSCORE_VARIANTS, "stft": STFT_VARIANTS, "torchz": TORCHZ_VARIANTS, "resize": RESIZE_VARIANTS}[variant_set]
+             "zscore": ZSCORE_VARIANTS, "stft": STFT_VARIANTS, "torchz": TORCHZ_VARIANTS, "resize": RESIZE_VARIANTS, "hopdiag": HOPDIAG_VARIANTS}[variant_set]
     names = list(names)
     result = {"created": datetime.utcnow().isoformat() + "Z", "host": os.uname().nodename, "n_pix": N_PIX,
               "L_in": L_IN, "variant_set": variant_set, "datasets": {}}
     fm_stats = None
-    if variant_set in ("range", "crop", "torch", "overview", "zscore", "stft", "torchz", "resize"):
-        modes = ("full",) if variant_set in ("crop", "overview", "resize") else ("full", "train")
+    if variant_set in ("range", "crop", "torch", "overview", "zscore", "stft", "torchz", "resize", "hopdiag"):
+        modes = ("full",) if variant_set in ("crop", "overview", "resize", "hopdiag") else ("full", "train")
         if variant_set in ("zscore", "stft", "torchz"):
             modes = ("full", "z2", "z3", "z4", "z5")
         for name in rp.DATASETS:
@@ -455,7 +463,7 @@ def main():
     ap.add_argument("--out-dir", default="data/deepspred/probe")
     ap.add_argument("--cpus", type=int, default=16)
     ap.add_argument("--pool", type=int, default=6)
-    ap.add_argument("--set", dest="variant_set", choices=["all", "tukey", "rect", "range", "crop", "torch", "overview", "zscore", "stft", "torchz", "resize"], default="all")
+    ap.add_argument("--set", dest="variant_set", choices=["all", "tukey", "rect", "range", "crop", "torch", "overview", "zscore", "stft", "torchz", "resize", "hopdiag"], default="all")
     ap.add_argument("--local", action="store_true")
     args = ap.parse_args()
     data_root = str(Path(args.data_root).resolve())
