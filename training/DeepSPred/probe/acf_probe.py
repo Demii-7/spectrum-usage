@@ -141,7 +141,12 @@ for _w in ("tukey224d", "tukey126d", "hamm128", "hann126"):
 # scipy.signal.stft defaults: Hann, nperseg 256, 50% overlap (hop 128), no detrend, zero-padded boundaries (255 frames, resized to 256).
 STFT_VARIANTS = {"hann128s_glob_raw": ("hann128s", 0, "glob", "raw"), "hann128s_zf3_raw": ("hann128s", 0, "zf3", "raw"),
                  "hann126_glob_raw": ("hann126", 0, "glob", "raw"), "tukey224d_glob_raw": ("tukey224d", 0, "glob", "raw")}
-ALL_VARIANTS = {**VARIANTS, **TUKEY_VARIANTS, **RECT_VARIANTS, **RANGE_VARIANTS, **CROP_VARIANTS, **TORCH_VARIANTS, **OVERVIEW_VARIANTS, **ZSCORE_VARIANTS, **STFT_VARIANTS}
+# torch.stft-style (rect, hop 127, reflect pad) under min-max and the standardisation clips; the dB floor only matters for min-max.
+TORCHZ_VARIANTS = {}
+for _e in (12, 8):
+    TORCHZ_VARIANTS[f"rect127c_eps{_e}_glob_raw"] = (f"rect127c~{_e}", 0, "glob", "raw")
+    TORCHZ_VARIANTS[f"rect127c_eps{_e}_zf3_raw"] = (f"rect127c~{_e}", 0, "zf3", "raw")
+ALL_VARIANTS = {**VARIANTS, **TUKEY_VARIANTS, **RECT_VARIANTS, **RANGE_VARIANTS, **CROP_VARIANTS, **TORCH_VARIANTS, **OVERVIEW_VARIANTS, **ZSCORE_VARIANTS, **STFT_VARIANTS, **TORCHZ_VARIANTS}
 
 G: dict = {}  # filled in the parent before the pool forks (read-only in the workers)
 
@@ -390,14 +395,14 @@ def work(data_root: str, out_dir: str, workers: int, pool_size: int, variant_set
     root = Path(data_root)
     names = {"all": VARIANTS, "tukey": TUKEY_VARIANTS, "rect": RECT_VARIANTS, "range": RANGE_VARIANTS,
              "crop": CROP_VARIANTS, "torch": TORCH_VARIANTS, "overview": OVERVIEW_VARIANTS,
-             "zscore": ZSCORE_VARIANTS, "stft": STFT_VARIANTS}[variant_set]
+             "zscore": ZSCORE_VARIANTS, "stft": STFT_VARIANTS, "torchz": TORCHZ_VARIANTS}[variant_set]
     names = list(names)
     result = {"created": datetime.utcnow().isoformat() + "Z", "host": os.uname().nodename, "n_pix": N_PIX,
               "L_in": L_IN, "variant_set": variant_set, "datasets": {}}
     fm_stats = None
-    if variant_set in ("range", "crop", "torch", "overview", "zscore", "stft"):
+    if variant_set in ("range", "crop", "torch", "overview", "zscore", "stft", "torchz"):
         modes = ("full",) if variant_set in ("crop", "overview") else ("full", "train")
-        if variant_set in ("zscore", "stft"):
+        if variant_set in ("zscore", "stft", "torchz"):
             modes = ("full", "z2", "z3", "z4", "z5")
         for name in rp.DATASETS:
             if (root / rp.DATASETS[name]).exists():
@@ -407,7 +412,7 @@ def work(data_root: str, out_dir: str, workers: int, pool_size: int, variant_set
                 if name == "fm":
                     fm_stats = mstats["full"]
                     fm_mode_stats = mstats
-        if variant_set in ("zscore", "stft") and "crossval_full" in result["datasets"]:
+        if variant_set in ("zscore", "stft", "torchz") and "crossval_full" in result["datasets"]:
             for mode in modes:  # cross-validation rendered with FM's range/standardisation of the same kind
                 result["datasets"][f"crossval_fm_{mode}"], _ = run_dataset(root, "crossval", workers, pool_size, names,
                                                                           stats_override=fm_mode_stats[mode], label=f"crossval_fm_{mode}")
@@ -444,7 +449,7 @@ def main():
     ap.add_argument("--out-dir", default="data/deepspred/probe")
     ap.add_argument("--cpus", type=int, default=16)
     ap.add_argument("--pool", type=int, default=6)
-    ap.add_argument("--set", dest="variant_set", choices=["all", "tukey", "rect", "range", "crop", "torch", "overview", "zscore", "stft"], default="all")
+    ap.add_argument("--set", dest="variant_set", choices=["all", "tukey", "rect", "range", "crop", "torch", "overview", "zscore", "stft", "torchz"], default="all")
     ap.add_argument("--local", action="store_true")
     args = ap.parse_args()
     data_root = str(Path(args.data_root).resolve())
