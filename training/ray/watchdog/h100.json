@@ -13,5 +13,10 @@
   "id": "claude-h100-t15-stageA-1",
   "entrypoint": "python -u -m training.ray.transfer15 --bands 600_800 2400_2600 --receivers guesthouse law73 --reps 1d 2d --seeds 40 41 42 43 44 --skip-done --max-parallel 8 --code-revision e7d420b5ae05c2efec4cd4f83bb356d96996f306",
   "max_restarts": 4
+ },
+ {
+  "id": "claude-h100-t15-stageB-1",
+  "entrypoint": "python -u -m training.ray.transfer15 --stage B --bands 600_800 2400_2600 --receivers guesthouse law73 --reps 1d 2d --seeds 40 41 42 43 44 --skip-done --max-parallel 8 --code-revision 29e443f3ed6b2233b21edbfee7fb1b9720bc44f2",
+  "max_restarts": 4
  }
 ]
