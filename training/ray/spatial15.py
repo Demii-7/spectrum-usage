@@ -159,7 +159,8 @@ def run_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         map_name = f"p15_{band}_{variant['name']}"
         config = apply_powder15_4d(config, band, list(HORIZONS), variant["nodes"], job["grid"], map_name)
         config = set_lookback_and_horizon(config, model, None)
-        config[model]["train"]["seed"] = seed
+        if "train" in config[model]:
+            config[model]["train"]["seed"] = seed          # STS-PredNet's flat section already carries it (inject_parameters)
         with tempfile.TemporaryDirectory(prefix="spatial15-") as scratch:
             scratch = Path(scratch)
             run_dir, eval_dir = scratch / "run", scratch / "eval"
