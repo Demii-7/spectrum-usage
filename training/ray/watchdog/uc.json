@@ -10,8 +10,8 @@
   "max_restarts": 6
  },
  {
-  "id": "claude-uc-tune4d-neural-2",
-  "entrypoint": "python -u -m training.ray.tune_fixed --source powder15_4d --models residualconvlstm:4d --max-parallel 6 --gpu-fraction 0.5 --memory-gb 12",
+  "id": "claude-uc-tune4d-neural-3",
+  "entrypoint": "python -u -m training.ray.tune_fixed --source powder15_4d --models residualconvlstm:4d --max-parallel 10 --gpu-fraction 0.5 --memory-gb 12",
   "max_restarts": 6
  },
  {
