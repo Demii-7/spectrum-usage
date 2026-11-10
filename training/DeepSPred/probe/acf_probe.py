@@ -106,7 +106,16 @@ RANGE_VARIANTS = {
     "hann126_glob_jpeg95": ("hann126", 0, "glob", "jpeg95"),
     "tukey224d_glob_jpeg95": ("tukey224d", 0, "glob", "jpeg95"),
 }
-ALL_VARIANTS = {**VARIANTS, **TUKEY_VARIANTS, **RECT_VARIANTS, **RANGE_VARIANTS}
+# Band crop: keep the bins that correspond to the paper's stated 90-110 MHz out of the recorded 31.25 MHz around 99 MHz
+# (0.1221 MHz per bin; bin 128 = 99 MHz), then resize the frequency axis back to 256 columns.
+#   A = bins 54..218 (90-110 MHz, spectrum not inverted)   B = bins 38..202 (same band if the spectrum is mirrored)
+#   C = bins 46..210 (+-10 MHz around 99 MHz)
+CROPS = {"A": "54-218", "B": "38-202", "C": "46-210"}
+CROP_VARIANTS = {"hann126_glob_raw": ("hann126", 0, "glob", "raw")}  # uncropped reference, also gives the mean spectrum
+for _base in ("tukey224", "tukey224d", "hann126", "hamm128"):
+    for _k, _bins in CROPS.items():
+        CROP_VARIANTS[f"{_base}_crop{_k}_glob_raw"] = (f"{_base}@{_bins}", 0, "glob", "raw")
+ALL_VARIANTS = {**VARIANTS, **TUKEY_VARIANTS, **RECT_VARIANTS, **RANGE_VARIANTS, **CROP_VARIANTS}
 
 G: dict = {}  # filled in the parent before the pool forks (read-only in the workers)
 
@@ -226,9 +235,13 @@ def run_dataset(root: Path, name: str, workers: int, pool_size: int, names, stat
     te_idx, segs_te = region(times, 5.0 / 6.0, 1.0)
     print(f"[{name}] {len(paths)} files; fit {len(fit_idx)} frames ({len(segs_fit)} segs), "
           f"test {len(te_idx)} frames ({len(segs_te)} segs)", flush=True)
-    rng_db = rp.load_db(paths[::rp.SAMPLE_EVERY], workers)
-    g = {"db_fit": rp.load_db([paths[i] for i in fit_idx], workers),
-         "db_te": rp.load_db([paths[i] for i in te_idx], workers),
+    needed = sorted({ALL_VARIANTS[n][0] for n in names})
+    rng_db = rp.load_db(paths[::rp.SAMPLE_EVERY], workers, needed)
+    extra = {}
+    if "hann126" in rng_db:  # mean dB spectrum over frames and STFT rows (diagnostic: band occupancy, edge roll-off, orientation)
+        extra["mean_spectrum_db_hann126"] = [round(float(v), 2) for v in rng_db["hann126"].mean(axis=(0, 1))]
+    g = {"db_fit": rp.load_db([paths[i] for i in fit_idx], workers, needed),
+         "db_te": rp.load_db([paths[i] for i in te_idx], workers, needed),
          "segs_fit": segs_fit, "segs_te": segs_te}
     g["pix"] = np.sort(np.random.default_rng(SEED).choice(rp.SIZE * rp.SIZE * 3, size=N_PIX, replace=False))
     g["stats"] = {}
@@ -243,7 +256,7 @@ def run_dataset(root: Path, name: str, workers: int, pool_size: int, names, stat
     import multiprocessing as mp
 
     def run_pool(label_):
-        out_ = {"n_files": len(paths), "n_fit": len(fit_idx), "n_test": len(te_idx), "variants": {}}
+        out_ = {"n_files": len(paths), "n_fit": len(fit_idx), "n_test": len(te_idx), "variants": {}, **extra}
         with mp.get_context("fork").Pool(pool_size) as pool:
             for res in pool.imap_unordered(mod.variant_worker, list(names)):
                 out_["variants"][res["name"]] = res
@@ -281,15 +294,17 @@ def run_dataset(root: Path, name: str, workers: int, pool_size: int, names, stat
 
 def work(data_root: str, out_dir: str, workers: int, pool_size: int, variant_set: str = "all") -> dict:
     root = Path(data_root)
-    names = {"all": VARIANTS, "tukey": TUKEY_VARIANTS, "rect": RECT_VARIANTS, "range": RANGE_VARIANTS}[variant_set]
+    names = {"all": VARIANTS, "tukey": TUKEY_VARIANTS, "rect": RECT_VARIANTS, "range": RANGE_VARIANTS,
+             "crop": CROP_VARIANTS}[variant_set]
     names = list(names)
     result = {"created": datetime.utcnow().isoformat() + "Z", "host": os.uname().nodename, "n_pix": N_PIX,
               "L_in": L_IN, "variant_set": variant_set, "datasets": {}}
     fm_stats = None
-    if variant_set == "range":
+    if variant_set in ("range", "crop"):
+        modes = ("full", "train") if variant_set == "range" else ("full",)
         for name in rp.DATASETS:
             if (root / rp.DATASETS[name]).exists():
-                res, mstats = run_dataset(root, name, workers, pool_size, names, range_modes=("full", "train"))
+                res, mstats = run_dataset(root, name, workers, pool_size, names, range_modes=modes)
                 for mode, out in res.items():
                     result["datasets"][f"{name}_{mode}"] = out
                 if name == "fm":
@@ -322,7 +337,7 @@ def main():
     ap.add_argument("--out-dir", default="data/deepspred/probe")
     ap.add_argument("--cpus", type=int, default=16)
     ap.add_argument("--pool", type=int, default=6)
-    ap.add_argument("--set", dest="variant_set", choices=["all", "tukey", "rect", "range"], default="all")
+    ap.add_argument("--set", dest="variant_set", choices=["all", "tukey", "rect", "range", "crop"], default="all")
     ap.add_argument("--local", action="store_true")
     args = ap.parse_args()
     data_root = str(Path(args.data_root).resolve())

@@ -111,6 +111,10 @@ def spectrogram_db(x: np.ndarray, window: str) -> np.ndarray:
     a trailing 'd' subtracts each segment's complex mean first (scipy detrend='constant').
     """
     nper = SIZE
+    crop = None
+    if "@" in window:  # "<window>@<a>-<b>": keep frequency bins a..b-1 (of the 256) and resize back to 256 columns
+        window, c = window.split("@")
+        crop = tuple(int(v) for v in c.split("-"))
     detrend = window.endswith("d")
     base = window[:-1] if detrend else window
     tail = int(base.lstrip("abcdefghijklmnopqrstuvwxyz"))
@@ -130,15 +134,22 @@ def spectrogram_db(x: np.ndarray, window: str) -> np.ndarray:
     if db.shape[0] != SIZE:
         from scipy.ndimage import zoom
         db = zoom(db, (SIZE / db.shape[0], 1.0), order=1).astype(np.float32)
+    if crop is not None:
+        from scipy.ndimage import zoom as _zoom
+        sub = db[:, crop[0]:crop[1]]
+        db = _zoom(sub, (1.0, SIZE / sub.shape[1]), order=1).astype(np.float32)
     return db
+
+
+ACTIVE_WINDOWS = None  # set by load_db before the pool forks; None = all of WINDOWS
 
 
 def _file_db(path_str: str):
     x = read_iq(Path(path_str))
-    return {w: spectrogram_db(x, w) for w in WINDOWS}
+    return {w: spectrogram_db(x, w) for w in (ACTIVE_WINDOWS or WINDOWS)}
 
 
-def load_db(paths, workers: int):
+def load_db(paths, workers: int, windows=None):
     import importlib
     import multiprocessing as mp
     # Inside a Ray task this module is not importable as __main__, so hand the pool the function
@@ -146,10 +157,12 @@ def load_db(paths, workers: int):
     probe_dir = str(Path(__file__).resolve().parent)
     if probe_dir not in sys.path:
         sys.path.insert(0, probe_dir)
-    fn = importlib.import_module("rendering_probe")._file_db
+    mod = importlib.import_module("rendering_probe")
+    ws = tuple(windows) if windows else WINDOWS
+    mod.ACTIVE_WINDOWS = ws
     with mp.get_context("fork").Pool(workers) as pool:
-        res = pool.map(fn, [str(p) for p in paths], chunksize=8)
-    return {w: np.stack([r[w] for r in res]) for w in WINDOWS}
+        res = pool.map(mod._file_db, [str(p) for p in paths], chunksize=8)
+    return {w: np.stack([r[w] for r in res]) for w in ws}
 
 
 def test_split(times):
