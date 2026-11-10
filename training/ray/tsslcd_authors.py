@@ -55,13 +55,13 @@ LATENT_DIM, N_TIMESTEPS, BATCH, LEARNING_RATE = 32, 1000, 256, 1e-4        # the
 EPOCHS = {"ctx": 300, "fut": 300, "diff": 2000}                              # the authors' config.py defaults
 TRAIN_MASK = 0.1
 DEFAULT_EVAL_SMOOTH = ("1:1:centered", "6:3:centered", "6:3:causal")
-# Resolution profiles. "1min" is the original setting. "15min" uses the benchmark's 15-minute windowing (lookback 96, future 48,
+# Resolution profiles. "1min" is the original setting. "15min": lookback 100 (the model needs a multiple of its 5 attention heads; 96 is not), future 48,
 # horizons 1/4/12/24/48) on the converted ``data/powder15`` traces; the test partition is loaded ``context - 1`` blocks early so the
 # forecast origins are exactly the benchmark's (first origin = first block of the test week); everything else (model, stages, epochs,
 # masking, savgol switch) is unchanged.
 PROFILES = {
     "1min": {"root": "data/powder", "raw": RAW_NAME, "freq": "min", "context": CONTEXT, "future": FUTURE, "horizons": HORIZONS, "pad_test": False},
-    "15min": {"root": "data/powder15", "raw": "power_15min.csv", "freq": "15min", "context": 96, "future": 48,
+    "15min": {"root": "data/powder15", "raw": "power_15min.csv", "freq": "15min", "context": 100, "future": 48,
               "horizons": (1, 4, 12, 24, 48), "pad_test": True},
 }
 
