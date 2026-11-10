@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sync committed source to both Ray clusters without restarting services."""
+"""Sync committed source to selected Ray clusters without restarting services."""
 
 from concurrent.futures import ThreadPoolExecutor
 import argparse
@@ -15,22 +15,34 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 DOCKER_DIR = SCRIPT_DIR.parent / "docker"
 
 TARGETS = {
+    "final": [
+        (f"ray-final-{index}", ["-F", str(DOCKER_DIR / "final-ssh.conf")])
+        for index in range(1, 7)
+    ],
     "mixed-gpu": [
-        ("129.114.25.96", ["-o", f"UserKnownHostsFile={DOCKER_DIR}/secrets/standalone_known_hosts"]),
-        ("129.114.26.81", ["-o", f"UserKnownHostsFile={DOCKER_DIR}/secrets/standalone_known_hosts"]),
-        ("129.114.27.86", ["-o", f"UserKnownHostsFile={DOCKER_DIR}/secrets/standalone_known_hosts"]),
+        (name, ["-F", str(DOCKER_DIR / "h100-ssh.conf")])
+        for name in ("ray-worker-2", "ray-worker-1", "ray-new-1", "ray-new-2", "ray-new-3", "ray-new-4")
     ],
     "tacc": [
         (name, ["-F", str(DOCKER_DIR / "tacc-ssh.conf")])
         for name in ("ray-tacc-1", "ray-tacc-2", "ray-tacc-3", "ray-tacc-4")
     ],
+    "uc": [
+        (f"ray-uc-{index}", ["-F", str(DOCKER_DIR / "uc-ssh.conf")])
+        for index in range(1, 9)
+    ] + [("ray-uc-extra-1", ["-F", str(DOCKER_DIR / "uc-ssh.conf")])],
 }
+
+DEFAULT_CLUSTERS = ("final", "tacc", "uc")
 
 # Pending deployment helpers that are newer than the selected commit.
 OVERRIDES = {
+    "data/sync_object_storage.py",
+    "training/ray/scripts/sync-cluster-code.py",
     "training/ray/scripts/sync-cluster-data.sh",
     "training/ray/scripts/configure-storage-secrets.py",
     "training/ray/docker/README.md",
+    "training/ray/docker/standalone-nodes.sh",
 }
 
 DEPLOY = '''import io,os,pathlib,sys,tarfile,tempfile
@@ -115,7 +127,7 @@ def main():
     args = parser.parse_args()
     subprocess.run(["git", "fetch", "origin"], check=True)
     revision = subprocess.check_output(["git", "rev-parse", args.revision], text=True).strip()
-    clusters = args.cluster or sorted(TARGETS)
+    clusters = args.cluster or DEFAULT_CLUSTERS
     targets = [
         (cluster, host, options)
         for cluster in clusters

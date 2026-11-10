@@ -92,3 +92,17 @@ def test_t15_table_summary():
     records = [{key: 1.0 + i for key in METRICS.values()} for i in range(3)]
     out = summarize(records, METRICS)
     assert out["mae_db"] == 2.0 and out["n_seeds"] == 3 and abs(out["mae_sd"] - (2 / 3) ** 0.5) < 1e-9
+
+
+def test_es_reproduction_summary_and_collapse_flag():
+    import math
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "evaluation" / "analysis"))
+    from es_reproduction_table import collapsed, summarize
+
+    s = summarize([1.0, 2.0, 3.0])
+    assert s["mean"] == 2.0 and s["sd"] == 1.0 and abs(s["stderr"] - 1 / math.sqrt(3)) < 1e-12 and s["n"] == 3
+    assert math.isnan(summarize([1.0])["stderr"])                        # one run has no standard error
+    assert collapsed([0.9, 1.0, 1.1, 3.0], 1.5) == [False, False, False, True]

@@ -1,5 +1,10 @@
 # Ray cluster with mixed GPU hosts
 
+**Historical deployment:** the four-GPU head instance expired on November 7.
+For the replacement head on `ray-worker-2` and six one-GPU hosts, use
+[H100.md](H100.md) and `h100-ssh.conf`. The addresses and deploy commands below
+describe the previous topology.
+
 The independent cluster uses stack `standalone`, with its manager and Ray head
 at `cc@129.114.25.96`. The head advertises zero CPUs and zero GPUs. The
 three GPU worker containers advertise six H100 GPUs and 288 CPUs in total.

@@ -71,8 +71,9 @@ def load_partition(root: str, partition: str, band: str = "600_800", sites=SITES
     """(values (T, sites*bins) dBm, minute index, valid mask). Receivers joined on common minutes; short gaps filled."""
     prof = PROFILES[profile]
     start, end = (pd.Timestamp(t) for t in RANGES[partition])
+    start, end = start.ceil(prof["freq"]), end.floor(prof["freq"])          # block-aligned (a no-op at 1 minute)
     if prof["pad_test"] and partition == "test":
-        start = pd.Timestamp(start).ceil(prof["freq"]) - (prof["context"] - 1) * pd.Timedelta(prof["freq"])
+        start = start - (prof["context"] - 1) * pd.Timedelta(prof["freq"])
     frames = []
     for site in sites:
         raw = pd.read_csv(Path(root) / prof["root"] / site / RUNS[partition] / band / prof["raw"])

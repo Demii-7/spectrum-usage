@@ -73,7 +73,10 @@ def parse_args():
     parser.add_argument("--bucket", help="Defaults to S3_BUCKET, or SPECTRUM_S3_BUCKET with --spectrum-storage")
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument("--all-sites", action="store_true", help="Sync processed CSVs across the entire bucket")
+    selection.add_argument("--sites", nargs="+", help="Sync these measurement prefixes without traversing unrelated bucket roots")
     selection.add_argument("--checkpoints", action="store_true", help="Sync checkpoints/ into the repository instead of processed CSVs into data/")
+    parser.add_argument("--checkpoint-prefix", action="append", default=[],
+                        help="Limit --checkpoints to this object-key prefix; repeat for multiple prefixes")
     parser.add_argument("--spectrum-storage", action="store_true", help="Use SPECTRUM_* credentials and endpoint instead of the default AWS/MinIO configuration")
     parser.add_argument("--inventory-out", type=Path, help="Save the selected object metadata as JSON")
     parser.add_argument("--inventory-in", type=Path, help="Use a saved inventory instead of listing the bucket")
@@ -137,17 +140,19 @@ def validate_key(key, checkpoints=False):
         raise ValueError(f"Invalid processed-data key: {key}")
 
 
-def list_checkpoint_objects(fs, bucket):
+def list_checkpoint_objects(fs, bucket, prefixes=None):
     entries = {}
-    request = {"Bucket": bucket, "Prefix": "checkpoints/"}
-    while True:
-        response = fs.call_s3("list_objects_v2", **request)
-        for item in response.get("Contents", []):
-            if not item["Key"].endswith("/"):
-                entries[item["Key"]] = item
-        if not response.get("IsTruncated"):
-            return entries
-        request["ContinuationToken"] = response["NextContinuationToken"]
+    for prefix in prefixes or ["checkpoints/"]:
+        request = {"Bucket": bucket, "Prefix": prefix}
+        while True:
+            response = fs.call_s3("list_objects_v2", **request)
+            for item in response.get("Contents", []):
+                if not item["Key"].endswith("/"):
+                    entries[item["Key"]] = item
+            if not response.get("IsTruncated"):
+                break
+            request["ContinuationToken"] = response["NextContinuationToken"]
+    return entries
 
 
 def write_json(path, value):
@@ -159,6 +164,13 @@ def write_json(path, value):
 
 def main():
     args = parse_args()
+    if args.checkpoint_prefix and not args.checkpoints:
+        print("ERROR: --checkpoint-prefix requires --checkpoints", file=sys.stderr)
+        return 2
+    if any(not prefix.startswith("checkpoints/") or ".." in PurePosixPath(prefix).parts
+           for prefix in args.checkpoint_prefix):
+        print("ERROR: checkpoint prefixes must stay under checkpoints/", file=sys.stderr)
+        return 2
     kind = "checkpoints" if args.checkpoints else "processed-data"
     if args.output_dir is None:
         args.output_dir = Path(__file__).resolve().parent
@@ -167,8 +179,8 @@ def main():
     if args.workers <= 0 or args.parts <= 0:
         print("ERROR: --workers and --parts must be positive", file=sys.stderr)
         return 2
-    if (args.all_sites or args.checkpoints) and args.nodes:
-        print("ERROR: --all-sites/--checkpoints cannot be combined with --node", file=sys.stderr)
+    if (args.all_sites or args.sites or args.checkpoints) and args.nodes:
+        print("ERROR: --all-sites/--sites/--checkpoints cannot be combined with --node", file=sys.stderr)
         return 2
     try:
         load_env_file(args.env_file)
@@ -184,6 +196,8 @@ def main():
         f"{site_prefix}{node.strip('/')}/"
         for node in args.nodes
     ] if args.nodes else [site_prefix]
+    if args.sites:
+        listing_prefixes = [site.strip("/") + "/" for site in args.sites]
     try:
         bucket, endpoint_url, credentials = storage_settings(args)
         fs = fsspec.filesystem("s3", **fs_kwargs(endpoint_url), **credentials)
@@ -196,7 +210,7 @@ def main():
             entries = inventory["objects"]
         else:
             if args.checkpoints:
-                entries = list_checkpoint_objects(fs, bucket)
+                entries = list_checkpoint_objects(fs, bucket, args.checkpoint_prefix)
             else:
                 entries = {}
                 for listing_prefix in listing_prefixes:
@@ -206,6 +220,9 @@ def main():
                        for key, value in entries.items()}
         for key in entries:
             validate_key(key, checkpoints=args.checkpoints)
+        if args.checkpoint_prefix:
+            entries = {key: info for key, info in entries.items()
+                       if any(key.startswith(prefix) for prefix in args.checkpoint_prefix)}
         if not entries:
             raise ValueError(f"No {kind} objects found")
         if args.inventory_out:

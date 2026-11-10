@@ -6,6 +6,41 @@ a stated reason before the paper results are final; none of it should quietly di
 Lease ends: H100 cluster 2026-11-07 16:58 UTC; A100 cluster 2026-11-10 18:00 UTC. Everything must be in the
 durable bucket (`s3://spectrum`) before then (target: A100 results exported by 2026-11-10 12:00 UTC).
 
+## Weekend plan (user offline, from Nov 6)
+The weekend to-do list, as set by the user on 2026-11-05 (do not add to it yourself):
+1. **Priority 1: the remaining DSwinLSTM round-2 seeds** (seeds 40-44, 0.5 GPU each; the 16-candidate search finished
+   2026-11-05 02:55 UTC and the replicate stage is PENDING on the H100 cluster).
+2. **Priority 2: the models missing on 2400-2600 MHz, and only those** (not extra seeds for the models already
+   there): ConvLSTM and ResidualConvLSTM (4D), VanillaLSTM and ResidualVanillaLSTM (1D). Run them at seed 42 with the
+   600-800 hyperparameters, to match the other 2400-2600 runs (assumption: confirm with the user if a different
+   seed count is wanted). DSwinLSTM on this band uses the round-2 winner only if it has exported, otherwise
+   round 1, and the paper says which.
+
+3. **Priority 3: extra seeds (40, 41, 43, 44) on 2400-2600 for the non-DSwinLSTM models** (11 models; DSwinLSTM extra
+   seeds are not included, they cost about 27 GPU-h each).
+   - CPU-only linear models (LinearAR and ResidualLinearAR in 1D/2D/4D): launched 2026-11-05 as
+     `claude-band2400-linear-seeds-1` on the A100 cluster (24 runs, CPU only, so they do not compete for GPUs).
+   - GPU models (AutoformerCSA, LSTMAttn, VanillaLSTM, ResidualVanillaLSTM, TCN in 2D; about 4.2 GPU-h per seed,
+     17 GPU-h in total): launch only after priority 1 and 2 are submitted, because Ray does not prioritize and
+     these would otherwise take GPU slots first.
+   Hyperparameters inherited from 600-800, same settings as the existing seed-42 runs.
+
+Do **not** pause or stop running jobs to make room (user decision). The other open items (scoring the 1D LSTMs and
+the 4D ConvLSTM models at stride 1, rescoring per-receiver/pooled-6 and 2400-2600, seeds 40-44 on 2400-2600,
+horizon-specific models) stay on the open list below but are not part of the weekend plan.
+
+**Status at 2026-11-06 19:20 UTC** (checked against the bucket, `oct2026-band-runs/` and `checkpoints-oct2026-r2/`; every item below has its weights and `run_costs.json` in `s3://spectrum`):
+- **Priority 1, DSwinLSTM round-2 seeds 40-44: done**, exported to `checkpoints-oct2026-r2/` (5 weight files). Final-range scoring is part of `claude-final-eval-v3-4d-2` (A100, still running).
+- **Priority 2, the four missing 2400-2600 models (ConvLSTM, ResidualConvLSTM, 1D VanillaLSTM, 1D ResidualVanillaLSTM) at seed 42: done** (`claude-band2400-missing-1`).
+- **Priority 3, extra seeds (40, 41, 43, 44) on 2400-2600:** the CPU-only linear models are **done** (all 5 seeds for LinearAR/ResidualLinearAR in 1D, 2D, 4D). The GPU models are **partial**: present are AutoformerCSA 40/41/42/44, VanillaLSTM 2D 40-43, ResidualVanillaLSTM 2D 41/42/44, LSTMAttn and TCN only seed 42. Resubmitted on the H100 cluster as `claude-h100-band2400-gpu-seeds-1` (all 20 runs; about 7 duplicate seeds that already exist and will be overwritten by an equivalent retrain). Missing only: AutoformerCSA 43; LSTMAttn 40/41/43/44; TCN 40/41/43/44; VanillaLSTM 2D 44; ResidualVanillaLSTM 2D 40/43.
+- Not in the plan and not run: DSwinLSTM extra seeds on 2400-2600 (43 and 44 exist from an earlier job; 40 and 41 do not).
+
+**Timing risk:** the H100 lease ends Friday 2026-11-07 16:58 UTC, before the weekend, and the DSwinLSTM replicate is
+still PENDING there (its GPUs are fully claimed). Anything not started on the H100 cluster by Friday must be
+restarted on the A100 cluster (lease ends 2026-11-10 18:00 UTC) from the search results, which are in the durable
+backup `oct2026-minio-backup-newcluster/` (the `dswinlstm_i-search` experiment, last backed up 2026-11-05 03:48 UTC).
+Everything must be in the bucket before the leases end (H100 2026-11-07 16:58 UTC, A100 2026-11-10 18:00 UTC).
+
 ## Models missing from the 2400-2600 MHz band run
 One seed per model on 2400-2600 was queued with the inherited 600-800 hyperparameters, but these models were
 left out because their searches have not exported a winner yet:
@@ -37,7 +72,17 @@ checkpoint, so the cost table has comparable numbers. Plan: do it on the H100 cl
 drained (expected about Nov 5-6, lease ends Nov 7 16:58 UTC), since the H100s are the main training GPU type
 for the cost table. Not written yet.
 
-## Horizon-specific models (15 and 60 minutes)
+## Reporting decision: rolled-out and direct models (user, 2026-11-05)
+Report **both** rolled-out (one-step model fed back) and direct (trained for the horizon) results, in the 15-minute
+POWDER experiments (and ElectroSense, where both already exist). Status:
+- 15-minute POWDER direct: LSTM family, AutoformerCSA and 1D LSTM done (237 records); the four linear models
+  (LinearAR/ResidualLinearAR, 1D and 2D) launched 2026-11-05 as `claude-p15-direct-linear-1` (CPU, 160 runs).
+  TCN has no direct form, so it is reported rolled-out only (say so in the paper).
+- 1-minute POWDER: report rolled-out models only (user decision, 2026-11-05). No direct 15/60-minute models are
+  needed there; the paper should state that the 1-minute models are one-step models rolled out.
+- Direct models reuse the one-step model's hyperparameters (no separate search); say so.
+
+## Horizon-specific models (15 and 60 minutes) - NOT NEEDED for 1-minute results (user, 2026-11-05)
 Train separate models directly for the 15- and 60-minute horizons (current models are one-step and rolled
 out autoregressively, except Autoformer-CSA and DSwinLSTM-I, which output 60 steps). Reuse each model's
 selected hyperparameters; no new search. `fixed_train --horizon 15 60` now does this (code `c626a57`, needs

@@ -19,12 +19,35 @@ done
 SELECTION=("$@")
 if [[ "$CHECKPOINTS" == true ]]; then
   SELECTION=(--checkpoints "${SELECTION[@]}")
+  if declare -p RAY_CHECKPOINT_PREFIXES >/dev/null 2>&1; then
+    for prefix in "${RAY_CHECKPOINT_PREFIXES[@]}"; do
+      SELECTION+=(--checkpoint-prefix "$prefix")
+    done
+  fi
 elif ((${#SELECTION[@]} == 0)); then
-  SELECTION=(--all-sites)
+  if declare -p RAY_DATA_SITES >/dev/null 2>&1 && ((${#RAY_DATA_SITES[@]} > 0)); then
+    SELECTION=(--sites "${RAY_DATA_SITES[@]}")
+  else
+    SELECTION=(--all-sites)
+  fi
 fi
 HOSTS=("${RAY_NODE_SSH_HOSTS[@]}")
+if [[ "$CHECKPOINTS" == true ]] && declare -p RAY_CHECKPOINT_SKIP_HOSTS >/dev/null 2>&1; then
+  CHECKPOINT_HOSTS=()
+  for host in "${HOSTS[@]}"; do
+    skip=false
+    for excluded in "${RAY_CHECKPOINT_SKIP_HOSTS[@]}"; do
+      if [[ "$host" == "$excluded" ]]; then skip=true; break; fi
+    done
+    if [[ "$skip" == false ]]; then CHECKPOINT_HOSTS+=("$host"); fi
+  done
+  HOSTS=("${CHECKPOINT_HOSTS[@]}")
+fi
 ((${#HOSTS[@]} > 0)) || { printf 'No SSH hosts in inventory\n' >&2; exit 2; }
 SSH_OPTIONS=(-o BatchMode=yes -o ConnectTimeout=15)
+if [[ -n "${RAY_SSH_CONFIG:-}" ]]; then
+  SSH_OPTIONS+=(-F "$RAY_SSH_CONFIG")
+fi
 if [[ -n "${RAY_SSH_KNOWN_HOSTS:-}" ]]; then
   SSH_OPTIONS+=(-o "UserKnownHostsFile=$RAY_SSH_KNOWN_HOSTS" -o StrictHostKeyChecking=accept-new)
 fi
@@ -35,8 +58,8 @@ trap 'rm -rf "$TMP"' EXIT
 worker_exec() {
   local host="$1" command index service="${RAY_STACK_NAME}_ray-worker"
   shift
-  for index in "${!HOSTS[@]}"; do
-    if [[ "${HOSTS[$index]}" == "$host" && -n "${RAY_NODE_SERVICES[$index]:-}" ]]; then
+  for index in "${!RAY_NODE_SSH_HOSTS[@]}"; do
+    if [[ "${RAY_NODE_SSH_HOSTS[$index]}" == "$host" && -n "${RAY_NODE_SERVICES[$index]:-}" ]]; then
       service="${RAY_NODE_SERVICES[$index]}"
       break
     fi

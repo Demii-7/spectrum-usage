@@ -1,4 +1,5 @@
 import importlib.util
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,6 +16,65 @@ SPEC.loader.exec_module(sync)
 
 
 class SyncObjectStorageTests(unittest.TestCase):
+    def test_core_checkpoint_inventory_excludes_reproduction_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            inventory = root / "all.json"
+            selected = root / "core.json"
+            inventory.write_text(json.dumps({"bucket": "spectrum", "endpoint": "",
+                "kind": "checkpoints", "objects": {
+                    "checkpoints/1d/model.pt": {"Size": 7},
+                    "checkpoints/repro/model.pt": {"Size": 1000000000}}}))
+            argv = ["sync", "--checkpoints", "--checkpoint-prefix", "checkpoints/1d/",
+                    "--inventory-in", str(inventory), "--inventory-out", str(selected),
+                    "--dry-run", "--summary-only", "--env-file", str(root / "absent")]
+            with patch.dict(sync.os.environ, {"S3_BUCKET": "spectrum"}, clear=True), \
+                 patch.dict("sys.modules", {"fsspec": SimpleNamespace(filesystem=lambda *a, **kw: None)}), \
+                 patch("sys.argv", argv):
+                self.assertEqual(sync.main(), 0)
+            self.assertEqual(set(json.loads(selected.read_text())["objects"]), {"checkpoints/1d/model.pt"})
+
+    def test_checkpoint_prefix_listing_stays_within_selected_roots(self):
+        calls = []
+        def call_s3(operation, **request):
+            calls.append(request.copy())
+            prefix = request["Prefix"]
+            if "ContinuationToken" not in request:
+                return {"Contents": [{"Key": prefix + "one.pt"}],
+                        "IsTruncated": True, "NextContinuationToken": prefix + "next"}
+            self.assertEqual(request["ContinuationToken"], prefix + "next")
+            return {"Contents": [{"Key": prefix + "two.pt"}]}
+        entries = sync.list_checkpoint_objects(SimpleNamespace(call_s3=call_s3), "spectrum",
+                                               ["checkpoints/1d/", "checkpoints/4d/"])
+        self.assertEqual(len(entries), 4)
+        self.assertEqual([c["Prefix"] for c in calls],
+                         ["checkpoints/1d/", "checkpoints/1d/", "checkpoints/4d/", "checkpoints/4d/"])
+
+    def test_selected_sites_inventory_avoids_artifact_namespaces(self):
+        calls = []
+
+        def call_s3(operation, **request):
+            prefix = request["Prefix"]
+            self.assertIn(prefix, ("powder/", "ara/"))
+            calls.append(prefix)
+            return {"Contents": [{"Key": prefix + "power_1mhz_avg_per_minute.csv",
+                                  "Size": 7, "LastModified": datetime(2026, 1, 1, tzinfo=timezone.utc)}]}
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            inventory = root / "inventory.json"
+            argv = ["sync", "--sites", "powder", "ara", "--dry-run", "--summary-only",
+                    "--inventory-out", str(inventory), "--output-dir", str(root / "data"),
+                    "--env-file", str(root / "absent")]
+            fs = SimpleNamespace(call_s3=call_s3)
+            with patch.dict(sync.os.environ, {"S3_BUCKET": "spectrum"}, clear=True), \
+                 patch.dict("sys.modules", {"fsspec": SimpleNamespace(filesystem=lambda *args, **kwargs: fs)}), \
+                 patch("sys.argv", argv):
+                self.assertEqual(sync.main(), 0)
+            self.assertEqual(calls, ["powder/", "ara/"])
+            self.assertEqual(len(json.loads(inventory.read_text())["objects"]), 2)
+            self.assertFalse((root / "data").exists())
+
     def test_checkpoint_listing_is_paginated_and_confined_to_checkpoint_prefix(self):
         calls = []
 

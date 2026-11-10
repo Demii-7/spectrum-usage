@@ -8,7 +8,12 @@ from pathlib import Path
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--head", required=True)
 parser.add_argument("--env-file", required=True)
+parser.add_argument("--ssh-config", type=Path, help="SSH config for aliases or jump hosts")
 args = parser.parse_args()
+ssh_command = ["ssh", "-A"]
+if args.ssh_config:
+    ssh_command += ["-F", str(args.ssh_config)]
+ssh_command.append(args.head)
 values = {}
 for line in Path(args.env_file).read_text().splitlines():
     line = line.strip()
@@ -28,11 +33,11 @@ for name, value in credentials.items():
     if not value:
         raise ValueError(f"Empty credential for {name}")
     subprocess.run(
-        ["ssh", args.head, f"docker secret inspect {name} >/dev/null 2>&1 || docker secret create {name} - >/dev/null"],
+        [*ssh_command, f"docker secret inspect {name} >/dev/null 2>&1 || docker secret create {name} - >/dev/null"],
         input=value.encode(), check=True,
     )
 endpoint = values.get("S3_ENDPOINT_URL", "https://chi.tacc.chameleoncloud.org:7480")
 bucket = values.get("S3_BUCKET", "spectrum")
 config = f"export SPECTRUM_S3_ENDPOINT_URL={shlex.quote(endpoint)}\nexport SPECTRUM_S3_BUCKET={shlex.quote(bucket)}\n"
-subprocess.run(["ssh", args.head, "umask 077; tee /home/cc/spectrum-storage.sh >/dev/null"], input=config.encode(), check=True)
+subprocess.run([*ssh_command, "umask 077; tee /home/cc/spectrum-storage.sh >/dev/null"], input=config.encode(), check=True)
 print(f"Storage secrets ready; spectrum bucket={bucket}, endpoint={endpoint}")

@@ -1,7 +1,17 @@
 # Ray Docker and Swarm deployment
 
-For the mixed-GPU cluster headed by `129.114.25.96`, see
-[STANDALONE.md](STANDALONE.md).
+For the six-host H100 cluster at `129.114.25.135`, with its head leased until
+**2026-11-14 01:49 UTC**, see [FINAL.md](FINAL.md).
+
+For the independent UC cluster (eight RTX hosts and one four-GPU V100 host),
+see [UC.md](UC.md).
+
+For the independent A100 cluster at TACC, including SSH jump-host access and
+the fifth-node procedure, see [TACC.md](TACC.md).
+
+For the rebuilt H100 cluster headed by `ray-worker-2` (`129.114.27.86`), see
+[H100.md](H100.md). [STANDALONE.md](STANDALONE.md) describes its expired
+four-GPU-head predecessor.
 
 For the October 2026 two-host cluster and expansion procedure, see
 [CHAMELEON.md](CHAMELEON.md). The addresses below describe the earlier cluster.

@@ -1,17 +1,18 @@
 # Current Chameleon cluster
 
-On October 30, 2026, we deployed stack `spectrum` on these hosts:
+As of November 1, 2026, stack `spectrum` uses these hosts:
 
 | Role | SSH address | Private address | Hostname |
 |---|---|---|---|
 | Manager, head, GPU worker, MinIO | `cc@129.114.27.86` | `192.168.1.43` | `ray-worker-1` |
 | GPU worker | `cc@129.114.26.81` | `192.168.1.49` | `ray-worker-2` |
-| GPU worker | `cc@129.114.25.96` | `192.168.1.136` | `ray-worker-3` |
+| GPU worker | `cc@129.114.25.125` | `192.168.1.26` | `ray-worker-3` |
+| GPU worker | `cc@129.114.25.135` | `192.168.1.186` | `ray-worker-4` |
 
-Each host contributes one H100 and 48 CPUs, for 3 GPUs and 144 CPUs total.
-Ray reports four logical nodes: the CPU-free head container and three GPU
-worker containers. We copied the local
-`training/` and `models/` source snapshot to `/home/cc/spectrum-usage` on all three
+Each host contributes one H100 and 48 CPUs, for 4 GPUs and 192 CPUs total.
+Ray reports five logical nodes: the CPU-free head container and four GPU
+worker containers. We copy the
+`training/` and `models/` source snapshot to `/home/cc/spectrum-usage` on all four
 hosts. Containers mount that directory at `/workspace/spectrum-usage`.
 
 The image `spectrum-ray:2.54.0-chameleon` contains Ray 2.54.0 and PyTorch
@@ -46,6 +47,36 @@ After adding `ray-worker-3`, we passed `chameleon-acceptance-3-workers` with
 all three expected GPU UUIDs, twelve fractional GPU tasks, model imports,
 and matching spectrum reads on all three workers. The head stores the log at
 `/home/cc/chameleon-acceptance-3-workers.log`.
+
+On November 1, we replaced the failed worker 3 at `129.114.25.96` with
+`129.114.25.125` and added worker 4 at `129.114.25.135`. We removed the old
+Swarm node `ziy7mp488k4ihq0t0i4klp5kc` after confirming its Down state.
+We installed Ubuntu host prerequisites and copied the existing Ray image to
+the new hosts. Their source snapshots use `integrate` commit `fd60eae` and
+include `data/locations/`, including `powder.json`.
+
+We kept the new nodes outside the `ray.gpu=true` worker placement constraint
+while preparing them. A temporary Swarm service mounted the existing storage
+secrets for data downloads and checks. Each new host received 208 processed
+CSVs (3,856,317,115 bytes) and 251 checkpoint objects (24,609,999,755 bytes).
+Full-file SHA-256 checksums matched between the new hosts for both selections.
+Both hosts passed CUDA computation, model imports, spectrum reads, and MinIO
+write/read/delete checks before we enabled Ray scheduling. Both POWDER runs
+`20261015T1434Z` and `20261025T1355Z` contain 14 processed CSVs on each new host.
+
+We removed the temporary service and applied `ray.gpu=true` after preparing
+the files. We kept the head and worker 2 containers running throughout the
+replacement. After the user requested a refresh on all four hosts, we synced
+`integrate` commit `241528c`, including `data/locations/`, and verified 531
+files per host. The current four-host inventory and this runbook overlay the
+committed deployment metadata. No services required a restart.
+
+The subsequent all-host asset sync verified matching SHA-256 checksums for
+208 processed CSVs (3,856,421,295 bytes per host) and 255 checkpoint objects
+(24,887,148,638 bytes per host). Ray reported four H100 workers and 192 CPUs.
+Node-affinity tasks on all four workers verified the location JSON, both
+October POWDER runs, source-bucket reads, and a MinIO object written on worker
+3 and read on all four workers.
 
 Hosts use copied source snapshots from the local `integrate` checkout.
 They do not track the branch with Git. Pushes to `integrate` require an explicit
@@ -112,6 +143,14 @@ Add each new private address and hostname to `chameleon-nodes.sh` for the
 inventory-based inspection scripts. Run the acceptance command above after
 joining nodes and confirm that `gpu_worker_count` matches the host count.
 The manager and its MinIO volume stay in place.
+
+For an expansion during active campaigns, prepare code, locations, processed
+data, and checkpoints before applying `ray.gpu=true`. The basic add-worker
+script applies that label as soon as it joins the node. Use a temporary
+secret-bearing preparation service for the staged workflow described above,
+then remove it before enabling the Ray worker. A preparation service can use
+the same image, repository mount, network, environment, and secrets as the
+worker service, with its entrypoint replaced by `bash -c 'sleep infinity'`.
 
 ## Sync processed data
 
