@@ -263,3 +263,74 @@ def chronological_split(frames, meta=None):
     splits = (frames[i_tr], frames[i_va], frames[i_te])
     segments = {'train': _segs(i_tr), 'val': _segs(i_va), 'test': _segs(i_te)}
     return splits, segments
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Alternative renderings via the probe's renderer (training/DeepSPred/probe/rendering_probe.py), selected by a spec string:
+#   rect126          rectangular window, hop 126, 256 rows, no padding
+#   rect127c~12      torch.stft defaults: rectangular, hop 127, center=True reflect padding, dB floor 1e-12
+#   tukey224@54-218  Tukey(0.25), hop 224 (144 rows -> 256, bilinear), frequency bins 54..217 -> 256 columns (bilinear)
+#   tukey224d        scipy.signal.spectrogram defaults: Tukey(0.25), hop 224, detrend='constant', 144 rows -> 256 (bilinear)
+# The dB range for the min-max scaling is taken over ALL frames (range_scope='full') or the first 2/3 of the capture ('train'),
+# not the every-50th-frame sample that load_frames uses. Everything after the STFT is as in load_frames: jet, uint8, no codec.
+# ---------------------------------------------------------------------------------------------------------------------
+
+def _spec_minmax(args):
+    path, spec = args
+    import rendering_probe as rp
+    x, _ = read_iq(path)
+    db = rp.spectrogram_db(x, spec)
+    return float(db.min()), float(db.max())
+
+
+def _spec_render(args):
+    path, spec, lo, hi = args
+    import rendering_probe as rp
+    x, _ = read_iq(path)
+    return rp.render(rp.spectrogram_db(x, spec)[None], 'glob', 'raw', False, {'lo': lo, 'hi': hi})[0]
+
+
+def load_frames_spec(directory, spec, *, range_scope='full', cache_dir=None, workers=None):
+    """Frames rendered with the probe's renderer. Returns (frames, meta) in the same layout as load_frames:
+    frames (N, 256, 256, 3) uint8 with H = STFT time rows and W = frequency bins; meta has times, segments and db_range."""
+    import hashlib
+    import multiprocessing as mp
+    import os
+    import sys
+    probe_dir = str(Path(__file__).resolve().parent.parent / 'probe')
+    if probe_dir not in sys.path:
+        sys.path.insert(0, probe_dir)
+    if range_scope not in ('full', 'train'):
+        raise ValueError(f"range_scope must be 'full' or 'train', got {range_scope!r}")
+    directory = Path(directory)
+    seconds = list_seconds(directory)
+    times, paths = [t for t, _ in seconds], [p for _, p in seconds]
+    tag = hashlib.sha1(f'{spec}|{range_scope}'.encode()).hexdigest()[:8]
+    cache_dir = Path(cache_dir) if cache_dir else Path(__file__).resolve().parents[2] / 'data' / 'datasets' / 'deepspred' / 'frames'
+    stem = f'{directory.resolve().name}_frames_256x256_spec{tag}'
+    npy, jsn = cache_dir / f'{stem}.npy', cache_dir / f'{stem}_meta.json'
+    if npy.exists() and jsn.exists():
+        meta = json.loads(jsn.read_text())
+        if meta.get('switches', {}).get('render_spec') == spec and meta.get('n_files') == len(paths):
+            print(f'loaded cache {npy}', flush=True)
+            return np.load(npy, mmap_mode='r'), meta
+    n_workers = workers or min(32, os.cpu_count() or 1)
+    ctx = mp.get_context('fork')
+    with ctx.Pool(n_workers) as pool:
+        mm = pool.map(_spec_minmax, [(str(p), spec) for p in paths], chunksize=16)
+    cut = times[0] + (times[-1] - times[0]) * (2.0 / 3.0)
+    sel = [True] * len(paths) if range_scope == 'full' else [t < cut for t in times]
+    lo = min(a for (a, _), k in zip(mm, sel) if k)
+    hi = max(b for (_, b), k in zip(mm, sel) if k)
+    with ctx.Pool(n_workers) as pool:
+        frames = np.stack(pool.map(_spec_render, [(str(p), spec, lo, hi) for p in paths], chunksize=16))
+    segs = contiguous_segments(times)
+    meta = {'source': str(directory.resolve()), 'n_files': len(paths), 'first': _iso(times[0]), 'last': _iso(times[-1]),
+            'times': [_iso(t) for t in times], 'segments': [[int(a), int(b)] for a, b in segs], 'db_range': [lo, hi],
+            'switches': {'render_spec': spec, 'range_scope': range_scope, 'size': 256, 'jpeg_quality': None, 'channels': 3},
+            'axes': 'H = STFT time rows, W = frequency bins [P:L 409-412]'}
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    np.save(npy, frames)
+    jsn.write_text(json.dumps(meta))
+    print(f'wrote cache {npy} ({frames.shape[0]} frames, db range {lo:.1f}..{hi:.1f})', flush=True)
+    return frames, meta

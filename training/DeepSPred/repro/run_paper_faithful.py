@@ -14,6 +14,7 @@ Run:
   python run_paper_faithful.py --data data/fm --horizon 20 --seed 0 --depths 2 6 2      # Table II
   python run_paper_faithful.py --data data/fm --horizon 20 --seed 0 --lr 0.0001         # Table III
   python run_paper_faithful.py --data data/fm --horizon 20 --seed 0 --patch 4 4 4 --window 4 7 7
+  python run_paper_faithful.py --data data/fm --horizon 20 --seed 0 --render-spec tukey224d --range-scope full   # alternative rendering (see probe/COLLABORATOR_RUN.md)
 
 Rendering switch: --jpeg-quality Q round-trips every frame through JPEG at quality Q before use.
 The paper never states how its "spectrograms" were stored; a JPEG pass is the only reading under
@@ -38,7 +39,7 @@ sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(HERE))
 
 from models.DeepSPred import SwinSTB3D
-from fm_data import load_frames, chronological_split
+from fm_data import load_frames, load_frames_spec, chronological_split
 from metrics import SPACES, mse_in_space, psnr_from_mse, ssim, lpips_available
 
 H = W = 256
@@ -154,6 +155,8 @@ def main() -> int:
     ap.add_argument('--patch', type=int, nargs=3, default=[2, 4, 4])
     ap.add_argument('--window', type=int, nargs=3, default=[2, 7, 7])
     ap.add_argument('--jpeg-quality', type=int, default=None, help='rendering hypothesis: round-trip frames through JPEG at this quality')
+    ap.add_argument('--render-spec', default=None, help="alternative rendering from probe/rendering_probe.py, e.g. rect126, rect127c~12, tukey224@54-218, tukey224d (default: the original Hann hop-126 rendering)")
+    ap.add_argument('--range-scope', default='full', choices=['full', 'train'], help="dB range for the min-max scaling with --render-spec: all frames, or the first 2/3 of the capture")
     ap.add_argument('--gray', action='store_true', help="Appendix-A grayscale ablation: 1-channel 'gray'-colormap frames, model in/out channels 1 (pass --embed-dim 32 per the paper's one-third-capacity note). LPIPS is skipped (the paper reports only MSE/PSNR for this ablation).")
     ap.add_argument('--init-from', type=Path, default=None, help='Transfer learning (paper Algorithm 4): fine-tune from this checkpoint instead of training from scratch. Recorded in the run record.')
     ap.add_argument('--lpips', action='store_true', help='compute LPIPS if the package is present')
@@ -161,6 +164,8 @@ def main() -> int:
     ap.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu')
     args = ap.parse_args()
     key = run_key(args.dataset, args.horizon, args.seed, args.embed_dim, args.depths, args.lr, args.patch, args.window, PRIMARY_SPACE, args.jpeg_quality, args.init_from)
+    if args.render_spec:  # the rendering is part of the run identity (results key and checkpoint hash)
+        key += f'|spec={args.render_spec}|{args.range_scope}'
     records = json.loads(args.results.read_text()) if args.results.exists() else {}
     if key in records:
         print(f'''already done, skipping: {key}''')
@@ -168,7 +173,10 @@ def main() -> int:
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     channels = 1 if args.gray else 3
-    frames, fmeta = load_frames(args.data, expect_hw=(H, W), jpeg_quality=args.jpeg_quality, channels=channels)
+    if args.render_spec:
+        frames, fmeta = load_frames_spec(args.data, args.render_spec, range_scope=args.range_scope)
+    else:
+        frames, fmeta = load_frames(args.data, expect_hw=(H, W), jpeg_quality=args.jpeg_quality, channels=channels)
     (train, val, test), segs = chronological_split(frames, fmeta)
     T = K = args.horizon
     dev = torch.device(args.device)
