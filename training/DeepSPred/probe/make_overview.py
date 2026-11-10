@@ -1,0 +1,128 @@
+"""Build results/OVERVIEW.md: every rendering option we tried, one row each, against the paper.
+
+  python training/DeepSPred/probe/make_overview.py
+
+Ceiling = best linear predictor of the frame at t+k from the last 5 frames (ANALYSIS_NOTES.md 4.3), MSE at k=8, uint8 units.
+Range conventions (how the dB min/max for the [0,1] scaling is chosen):
+  full    = min/max over ALL frames of the dataset        train = min/max over the first 2/3 of the capture only
+  sampled = min/max over every 50th frame: the COLLABORATOR's compute shortcut, not a plausible reading of the paper; shown for reference only.
+A '-' means that combination was not run.
+"""
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+
+R = Path(__file__).resolve().parent / "results"
+PAPER = {"fm_k8": 448.76, "cv_k8": 530.0, "cv_k12": 531.43, "ratio": 1.18, "fm_rise": 3.6, "cv_rise": 2.3}
+
+SRC = {  # file -> {dataset key: (dataset, convention)}
+    "acf_probe_20261110T172942.json": {"fm": ("fm", "sampled"), "crossval": ("cv", "sampled")},
+    "acf_probe_tukey_20261110T180408.json": {"fm": ("fm", "sampled"), "crossval": ("cv", "sampled")},
+    "acf_probe_tukey_20261110T183333.json": {"fm": ("fm", "sampled"), "crossval": ("cv", "sampled")},
+    "acf_probe_rect_20261110T183943.json": {"fm": ("fm", "sampled"), "crossval": ("cv", "sampled")},
+    "acf_probe_range_20261110T185554.json": {"fm_full": ("fm", "full"), "fm_train": ("fm", "train"),
+                                             "crossval_full": ("cv", "full"), "crossval_train": ("cv", "train"),
+                                             "crossval_fmfull": ("cv", "fmfull")},
+    "acf_probe_crop_20261110T191214.json": {"fm_full": ("fm", "full"), "crossval_full": ("cv", "full"), "crossval_fmfull": ("cv", "fmfull")},
+    "acf_probe_torch_20261110T193321.json": {"fm_sampled": ("fm", "sampled"), "fm_full": ("fm", "full"), "fm_train": ("fm", "train"),
+                                             "crossval_sampled": ("cv", "sampled"), "crossval_full": ("cv", "full"),
+                                             "crossval_train": ("cv", "train"), "crossval_fmfull": ("cv", "fmfull")},
+}
+
+WIN = {"hann126": "Hann, hop 126", "hamm128": "Hamming, hop 128", "rect126": "Rectangular, hop 126",
+       "rect126d": "Rectangular, hop 126, detrend", "tukey126": "Tukey .25, hop 126", "tukey126d": "Tukey .25, hop 126, detrend",
+       "tukey224": "Tukey .25, hop 224", "tukey224d": "scipy defaults (Tukey .25, hop 224, detrend)", "rect127c": "torch-style (rect, hop 127, reflect pad)"}
+SCALE = {"glob": "dB min-max", "frame": "per-frame min-max", "p1p99": "1-99% clip", "lin": "linear power"}
+
+
+def label(name: str) -> tuple[str, str]:
+    """(group, readable label) from a variant name like 'tukey224_cropA_glob_raw'."""
+    t = name.split("_")
+    win, rest = t[0], t[1:]
+    extra, scale, post = [], "glob", "raw"
+    for tok in rest:
+        if tok in SCALE:
+            scale = tok
+        elif tok == "raw" or tok.startswith("jpeg") or tok.startswith("blur"):
+            post = tok
+        elif tok.startswith("crop"):
+            extra.append({"A": "crop A (90-110 MHz)", "B": "crop B (mirrored)", "C": "crop C (+-10 MHz of 99)"}[tok[4:]])
+        elif tok.startswith("avg"):
+            extra.append(f"row-average x{tok[3:]}")
+        elif tok.startswith("eps"):
+            extra.append(f"dB floor 1e-{tok[3:]}")
+    s = WIN.get(win, win)
+    if extra:
+        s += ", " + ", ".join(extra)
+    if scale != "glob":
+        s += f", {SCALE[scale]}"
+    if post != "raw":
+        s += f", {post.replace('jpeg', 'JPEG q').replace('blur', 'blur sigma ')}"
+    if post.startswith("jpeg") or post.startswith("blur") or any(e.startswith("row-average") for e in extra):
+        g = "C. post-processing (smoothing / codec)"
+    elif scale != "glob":
+        g = "B. normalisation type"
+    elif "rect127c" in win:
+        g = "D. torch.stft-style and dB floor"
+    elif extra and any(e.startswith("crop") for e in extra):
+        g = "E. band crop to 90-110 MHz"
+    else:
+        g = "A. window / hop / detrend"
+    return g, s
+
+
+def collect() -> dict:
+    res: dict = {}
+    for fname, mapping in SRC.items():
+        d = json.loads((R / fname).read_text())["datasets"]
+        for key, (ds, conv) in mapping.items():
+            if key not in d:
+                continue
+            for vname, v in d[key]["variants"].items():
+                res.setdefault(vname, {}).setdefault((ds, conv), v["ridge_mse"])
+    return res
+
+
+def cell(c, ds, conv, k=8):
+    q = c.get((ds, conv))
+    return None if q is None else q[k - 1]
+
+
+def f(x, nd=0):
+    return "-" if x is None else f"{x:.{nd}f}"
+
+
+def main():
+    res = collect()
+    rows: dict = {}
+    for vname, c in res.items():
+        g, lab = label(vname)
+        rows.setdefault(g, []).append((lab, vname, c))
+    out = ["# Everything we tried vs the paper (ceiling MSE at k=8)\n",
+           "Generated by `make_overview.py`. Ceiling = best linear predictor from the last 5 frames (a bound a model could approach); MSE in uint8 units; "
+           "paper: FM 448.76 [T] (+3.6% rise [P]), cross-validation 531.43 at k=12 [T] (about 530 at k=8 [P], +2.3% [P]), CV/FM about 1.18. "
+           "**Primary conventions: full and train-only range. 'sampled' is the collaborator's compute shortcut (range from every 50th frame) and is shown only for reference.** "
+           "Rise = k=1 to k=20 under the full range (sampled if full was not run). `-` = not run. FM/CV 'FM-range' = cross-validation rendered with FM's full range.\n",
+           "| option | FM full | FM train-only | CV full | CV train-only | CV/FM (full) | FM rise | CV rise | FM vs paper (full) | FM (sampled, ref.) | CV (sampled, ref.) |",
+           "|---|---|---|---|---|---|---|---|---|---|---|",
+           f"| **PAPER (3D-SwinSTB)** | {PAPER['fm_k8']} [T] | - | {PAPER['cv_k12']} [T] | - | {PAPER['ratio']} | +{PAPER['fm_rise']}% [P] | +{PAPER['cv_rise']}% [P] | 1.00x | - | - |"]
+    for g in sorted(rows):
+        out.append(f"| *{g}* | | | | | | | | | | |")
+        for lab, vname, c in sorted(rows[g], key=lambda r: (cell(r[2], "fm", "full") or cell(r[2], "fm", "sampled") or 0)):
+            fmf, fmt_, cvf, cvt = cell(c, "fm", "full"), cell(c, "fm", "train"), cell(c, "cv", "full"), cell(c, "cv", "train")
+            fms, cvs = cell(c, "fm", "sampled"), cell(c, "cv", "sampled")
+            ref = "full" if fmf is not None else "sampled"
+            fmq = c.get(("fm", ref)); cvq = c.get(("cv", ref))
+            fr = f"{100 * (fmq[19] / fmq[0] - 1):+.1f}%" if fmq else "-"
+            cr = f"{100 * (cvq[19] / cvq[0] - 1):+.1f}%" if cvq else "-"
+            ratio = f"{cvf / fmf:.2f}" if (fmf and cvf) else "-"
+            vs = f"{fmf / PAPER['fm_k8']:.2f}x" if fmf else "-"
+            out.append(f"| {lab} | {f(fmf)} | {f(fmt_)} | {f(cvf)} | {f(cvt)} | {ratio} | {fr} | {cr} | {vs} | {f(fms)} | {f(cvs)} |")
+    (R / "OVERVIEW.md").write_text("\n".join(out) + "\n")
+    print("wrote", R / "OVERVIEW.md", "rows:", sum(len(v) for v in rows.values()))
+
+
+if __name__ == "__main__":
+    main()
