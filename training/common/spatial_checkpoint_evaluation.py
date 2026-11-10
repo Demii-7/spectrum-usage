@@ -235,6 +235,44 @@ def select_window_origins(
     return origin_array, x, y
 
 
+def load_stsprednet_for_forecast(checkpoint_path: Path, device):
+    """The STS-PredNet *training* model (``training/STS-PredNet/stsprednet.py``), rebuilt from the checkpoint's own ``model_config``, wrapped
+    so the shared forecaster can call it like the other map models: input (B, T, F, H, W), output (B, 1, F, H, W).
+
+    The shared model factory's STS-PredNet class (``models/STSPredNet.py``) is a different implementation with a different state dict, so
+    checkpoints trained with the integrated trainer are loaded here instead. Only the closeness-only configuration (the benchmark's: the
+    same lookback window as every other model) is supported; period and trend branches need other inputs and raise.
+    """
+    import sys
+
+    import torch
+    import torch.nn as nn
+
+    folder = str(Path(__file__).resolve().parents[1] / "STS-PredNet")
+    if folder not in sys.path:
+        sys.path.insert(0, folder)
+    from stsprednet import STSPredNet
+
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    config = checkpoint["model_config"]
+    branches = config["branches"]
+    if branches["use_period"] or branches["use_trend"]:
+        raise NotImplementedError("frozen STS-PredNet inference supports the closeness-only configuration")
+    network = STSPredNet(config)
+    network.load_state_dict(checkpoint["model_state_dict"], strict=True)
+    closeness = int(branches["lc"])
+
+    class ClosenessAdapter(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.network, self.closeness = network, closeness
+
+        def forward(self, x):
+            return self.network(closeness_seq=x[:, -self.closeness:]).unsqueeze(1)
+
+    return ClosenessAdapter().to(device).eval()
+
+
 def infer_frozen_model(
     checkpoint_path: Path,
     model_name: str,
@@ -260,11 +298,14 @@ def infer_frozen_model(
     horizon = np.asarray(horizons, dtype=np.int64)
     rollout = int(horizon.max())
     prediction_horizon = int(config[model_name.lower()]["model"]["prediction_horizon"])
-    model = build_model(model_name, config, maps[0])
     torch_device = torch.device(device)
-    model, _ = load_checkpoint_into_model(checkpoint_path=Path(checkpoint_path), model=model,
-        model_name=model_name.lower(), data_normalization=normalization,
-        data_frequencies=list(frequencies), device=torch_device)
+    if model_name.lower() == "stsprednet":
+        model = load_stsprednet_for_forecast(Path(checkpoint_path), torch_device)
+    else:
+        model = build_model(model_name, config, maps[0])
+        model, _ = load_checkpoint_into_model(checkpoint_path=Path(checkpoint_path), model=model,
+            model_name=model_name.lower(), data_normalization=normalization,
+            data_frequencies=list(frequencies), device=torch_device)
     outputs = []
     with torch.no_grad():
         for start in range(0, len(maps), batch_size):
