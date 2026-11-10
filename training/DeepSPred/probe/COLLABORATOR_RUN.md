@@ -25,9 +25,10 @@ Everything else in the rendering is as before: complex I/Q (one `.xls` = one sec
 The bilinear resize is `scipy.ndimage.zoom(db, (256/rows, 1), order=1)` (corner-aligned). cv2 or torch bilinear use half-pixel centres and differ slightly; the level changes by up to about 20%
 between nearest, bilinear and cubic, so use the same function as in the probe to reproduce our numbers.
 
-## 2. Patch to `training/DeepSPred/repro/fm_data.py` (append)
+## 2. `training/DeepSPred/repro/fm_data.py`: `load_frames_spec` (ALREADY APPLIED on `integrate`; shown for reference)
 
-Requires `training/DeepSPred/probe/rendering_probe.py` (the renderer that produced all the numbers in `ANALYSIS_NOTES.md`). It must be on the branch; it is added to `sys.path` below.
+Requires `training/DeepSPred/probe/rendering_probe.py` (the renderer that produced all the numbers in `ANALYSIS_NOTES.md`); it is added to `sys.path` inside the function. Pull the `integrate` branch and the commands in section 4 work as written.
+Tested on synthetic data: the new `rect126` path reproduces `load_frames(window='rect', sample_every=1)` exactly (0 differing pixels), the cache reloads, all four specs run, and `chronological_split` accepts the metadata. It has not been run on the real FM data or through a training step.
 
 ```python
 def _spec_minmax(args):
@@ -83,7 +84,7 @@ def load_frames_spec(directory, spec, *, range_scope='full', cache_dir=None, wor
 
 (`json`, `np`, `Path`, `sys`, `list_seconds`, `read_iq`, `contiguous_segments`, `_iso` already exist in `fm_data.py`; add `import sys` if it is not imported.)
 
-## 3. Patch to `training/DeepSPred/repro/run_paper_faithful.py`
+## 3. `training/DeepSPred/repro/run_paper_faithful.py`: `--render-spec` / `--range-scope` (ALREADY APPLIED on `integrate`; shown for reference)
 
 ```python
 from fm_data import load_frames, load_frames_spec, chronological_split          # was: load_frames, chronological_split
