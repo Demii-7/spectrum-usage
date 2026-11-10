@@ -172,9 +172,10 @@ def render(db: np.ndarray, scaling: str, post: str, gray: bool, stats: dict) -> 
     else:
         raise ValueError(scaling)
     n = np.clip(n, 0.0, 1.0).astype(np.float32)
-    if post == "blur1":
+    if post.startswith("blur"):
         from scipy.ndimage import gaussian_filter
-        n = np.stack([gaussian_filter(f, 1.0) for f in n])
+        sigma = float(post[4:])
+        n = np.stack([gaussian_filter(f, sigma) for f in n])
     if gray:
         img = (n * 255.0).round().astype(np.uint8)[..., None]
     else:
