@@ -250,7 +250,8 @@ def model_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
             centered = t15.evaluate_frozen(module, entry["rep"], task, source, name, checkpoint, config, seed, center=center)
             if not all(np.array_equal(plain["rows"][h], centered["rows"][h]) for h in HORIZONS):
                 raise RuntimeError("stage A and B origins differ")
-            n_origins = len(plain["rows"][HORIZONS[0]])
+            n_rows = len(plain["rows"][HORIZONS[0]])
+            n_origins = n_rows // 200 if entry["rep"] == "1d" else n_rows          # flattened 1D rows are origins x 200 bins
             if n_origins != int(t["n_origins"]):
                 raise RuntimeError(f"origin count {n_origins} differs from the frozen {t['n_origins']}")
             facts = {**record, **provenance(root, t, entry["band"], args["code_revision"]),
