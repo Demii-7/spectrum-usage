@@ -300,14 +300,20 @@ def main():
     import ray
     from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
     ray.init(address="auto")
-    nodes = [n for n in ray.nodes() if n["Alive"]]
+    nodes = [n for n in ray.nodes() if n["Alive"] and n.get("Resources", {}).get("CPU", 0) >= args.cpus]
 
     def has_data(path):
         return Path(path, DATASETS["fm"]).exists()
 
     probes = {n["NodeID"]: ray.remote(num_cpus=0.01, scheduling_strategy=NodeAffinitySchedulingStrategy(n["NodeID"], soft=False))(has_data).remote(data_root)
               for n in nodes}
-    ok = [nid for nid, ref in probes.items() if ray.get(ref)]
+    ok = []
+    for nid, ref in probes.items():
+        try:
+            if ray.get(ref, timeout=120):
+                ok.append(nid)
+        except Exception as exc:  # node unschedulable or busy: skip it
+            print(f"probe on {nid[:8]} failed: {type(exc).__name__}", flush=True)
     if not ok:
         sys.exit(f"no node has {data_root}/{DATASETS['fm']}")
     print(f"data present on {len(ok)} node(s); using {ok[0]}", flush=True)
