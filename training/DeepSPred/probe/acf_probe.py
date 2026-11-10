@@ -146,7 +146,13 @@ TORCHZ_VARIANTS = {}
 for _e in (12, 8):
     TORCHZ_VARIANTS[f"rect127c_eps{_e}_glob_raw"] = (f"rect127c~{_e}", 0, "glob", "raw")
     TORCHZ_VARIANTS[f"rect127c_eps{_e}_zf3_raw"] = (f"rect127c~{_e}", 0, "zf3", "raw")
-ALL_VARIANTS = {**VARIANTS, **TUKEY_VARIANTS, **RECT_VARIANTS, **RANGE_VARIANTS, **CROP_VARIANTS, **TORCH_VARIANTS, **OVERVIEW_VARIANTS, **ZSCORE_VARIANTS, **STFT_VARIANTS, **TORCHZ_VARIANTS}
+# Interpolation order of the time-axis resize to 256 rows: nearest (^0), bilinear (^1, what every earlier run used), cubic (^3).
+# Hop-126 windows need no resize and are included as the no-interpolation reference.
+RESIZE_VARIANTS = {"tukey126d_glob_raw": ("tukey126d", 0, "glob", "raw"), "hann126_glob_raw": ("hann126", 0, "glob", "raw")}
+for _w in ("tukey224d", "hann128s", "hamm128"):
+    for _o in (0, 1, 3):
+        RESIZE_VARIANTS[f"{_w}_resize{_o}_glob_raw"] = (f"{_w}^{_o}", 0, "glob", "raw")
+ALL_VARIANTS = {**VARIANTS, **TUKEY_VARIANTS, **RECT_VARIANTS, **RANGE_VARIANTS, **CROP_VARIANTS, **TORCH_VARIANTS, **OVERVIEW_VARIANTS, **ZSCORE_VARIANTS, **STFT_VARIANTS, **TORCHZ_VARIANTS, **RESIZE_VARIANTS}
 
 G: dict = {}  # filled in the parent before the pool forks (read-only in the workers)
 
@@ -395,13 +401,13 @@ def work(data_root: str, out_dir: str, workers: int, pool_size: int, variant_set
     root = Path(data_root)
     names = {"all": VARIANTS, "tukey": TUKEY_VARIANTS, "rect": RECT_VARIANTS, "range": RANGE_VARIANTS,
              "crop": CROP_VARIANTS, "torch": TORCH_VARIANTS, "overview": OVERVIEW_VARIANTS,
-             "zscore": ZSCORE_VARIANTS, "stft": STFT_VARIANTS, "torchz": TORCHZ_VARIANTS}[variant_set]
+             "zscore": ZSCORE_VARIANTS, "stft": STFT_VARIANTS, "torchz": TORCHZ_VARIANTS, "resize": RESIZE_VARIANTS}[variant_set]
     names = list(names)
     result = {"created": datetime.utcnow().isoformat() + "Z", "host": os.uname().nodename, "n_pix": N_PIX,
               "L_in": L_IN, "variant_set": variant_set, "datasets": {}}
     fm_stats = None
-    if variant_set in ("range", "crop", "torch", "overview", "zscore", "stft", "torchz"):
-        modes = ("full",) if variant_set in ("crop", "overview") else ("full", "train")
+    if variant_set in ("range", "crop", "torch", "overview", "zscore", "stft", "torchz", "resize"):
+        modes = ("full",) if variant_set in ("crop", "overview", "resize") else ("full", "train")
         if variant_set in ("zscore", "stft", "torchz"):
             modes = ("full", "z2", "z3", "z4", "z5")
         for name in rp.DATASETS:
@@ -449,7 +455,7 @@ def main():
     ap.add_argument("--out-dir", default="data/deepspred/probe")
     ap.add_argument("--cpus", type=int, default=16)
     ap.add_argument("--pool", type=int, default=6)
-    ap.add_argument("--set", dest="variant_set", choices=["all", "tukey", "rect", "range", "crop", "torch", "overview", "zscore", "stft", "torchz"], default="all")
+    ap.add_argument("--set", dest="variant_set", choices=["all", "tukey", "rect", "range", "crop", "torch", "overview", "zscore", "stft", "torchz", "resize"], default="all")
     ap.add_argument("--local", action="store_true")
     args = ap.parse_args()
     data_root = str(Path(args.data_root).resolve())

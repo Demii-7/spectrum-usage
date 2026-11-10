@@ -119,6 +119,10 @@ def spectrogram_db(x: np.ndarray, window: str) -> np.ndarray:
     if "~" in window:  # "<window>~<n>": the dB floor is 10**-n instead of 1e-12 (it only matters for exact-zero bins)
         window, e = window.split("~")
         eps = 10.0 ** (-int(e))
+    order = 1  # interpolation order of the time-axis resize to 256 rows ("^0" nearest, "^1" bilinear (default), "^3" cubic)
+    if "^" in window:
+        window, o = window.split("^")
+        order = int(o)
     detrend = window.endswith("d")
     base = window[:-1] if detrend else window
     stft_style = base.endswith("s")  # scipy.signal.stft(boundary='zeros', padded=True): zero-pad nper//2 each side, then to a whole number of hops
@@ -155,7 +159,7 @@ def spectrogram_db(x: np.ndarray, window: str) -> np.ndarray:
     db = 10.0 * np.log10(np.abs(S) ** 2 + eps).astype(np.float32)  # (n_time, 256)
     if db.shape[0] != SIZE:
         from scipy.ndimage import zoom
-        db = zoom(db, (SIZE / db.shape[0], 1.0), order=1).astype(np.float32)
+        db = zoom(db, (SIZE / db.shape[0], 1.0), order=order).astype(np.float32)
     if crop is not None:
         from scipy.ndimage import zoom as _zoom
         sub = db[:, crop[0]:crop[1]]
