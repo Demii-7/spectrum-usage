@@ -115,7 +115,12 @@ CROP_VARIANTS = {"hann126_glob_raw": ("hann126", 0, "glob", "raw")}  # uncropped
 for _base in ("tukey224", "tukey224d", "hann126", "hamm128"):
     for _k, _bins in CROPS.items():
         CROP_VARIANTS[f"{_base}_crop{_k}_glob_raw"] = (f"{_base}@{_bins}", 0, "glob", "raw")
-ALL_VARIANTS = {**VARIANTS, **TUKEY_VARIANTS, **RECT_VARIANTS, **RANGE_VARIANTS, **CROP_VARIANTS}
+# torch.stft defaults: rectangular window (window=None), center=True (reflect padding), no detrend; hop 127 gives exactly 256 frames
+# for 32,508 samples. The dB floor (epsilon) only matters for frames with an exact-zero bin, but it then sets the range minimum.
+TORCH_VARIANTS = {"rect126_glob_raw": ("rect126", 0, "glob", "raw")}
+for _e in (12, 10, 8, 6):
+    TORCH_VARIANTS[f"rect127c_eps{_e}_glob_raw"] = (f"rect127c~{_e}", 0, "glob", "raw")
+ALL_VARIANTS = {**VARIANTS, **TUKEY_VARIANTS, **RECT_VARIANTS, **RANGE_VARIANTS, **CROP_VARIANTS, **TORCH_VARIANTS}
 
 G: dict = {}  # filled in the parent before the pool forks (read-only in the workers)
 
@@ -295,13 +300,13 @@ def run_dataset(root: Path, name: str, workers: int, pool_size: int, names, stat
 def work(data_root: str, out_dir: str, workers: int, pool_size: int, variant_set: str = "all") -> dict:
     root = Path(data_root)
     names = {"all": VARIANTS, "tukey": TUKEY_VARIANTS, "rect": RECT_VARIANTS, "range": RANGE_VARIANTS,
-             "crop": CROP_VARIANTS}[variant_set]
+             "crop": CROP_VARIANTS, "torch": TORCH_VARIANTS}[variant_set]
     names = list(names)
     result = {"created": datetime.utcnow().isoformat() + "Z", "host": os.uname().nodename, "n_pix": N_PIX,
               "L_in": L_IN, "variant_set": variant_set, "datasets": {}}
     fm_stats = None
-    if variant_set in ("range", "crop"):
-        modes = ("full", "train") if variant_set == "range" else ("full",)
+    if variant_set in ("range", "crop", "torch"):
+        modes = ("full",) if variant_set == "crop" else ("full", "train")
         for name in rp.DATASETS:
             if (root / rp.DATASETS[name]).exists():
                 res, mstats = run_dataset(root, name, workers, pool_size, names, range_modes=modes)
@@ -313,6 +318,11 @@ def work(data_root: str, out_dir: str, workers: int, pool_size: int, variant_set
             # cross-validation rendered with FM's full-dataset dB range
             result["datasets"]["crossval_fmfull"], _ = run_dataset(root, "crossval", workers, pool_size, names,
                                                                   stats_override=fm_stats, label="crossval_fmfull")
+        if variant_set == "torch":  # also the 1-in-50 sampled range, for comparison with the earlier probes
+            for name in rp.DATASETS:
+                if (root / rp.DATASETS[name]).exists():
+                    result["datasets"][f"{name}_sampled"], _ = run_dataset(root, name, workers, pool_size, names,
+                                                                          label=f"{name}_sampled")
     else:
         for name in rp.DATASETS:
             if (root / rp.DATASETS[name]).exists():
@@ -337,7 +347,7 @@ def main():
     ap.add_argument("--out-dir", default="data/deepspred/probe")
     ap.add_argument("--cpus", type=int, default=16)
     ap.add_argument("--pool", type=int, default=6)
-    ap.add_argument("--set", dest="variant_set", choices=["all", "tukey", "rect", "range", "crop"], default="all")
+    ap.add_argument("--set", dest="variant_set", choices=["all", "tukey", "rect", "range", "crop", "torch"], default="all")
     ap.add_argument("--local", action="store_true")
     args = ap.parse_args()
     data_root = str(Path(args.data_root).resolve())

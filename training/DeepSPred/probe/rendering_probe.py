@@ -115,10 +115,22 @@ def spectrogram_db(x: np.ndarray, window: str) -> np.ndarray:
     if "@" in window:  # "<window>@<a>-<b>": keep frequency bins a..b-1 (of the 256) and resize back to 256 columns
         window, c = window.split("@")
         crop = tuple(int(v) for v in c.split("-"))
+    eps = 1e-12
+    if "~" in window:  # "<window>~<n>": the dB floor is 10**-n instead of 1e-12 (it only matters for exact-zero bins)
+        window, e = window.split("~")
+        eps = 10.0 ** (-int(e))
     detrend = window.endswith("d")
     base = window[:-1] if detrend else window
+    center = base.endswith("c")  # torch.stft(center=True): reflect-pad nper//2 each side, 1 + len//hop frames
+    if center:
+        base = base[:-1]
     tail = int(base.lstrip("abcdefghijklmnopqrstuvwxyz"))
-    if tail == 126:
+    if center:
+        n0 = len(x)
+        x = np.pad(x, nper // 2, mode="reflect")
+        hop = tail
+        starts = np.arange(1 + n0 // hop) * hop
+    elif tail == 126:
         hop = (len(x) - nper) // (SIZE - 1)
         starts = np.arange(SIZE) * hop
     else:  # fixed hop, then resize the time axis to 256 (MATLAB default 128, scipy default 224)
@@ -130,7 +142,7 @@ def spectrogram_db(x: np.ndarray, window: str) -> np.ndarray:
     else:
         seg = np.stack([x[s:s + nper] * w for s in starts])
     S = np.fft.fftshift(np.fft.fft(seg, axis=1), axes=1)
-    db = 10.0 * np.log10(np.abs(S) ** 2 + 1e-12).astype(np.float32)  # (n_time, 256)
+    db = 10.0 * np.log10(np.abs(S) ** 2 + eps).astype(np.float32)  # (n_time, 256)
     if db.shape[0] != SIZE:
         from scipy.ndimage import zoom
         db = zoom(db, (SIZE / db.shape[0], 1.0), order=1).astype(np.float32)
