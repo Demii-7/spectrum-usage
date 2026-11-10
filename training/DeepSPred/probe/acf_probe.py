@@ -95,7 +95,18 @@ RECT_VARIANTS = {
     "rect126_glob_raw": ("rect126", 0, "glob", "raw"),
     "tukey224d_glob_raw": ("tukey224d", 0, "glob", "raw"),
 }
-ALL_VARIANTS = {**VARIANTS, **TUKEY_VARIANTS, **RECT_VARIANTS}
+# Raw/global renderings re-normalised with the true dB range (all frames, or the first 2/3 of the capture only).
+RANGE_VARIANTS = {
+    "hann126_glob_raw": ("hann126", 0, "glob", "raw"),
+    "hamm128_glob_raw": ("hamm128", 0, "glob", "raw"),
+    "rect126_glob_raw": ("rect126", 0, "glob", "raw"),
+    "tukey126_glob_raw": ("tukey126", 0, "glob", "raw"),
+    "tukey224_glob_raw": ("tukey224", 0, "glob", "raw"),
+    "tukey224d_glob_raw": ("tukey224d", 0, "glob", "raw"),
+    "hann126_glob_jpeg95": ("hann126", 0, "glob", "jpeg95"),
+    "tukey224d_glob_jpeg95": ("tukey224d", 0, "glob", "jpeg95"),
+}
+ALL_VARIANTS = {**VARIANTS, **TUKEY_VARIANTS, **RECT_VARIANTS, **RANGE_VARIANTS}
 
 G: dict = {}  # filled in the parent before the pool forks (read-only in the workers)
 
@@ -169,6 +180,16 @@ def ridge_curve(c_fit: np.ndarray, D_te: np.ndarray, segs_te) -> list:
     return out
 
 
+def file_minmax(path_str: str) -> dict:
+    """Per-window (min, max) dB of one file; the window list is set in G before the pool forks."""
+    x = rp.read_iq(Path(path_str))
+    out = {}
+    for w in G["range_windows"]:
+        db = rp.spectrogram_db(x, w)
+        out[w] = (float(db.min()), float(db.max()))
+    return out
+
+
 def variant_worker(name: str) -> dict:
     window, avg_m, scaling, post = ALL_VARIANTS[name]
     g = G
@@ -192,7 +213,8 @@ def variant_worker(name: str) -> dict:
             "var_fit": round(float(c_fit[0]), 2), "seconds": round(time.time() - t0, 1)}
 
 
-def run_dataset(root: Path, name: str, workers: int, pool_size: int, names, stats_override=None, label=None):
+def run_dataset(root: Path, name: str, workers: int, pool_size: int, names, stats_override=None, label=None,
+                range_modes=None):
     """Returns (result, stats). With `stats_override` (e.g. FM's dB range) the dataset is rendered with those
     normalisation statistics instead of its own."""
     label = label or name
@@ -219,33 +241,73 @@ def run_dataset(root: Path, name: str, workers: int, pool_size: int, names, stat
     mod = importlib.import_module("acf_probe")  # the module the pool workers will see (not __main__)
     mod.G.update(g)
     import multiprocessing as mp
-    out = {"n_files": len(paths), "n_fit": len(fit_idx), "n_test": len(te_idx), "variants": {}}
-    with mp.get_context("fork").Pool(pool_size) as pool:
-        for res in pool.imap_unordered(mod.variant_worker, list(names)):
-            out["variants"][res["name"]] = res
-            s, r = res["skill"], res["rho"]
-            print(f"[{label}] {res['name']:26s} clim {res['clim_mse']:8.1f} ridge k1/8/20 "
-                  f"{res['ridge_mse'][0]:8.1f} {res['ridge_mse'][7]:8.1f} {res['ridge_mse'][19]:8.1f} | "
-                  f"skill {s[0]:.3f} {s[7]:.3f} {s[19]:.3f} | rho {r[0]:.3f} {r[7]:.3f} {r[19]:.3f} ({res['seconds']:.0f}s)", flush=True)
-    return out, own_stats
+
+    def run_pool(label_):
+        out_ = {"n_files": len(paths), "n_fit": len(fit_idx), "n_test": len(te_idx), "variants": {}}
+        with mp.get_context("fork").Pool(pool_size) as pool:
+            for res in pool.imap_unordered(mod.variant_worker, list(names)):
+                out_["variants"][res["name"]] = res
+                s_, r_ = res["skill"], res["rho"]
+                print(f"[{label_}] {res['name']:26s} clim {res['clim_mse']:8.1f} ridge k1/8/20 "
+                      f"{res['ridge_mse'][0]:8.1f} {res['ridge_mse'][7]:8.1f} {res['ridge_mse'][19]:8.1f} | "
+                      f"skill {s_[0]:.3f} {s_[7]:.3f} {s_[19]:.3f} | rho {r_[0]:.3f} {r_[7]:.3f} {r_[19]:.3f} ({res['seconds']:.0f}s)", flush=True)
+        return out_
+
+    if range_modes:
+        wins = sorted({ALL_VARIANTS[n][0] for n in names if ALL_VARIANTS[n][1] == 0})
+        mod.G["range_windows"] = wins
+        with mp.get_context("fork").Pool(workers) as pool:
+            mm = pool.map(mod.file_minmax, paths, chunksize=8)
+        t0_, span_ = times[0], (times[-1] - times[0]).total_seconds()
+        cut = t0_ + timedelta(seconds=span_ * 2.0 / 3.0)
+        masks = {"full": [True] * len(paths), "train": [t < cut for t in times]}
+        print(f"[{label}] per-file min/max done in {time.time() - t0:.0f}s", flush=True)
+        results, mode_stats = {}, {}
+        for mode in range_modes:
+            sel = masks[mode]
+            st = dict(own_stats)
+            for w in wins:
+                lo = min(r[w][0] for r, k in zip(mm, sel) if k)
+                hi = max(r[w][1] for r, k in zip(mm, sel) if k)
+                st[(w, 0)] = {**own_stats[(w, 0)], "lo": lo, "hi": hi}
+            mode_stats[mode] = st
+            mod.G["stats"] = st
+            res = run_pool(f"{label}_{mode}")
+            res["range"] = {w: [round(st[(w, 0)]["lo"], 2), round(st[(w, 0)]["hi"], 2)] for w in wins}
+            results[mode] = res
+        return results, mode_stats
+    return run_pool(label), own_stats
 
 
 def work(data_root: str, out_dir: str, workers: int, pool_size: int, variant_set: str = "all") -> dict:
     root = Path(data_root)
-    names = {"all": VARIANTS, "tukey": TUKEY_VARIANTS, "rect": RECT_VARIANTS}[variant_set]
+    names = {"all": VARIANTS, "tukey": TUKEY_VARIANTS, "rect": RECT_VARIANTS, "range": RANGE_VARIANTS}[variant_set]
     names = list(names)
     result = {"created": datetime.utcnow().isoformat() + "Z", "host": os.uname().nodename, "n_pix": N_PIX,
               "L_in": L_IN, "variant_set": variant_set, "datasets": {}}
     fm_stats = None
-    for name in rp.DATASETS:
-        if (root / rp.DATASETS[name]).exists():
-            result["datasets"][name], stats = run_dataset(root, name, workers, pool_size, names)
-            if name == "fm":
-                fm_stats = stats
-    if variant_set != "all" and fm_stats is not None and "crossval" in result["datasets"]:
-        # cross-validation rendered with FM's dB range instead of its own (does the paper's ratio then hold?)
-        result["datasets"]["crossval_fmnorm"], _ = run_dataset(root, "crossval", workers, pool_size, names,
-                                                               stats_override=fm_stats, label="crossval_fmnorm")
+    if variant_set == "range":
+        for name in rp.DATASETS:
+            if (root / rp.DATASETS[name]).exists():
+                res, mstats = run_dataset(root, name, workers, pool_size, names, range_modes=("full", "train"))
+                for mode, out in res.items():
+                    result["datasets"][f"{name}_{mode}"] = out
+                if name == "fm":
+                    fm_stats = mstats["full"]
+        if fm_stats is not None and "crossval_full" in result["datasets"]:
+            # cross-validation rendered with FM's full-dataset dB range
+            result["datasets"]["crossval_fmfull"], _ = run_dataset(root, "crossval", workers, pool_size, names,
+                                                                  stats_override=fm_stats, label="crossval_fmfull")
+    else:
+        for name in rp.DATASETS:
+            if (root / rp.DATASETS[name]).exists():
+                result["datasets"][name], stats = run_dataset(root, name, workers, pool_size, names)
+                if name == "fm":
+                    fm_stats = stats
+        if variant_set != "all" and fm_stats is not None and "crossval" in result["datasets"]:
+            # cross-validation rendered with FM's dB range instead of its own (does the paper's ratio then hold?)
+            result["datasets"]["crossval_fmnorm"], _ = run_dataset(root, "crossval", workers, pool_size, names,
+                                                                   stats_override=fm_stats, label="crossval_fmnorm")
     od = Path(out_dir)
     od.mkdir(parents=True, exist_ok=True)
     path = od / f"acf_probe_{variant_set}_{datetime.utcnow().strftime('%Y%m%dT%H%M%S')}.json"
@@ -260,7 +322,7 @@ def main():
     ap.add_argument("--out-dir", default="data/deepspred/probe")
     ap.add_argument("--cpus", type=int, default=16)
     ap.add_argument("--pool", type=int, default=6)
-    ap.add_argument("--set", dest="variant_set", choices=["all", "tukey", "rect"], default="all")
+    ap.add_argument("--set", dest="variant_set", choices=["all", "tukey", "rect", "range"], default="all")
     ap.add_argument("--local", action="store_true")
     args = ap.parse_args()
     data_root = str(Path(args.data_root).resolve())
