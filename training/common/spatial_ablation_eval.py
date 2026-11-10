@@ -272,8 +272,13 @@ def evaluate_condition(
     origin_limit: int | None = None,
     batch_size: int = 8,
     device: str = "cuda",
+    series_transform=None,
 ) -> dict[str, Any]:
-    """Evaluate one frozen checkpoint and write physical-receiver metrics."""
+    """Evaluate one frozen checkpoint and write physical-receiver metrics.
+
+    ``series_transform`` (optional) is applied to the aligned receiver series right after loading, before the input maps and the targets
+    are built; the neighbour ablation uses it to break other receivers' dynamics while keeping the scored receiver untouched.
+    """
     started = time.perf_counter()
     experiment_path = experiment_path.resolve()
     model_config_path = model_config_path.resolve()
@@ -316,6 +321,8 @@ def evaluate_condition(
     series, input_indices, target_indices = _condition_data(
         experiment, condition, frequencies, coordinates, root
     )
+    if series_transform is not None:
+        series = series_transform(series)
     input_series = _subset_series(series, input_indices)
     coordinate_permutation = None
     if condition == "geometry_permuted":
