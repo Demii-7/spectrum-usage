@@ -89,6 +89,13 @@ def main():
         ms = crop["datasets"][ds].get("mean_spectrum_db_hann126")
         if ms:
             parts.append(f"\n**{ds}** mean dB spectrum (Hann), 16-bin block averages: " + " ".join(f"{sum(ms[i:i+16]) / 16:.1f}" for i in range(0, 256, 16)))
+    parts.append("\n\n## 9. torch.stft-style rendering (rect, hop 127, reflect padding) with dB-floor epsilon variants (acf_probe_torch_20261110T193321.json)\n")
+    tor = load("acf_probe_torch_20261110T193321.json")
+    parts.append(acf_table(tor))
+    parts.append("\n\nRanges used (lo..hi dB) per window:\n")
+    for ds, v in tor["datasets"].items():
+        if v.get("range"):
+            parts.append(f"- **{ds}**: " + "; ".join(f"{w} {lo:.1f}..{hi:.1f}" for w, (lo, hi) in v["range"].items()))
     (R / "TABLES.md").write_text("\n".join(parts) + "\n")
     print("wrote", R / "TABLES.md")
 

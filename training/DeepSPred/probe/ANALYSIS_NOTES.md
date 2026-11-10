@@ -33,7 +33,8 @@ cross-validation ratio (2.1 vs the paper's about 1.2), and its detrended variant
 conversion. Normalising with the true full-dataset dB range brings the scipy-default rendering to FM 482 (7% above the paper, with the paper's horizon
 shape) and a scipy-default variant without detrend to a cross-validation/FM ratio of 1.16 (paper about 1.18) with both levels about 25% high, but no single
 configuration matches level, ratio and shape together. Cropping to the stated 90-110 MHz band brings both datasets' levels to within about 10-17% of the paper
-at once (Tukey hop 224: FM +6%, cross-validation -12%), at the cost of a larger FM horizon rise (+6% vs about +3.4%). The honest conclusion available today is "not reproduced from the released data and the paper's text, though
+at once (Tukey hop 224: FM +6%, cross-validation -12%), at the cost of a larger FM horizon rise (+6% vs about +3.4%). A torch.stft-style rectangular rendering gives FM 409 with the
+sampled range (-9%), and its cross-validation value is set by the dB floor chosen for exact-zero bins (210-379 with the full range), so that dataset cannot discriminate. The honest conclusion available today is "not reproduced from the released data and the paper's text, though
 the residual disagreement under the best candidates is within what the remaining unstated choices could plausibly produce".
 
 ---
@@ -390,6 +391,38 @@ are exact only where printed (FM 3D-SwinSTB: 448.76 at k=8, 453.04 at k=16, 454.
   which would be the case if frames shared content across seconds (the released files, 1 ms snapshots one second apart, do not support this directly); (c) slow non-stationary drift within the 30-minute test block that the models
   track imperfectly. The longer-lag autocorrelation under each rendering is already in the result JSONs (`rho`, k up to 20) and could be compared against the curve to test (b).
 
+### 5.8 A torch.stft-style rendering, and the dB floor as a free parameter for cross-validation [V]
+
+The paper says it used PyTorch 1.8.0 (Sec. VI-A2) but not how the I/Q became images. `torch.stft` defaults, verified on torch 2.5.1 on the UC cluster (the paper's 1.8.0 was not checked) [V]:
+`window=None` is a **rectangular** window (output identical to an explicit window of ones, different from Hann); `hop_length` defaults to `n_fft//4` = 64, giving 508 frames (`center=True`) or 504 for 32,508 samples;
+`center=True` reflect-pads `n_fft//2` on both sides; complex input gives 256 two-sided frequency bins; there is no detrend. Hop 127 with `center=True` gives exactly 256 frames
+(hop 126 with `center=False` also does, which is what the earlier `rect126` rendering mimics).
+
+Job `claude-uc-deepspred-torch-probe-1` (`results/acf_probe_torch_20261110T193321.json`, `TABLES.md` section 9) renders rectangular, hop 127, reflect padding, no detrend, with the dB floor
+(the epsilon added before `log10`) set to 1e-12, 1e-10, 1e-8 and 1e-6 (floors of -120, -100, -80, -60 dB for an exact-zero bin). Ceiling at k=8 (rise k=1 to 20); paper FM 448.8 (+3.6%), cross-validation 531.4 (+2.3%) [P for the rises]:
+
+| Range convention, dB floor | FM | CV own range | CV/FM |
+|---|---|---|---|
+| sampled (1 in 50), any floor | 409.1 (+2.9%) | 979.0 (+1.5%) | 2.39 |
+| full or train-only, 1e-12 (-120 dB) | 288.5 (+2.5%) | 210.4 (+2.6%) | 0.73 |
+| full, 1e-10 (-100 dB) | 288.5 | 251.9 (+2.6%) | 0.87 |
+| full, 1e-8 (-80 dB) | 288.5 | 306.1 (+2.6%) | 1.06 |
+| full, 1e-6 (-60 dB) | 288.5 | 379.1 (+2.6%) | 1.31 |
+| cross-validation rendered with FM's full range | - | 731.5 (+1.7%) | 2.54 |
+| (`rect126` for comparison: sampled / full) | 433.2 / 333.7 | 899.4 / 210.2 | 2.08 / 0.63 |
+
+What this shows:
+
+1. **Reflect padding matters at the 5-15% level.** Against the unpadded `rect126`, FM falls from 433 to 409 (sampled range) and from 334 to 289 (full range), because the padded edge frames change the extreme values (full-range minimum -19.4 dB vs -12.6).
+2. **The FM numbers do not depend on the floor** (FM has no exact-zero bins), but **cross-validation does, by almost 2x** (210 to 379), because a few cross-validation frames contain exact-zero bins and the floor then sets the range minimum
+   (full-range cross-validation: -120.0, -100.0, -80.0, -60.0 dB minimum for the four floors; maximum 105.2 dB).
+   The 1-in-50 sample missed those frames, which is why the sampled-range cross-validation value (979) differs so much from the full-range ones.
+3. **The paper's ratio (about 1.18) falls between the -80 dB and -60 dB floors (about -70 dB, epsilon about 1e-7), where both levels are about 0.64x the paper's** (FM 288.5 vs 448.8; cross-validation about 340 vs 531). Because the
+   floor is a continuous free parameter that moves only the cross-validation level, **matching the ratio by choosing it is not evidence**. The comparison that is independent of the floor is FM alone, and the cross-validation rise.
+4. **FM-only evidence is mixed:** the sampled-range level is 9% below the paper's (409 vs 448.8, the closest of any rendering with a simple, unadjusted pipeline), the full-range level is 36% below, and the rise (+2.5-2.9%) is
+   0.7-1.1 points below the paper's +3.6% (a plot reading). **The cross-validation rise (+2.6% full range, floor-independent) is close to the paper's +2.3%.**
+5. **Whether the authors normalised with the full dataset or a sample, and how they handled exact-zero bins, would then determine their cross-validation number**; neither is stated.
+
 ---
 
 ## 6. What can and cannot be claimed
@@ -464,6 +497,7 @@ Code synced with `training/ray/scripts/sync-cluster-code.py --cluster uc` (commi
 | `claude-uc-deepspred-rect-probe-1` | `acf_probe.py --set rect` | `acf_probe_rect_20261110T183943.json`  |
 | `claude-uc-deepspred-fullrange-probe-1` | `acf_probe.py --set range` | `acf_probe_range_20261110T185554.json` |
 | `claude-uc-deepspred-crop-probe-1` | `acf_probe.py --set crop` | `acf_probe_crop_20261110T191214.json` |
+| `claude-uc-deepspred-torch-probe-1` | `acf_probe.py --set torch` | `acf_probe_torch_20261110T193321.json` |
 | `claude-uc-deepspred-range-probe-1` | `range_probe.py` | `range_probe_20261110T184251.json`  |
 
 Commits (local branch `integrate`): `d39e018`, `fd1f42d`, `7fde749`, `831b6d8`, `63f5eca`, `38befbd`, `3d77d4f`, `86cca82`, plus this
@@ -487,5 +521,7 @@ and FM-range normalisation were each tried once; no band crop; no full-range nor
 6. **One trained model** on the best candidate (scipy defaults, full range; or the no-detrend variant), only after 2-4 narrow the choices: the ceiling already
    predicts roughly 1.01-1.06x the ceiling for a trained Swin (846 vs 837 raw; 267 vs 252 JPEG), so training would add little discrimination at this
    point and costs hours of GPU.
-7. **Overfit/sanity run** of the collaborator's Swin model on a tiny set, and a loss curve for the raw run (their histories are lost). The ceiling already
+7. **Identify the exact-zero cross-validation frames** (which files, why: dropouts or padding?) and decide whether they should be excluded; they set the cross-validation range under rectangular windows (5.4, 5.8).
+8. **Check `torch.stft` defaults on PyTorch 1.8.0** (the paper's version); I verified only 2.5.1.
+9. **Overfit/sanity run** of the collaborator's Swin model on a tiny set, and a loss curve for the raw run (their histories are lost). The ceiling already
    argues the 846 is not an optimisation failure (846 vs 837).

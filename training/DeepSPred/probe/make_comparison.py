@@ -73,6 +73,7 @@ def main():
     r = load("acf_probe_rect_20261110T183943.json")   # rect +- detrend, sampled range
     g = load("acf_probe_range_20261110T185554.json")  # full / train-only range
     c = load("acf_probe_crop_20261110T191214.json")   # band crops, full range
+    tor = load("acf_probe_torch_20261110T193321.json")  # torch.stft-style rect, hop 127, reflect padding
     collab = collab_results()
     key_raw = "fm|K20|s0|C96|d2-4-2|lr0.001|p2-4-4|w2-7-7|uint8_mean_per_channel"
     key_jpg = "fm|K20|s0|C96|d2-4-2|lr0.001|p2-4-4|w2-7-7|jpeg95|uint8_mean_per_channel"
@@ -93,6 +94,9 @@ def main():
         ("Hamming hop128, sampled range, raw", V(a, "fm", "hamm128_glob_raw"), V(a, "crossval", "hamm128_glob_raw"), "ceiling"),
         ("Hamming hop128, FULL range, raw", V(g, "fm_full", "hamm128_glob_raw"), V(g, "crossval_full", "hamm128_glob_raw"), "ceiling"),
         ("Rectangular hop126, sampled range, raw", V(r, "fm", "rect126_glob_raw"), V(r, "crossval", "rect126_glob_raw"), "CV full range is a -120 dB artifact"),
+        ("torch.stft-style (rect, hop127, reflect), sampled range", V(tor, "fm_sampled", "rect127c_eps12_glob_raw"), V(tor, "crossval_sampled", "rect127c_eps12_glob_raw"), "CV sampled misses the zero-bin frames"),
+        ("torch.stft-style, FULL range, dB floor 1e-8 (-80 dB)", V(tor, "fm_full", "rect127c_eps8_glob_raw"), V(tor, "crossval_full", "rect127c_eps8_glob_raw"), "CV level set by the floor"),
+        ("torch.stft-style, FULL range, dB floor 1e-6 (-60 dB)", V(tor, "fm_full", "rect127c_eps6_glob_raw"), V(tor, "crossval_full", "rect127c_eps6_glob_raw"), "CV level set by the floor"),
         ("Tukey.25 hop126, FULL range, raw", V(g, "fm_full", "tukey126_glob_raw"), V(g, "crossval_full", "tukey126_glob_raw"), "ceiling"),
         ("Tukey.25 hop224 (no detrend), sampled range, raw", V(t, "fm", "tukey224_glob_raw"), V(t, "crossval", "tukey224_glob_raw"), "ceiling"),
         ("Tukey.25 hop224 (no detrend), FULL range, raw", V(g, "fm_full", "tukey224_glob_raw"), V(g, "crossval_full", "tukey224_glob_raw"), "ceiling"),
