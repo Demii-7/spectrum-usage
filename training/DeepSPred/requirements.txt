@@ -1,7 +1,13 @@
+# Single dependency list for the DeepSPred tracks (consolidated 2026-11-09 from the former
+# repro/requirements.txt and benchmark requirements.txt). Install torch/torchvision first
+# from the CUDA index if a GPU build is wanted (see README.md).
 torch>=2.0.0
+torchvision>=0.15.0
 einops>=0.7.0
-matplotlib>=3.7.0
 numpy>=1.24.0
+scipy>=1.10.0
+matplotlib>=3.7.0
+Pillow>=10.0.0
 pandas>=2.0.0
 pyyaml>=6.0
 scikit-learn>=1.3.0
