@@ -120,7 +120,20 @@ for _base in ("tukey224", "tukey224d", "hann126", "hamm128"):
 TORCH_VARIANTS = {"rect126_glob_raw": ("rect126", 0, "glob", "raw")}
 for _e in (12, 10, 8, 6):
     TORCH_VARIANTS[f"rect127c_eps{_e}_glob_raw"] = (f"rect127c~{_e}", 0, "glob", "raw")
-ALL_VARIANTS = {**VARIANTS, **TUKEY_VARIANTS, **RECT_VARIANTS, **RANGE_VARIANTS, **CROP_VARIANTS, **TORCH_VARIANTS}
+OVERVIEW_VARIANTS = {}
+for _w in ("hann126", "hamm128", "rect126", "tukey126", "tukey224", "tukey224d", "tukey126d"):
+    OVERVIEW_VARIANTS[f"{_w}_glob_raw"] = (_w, 0, "glob", "raw")
+for _w in ("hann126", "tukey224d", "hamm128"):
+    for _p in ("jpeg95", "jpeg75"):
+        OVERVIEW_VARIANTS[f"{_w}_glob_{_p}"] = (_w, 0, "glob", _p)
+for _p in ("jpeg50", "jpeg25", "blur1", "blur2"):
+    OVERVIEW_VARIANTS[f"hann126_glob_{_p}"] = ("hann126", 0, "glob", _p)
+for _e in (12, 8):
+    OVERVIEW_VARIANTS[f"rect127c_eps{_e}_glob_raw"] = (f"rect127c~{_e}", 0, "glob", "raw")
+for _base in ("tukey224", "tukey224d", "hamm128", "hann126"):
+    for _k in ("A", "C"):
+        OVERVIEW_VARIANTS[f"{_base}_crop{_k}_glob_raw"] = (f"{_base}@{CROPS[_k]}", 0, "glob", "raw")
+ALL_VARIANTS = {**VARIANTS, **TUKEY_VARIANTS, **RECT_VARIANTS, **RANGE_VARIANTS, **CROP_VARIANTS, **TORCH_VARIANTS, **OVERVIEW_VARIANTS}
 
 G: dict = {}  # filled in the parent before the pool forks (read-only in the workers)
 
@@ -204,6 +217,27 @@ def file_minmax(path_str: str) -> dict:
     return out
 
 
+def lookback_mean_curve(D: np.ndarray, segs, T: int = 20, K: int = K_MAX) -> list:
+    """MSE at k = 1..K of predicting frame t+k with the mean of the last T input frames (stride-1 windows inside contiguous
+    segments, same pixel subset). Subtracting the fit-block mean image from both sides leaves the error unchanged, so the
+    deviations D can be used directly."""
+    se = np.zeros(K)
+    n = 0
+    for a, b in segs:
+        X = D[a:b].astype(np.float64)
+        L = len(X)
+        if L < T + K:
+            continue
+        cs = np.vstack([np.zeros((1, X.shape[1])), np.cumsum(X, axis=0)])
+        st = np.arange(0, L - T - K + 1)
+        mean = (cs[st + T] - cs[st]) / T
+        for k in range(1, K + 1):
+            e = X[st + T - 1 + k] - mean
+            se[k - 1] += float(np.einsum("ij,ij->", e, e))
+        n += len(st) * X.shape[1]
+    return (se / max(n, 1)).tolist()
+
+
 def variant_worker(name: str) -> dict:
     window, avg_m, scaling, post = ALL_VARIANTS[name]
     g = G
@@ -222,7 +256,9 @@ def variant_worker(name: str) -> dict:
     ridge = ridge_curve(c_fit, Dt, g["segs_te"])
     rho = (c_te[1:] / c_te[0]).tolist()
     skill = [1.0 - r / clim for r in ridge]
+    lbm = lookback_mean_curve(Dt, g["segs_te"])
     return {"name": name, "clim_mse": round(clim, 2), "ridge_mse": [round(x, 2) for x in ridge],
+            "lbm_mse": [round(x, 2) for x in lbm],
             "skill": [round(x, 4) for x in skill], "rho": [round(x, 4) for x in rho],
             "var_fit": round(float(c_fit[0]), 2), "seconds": round(time.time() - t0, 1)}
 
@@ -300,13 +336,13 @@ def run_dataset(root: Path, name: str, workers: int, pool_size: int, names, stat
 def work(data_root: str, out_dir: str, workers: int, pool_size: int, variant_set: str = "all") -> dict:
     root = Path(data_root)
     names = {"all": VARIANTS, "tukey": TUKEY_VARIANTS, "rect": RECT_VARIANTS, "range": RANGE_VARIANTS,
-             "crop": CROP_VARIANTS, "torch": TORCH_VARIANTS}[variant_set]
+             "crop": CROP_VARIANTS, "torch": TORCH_VARIANTS, "overview": OVERVIEW_VARIANTS}[variant_set]
     names = list(names)
     result = {"created": datetime.utcnow().isoformat() + "Z", "host": os.uname().nodename, "n_pix": N_PIX,
               "L_in": L_IN, "variant_set": variant_set, "datasets": {}}
     fm_stats = None
-    if variant_set in ("range", "crop", "torch"):
-        modes = ("full",) if variant_set == "crop" else ("full", "train")
+    if variant_set in ("range", "crop", "torch", "overview"):
+        modes = ("full",) if variant_set in ("crop", "overview") else ("full", "train")
         for name in rp.DATASETS:
             if (root / rp.DATASETS[name]).exists():
                 res, mstats = run_dataset(root, name, workers, pool_size, names, range_modes=modes)
@@ -347,7 +383,7 @@ def main():
     ap.add_argument("--out-dir", default="data/deepspred/probe")
     ap.add_argument("--cpus", type=int, default=16)
     ap.add_argument("--pool", type=int, default=6)
-    ap.add_argument("--set", dest="variant_set", choices=["all", "tukey", "rect", "range", "crop", "torch"], default="all")
+    ap.add_argument("--set", dest="variant_set", choices=["all", "tukey", "rect", "range", "crop", "torch", "overview"], default="all")
     ap.add_argument("--local", action="store_true")
     args = ap.parse_args()
     data_root = str(Path(args.data_root).resolve())
