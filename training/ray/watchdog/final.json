@@ -33,5 +33,10 @@
   "id": "claude-final-es-repro-1",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.es_repro_seeds --arms ofa_gpt2 timellm_gpt2 timellm_bert --seeds 0 1 2 3 4 --skip-done --max-parallel 8\"",
   "max_restarts": 3
+ },
+ {
+  "id": "claude-final-tsslcd-tune-r1",
+  "entrypoint": "python -u -m training.ray.tune_tsslcd --budget 8 --trials-only --max-parallel 4",
+  "max_restarts": 4
  }
 ]
