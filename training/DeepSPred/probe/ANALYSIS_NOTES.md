@@ -30,8 +30,10 @@ is close to a free parameter, because it scales roughly as 1/(dB span)^k with k 
 not state the span; (b) no rendering we tried reproduces the paper's FM level, FM-to-cross-validation ratio and
 horizon shape together; (c) the one rendering that matched the FM level (rectangular window, 433) fails the
 cross-validation ratio (2.1 vs the paper's about 1.2), and its detrended variant (78) is an artifact of a 1e-12 floor in the dB
-conversion. The honest conclusion available today is "not reproducible as published from the released data", with one
-specific, testable lead (full-dataset min-max under scipy-default STFT settings) that has not been closed.
+conversion. Normalising with the true full-dataset dB range brings the scipy-default rendering to FM 482 (7% above the paper, with the paper's horizon
+shape) and a scipy-default variant without detrend to a cross-validation/FM ratio of 1.16 (paper about 1.18) with both levels about 25% high, but no single
+configuration matches level, ratio and shape together. The honest conclusion available today is "not reproduced from the released data and the paper's text, though
+the residual disagreement under the best candidates is within what the remaining unstated choices could plausibly produce".
 
 ---
 
@@ -290,16 +292,45 @@ floor appears for rectangular *without* detrend on the full cross-validation set
 contain an exact-zero bin there, which the 1-in-50 sample missed. These are artifacts of our epsilon, not properties of the data.
 In the authors' pipeline exact zeros would give -inf dB, so this reading cannot be what they did without additional handling.
 
-### 5.5 What the range probe says about the "full dataset min-max" lead [V for spans, D for the estimates]
+### 5.5 Full-dataset normalisation: measured, and the scaling estimate was close [V]
 
-(`results/TABLES.md` section 6.) Sampled vs full dB spans for the scipy-default window (tukey224d): FM 130.7 vs 156.2; cross-validation
-104.0 vs 117.0 (train-only: 146.5 and 117.0). Under a span^-2 scaling [D] (uncertain, section 5.2), the full-dataset range would move
-the ceilings at k=8 from 725.5 -> about 508 (FM; paper 448.8) and from 1059 -> about 837 (cross-validation; paper 531.4). To reach the
-paper's numbers exactly, the span would have to be about **166 dB (FM) and 147 dB (cross-validation)**; measured full spans are 156 and 117.
-FM then lands within about 13% of the paper; cross-validation remains 1.6x too high. **These are scaling estimates, not measurements.**
-The measurement would be to re-run the ceiling with full-range (or train-only) normalisation, which has not been done.
-(An earlier message of mine quoted needed spans of 187 and 177 dB; that used the Hann spans (147/125) as the baseline instead of the
-tukey224d sampled spans (130.7/104.0), and is wrong. The values above replace it.)
+Job `claude-uc-deepspred-fullrange-probe-1` re-ran the ceiling with the dB range set by **all frames** ("full"), or by the first 2/3 of the
+capture only ("train-only"), instead of the 1-in-50 sample (`results/acf_probe_range_20261110T185554.json`, `TABLES.md` section 7). Ceiling
+MSE at k=8 (rise from k=1 to 20 in brackets); paper: FM 448.8 (+3.4%, read from a plot), cross-validation 531.4 at frame 12:
+
+| Window (raw, global range) | FM sampled | FM full | FM train-only | CV own: sampled | full | train-only | CV with FM's full range |
+|---|---|---|---|---|---|---|---|
+| scipy defaults (Tukey .25, hop 224, detrend) | 725.5 (3.9%) | **481.9 (3.5%)** | 567.5 (3.6%) | 1058.8 | 810.1 (5.2%) | 810.1 | 474.4 (5.6%) |
+| Tukey .25, hop 224, no detrend | 708.6 (3.7%) | 571.7 (3.4%) | 572.1 (3.4%) | 1009.7 | 660.7 (5.6%) | 660.7 | 539.9 (5.8%) |
+| Tukey .25, hop 126 | 786.1 (1.8%) | 543.4 (1.5%) | 708.1 (1.7%) | 1076.6 | 563.2 (4.9%) | 782.0 | 493.9 (3.8%) |
+| Hamming, hop 128 | 598.4 (2.9%) | 581.2 (2.8%) | 581.7 (2.8%) | 983.3 | 712.0 (3.6%) | 712.0 | 604.0 (4.2%) |
+| Hann, hop 126 | 836.9 (1.1%) | 816.3 (1.1%) | 826.4 (1.1%) | 863.3 | 729.9 (2.6%) | 729.9 | 678.7 (2.6%) |
+| Rectangular, hop 126 | 433.2 (2.9%) | 333.7 (2.6%) | 333.9 (2.6%) | 899.4 | 210.2 (artifact) | 210.3 (artifact) | 826.6 (1.7%) |
+
+Full-range dB spans (lo..hi): FM scipy-default -37.9..118.3 (156 dB; sampled 130.7, train-only 146.5); cross-validation -13.0..104.0 (117 dB; sampled 104.0).
+The rectangular cross-validation rows are polluted by exact-zero bins (min = -120.0 dB, section 5.4).
+
+What this shows:
+
+1. **The scaling estimate held.** I predicted about 508 (FM) and 837 (cross-validation) for the scipy default under a span^-2 scaling [D]; the measurements are
+   481.9 and 810.1 (5% and 3% off). Over this range the "about 1/span^2" rule worked, though the exponent measured elsewhere varies (5.2).
+2. **Exact scipy defaults with full-range normalisation give FM 482 with a +3.5% rise**, against the paper's 448.8 and about +3.4%: 7% above the paper in level,
+   matching in shape. But its own-range cross-validation is 810 (ratio to FM 1.68; paper about 1.18), and rendered with FM's range the cross-validation value is
+   474 (ratio 0.98).
+3. **Tukey hop 224 without detrend and Hamming give a consistent pair:** cross-validation/FM = 1.16 and 1.23 (paper about 1.18), FM rise +3.4% / +2.8%, but both
+   levels are a common factor too high: FM 572 vs 449 (x1.27) and cross-validation 661 vs 531 (x1.24) for Tukey; x1.30 and x1.34 for Hamming. A single
+   modest rescaling of the span (about 12-15% wider, by the span^-2 rule) would align both datasets at once. No single configuration is within about 5% on level, ratio
+   and rise together.
+4. **Which frames set the range matters as much as the window.** Full vs train-only differ by up to 30% (Tukey hop 126: 543 vs 708; scipy default: 482 vs 568),
+   because single extreme pixels in the validation or test periods set the minimum. "Normalised over the whole dataset before splitting" and "over the training
+   split" are different pipelines, and the paper does not say which.
+5. **Caution on selection.** I have now examined about 30 renderings under three range conventions and two cross-validation normalisations. Finding a
+   combination near the paper on one or two scale-free measures is not strong evidence on its own; the consistency across two datasets (point 3) is the more
+   informative sign, and it is still not a confirmation.
+
+(An earlier message of mine quoted needed spans of 187 and 177 dB; that used the Hann spans (147/125) as the baseline and was wrong. For the scipy default the
+spans needed under span^-2 were about 166 dB (FM) and 147 dB (cross-validation); the measured full spans of 156 and 117 dB were short of these, which is
+consistent with the measured levels landing above the paper's.)
 
 ---
 
@@ -321,8 +352,9 @@ Safe to state, with the evidence [V]:
 Do not claim:
 - That the authors used JPEG, a rectangular window, the scipy defaults, or any specific rendering. None is established.
 - That "the paper's models perform at persistence level" or that "our model beats the paper by 42%". Both depend on an unverified rendering.
-- That the paper's numbers are impossible. We showed they are impossible *under the renderings we tried*; full-range normalisation of the
-  scipy-default rendering is still open (5.5).
+- That the paper's numbers are impossible. Under the sampled-range renderings they were out of reach; with full-dataset normalisation the best candidates come within
+  about 7% (FM, scipy defaults) and about 25% (both datasets, Tukey without detrend) of them (5.5).
+- That any of those candidates is the authors' pipeline: about 30 combinations were examined, and no single one matches level, ratio and shape together.
 - Any trained-model result for a rendering other than raw Hann and JPEG q95: all other entries are linear-predictor ceilings.
 - The dB equivalents of MSE as exact; they are approximate (section 8).
 
@@ -341,6 +373,7 @@ Included so the report does not inherit them.
 | The scipy default "needs spans of 187 / 177 dB" | Wrong baseline; correct values 166 / 147 dB (5.5) |
 | "MSE is about 1/span^2" | Rough: measured exponents 1.3-2.5 (5.2) |
 | "scipy's default hop and detrend don't help" (before the exact default was run) | Premature: the exact default (tukey224d) has been run since; FM 725.5 |
+| The scipy default "needs spans of 187 / 177 dB", and the lead might close it | Measured (5.5): full spans 156 / 117 dB give 482 / 810; the predicted 508 / 837 were within 5% |
 | The collaborator's grayscale anchors are 5294.5 / 11.32 | Disputed: the IEEE text gives 5185.25 / 11.339 and its percentages match those (1.5) |
 
 ---
@@ -371,6 +404,7 @@ Code synced with `training/ray/scripts/sync-cluster-code.py --cluster uc` (commi
 | `claude-uc-deepspred-tukey-probe-1` | `acf_probe.py --set tukey` | `acf_probe_tukey_20261110T180408.json`  |
 | `claude-uc-deepspred-tukey-probe-2` | `acf_probe.py --set tukey` (adds tukey224d) | `acf_probe_tukey_20261110T183333.json`  |
 | `claude-uc-deepspred-rect-probe-1` | `acf_probe.py --set rect` | `acf_probe_rect_20261110T183943.json`  |
+| `claude-uc-deepspred-fullrange-probe-1` | `acf_probe.py --set range` | `acf_probe_range_20261110T185554.json` |
 | `claude-uc-deepspred-range-probe-1` | `range_probe.py` | `range_probe_20261110T184251.json`  |
 
 Commits (local branch `integrate`): `d39e018`, `fd1f42d`, `7fde749`, `831b6d8`, `63f5eca`, `38befbd`, `3d77d4f`, `86cca82`, plus this
@@ -385,10 +419,14 @@ and FM-range normalisation were each tried once; no band crop; no full-range nor
 
 ## 10. Open items ranked by value per cost
 
-1. **Re-run the ceiling with full-range and train-only normalisation** for the raw windows (minutes, CPU). This closes or kills the one live lead (5.5).
-2. **Band crop** to the stated 90-110 MHz (central 164 of 256 bins, resized to 256), with and without full-range normalisation (minutes, CPU).
-3. **Resize method** for the hop-224 case (bilinear vs bicubic vs area) and image-save path (matplotlib `savefig` vs direct array).
-4. **FM-trained model evaluated on cross-validation** (a domain-shift test of the paper's Fig. 8); only the trivial-predictor version is cheap.
-5. **One trained model** on the best candidate rendering, only if 1-3 yield a rendering matching level, rise and ratio together (hours of GPU).
-6. **Overfit/sanity run** of the collaborator's Swin model on a tiny set, and a loss curve for the raw run (their histories are lost); would show the 846 is not an
-   optimisation failure. The ceiling already argues it is not (846 vs 837).
+1. ~~Re-run the ceiling with full-range and train-only normalisation~~ Done (5.5).
+2. **Band crop** to the stated 90-110 MHz (central 164 of 256 bins, resized to 256), under the full-range convention (minutes, CPU). It shifts both level and
+   shape and is the most likely remaining unstated step.
+3. **Range scope and margin:** all frames vs train-only vs a fixed or padded range; the scipy-default levels move 30% with scope alone (5.5, point 4).
+4. **Resize method** for the hop-224 case (bilinear vs bicubic vs area) and image-save path (matplotlib `savefig` vs direct array).
+5. **FM-trained model evaluated on cross-validation** (domain-shift reading of the paper's Fig. 8). Only the trivial-predictor version is cheap.
+6. **One trained model** on the best candidate (scipy defaults, full range; or the no-detrend variant), only after 2-4 narrow the choices: the ceiling already
+   predicts roughly 1.01-1.06x the ceiling for a trained Swin (846 vs 837 raw; 267 vs 252 JPEG), so training would add little discrimination at this
+   point and costs hours of GPU.
+7. **Overfit/sanity run** of the collaborator's Swin model on a tiny set, and a loss curve for the raw run (their histories are lost). The ceiling already
+   argues the 846 is not an optimisation failure (846 vs 837).

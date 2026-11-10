@@ -71,6 +71,13 @@ def main():
     parts.append(acf_table(load("acf_probe_rect_20261110T183943.json")))
     parts.append("\n\n## 6. dB range by window and by which frames set it (range_probe_20261110T184251.json)\n")
     parts.append(range_table(load("range_probe_20261110T184251.json")))
+    parts.append("\n\n## 7. Ceiling under full-dataset and train-only dB range (acf_probe_range_20261110T185554.json)\n")
+    rng = load("acf_probe_range_20261110T185554.json")
+    parts.append(acf_table(rng))
+    parts.append("\n\nRanges used (lo..hi dB) per window:\n")
+    for ds, v in rng["datasets"].items():
+        if v.get("range"):
+            parts.append(f"- **{ds}**: " + "; ".join(f"{w} {lo:.1f}..{hi:.1f}" for w, (lo, hi) in v["range"].items()))
     (R / "TABLES.md").write_text("\n".join(parts) + "\n")
     print("wrote", R / "TABLES.md")
 
