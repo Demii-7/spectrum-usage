@@ -167,22 +167,48 @@ def model_job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------------------------------------------- baselines
-def baseline_forecasts(data: np.ndarray, starts: np.ndarray, lookback: int, band: str, res: str, horizon: int, gains) -> dict[str, np.ndarray]:
-    """Forecast (N, F) in dB for one horizon from the window ending at each origin."""
+def rolled_forecast(x, statistic: str, k: int, steps: int, gain=None):
+    """Autoregressive roll-out of a one-step window statistic (the repository's ``lookbackmean2d`` and ``forecast``): each step appends
+    its own prediction to the window. Returns {step: (N, F) forecast} for steps 1..``steps``. ``statistic`` median / mean over the newest
+    ``k`` steps, or 'ewma' (per-bin gain over the whole window of length ``k``). The median is the lower median (torch.median)."""
+    import torch
+
+    buffer = x[:, -k:].clone()
+    if statistic == "ewma":
+        age = torch.arange(k - 1, -1, -1, dtype=x.dtype).view(1, -1, 1)
+        g = torch.as_tensor(np.asarray(gain, dtype=np.float32)).view(1, 1, -1)
+        weights = g * (1.0 - g) ** age
+        weights = weights / weights.sum(dim=1, keepdim=True)
+    out = {}
+    for step in range(1, steps + 1):
+        if statistic == "median":
+            pred = buffer.median(dim=1).values
+        elif statistic == "mean":
+            pred = buffer.mean(dim=1)
+        else:
+            pred = (buffer * weights).sum(dim=1)
+        out[step] = pred.numpy()
+        buffer = torch.cat([buffer[:, 1:], pred.unsqueeze(1)], dim=1)
+    return out
+
+
+def baseline_forecasts(data: np.ndarray, starts: np.ndarray, lookback: int, band: str, res: str, horizons, gains) -> dict[str, dict[int, np.ndarray]]:
+    """{statistic: {horizon: (N, F) forecast in dB}} from the window ending at each origin (statistics rolled out as in the model tables)."""
     import torch
 
     windows = np.stack([data[s:s + lookback] for s in starts]).astype(np.float32)           # (N, T, F)
     x = torch.from_numpy(windows)
-    out = {"persistence": windows[:, -1], "lookbackmean": windows.mean(axis=1)}
+    top = max(horizons)
+    out: dict[str, dict[int, np.ndarray]] = {"persistence": {h: windows[:, -1] for h in horizons},
+                                              "lookbackmean": {h: windows.mean(axis=1) for h in horizons}}   # a fixed point of the roll-out
     for stat in ("median", "mean"):
-        k = TUNED_K[f"{res}|{band}|{stat}"][horizon]
-        recent = x[:, -k:]
-        out[f"tuned_{stat}"] = (recent.median(dim=1).values if stat == "median" else recent.mean(dim=1)).numpy()   # lower median, as the repository's model
-    age = torch.arange(lookback - 1, -1, -1, dtype=torch.float32).view(1, -1, 1)
-    g = torch.as_tensor(np.asarray(gains, dtype=np.float32)).view(1, 1, -1)
-    weights = g * (1.0 - g) ** age
-    weights = weights / weights.sum(dim=1, keepdim=True)
-    out["kalman"] = (x * weights).sum(dim=1).numpy()
+        by_k: dict[int, dict[int, np.ndarray]] = {}
+        for h in horizons:
+            k = TUNED_K[f"{res}|{band}|{stat}"][h]
+            if k not in by_k:
+                by_k[k] = rolled_forecast(x, stat, k, top)
+        out[f"tuned_{stat}"] = {h: by_k[TUNED_K[f"{res}|{band}|{stat}"][h]][h] for h in horizons}
+    out["kalman"] = rolled_forecast(x, "ewma", lookback, top, gain=gains)
     return out
 
 
@@ -209,10 +235,11 @@ def baseline_job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         data = np.asarray(source.data, dtype=np.float32)
         gains = train_gains(res, band, root)
         frames = []
+        forecasts = baseline_forecasts(data, starts, lookback, band, res, horizons, gains)
         for h in horizons:
             rows = starts + lookback + h - 1
-            for stat, pred in baseline_forecasts(data, starts, lookback, band, res, h, gains).items():
-                frames.append(origin_frame(source, rows, h, res, np.abs(pred.astype(np.float64) - data[rows]).mean(axis=1), stat=stat))
+            for stat, by_h in forecasts.items():
+                frames.append(origin_frame(source, rows, h, res, np.abs(by_h[h].astype(np.float64) - data[rows]).mean(axis=1), stat=stat))
         frame = pd.concat(frames, ignore_index=True)
         buffer = io.StringIO()
         frame.to_csv(buffer, index=False)
