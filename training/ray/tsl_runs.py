@@ -141,7 +141,9 @@ def setup_node(args: dict[str, Any]) -> dict[str, Any]:
         f(f"python -m venv --system-site-packages {VENV}")
     # install only what the library's imports are missing, one at a time (never its pinned requirements)
     installed = []
-    probe = "from exp.exp_long_term_forecasting import Exp_Long_Term_Forecast; print('IMPORT_OK')"
+    # the experiment class imports models lazily, so also import every model we run (PatchTST, Informer and Reformer need reformer_pytorch)
+    models = ", ".join(f"models.{m}" for m in DEFAULT_MODELS + ("Reformer",))
+    probe = f"from exp.exp_long_term_forecasting import Exp_Long_Term_Forecast; import {models}; print('IMPORT_OK')"
     for _ in range(20):
         r = f(f"cd {repo} && {VENV}/bin/python -c \"{probe}\" 2>&1 | tail -3")
         match = re.search(r"No module named '([A-Za-z0-9_]+)", r.stdout)
