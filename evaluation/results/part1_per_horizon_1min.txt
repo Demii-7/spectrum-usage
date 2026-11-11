@@ -1,0 +1,82 @@
+
+600_800: 1-minute (direct finals, windows thinned 15x) MAE (dB), mean over seeds
+horizon                                              1     15     60  mean_all
+family    model                                                               
+direct    patchtst                               0.848  0.901  1.002     0.917
+          timellm                                0.851  0.901  0.999     0.917
+heuristic median (tuned)                         0.851  0.900  1.002     0.917
+direct    ofa                                    0.849  0.903  1.002     0.918
+          revinmlp                               0.852  0.901  1.001     0.918
+heuristic ewma                                   0.857  0.914  1.014     0.928
+          kalman                                 0.854  0.914  1.015     0.928
+direct    residuallinearar2d                     0.863  0.913  1.011     0.929
+          residualnonlinear2d                    0.860  0.917  1.015     0.931
+          nlinear                                0.861  0.918  1.018     0.932
+heuristic median (full 60 min)                   0.873  0.912  1.017     0.934
+          mean (tuned)                           0.869  0.917  1.015     0.934
+direct    dlinear                                0.863  0.926  1.034     0.941
+heuristic mean (full 60 min)                     0.898  0.927  1.022     0.949
+          persistence                            1.064  1.165  1.249     1.159
+TSS-LCD   tsslcd (tuned winner, savgol off)      1.145  1.170  1.170     1.162
+          tsslcd (authors defaults, savgol off)  1.148  1.171  1.174     1.164
+
+600_800: 1-minute (direct finals, windows thinned 15x) MSE (dB^2), mean over seeds
+horizon                                              1     15     60  mean_all
+family    model                                                               
+direct    patchtst                               2.964  3.204  3.763     3.310
+          residualnonlinear2d                    2.965  3.208  3.760     3.311
+          timellm                                2.966  3.209  3.769     3.315
+          revinmlp                               2.984  3.205  3.765     3.318
+          ofa                                    2.970  3.216  3.774     3.320
+          residuallinearar2d                     2.972  3.221  3.774     3.323
+          dlinear                                2.974  3.239  3.797     3.337
+heuristic ewma                                   2.972  3.246  3.802     3.340
+          kalman                                 2.942  3.261  3.819     3.341
+direct    nlinear                                2.972  3.255  3.807     3.345
+heuristic mean (tuned)                           3.056  3.293  3.828     3.392
+          mean (full 60 min)                     3.132  3.302  3.825     3.420
+          median (tuned)                         3.472  3.683  4.234     3.797
+          median (full 60 min)                   3.484  3.688  4.264     3.812
+TSS-LCD   tsslcd (authors defaults, savgol off)  4.490  4.686  4.637     4.604
+          tsslcd (tuned winner, savgol off)      4.543  4.741  4.674     4.652
+heuristic persistence                            5.206  5.843  6.378     5.809
+
+2400_2600: 1-minute (direct finals, windows thinned 15x) MAE (dB), mean over seeds
+horizon                                              1     15     60  mean_all
+family    model                                                               
+heuristic median (tuned)                         0.663  0.716  0.824     0.734
+          ewma                                   0.672  0.728  0.835     0.745
+          kalman                                 0.671  0.728  0.835     0.745
+direct    ofa                                    0.675  0.733  0.840     0.749
+          timellm                                0.672  0.730  0.844     0.749
+heuristic mean (tuned)                           0.681  0.730  0.835     0.749
+direct    revinmlp                               0.679  0.737  0.846     0.754
+          patchtst                               0.680  0.739  0.845     0.755
+heuristic median (full 60 min)                   0.692  0.734  0.851     0.759
+direct    residuallinearar2d                     0.690  0.741  0.848     0.760
+          residualnonlinear2d                    0.693  0.744  0.845     0.761
+          nlinear                                0.684  0.744  0.861     0.763
+heuristic mean (full 60 min)                     0.714  0.743  0.847     0.768
+direct    dlinear                                0.693  0.764  0.870     0.775
+TSS-LCD   tsslcd (authors defaults, savgol off)  0.830  0.841  0.884     0.852
+heuristic persistence                            0.844  0.929  1.022     0.932
+
+2400_2600: 1-minute (direct finals, windows thinned 15x) MSE (dB^2), mean over seeds
+horizon                                              1     15     60  mean_all
+family    model                                                               
+heuristic ewma                                   2.495  2.927  3.819     3.080
+          kalman                                 2.491  2.931  3.822     3.081
+          mean (tuned)                           2.568  2.949  3.824     3.114
+          mean (full 60 min)                     2.783  3.028  3.888     3.233
+direct    residualnonlinear2d                    2.641  3.105  3.975     3.240
+          ofa                                    2.616  3.105  4.047     3.256
+          residuallinearar2d                     2.662  3.113  3.994     3.256
+          timellm                                2.640  3.106  4.031     3.259
+          patchtst                               2.639  3.127  4.036     3.267
+          nlinear                                2.620  3.126  4.062     3.270
+          revinmlp                               2.658  3.123  4.039     3.273
+          dlinear                                2.654  3.174  4.069     3.299
+heuristic median (tuned)                         2.765  3.153  4.037     3.318
+          median (full 60 min)                   2.931  3.253  4.210     3.465
+TSS-LCD   tsslcd (authors defaults, savgol off)  3.626  3.675  4.129     3.810
+heuristic persistence                            4.260  5.002  5.889     5.050

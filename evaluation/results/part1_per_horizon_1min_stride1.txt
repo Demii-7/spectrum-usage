@@ -1,0 +1,114 @@
+
+600_800: 1-minute, every test window MAE (dB), mean over seeds
+horizon                                                   1     15     60  mean_all
+family         model                                                               
+heuristic      median (tuned)                         0.851  0.900  1.002     0.917
+direct         patchtst                               0.846  0.905  1.007     0.919
+               revinmlp                               0.849  0.906  1.006     0.920
+               ofa                                    0.846  0.907  1.007     0.920
+oct checkpoint residualvanillalstm (1d)               0.849  0.905  1.004     0.920
+               residuallinearar2d (2d)                0.852  0.910  1.009     0.924
+               residuallinearar1d (1d)                0.855  0.912  1.010     0.926
+heuristic      kalman                                 0.854  0.914  1.015     0.928
+oct checkpoint linearar1d (1d)                        0.856  0.914  1.014     0.928
+               temporalconvnet (2d)                   0.857  0.914  1.018     0.930
+               linearar2d (2d)                        0.854  0.915  1.021     0.930
+               vanillalstm1d (1d)                     0.854  0.915  1.028     0.932
+direct         residuallinearar2d                     0.862  0.917  1.017     0.932
+heuristic      median (full 60 min)                   0.873  0.912  1.017     0.934
+               mean (tuned)                           0.869  0.917  1.015     0.934
+direct         residualnonlinear2d                    0.859  0.921  1.020     0.934
+               nlinear                                0.860  0.923  1.023     0.935
+               dlinear                                0.861  0.931  1.039     0.944
+heuristic      mean (full 60 min)                     0.898  0.927  1.022     0.949
+oct checkpoint autoformer_csa (2d)                    0.898  0.934  1.037     0.956
+               residualvanillalstm (2d)               0.888  0.954  1.156     1.000
+               lstmattn (2d)                          1.016  1.076  1.174     1.089
+               vanillalstm (2d)                       1.055  1.103  1.190     1.116
+heuristic      persistence                            1.064  1.165  1.249     1.159
+TSS-LCD        tsslcd (tuned winner, savgol off)      1.145  1.170  1.170     1.162
+               tsslcd (authors defaults, savgol off)  1.148  1.171  1.174     1.164
+
+600_800: 1-minute, every test window MSE (dB^2), mean over seeds
+horizon                                                   1     15     60  mean_all
+family         model                                                               
+oct checkpoint linearar2d (2d)                        2.928  3.229  3.774     3.311
+               residuallinearar2d (2d)                2.932  3.235  3.786     3.318
+direct         patchtst                               2.958  3.236  3.794     3.329
+               residualnonlinear2d                    2.965  3.241  3.794     3.333
+oct checkpoint linearar1d (1d)                        2.962  3.246  3.801     3.337
+               residuallinearar1d (1d)                2.962  3.247  3.805     3.338
+direct         revinmlp                               2.977  3.239  3.799     3.338
+               ofa                                    2.964  3.249  3.803     3.339
+heuristic      kalman                                 2.942  3.261  3.819     3.341
+oct checkpoint temporalconvnet (2d)                   2.965  3.251  3.810     3.342
+direct         residuallinearar2d                     2.981  3.254  3.814     3.350
+oct checkpoint residualvanillalstm (1d)               2.974  3.267  3.812     3.351
+direct         dlinear                                2.972  3.275  3.830     3.359
+oct checkpoint vanillalstm1d (1d)                     2.970  3.274  3.846     3.363
+direct         nlinear                                2.973  3.293  3.841     3.369
+heuristic      mean (tuned)                           3.056  3.293  3.828     3.392
+               mean (full 60 min)                     3.132  3.302  3.825     3.420
+oct checkpoint autoformer_csa (2d)                    3.135  3.336  3.906     3.459
+               residualvanillalstm (2d)               3.058  3.342  4.381     3.594
+heuristic      median (tuned)                         3.472  3.683  4.234     3.797
+               median (full 60 min)                   3.484  3.688  4.264     3.812
+oct checkpoint lstmattn (2d)                          3.655  4.000  4.599     4.085
+               vanillalstm (2d)                       3.837  4.142  4.703     4.227
+TSS-LCD        tsslcd (authors defaults, savgol off)  4.490  4.686  4.637     4.604
+               tsslcd (tuned winner, savgol off)      4.543  4.741  4.674     4.652
+heuristic      persistence                            5.206  5.843  6.378     5.809
+
+2400_2600: 1-minute, every test window MAE (dB), mean over seeds
+horizon                                              1     15     60  mean_all
+family    model                                                               
+heuristic median (tuned)                         0.663  0.716  0.824     0.734
+direct    ofa                                    0.665  0.720  0.829     0.738
+          revinmlp                               0.668  0.724  0.834     0.742
+          patchtst                               0.670  0.725  0.833     0.743
+heuristic kalman                                 0.671  0.728  0.835     0.745
+          mean (tuned)                           0.681  0.730  0.835     0.749
+direct    residualnonlinear2d                    0.683  0.732  0.834     0.750
+          residuallinearar2d                     0.681  0.730  0.838     0.750
+          nlinear                                0.674  0.732  0.849     0.752
+heuristic median (full 60 min)                   0.692  0.734  0.851     0.759
+direct    dlinear                                0.682  0.751  0.856     0.763
+heuristic mean (full 60 min)                     0.714  0.743  0.847     0.768
+TSS-LCD   tsslcd (authors defaults, savgol off)  0.830  0.841  0.884     0.852
+heuristic persistence                            0.844  0.929  1.022     0.932
+
+2400_2600: 1-minute, every test window MSE (dB^2), mean over seeds
+horizon                                              1     15     60  mean_all
+family    model                                                               
+heuristic kalman                                 2.491  2.931  3.822     3.081
+direct    residualnonlinear2d                    2.523  2.926  3.824     3.091
+          ofa                                    2.498  2.919  3.876     3.098
+          patchtst                               2.517  2.928  3.853     3.099
+          residuallinearar2d                     2.547  2.943  3.842     3.111
+          nlinear                                2.508  2.946  3.886     3.114
+heuristic mean (tuned)                           2.568  2.949  3.824     3.114
+direct    revinmlp                               2.534  2.943  3.867     3.115
+          dlinear                                2.526  2.989  3.881     3.132
+heuristic mean (full 60 min)                     2.783  3.028  3.888     3.233
+          median (tuned)                         2.765  3.153  4.037     3.318
+          median (full 60 min)                   2.931  3.253  4.210     3.465
+TSS-LCD   tsslcd (authors defaults, savgol off)  3.626  3.675  4.129     3.810
+heuristic persistence                            4.260  5.002  5.889     5.050
+
+600_800: 4D map-level (not comparable) MAE (dB), mean over seeds
+horizon                      1     15     60  mean_all
+model                                                 
+residuallinearar4d (4d)  0.655  0.703  0.799     0.719
+linearar4d (4d)          0.663  0.710  0.811     0.728
+residualconvlstm (4d)    0.694  0.719  0.813     0.742
+convlstm (4d)            0.867  0.905  0.978     0.917
+dswinlstm_i (4d)         0.916  0.908  0.944     0.923
+
+600_800: 4D map-level (not comparable) MSE (dB^2), mean over seeds
+horizon                      1     15     60  mean_all
+model                                                 
+residuallinearar4d (4d)  1.721  1.907  2.305     1.978
+linearar4d (4d)          1.734  1.907  2.295     1.979
+residualconvlstm (4d)    1.849  1.959  2.357     2.055
+convlstm (4d)            2.488  2.673  3.041     2.734
+dswinlstm_i (4d)         2.647  2.689  2.869     2.735
