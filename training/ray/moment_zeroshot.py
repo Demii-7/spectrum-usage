@@ -253,6 +253,7 @@ def main(argv=None) -> None:
     p.add_argument("--context", type=int, default=None, help="longer context (separately labelled result); default 96")
     p.add_argument("--prefix", default=PREFIX)
     p.add_argument("--max-parallel", type=int, default=4)
+    p.add_argument("--gpu-fraction", type=float, default=1.0, help="1.0 on 24 GB cards (fractional shares ran out of memory there); a small share is fine on an 80 GB H100")
     p.add_argument("--skip-done", action="store_true")
     p.add_argument("--bucket", default=None)
     p.add_argument("--address", default="auto")
@@ -290,7 +291,7 @@ def main(argv=None) -> None:
     print(f"[moment-zeroshot] {a.command}: {len(jobs)} jobs, revision {revision[:12]}", flush=True)
     shared = {"repo_root": a.repo_root, "bucket": bucket, "prefix": a.prefix, "size": a.size, "code_revision": revision, "context": a.context}
     ray.init(address=a.address, ignore_reinit_error=True)
-    remote = ray.remote(num_cpus=4, num_gpus=1.0, memory=24 * 2 ** 30, max_retries=1)(job)          # a whole GPU each (fractional shares ran out of memory on 24 GB cards)
+    remote = ray.remote(num_cpus=4, num_gpus=a.gpu_fraction, memory=24 * 2 ** 30, max_retries=1)(job)
     queue, pending, ok = list(jobs), [], 0
     while queue or pending:
         while queue and len(pending) < a.max_parallel:
