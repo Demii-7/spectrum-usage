@@ -63,5 +63,10 @@
   "id": "claude-final-spectral-seeds-15min-1",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.spectral_context_fixed --bucket spectrum --resolution 15min --output-prefix oct2026-spectral-context-15min --max-parallel 3 --seeds 43 44\"",
   "max_restarts": 4
+ },
+ {
+  "id": "claude-final-s15sts-krige-1",
+  "entrypoint": "bash training/ray/scripts/sts_krige_followup.sh",
+  "max_restarts": 4
  }
 ]
