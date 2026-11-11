@@ -113,7 +113,7 @@ class MomentZeroShot:
                              mask=torch.from_numpy(mask).to(self.device))
         return out.reconstruction.float().cpu().numpy()
 
-    def predict(self, windows: np.ndarray, design: dict[str, Any], batch_windows: int = 8, horizons=HORIZONS) -> dict[int, np.ndarray]:
+    def predict(self, windows: np.ndarray, design: dict[str, Any], batch_windows: int = 4, horizons=HORIZONS) -> dict[int, np.ndarray]:
         """``windows`` (N, L, F) -> {h: (N, F)}."""
         n = len(windows)
         out = {h: np.empty((n, windows.shape[2]), dtype=np.float32) for h in horizons}
