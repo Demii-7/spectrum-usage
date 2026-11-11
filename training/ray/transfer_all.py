@@ -102,6 +102,7 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     try:
         import torch
 
+        torch.set_num_threads(max(1, int(args.get("threads", 2))))        # 40+ concurrent jobs on 48-core hosts thrash with torch's default thread count
         from training.common import transfer_1d, transfer_2d
         from training.common import transfer_regimes as R
         from training.ray import transfer15 as t15
@@ -233,7 +234,7 @@ def cmd_run(a: argparse.Namespace) -> None:
     if a.skip_done:
         jobs = [j for j in jobs if not done(j)]
     print(f"[transfer-all] {len(tgts)} targets, {len(groups)} model groups, {len(jobs)} jobs, revision {revision[:12]}", flush=True)
-    shared = {"repo_root": a.repo_root, "bucket": bucket, "prefix": a.prefix, "code_revision": revision}
+    shared = {"repo_root": a.repo_root, "bucket": bucket, "prefix": a.prefix, "code_revision": revision, "threads": a.threads}
     ray.init(address=a.address, ignore_reinit_error=True)
     queue, pending, ok, failed = list(jobs), {}, 0, 0
 
@@ -278,6 +279,7 @@ def main(argv=None) -> None:
     r.add_argument("--regimes", nargs="+", choices=["A", "B", "C", "Cm"])
     r.add_argument("--gpu-fraction", type=float, default=None, help="override (default: 0 for the cheap models, per-model for the LLM ones)")
     r.add_argument("--memory-gb", type=float, default=8.0)
+    r.add_argument("--threads", type=int, default=2, help="torch threads per job")
     r.add_argument("--max-parallel", type=int, default=24)
     r.add_argument("--skip-done", action="store_true")
     r.add_argument("--bucket", default=None)
