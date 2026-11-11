@@ -3,6 +3,8 @@
 set -u
 cd /workspace/spectrum-usage || exit 1
 mkdir -p evaluation/results
+# the table script builds its own boto3 client from the generic S3_*/AWS_* variables, which on the workers point elsewhere: map the benchmark's SPECTRUM_* ones onto them
+export S3_ENDPOINT_URL="${SPECTRUM_S3_ENDPOINT_URL:-${S3_ENDPOINT_URL:-}}" AWS_ACCESS_KEY_ID="${SPECTRUM_AWS_ACCESS_KEY_ID:-${AWS_ACCESS_KEY_ID:-}}" AWS_SECRET_ACCESS_KEY="${SPECTRUM_AWS_SECRET_ACCESS_KEY:-${AWS_SECRET_ACCESS_KEY:-}}"
 python -u evaluation/analysis/es_reproduction_table.py --out evaluation/results/es_reproduction_table.csv > evaluation/results/es_reproduction_table.txt 2>&1
 python -u evaluation/analysis/es_reproduction_table.py --seedfix --out evaluation/results/es_reproduction_table_seedfix.csv > evaluation/results/es_reproduction_table_seedfix.txt 2>&1
 python - <<'PY'
