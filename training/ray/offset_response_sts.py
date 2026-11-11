@@ -31,7 +31,7 @@ import yaml
 from training.ray.offset_response import OFFSETS, response_rows
 
 MODEL = "stsprednet"
-STRIDE = 4                      # origins are thinned (the response does not need every origin); disclosed in every record
+STRIDE = 4                      # default origin thinning (the response does not need every origin); disclosed in every record
 
 
 def make_shift(offset: float):
@@ -69,9 +69,11 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
 
     client, bucket = spectrum_s3_client(), args["bucket"]
     names = [SIX[n] for n in CORE]
+    offsets = tuple(float(o) for o in (args.get("offsets") or OFFSETS))
+    stride = int(args.get("stride") or STRIDE)
     record: dict[str, Any] = {"kind": "offset_response", "band": band, "rep": "4d", "model": MODEL, "seed": seed,
-                              "intrinsic_window_normalization": "none (checkpoint normalization only)", "offsets_db": list(OFFSETS),
-                              "horizons": list(HORIZONS), "origin_stride": STRIDE}
+                              "intrinsic_window_normalization": "none (checkpoint normalization only)", "offsets_db": list(offsets),
+                              "horizons": list(HORIZONS), "origin_stride": stride}
     started = time.time()
     try:
         import torch
@@ -98,10 +100,10 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
             predictions: dict[float, np.ndarray] = {}
             times = None
             try:
-                for offset in (0.0, *OFFSETS):
+                for offset in (0.0, *offsets):
                     out = scratch / f"out-{offset:+g}"
                     evaluate_condition(experiment_path=exp_path, model_config_path=model_config, checkpoint_path=checkpoint, model_name=MODEL,
-                                       seed=seed, condition="geometry_correct", output_directory=out, origin_stride=STRIDE,
+                                       seed=seed, condition="geometry_correct", output_directory=out, origin_stride=stride,
                                        batch_size=args["batch_size"], device=args["device"], series_transform=make_shift(offset))
                     with np.load(out / "receiver_forecasts.npz", allow_pickle=True) as npz:
                         stamp = np.asarray(npz["origin_timestamps"]).astype(str)
@@ -117,7 +119,7 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         base = predictions[0.0]
         for index, receiver in enumerate(names):
             rows = []
-            for offset in OFFSETS:
+            for offset in offsets:
                 rows.extend(response_rows(receiver_arrays(base, list(HORIZONS), index), receiver_arrays(predictions[offset], list(HORIZONS), index),
                                           offset, HORIZONS))
             summary = {**record, "receiver": receiver, "rows": rows, "n_origins": int(base.shape[0]), "code_revision": args["code_revision"], "ok": True}
@@ -145,6 +147,8 @@ def main(argv=None) -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--bands", nargs="+", default=["600_800", "2400_2600"], choices=["600_800", "2400_2600"])
     p.add_argument("--seeds", type=int, nargs="+", default=[40, 41, 42])
+    p.add_argument("--offsets", type=float, nargs="+", help="subset of the offsets (smoke tests only; default all six)")
+    p.add_argument("--stride", type=int, default=STRIDE, help="origin thinning (default 4)")
     p.add_argument("--device", default="cpu", help="cpu (default) or cuda; with cuda pass --gpu-fraction")
     p.add_argument("--gpu-fraction", type=float, default=0.0)
     p.add_argument("--batch-size", type=int, default=8)
@@ -181,7 +185,7 @@ def main(argv=None) -> None:
         jobs = [j for j in jobs if not done(j)]
     print(f"[offset-sts] {len(jobs)} jobs, revision {revision[:12]}", flush=True)
     shared = {"repo_root": args.repo_root, "bucket": bucket, "prefix": args.prefix, "tuning_prefix": args.tuning_prefix, "code_revision": revision,
-              "batch_size": args.batch_size, "device": args.device, "threads": args.threads}
+              "batch_size": args.batch_size, "device": args.device, "threads": args.threads, "offsets": args.offsets, "stride": args.stride}
     ray.init(address=args.address, ignore_reinit_error=True)
     remote = ray.remote(num_cpus=args.threads, num_gpus=args.gpu_fraction, memory=int(args.memory_gb * 2 ** 30), max_retries=1)(job)
     queue, pending, ok = list(jobs), [], 0
