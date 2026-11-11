@@ -317,6 +317,8 @@ def evaluate_condition(
         origin_lon=grid_cfg.get("origin_lon"),
         origin_lat=grid_cfg.get("origin_lat"),
         power_domain=str(grid_cfg.get("power_domain", "db")),
+        method=str(grid_cfg.get("method", "idw")),
+        variogram=grid_cfg.get("variogram"),
     )
     series, input_indices, target_indices = _condition_data(
         experiment, condition, frequencies, coordinates, root

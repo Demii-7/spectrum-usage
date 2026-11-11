@@ -83,13 +83,21 @@ def _map_from_sites(site_data, site_x, site_y, grid):
     grid_x = np.linspace(-width_m / 2.0, width_m / 2.0, width)
     grid_y = np.linspace(-height_m / 2.0, height_m / 2.0, height)
     gx, gy = np.meshgrid(grid_x, grid_y)
-    distances = np.hypot(gx[..., None] - x, gy[..., None] - y)
-    power = float(grid.get("power", 2.0))
-    weights = 1.0 / np.maximum(distances, 1e-6) ** power
-    exact = distances == 0
-    for site_index in range(len(site_x)):
-        weights[exact[..., site_index], :] = 0.0
-        weights[exact[..., site_index], site_index] = 1.0
+    if str(grid.get("method", "idw")) == "kriging":
+        # ordinary kriging with the frozen variogram in ``grid["variogram"]``: weights depend on the coordinates only (see kriging.py)
+        if grid.get("power_domain", "db") != "db":
+            raise ValueError("kriging interpolates in dB; power_domain must be db")
+        from training.common.kriging import kriging_weights
+
+        weights = kriging_weights(x, y, gx, gy, grid["variogram"])
+    else:
+        distances = np.hypot(gx[..., None] - x, gy[..., None] - y)
+        power = float(grid.get("power", 2.0))
+        weights = 1.0 / np.maximum(distances, 1e-6) ** power
+        exact = distances == 0
+        for site_index in range(len(site_x)):
+            weights[exact[..., site_index], :] = 0.0
+            weights[exact[..., site_index], site_index] = 1.0
 
     # Site data arrives as (site, time, frequency); map output is time-first.
     working = np.moveaxis(site_data.astype(np.float64), 0, 1)

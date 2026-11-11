@@ -10,7 +10,10 @@ are inherited from the October 1-minute 600-800 winners (seed-42 run_costs of ``
   and each of the six receivers it did not see, both left out of the input map and added to it without retraining.
 
 Variants (``--experiments``):
-    s2   core four; IDW power 1, 2, 4, 16 (16 ~ nearest neighbour), linear-power interpolation, grids 5x5 and 20x20
+    s2   core four; IDW power 1, 2, 4, 16 (16 ~ nearest neighbour), linear-power interpolation, grids 5x5 and 20x20, and ordinary
+         kriging (``core4-krige``: the variogram of each band is fitted on the training range by ``training.ray.fit_variogram``,
+         frozen in ``evaluation/analysis/kriging_variograms.json`` and injected into the grid; the forecast is sampled back at the
+         receivers with the default IDW power-2 weights, as in every other variant)
     s3   leave one receiver out of the six (six folds)
     s5   receiver count: 2 and 3 of the core four (three subsets each); evaluated at guest house and law 73
          (the full core four is s2's default)
@@ -43,6 +46,13 @@ HORIZONS = (4, 12, 24, 48)
 SEEDS = (40, 41, 42)
 CPU_MODELS = {"lookbackmean4d", "linearar4d", "residuallinearar4d"}
 GRID_DEFAULT = {"height": 10, "width": 10, "power": 2.0, "power_domain": "db"}
+VARIOGRAM_FILE = "evaluation/analysis/kriging_variograms.json"
+
+
+def load_variogram(repo_root: str, band: str) -> dict[str, Any]:
+    """The frozen ordinary-kriging variogram of ``band`` (fitted on the training range before any scoring)."""
+    data = json.loads((Path(repo_root) / VARIOGRAM_FILE).read_text())["bands"][band]["variogram"]
+    return {"model": data["model"], "nugget": float(data["nugget"]), "sill": float(data["sill"]), "range": float(data["range"])}
 
 
 def six_receiver_frame(repo_root: str) -> dict[str, float]:
@@ -80,6 +90,7 @@ def variants(experiments: list[str]) -> list[dict[str, Any]]:
         out.append({"name": "core4-p2-linear", "nodes": list(CORE), "grid": {"power_domain": "linear"}})
         for size in (5, 20):
             out.append({"name": f"core4-p2-g{size}", "nodes": list(CORE), "grid": {"height": size, "width": size}})
+        out.append({"name": "core4-krige", "nodes": list(CORE), "grid": {"method": "kriging"}})      # variogram injected per band in main()
     if "s3" in experiments:
         for held in SIX:
             out.append({"name": f"loo-{SIX[held].replace(' ', '')}", "nodes": [n for n in SIX if n != held], "grid": {}})
@@ -394,6 +405,9 @@ def main(argv=None) -> None:
         perms = unique_permutation_seeds(args.permuted, receiver_count=4)
         jobs = [{"variant": base_variant, "grid": grid_for(base_variant, frame), "model": m, "seed": s, "permutation_seed": ps}
                 for m in args.models for s in ([42] if m == "lookbackmean4d" else args.seeds) for ps in perms]
+    for job in jobs:                                   # the frozen variogram of this band goes into every kriging grid
+        if job["grid"].get("method") == "kriging":
+            job["grid"] = {**job["grid"], "variogram": load_variogram(args.repo_root, args.band)}
     if args.skip_done:
         def done(job):
             key = (f"{args.prefix.strip('/')}/{args.band}/permuted/{job['model']}/seed-{job['seed']}/p{job['permutation_seed']}/result.json"

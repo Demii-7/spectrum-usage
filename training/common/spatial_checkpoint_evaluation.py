@@ -21,6 +21,8 @@ class FrozenGrid:
     origin_latitude: float
     power: float = 2.0
     power_domain: str = "db"
+    method: str = "idw"                      # "idw" or "kriging" (ordinary kriging with the frozen ``variogram``; see kriging.py)
+    variogram: Any = None
 
     @property
     def shape(self) -> tuple[int, int]:
@@ -57,6 +59,8 @@ def derive_frozen_grid(
     origin_lon: float | None = None,
     origin_lat: float | None = None,
     power_domain: str = "db",
+    method: str = "idw",
+    variogram: Mapping[str, Any] | None = None,
 ) -> FrozenGrid:
     """Derive the fixed grid using the exact geometry of map_builder._map_from_sites."""
     lons = np.asarray(longitudes, dtype=np.float64)
@@ -79,7 +83,11 @@ def derive_frozen_grid(
     )
     if power_domain not in {"db", "linear"}:
         raise ValueError("power_domain must be db or linear")
-    return FrozenGrid(gx, gy, origin_lon, origin_lat, float(power), power_domain)
+    if method not in {"idw", "kriging"}:
+        raise ValueError("method must be idw or kriging")
+    if method == "kriging" and (variogram is None or power_domain != "db"):
+        raise ValueError("kriging needs a variogram and power_domain db")
+    return FrozenGrid(gx, gy, origin_lon, origin_lat, float(power), power_domain, method, dict(variogram) if variogram else None)
 
 
 def _idw_weights(target_x: np.ndarray, target_y: np.ndarray, source_x: np.ndarray,
@@ -108,7 +116,12 @@ def build_idw_maps(
         raise ValueError("values and receiver coordinates do not agree")
     order = _permutation(coordinate_permutation, len(lons))
     site_x, site_y = _local_xy(lons[order], lats[order], grid.origin_longitude, grid.origin_latitude)
-    weights = _idw_weights(grid.x, grid.y, site_x, site_y, grid.power)
+    if grid.method == "kriging":
+        from training.common.kriging import kriging_weights
+
+        weights = kriging_weights(site_x, site_y, grid.x, grid.y, grid.variogram)
+    else:
+        weights = _idw_weights(grid.x, grid.y, site_x, site_y, grid.power)
     valid = np.isfinite(values)
     linear = grid.power_domain == "linear"                     # interpolate linear power, as map_builder does with power_domain linear
     source = np.power(10.0, np.where(valid, values, 0.0) / 10.0) if linear else np.where(valid, values, 0.0)
