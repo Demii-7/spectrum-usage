@@ -68,5 +68,10 @@
   "id": "claude-final-s15sts-krige-1",
   "entrypoint": "bash training/ray/scripts/sts_krige_followup.sh",
   "max_restarts": 4
+ },
+ {
+  "id": "claude-final-rescore-timellm1min-1",
+  "entrypoint": "python -u -m training.ray.rescore --sources direct --resolution 1min --models timellm --skip-done --no-pin --max-parallel 1 --gpu-fraction 0.5",
+  "max_restarts": 4
  }
 ]
