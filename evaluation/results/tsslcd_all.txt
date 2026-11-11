@@ -4,6 +4,7 @@ horizon                      1      4     12     24     48   mean  sd(mean)  see
 setting          savgol                                                           
 authors defaults causal  0.884  0.879  1.020  1.098  0.992  0.975     0.065      5
                  off     0.928  0.898  0.954  1.075  1.090  0.989     0.062      5
+tuned winner     off     0.684  0.697  0.713  0.762  0.770  0.725     0.034      5
 heuristics (MAE):
 horizon                   1      4     12     24     48   mean
 family selection                                              
@@ -17,6 +18,7 @@ horizon                      1      4     12     24     48   mean  sd(mean)  see
 setting          savgol                                                           
 authors defaults causal  3.711  3.796  5.151  5.887  5.154  4.740     0.615      5
                  off     3.996  3.796  4.273  5.482  5.556  4.621     0.539      5
+tuned winner     off     2.218  2.332  2.460  2.892  2.921  2.564     0.280      5
 
 15min 600_800: TSS-LCD raw-target MAE per horizon, mean over seeds
 horizon                      1      4     12     24     48   mean  sd(mean)  seeds

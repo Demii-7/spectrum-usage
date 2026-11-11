@@ -1,0 +1,123 @@
+156 runs
+
+2400_2600: mean gain of the forecast shift to an input offset of c dB at t+1 (columns: c); 1 = level carried exactly
+                           -20    -10     -5     +5    +10    +20  n_runs
+rep model                                                                
+1d  linearar1d           0.994  0.994  0.994  0.994  0.994  0.994       5
+    residuallinearar1d   1.000  1.000  1.000  1.000  1.000  1.000       5
+    residualvanillalstm  1.000  1.000  1.000  1.000  1.000  1.000       5
+    vanillalstm1d        0.169  0.321  0.470  0.837  0.726  0.605       1
+2d  autoformer_csa       1.000  1.000  1.000  1.000  1.000  1.000       5
+    dlinear              0.970  0.970  0.970  0.970  0.970  0.970       5
+    linearar2d           0.979  0.979  0.979  0.979  0.979  0.979       5
+    lstmattn             0.040  0.075  0.156 -0.340 -0.186 -0.100       5
+    nlinear              1.000  1.000  1.000  1.000  1.000  1.000       5
+    patchtst             1.000  1.000  1.000  1.000  1.000  1.000       5
+    residuallinearar2d   1.000  1.000  1.000  1.000  1.000  1.000       5
+    residualnonlinear2d  1.000  1.000  1.000  1.000  1.000  1.000       5
+    residualvanillalstm  1.000  1.000  1.000  1.000  1.000  1.000       5
+    revinmlp             1.000  1.000  1.000  1.000  1.000  1.000       5
+    temporalconvnet      0.217  0.348  0.513  0.984  0.983  0.983       5
+    vanillalstm          0.042  0.084  0.181 -0.389 -0.208 -0.108       5
+
+600_800: mean gain of the forecast shift to an input offset of c dB at t+1 (columns: c); 1 = level carried exactly
+                           -20    -10     -5     +5    +10    +20  n_runs
+rep model                                                                
+1d  linearar1d           0.998  0.998  0.998  0.998  0.998  0.998       5
+    residuallinearar1d   1.000  1.000  1.000  1.000  1.000  1.000       5
+    residualvanillalstm  1.000  1.000  1.000  1.000  1.000  1.000       5
+    vanillalstm1d        0.303  0.489  0.624  0.769  0.672  0.525       5
+2d  autoformer_csa       1.000  1.000  1.000  1.000  1.000  1.000       5
+    dlinear              0.986  0.986  0.986  0.986  0.986  0.986       5
+    linearar2d           0.990  0.990  0.990  0.990  0.990  0.990       5
+    lstmattn             0.059  0.118  0.230  0.091  0.040  0.019       5
+    nlinear              1.000  1.000  1.000  1.000  1.000  1.000       5
+    patchtst             1.000  1.000  1.000  1.000  1.000  1.000       5
+    residuallinearar2d   1.000  1.000  1.000  1.000  1.000  1.000       5
+    residualnonlinear2d  1.000  1.000  1.000  1.000  1.000  1.000       5
+    residualvanillalstm  1.000  1.000  1.000  1.000  1.000  1.000       5
+    revinmlp             1.000  1.000  1.000  1.000  1.000  1.000       5
+    temporalconvnet      0.322  0.508  0.647  0.990  0.991  0.991       5
+    vanillalstm          0.064  0.128  0.253  0.151  0.080  0.041       5
+156 runs
+
+2400_2600: mean gain of the forecast shift to an input offset of c dB at t+15 (columns: c); 1 = level carried exactly
+                           -20    -10     -5     +5    +10    +20  n_runs
+rep model                                                                
+1d  linearar1d           0.988  0.988  0.988  0.988  0.988  0.988       5
+    residuallinearar1d   1.000  1.000  1.000  1.000  1.000  1.000       5
+    residualvanillalstm  1.000  1.000  1.000  1.000  1.000  1.000       5
+    vanillalstm1d        0.213  0.335  0.485  0.785  0.698  0.600       1
+2d  autoformer_csa       1.000  1.000  1.000  1.000  1.000  1.000       5
+    dlinear              0.959  0.959  0.959  0.959  0.959  0.959       5
+    linearar2d           0.957  0.957  0.957  0.957  0.957  0.957       5
+    lstmattn             0.021  0.041  0.102 -0.328 -0.169 -0.085       5
+    nlinear              1.000  1.000  1.000  1.000  1.000  1.000       5
+    patchtst             1.000  1.000  1.000  1.000  1.000  1.000       5
+    residuallinearar2d   1.000  1.000  1.000  1.000  1.000  1.000       5
+    residualnonlinear2d  1.000  1.000  1.000  1.000  1.000  1.000       5
+    residualvanillalstm  1.000  1.000  1.000  1.000  1.000  1.000       5
+    revinmlp             1.000  1.000  1.000  1.000  1.000  1.000       5
+    temporalconvnet      0.213  0.342  0.503  0.963  0.962  0.962       5
+    vanillalstm          0.036  0.072  0.146 -0.374 -0.192 -0.097       5
+
+600_800: mean gain of the forecast shift to an input offset of c dB at t+15 (columns: c); 1 = level carried exactly
+                           -20    -10     -5     +5    +10    +20  n_runs
+rep model                                                                
+1d  linearar1d           0.994  0.994  0.994  0.994  0.994  0.994       5
+    residuallinearar1d   1.000  1.000  1.000  1.000  1.000  1.000       5
+    residualvanillalstm  1.000  1.000  1.000  1.000  1.000  1.000       5
+    vanillalstm1d        0.296  0.470  0.608  0.721  0.617  0.445       5
+2d  autoformer_csa       1.000  1.000  1.000  1.000  1.000  1.000       5
+    dlinear              0.979  0.979  0.979  0.979  0.979  0.979       5
+    linearar2d           0.978  0.978  0.978  0.978  0.978  0.978       5
+    lstmattn             0.055  0.110  0.216  0.052  0.022  0.010       5
+    nlinear              1.000  1.000  1.000  1.000  1.000  1.000       5
+    patchtst             1.000  1.000  1.000  1.000  1.000  1.000       5
+    residuallinearar2d   1.000  1.000  1.000  1.000  1.000  1.000       5
+    residualnonlinear2d  1.000  1.000  1.000  1.000  1.000  1.000       5
+    residualvanillalstm  1.000  1.000  1.000  1.000  1.000  1.000       5
+    revinmlp             1.000  1.000  1.000  1.000  1.000  1.000       5
+    temporalconvnet      0.319  0.503  0.640  0.979  0.979  0.979       5
+    vanillalstm          0.066  0.125  0.235  0.119  0.057  0.029       5
+156 runs
+
+2400_2600: mean gain of the forecast shift to an input offset of c dB at t+60 (columns: c); 1 = level carried exactly
+                           -20    -10     -5     +5    +10    +20  n_runs
+rep model                                                                
+1d  linearar1d           0.973  0.973  0.973  0.973  0.973  0.973       5
+    residuallinearar1d   1.000  1.000  1.000  1.000  1.000  1.000       5
+    residualvanillalstm  1.000  1.000  1.000  1.000  1.000  1.000       5
+    vanillalstm1d        0.195  0.308  0.449  0.767  0.710  0.601       1
+2d  autoformer_csa       1.000  1.000  1.000  1.000  1.000  1.000       5
+    dlinear              0.960  0.960  0.960  0.960  0.960  0.960       5
+    linearar2d           0.912  0.912  0.912  0.912  0.912  0.912       5
+    lstmattn             0.022  0.043  0.098 -0.356 -0.180 -0.091       5
+    nlinear              1.000  1.000  1.000  1.000  1.000  1.000       5
+    patchtst             1.000  1.000  1.000  1.000  1.000  1.000       5
+    residuallinearar2d   1.000  1.000  1.000  1.000  1.000  1.000       5
+    residualnonlinear2d  1.000  1.000  1.000  1.000  1.000  1.000       5
+    residualvanillalstm  1.000  1.000  1.000  1.000  1.000  1.000       5
+    revinmlp             1.000  1.000  1.000  1.000  1.000  1.000       5
+    temporalconvnet      0.202  0.325  0.478  0.912  0.911  0.909       5
+    vanillalstm          0.039  0.076  0.152 -0.391 -0.195 -0.098       5
+
+600_800: mean gain of the forecast shift to an input offset of c dB at t+60 (columns: c); 1 = level carried exactly
+                           -20    -10     -5     +5    +10    +20  n_runs
+rep model                                                                
+1d  linearar1d           0.987  0.987  0.987  0.987  0.987  0.987       5
+    residuallinearar1d   1.000  1.000  1.000  1.000  1.000  1.000       5
+    residualvanillalstm  1.000  1.000  1.000  1.000  1.000  1.000       5
+    vanillalstm1d        0.261  0.431  0.571  0.693  0.591  0.418       5
+2d  autoformer_csa       1.000  1.000  1.000  1.000  1.000  1.000       5
+    dlinear              0.943  0.943  0.943  0.943  0.943  0.943       5
+    linearar2d           0.950  0.950  0.950  0.950  0.950  0.950       5
+    lstmattn             0.055  0.106  0.207  0.023  0.003  0.000       5
+    nlinear              1.000  1.000  1.000  1.000  1.000  1.000       5
+    patchtst             1.000  1.000  1.000  1.000  1.000  1.000       5
+    residuallinearar2d   1.000  1.000  1.000  1.000  1.000  1.000       5
+    residualnonlinear2d  1.000  1.000  1.000  1.000  1.000  1.000       5
+    residualvanillalstm  1.000  1.000  1.000  1.000  1.000  1.000       5
+    revinmlp             1.000  1.000  1.000  1.000  1.000  1.000       5
+    temporalconvnet      0.309  0.488  0.621  0.948  0.949  0.949       5
+    vanillalstm          0.071  0.132  0.248  0.122  0.055  0.027       5

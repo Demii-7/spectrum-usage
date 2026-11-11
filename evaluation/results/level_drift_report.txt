@@ -1,0 +1,187 @@
+1630800 origin rows, models ['lstmattn', 'residualvanillalstm', 'vanillalstm'], checkpoints {'lstmattn': 15, 'residualvanillalstm': 15, 'vanillalstm': 15}, gains from 1-minute offset test (t+15): {('2400_2600', 'autoformer_csa'): 1.0000000525557684, ('2400_2600', 'dlinear'): 0.959158341224211, ('2400_2600', 'linearar2d'): 0.9570230961763627, ('2400_2600', 'lstmattn'): -0.06956197151806487, ('2400_2600', 'nlinear'): 0.9999999998713206, ('2400_2600', 'patchtst'): 1.0000000001208431, ('2400_2600', 'residuallinearar2d'): 1.00000000017161, ('2400_2600', 'residualnonlinear2d'): 0.9999999998637381, ('2400_2600', 'residualvanillalstm'): 1.00000003268354, ('2400_2600', 'revinmlp'): 1.0000000000372142, ('2400_2600', 'temporalconvnet'): 0.6575425882884798, ('2400_2600', 'vanillalstm'): -0.06790816775741143, ('600_800', 'autoformer_csa'): 1.000000051727228, ('600_800', 'dlinear'): 0.9786524848042848, ('600_800', 'linearar2d'): 0.9779368919226036, ('600_800', 'lstmattn'): 0.07757930109510441, ('600_800', 'nlinear'): 1.0000000003992677, ('600_800', 'patchtst'): 1.0000000001685745, ('600_800', 'residuallinearar2d'): 1.0000000002401286, ('600_800', 'residualnonlinear2d'): 1.0000000004154639, ('600_800', 'residualvanillalstm'): 0.9999999396956915, ('600_800', 'revinmlp'): 1.0000000002742209, ('600_800', 'temporalconvnet'): 0.7332002221162907, ('600_800', 'vanillalstm'): 0.10521552279791835}
+
+(5) gap of the model MAE over the tuned median, per range and horizon (train is in-sample for the models):
+horizon                                      1      15     60
+band      model               range                          
+2400_2600 lstmattn            test        0.049  0.065  0.066
+                              train       0.045  0.060  0.059
+                              validation  0.038  0.078  0.072
+                              week2       0.066  0.080  0.094
+          residualvanillalstm test        0.037  0.033  0.033
+                              train       0.066  0.061  0.056
+                              validation  0.047  0.039  0.033
+                              week2       0.049  0.041  0.034
+          vanillalstm         test        0.052  0.082  0.110
+                              train       0.043  0.062  0.117
+                              validation  0.037  0.087  0.120
+                              week2       0.074  0.113  0.140
+600_800   lstmattn            test        0.188  0.199  0.173
+                              train       0.046  0.050  0.035
+                              validation  0.141  0.144  0.116
+                              week2       0.232  0.247  0.227
+          residualvanillalstm test        0.039  0.062  0.157
+                              train       0.043  0.065  0.163
+                              validation  0.044  0.063  0.144
+                              week2       0.042  0.058  0.152
+          vanillalstm         test        0.232  0.227  0.186
+                              train       0.095  0.079  0.049
+                              validation  0.182  0.172  0.138
+                              week2       0.288  0.286  0.251
+
+(6) slope of the excess error over the median on the level distance d (dB per dB), vs the mechanism's 1 - gain:
+     band               model      range horizon  slope  slope_lo  slope_hi  intercept    r2   n_points  n_day_blocks   gain  predicted_slope_1_minus_gain                 gain_source
+2400_2600            lstmattn       test     all -0.006    -0.014     0.004      0.051 0.000 12036000.0             8 -0.070                         1.070 1-minute offset test (t+15)
+2400_2600            lstmattn      train     all -0.005    -0.015     0.006      0.040 0.000 11868000.0             7 -0.070                         1.070 1-minute offset test (t+15)
+2400_2600            lstmattn validation     all -0.009    -0.012    -0.005      0.057 0.001  3324000.0             2 -0.070                         1.070 1-minute offset test (t+15)
+2400_2600            lstmattn      week2     all  0.006    -0.001     0.012      0.053 0.000  9012000.0             7 -0.070                         1.070 1-minute offset test (t+15)
+2400_2600 residualvanillalstm       test     all -0.004    -0.009     0.002      0.029 0.000 12036000.0             8  1.000                        -0.000 1-minute offset test (t+15)
+2400_2600 residualvanillalstm      train     all  0.011     0.003     0.020      0.030 0.001 11868000.0             7  1.000                        -0.000 1-minute offset test (t+15)
+2400_2600 residualvanillalstm validation     all -0.001    -0.002    -0.000      0.030 0.000  3324000.0             2  1.000                        -0.000 1-minute offset test (t+15)
+2400_2600 residualvanillalstm      week2     all  0.001    -0.006     0.010      0.029 0.000  9012000.0             7  1.000                        -0.000 1-minute offset test (t+15)
+2400_2600         vanillalstm       test     all  0.008    -0.008     0.028      0.054 0.000 12036000.0             8 -0.068                         1.068 1-minute offset test (t+15)
+2400_2600         vanillalstm      train     all -0.002    -0.013     0.012      0.052 0.000 11868000.0             7 -0.068                         1.068 1-minute offset test (t+15)
+2400_2600         vanillalstm validation     all  0.003    -0.003     0.009      0.060 0.000  3324000.0             2 -0.068                         1.068 1-minute offset test (t+15)
+2400_2600         vanillalstm      week2     all  0.017     0.003     0.031      0.063 0.001  9012000.0             7 -0.068                         1.068 1-minute offset test (t+15)
+  600_800            lstmattn       test     all  0.131     0.068     0.195      0.014 0.031 24072000.0             8  0.078                         0.922 1-minute offset test (t+15)
+  600_800            lstmattn      train     all  0.002    -0.006     0.012      0.037 0.000 23736000.0             7  0.078                         0.922 1-minute offset test (t+15)
+  600_800            lstmattn validation     all  0.062     0.057     0.075      0.058 0.007  6648000.0             2  0.078                         0.922 1-minute offset test (t+15)
+  600_800            lstmattn      week2     all  0.164     0.138     0.200      0.011 0.049 18024000.0             7  0.078                         0.922 1-minute offset test (t+15)
+  600_800 residualvanillalstm       test     all  0.011     0.009     0.013      0.069 0.000 24072000.0             8  1.000                         0.000 1-minute offset test (t+15)
+  600_800 residualvanillalstm      train     all  0.010     0.005     0.015      0.075 0.000 23736000.0             7  1.000                         0.000 1-minute offset test (t+15)
+  600_800 residualvanillalstm validation     all  0.013     0.011     0.019      0.067 0.000  6648000.0             2  1.000                         0.000 1-minute offset test (t+15)
+  600_800 residualvanillalstm      week2     all  0.010     0.009     0.012      0.068 0.000 18024000.0             7  1.000                         0.000 1-minute offset test (t+15)
+  600_800         vanillalstm       test     all  0.160     0.092     0.225      0.005 0.043 24072000.0             8  0.105                         0.895 1-minute offset test (t+15)
+  600_800         vanillalstm      train     all  0.032     0.021     0.046      0.033 0.002 23736000.0             7  0.105                         0.895 1-minute offset test (t+15)
+  600_800         vanillalstm validation     all  0.093     0.085     0.115      0.052 0.014  6648000.0             2  0.105                         0.895 1-minute offset test (t+15)
+  600_800         vanillalstm      week2     all  0.203     0.172     0.248     -0.003 0.067 18024000.0             7  0.105                         0.895 1-minute offset test (t+15)
+
+(7) level distance d = |window mean - training mean| (dB): quantiles, mean over the four receivers:
+                        q10    q50    q90    q99   mean
+band      range                                        
+2400_2600 test        0.027  0.319  2.764  4.180  0.992
+          train       0.016  0.239  2.659  4.285  0.858
+          validation  0.022  0.286  2.937  4.377  1.004
+          week2       0.028  0.383  2.923  4.384  1.094
+600_800   test        0.023  0.587  3.298  6.290  1.193
+          train       0.013  0.469  2.906  6.023  1.039
+          validation  0.018  0.510  3.080  5.793  1.085
+          week2       0.023  0.610  3.609  6.622  1.266
+
+(7b) the same divided by the bin's training standard deviation:
+                        q10    q50    q90    q99   mean
+band      range                                        
+2400_2600 test        0.103  0.517  1.232  1.712  0.608
+          train       0.066  0.375  1.136  1.673  0.505
+          validation  0.089  0.468  1.299  1.750  0.591
+          week2       0.099  0.555  1.300  2.048  0.657
+600_800   test        0.102  0.535  1.426  3.270  0.702
+          train       0.069  0.432  1.136  1.728  0.528
+          validation  0.091  0.457  1.318  2.429  0.609
+          week2       0.108  0.547  1.538  3.221  0.734
+
+(8) per day (day 0 = 2026-10-27 20:00; days 0-6 test week, 7-12 week2): level distance median / p90 (dB), MAE, relative excess:
+
+600_800:
+     d_q50  d_q90  lstmattn  residualvanillalstm  vanillalstm
+day                                                          
+-1    1.32   4.42     0.029                0.069        0.026
+ 0    0.65   3.46     0.116                0.084        0.141
+ 1    0.68   3.45     0.113                0.086        0.131
+ 2    0.64   3.35     0.133                0.082        0.148
+ 3    0.50   2.89     0.174                0.104        0.199
+ 4    0.50   2.86     0.248                0.098        0.304
+ 5    0.55   3.31     0.305                0.090        0.332
+ 6    0.99   4.17     0.230                0.082        0.262
+ 7    0.70   3.94     0.220                0.084        0.265
+ 8    0.69   3.92     0.200                0.081        0.238
+ 9    0.66   3.64     0.208                0.080        0.233
+ 10   0.62   3.38     0.272                0.091        0.310
+ 11   0.50   3.23     0.284                0.102        0.332
+ 12   0.44   2.38     0.216                0.084        0.260
+
+2400_2600:
+     d_q50  d_q90  lstmattn  residualvanillalstm  vanillalstm
+day                                                          
+-1    1.64   3.21     0.061                0.063       -0.044
+ 0    0.34   2.92     0.045                0.038        0.045
+ 1    0.38   3.00     0.048                0.030        0.052
+ 2    0.30   2.61     0.038                0.017        0.065
+ 3    0.31   2.68     0.052                0.027        0.072
+ 4    0.28   2.39     0.101                0.045        0.145
+ 5    0.32   2.62     0.094                0.041        0.144
+ 6    0.93   3.19     0.058                0.043        0.083
+ 7    0.35   3.16     0.068                0.048        0.088
+ 8    0.41   2.99     0.056                0.034        0.064
+ 9    0.37   2.92     0.076                0.043        0.073
+ 10   0.51   2.89     0.084                0.037        0.140
+ 11   0.36   2.74     0.122                0.050        0.187
+ 12   0.39   1.64     0.085                0.002        0.173
+
+slopes per day:
+     band               model                 span   quantity  slope_per_day     se  n_days
+2400_2600            lstmattn test week (days 0-6) rel_excess         0.0070 0.0041       7
+2400_2600            lstmattn test week (days 0-6)      d_q50         0.0577 0.0404       7
+2400_2600            lstmattn test week (days 0-6)      d_q90        -0.0051 0.0568       7
+2400_2600            lstmattn    week2 (days 7-12) rel_excess         0.0083 0.0043       6
+2400_2600            lstmattn    week2 (days 7-12)      d_q50         0.0050 0.0153       6
+2400_2600            lstmattn    week2 (days 7-12)      d_q90        -0.2395 0.0841       6
+2400_2600            lstmattn     both (days 0-12) rel_excess         0.0041 0.0015      13
+2400_2600            lstmattn     both (days 0-12)      d_q50         0.0081 0.0128      13
+2400_2600            lstmattn     both (days 0-12)      d_q90        -0.0293 0.0300      13
+2400_2600 residualvanillalstm test week (days 0-6) rel_excess         0.0023 0.0019       7
+2400_2600 residualvanillalstm test week (days 0-6)      d_q50         0.0577 0.0404       7
+2400_2600 residualvanillalstm test week (days 0-6)      d_q90        -0.0051 0.0568       7
+2400_2600 residualvanillalstm    week2 (days 7-12) rel_excess        -0.0053 0.0038       6
+2400_2600 residualvanillalstm    week2 (days 7-12)      d_q50         0.0050 0.0153       6
+2400_2600 residualvanillalstm    week2 (days 7-12)      d_q90        -0.2395 0.0841       6
+2400_2600 residualvanillalstm     both (days 0-12) rel_excess        -0.0000 0.0010      13
+2400_2600 residualvanillalstm     both (days 0-12)      d_q50         0.0081 0.0128      13
+2400_2600 residualvanillalstm     both (days 0-12)      d_q90        -0.0293 0.0300      13
+2400_2600         vanillalstm test week (days 0-6) rel_excess         0.0135 0.0061       7
+2400_2600         vanillalstm test week (days 0-6)      d_q50         0.0577 0.0404       7
+2400_2600         vanillalstm test week (days 0-6)      d_q90        -0.0051 0.0568       7
+2400_2600         vanillalstm    week2 (days 7-12) rel_excess         0.0246 0.0071       6
+2400_2600         vanillalstm    week2 (days 7-12)      d_q50         0.0050 0.0153       6
+2400_2600         vanillalstm    week2 (days 7-12)      d_q90        -0.2395 0.0841       6
+2400_2600         vanillalstm     both (days 0-12) rel_excess         0.0084 0.0028      13
+2400_2600         vanillalstm     both (days 0-12)      d_q50         0.0081 0.0128      13
+2400_2600         vanillalstm     both (days 0-12)      d_q90        -0.0293 0.0300      13
+  600_800            lstmattn test week (days 0-6) rel_excess         0.0301 0.0075       7
+  600_800            lstmattn test week (days 0-6)      d_q50         0.0219 0.0332       7
+  600_800            lstmattn test week (days 0-6)      d_q90         0.0481 0.0883       7
+  600_800            lstmattn    week2 (days 7-12) rel_excess         0.0084 0.0085       6
+  600_800            lstmattn    week2 (days 7-12)      d_q50        -0.0555 0.0091       6
+  600_800            lstmattn    week2 (days 7-12)      d_q90        -0.2898 0.0562       6
+  600_800            lstmattn     both (days 0-12) rel_excess         0.0106 0.0036      13
+  600_800            lstmattn     both (days 0-12)      d_q50        -0.0069 0.0106      13
+  600_800            lstmattn     both (days 0-12)      d_q90        -0.0133 0.0376      13
+  600_800 residualvanillalstm test week (days 0-6) rel_excess         0.0006 0.0018       7
+  600_800 residualvanillalstm test week (days 0-6)      d_q50         0.0219 0.0332       7
+  600_800 residualvanillalstm test week (days 0-6)      d_q90         0.0481 0.0883       7
+  600_800 residualvanillalstm    week2 (days 7-12) rel_excess         0.0021 0.0019       6
+  600_800 residualvanillalstm    week2 (days 7-12)      d_q50        -0.0555 0.0091       6
+  600_800 residualvanillalstm    week2 (days 7-12)      d_q90        -0.2898 0.0562       6
+  600_800 residualvanillalstm     both (days 0-12) rel_excess         0.0000 0.0006      13
+  600_800 residualvanillalstm     both (days 0-12)      d_q50        -0.0069 0.0106      13
+  600_800 residualvanillalstm     both (days 0-12)      d_q90        -0.0133 0.0376      13
+  600_800         vanillalstm test week (days 0-6) rel_excess         0.0329 0.0087       7
+  600_800         vanillalstm test week (days 0-6)      d_q50         0.0219 0.0332       7
+  600_800         vanillalstm test week (days 0-6)      d_q90         0.0481 0.0883       7
+  600_800         vanillalstm    week2 (days 7-12) rel_excess         0.0096 0.0095       6
+  600_800         vanillalstm    week2 (days 7-12)      d_q50        -0.0555 0.0091       6
+  600_800         vanillalstm    week2 (days 7-12)      d_q90        -0.2898 0.0562       6
+  600_800         vanillalstm     both (days 0-12) rel_excess         0.0125 0.0039      13
+  600_800         vanillalstm     both (days 0-12)      d_q50        -0.0069 0.0106      13
+  600_800         vanillalstm     both (days 0-12)      d_q90        -0.0133 0.0376      13
+
+(9) valid minutes per day after the test week (1,440 = full):
+band        2400_2600                              600_800                          
+receiver   humanities  madsen   moran sagepoint humanities  madsen   moran sagepoint
+day                                                                                 
+2026-11-03     1440.0  1440.0  1440.0    1440.0     1440.0  1440.0  1440.0    1440.0
+2026-11-04     1440.0  1440.0  1440.0    1440.0     1440.0  1440.0  1440.0    1440.0
+2026-11-05     1440.0  1440.0  1440.0    1440.0     1440.0  1440.0  1440.0    1440.0
+2026-11-06     1440.0  1440.0  1440.0    1440.0     1440.0  1440.0  1440.0    1440.0
+2026-11-07     1440.0  1440.0  1440.0    1440.0     1440.0  1440.0  1440.0    1440.0
+2026-11-08     1440.0  1440.0  1440.0    1440.0     1440.0  1440.0  1440.0    1440.0
+2026-11-09      143.0   140.0   140.0     142.0      141.0   148.0   148.0     139.0
