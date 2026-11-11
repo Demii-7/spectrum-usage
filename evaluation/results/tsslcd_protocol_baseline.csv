@@ -31,6 +31,22 @@ band,savgol,inputs,eval_smooth,target,horizon,metric,value
 600_800,off,(i) model inputs,p6g3cen,raw_target,60,mse_db2,4.181923804132756
 600_800,off,(i) model inputs,p6g3cen,raw_target,mean,mae_db,0.9103003032462537
 600_800,off,(i) model inputs,p6g3cen,raw_target,mean,mse_db2,3.691205060788319
+600_800,off,(i) model inputs,p6g3cau,model_target,1,mae_db,0.5992947843141102
+600_800,off,(i) model inputs,p6g3cau,model_target,1,mse_db2,1.5980042927810623
+600_800,off,(i) model inputs,p6g3cau,model_target,15,mae_db,0.6666034786054859
+600_800,off,(i) model inputs,p6g3cau,model_target,15,mse_db2,1.8833325837504402
+600_800,off,(i) model inputs,p6g3cau,model_target,60,mae_db,0.7872989056302465
+600_800,off,(i) model inputs,p6g3cau,model_target,60,mse_db2,2.4440109227751954
+600_800,off,(i) model inputs,p6g3cau,model_target,mean,mae_db,0.6843990561832808
+600_800,off,(i) model inputs,p6g3cau,model_target,mean,mse_db2,1.9751159331022325
+600_800,off,(i) model inputs,p6g3cau,raw_target,1,mae_db,0.8592519097616224
+600_800,off,(i) model inputs,p6g3cau,raw_target,1,mse_db2,3.428777948167045
+600_800,off,(i) model inputs,p6g3cau,raw_target,15,mae_db,0.9036400834996763
+600_800,off,(i) model inputs,p6g3cau,raw_target,15,mse_db2,3.6472917370206077
+600_800,off,(i) model inputs,p6g3cau,raw_target,60,mae_db,1.0062757466652548
+600_800,off,(i) model inputs,p6g3cau,raw_target,60,mse_db2,4.20881787939796
+600_800,off,(i) model inputs,p6g3cau,raw_target,mean,mae_db,0.9230559133088511
+600_800,off,(i) model inputs,p6g3cau,raw_target,mean,mse_db2,3.7616291881952044
 600_800,off,(ii) raw inputs,off,model_target,1,mae_db,0.8491469939509999
 600_800,off,(ii) raw inputs,off,model_target,1,mse_db2,3.4035582651258656
 600_800,off,(ii) raw inputs,off,model_target,15,mae_db,0.8992782276876012
@@ -63,6 +79,22 @@ band,savgol,inputs,eval_smooth,target,horizon,metric,value
 600_800,off,(ii) raw inputs,p6g3cen,raw_target,60,mse_db2,4.181923804132756
 600_800,off,(ii) raw inputs,p6g3cen,raw_target,mean,mae_db,0.9103003032462537
 600_800,off,(ii) raw inputs,p6g3cen,raw_target,mean,mse_db2,3.691205060788319
+600_800,off,(ii) raw inputs,p6g3cau,model_target,1,mae_db,0.5992947843141102
+600_800,off,(ii) raw inputs,p6g3cau,model_target,1,mse_db2,1.5980042927810623
+600_800,off,(ii) raw inputs,p6g3cau,model_target,15,mae_db,0.6666034786054859
+600_800,off,(ii) raw inputs,p6g3cau,model_target,15,mse_db2,1.8833325837504402
+600_800,off,(ii) raw inputs,p6g3cau,model_target,60,mae_db,0.7872989056302465
+600_800,off,(ii) raw inputs,p6g3cau,model_target,60,mse_db2,2.4440109227751954
+600_800,off,(ii) raw inputs,p6g3cau,model_target,mean,mae_db,0.6843990561832808
+600_800,off,(ii) raw inputs,p6g3cau,model_target,mean,mse_db2,1.9751159331022325
+600_800,off,(ii) raw inputs,p6g3cau,raw_target,1,mae_db,0.8592519097616224
+600_800,off,(ii) raw inputs,p6g3cau,raw_target,1,mse_db2,3.428777948167045
+600_800,off,(ii) raw inputs,p6g3cau,raw_target,15,mae_db,0.9036400834996763
+600_800,off,(ii) raw inputs,p6g3cau,raw_target,15,mse_db2,3.6472917370206077
+600_800,off,(ii) raw inputs,p6g3cau,raw_target,60,mae_db,1.0062757466652548
+600_800,off,(ii) raw inputs,p6g3cau,raw_target,60,mse_db2,4.20881787939796
+600_800,off,(ii) raw inputs,p6g3cau,raw_target,mean,mae_db,0.9230559133088511
+600_800,off,(ii) raw inputs,p6g3cau,raw_target,mean,mse_db2,3.7616291881952044
 600_800,centered,(i) model inputs,off,model_target,1,mae_db,0.21137105486727956
 600_800,centered,(i) model inputs,off,model_target,1,mse_db2,0.17512797053194823
 600_800,centered,(i) model inputs,off,model_target,15,mae_db,0.40980654106184883
@@ -95,6 +127,22 @@ band,savgol,inputs,eval_smooth,target,horizon,metric,value
 600_800,centered,(i) model inputs,p6g3cen,raw_target,60,mse_db2,3.8524061267684644
 600_800,centered,(i) model inputs,p6g3cen,raw_target,mean,mae_db,0.9280286224307437
 600_800,centered,(i) model inputs,p6g3cen,raw_target,mean,mse_db2,3.3284443973754243
+600_800,centered,(i) model inputs,p6g3cau,model_target,1,mae_db,0.23285759635392406
+600_800,centered,(i) model inputs,p6g3cau,model_target,1,mse_db2,0.20938033479453888
+600_800,centered,(i) model inputs,p6g3cau,model_target,15,mae_db,0.4155532114124015
+600_800,centered,(i) model inputs,p6g3cau,model_target,15,mse_db2,0.6446612804804156
+600_800,centered,(i) model inputs,p6g3cau,model_target,60,mae_db,0.5745877714492539
+600_800,centered,(i) model inputs,p6g3cau,model_target,60,mse_db2,1.1947775859154404
+600_800,centered,(i) model inputs,p6g3cau,model_target,mean,mae_db,0.40766619307185986
+600_800,centered,(i) model inputs,p6g3cau,model_target,mean,mse_db2,0.6829397337301316
+600_800,centered,(i) model inputs,p6g3cau,raw_target,1,mae_db,0.851896059605063
+600_800,centered,(i) model inputs,p6g3cau,raw_target,1,mse_db2,2.8976044584243725
+600_800,centered,(i) model inputs,p6g3cau,raw_target,15,mae_db,0.9278499098788319
+600_800,centered,(i) model inputs,p6g3cau,raw_target,15,mse_db2,3.3335149940475
+600_800,centered,(i) model inputs,p6g3cau,raw_target,60,mae_db,1.025849935317267
+600_800,centered,(i) model inputs,p6g3cau,raw_target,60,mse_db2,3.878161636096466
+600_800,centered,(i) model inputs,p6g3cau,raw_target,mean,mae_db,0.9351986349337206
+600_800,centered,(i) model inputs,p6g3cau,raw_target,mean,mse_db2,3.369760362856113
 600_800,centered,(ii) raw inputs,off,model_target,1,mae_db,0.34952210170828735
 600_800,centered,(ii) raw inputs,off,model_target,1,mse_db2,0.5434035964598629
 600_800,centered,(ii) raw inputs,off,model_target,15,mae_db,0.4835767762965755
@@ -127,6 +175,118 @@ band,savgol,inputs,eval_smooth,target,horizon,metric,value
 600_800,centered,(ii) raw inputs,p6g3cen,raw_target,60,mse_db2,4.181923804132756
 600_800,centered,(ii) raw inputs,p6g3cen,raw_target,mean,mae_db,0.9103003032462537
 600_800,centered,(ii) raw inputs,p6g3cen,raw_target,mean,mse_db2,3.691205060788319
+600_800,centered,(ii) raw inputs,p6g3cau,model_target,1,mae_db,0.35592389645528566
+600_800,centered,(ii) raw inputs,p6g3cau,model_target,1,mse_db2,0.5490060662179905
+600_800,centered,(ii) raw inputs,p6g3cau,model_target,15,mae_db,0.48498243174100886
+600_800,centered,(ii) raw inputs,p6g3cau,model_target,15,mse_db2,0.9745148890022595
+600_800,centered,(ii) raw inputs,p6g3cau,model_target,60,mae_db,0.6265779404026204
+600_800,centered,(ii) raw inputs,p6g3cau,model_target,60,mse_db2,1.5265813485248945
+600_800,centered,(ii) raw inputs,p6g3cau,model_target,mean,mae_db,0.489161422866305
+600_800,centered,(ii) raw inputs,p6g3cau,model_target,mean,mse_db2,1.0167007679150482
+600_800,centered,(ii) raw inputs,p6g3cau,raw_target,1,mae_db,0.8592519097616224
+600_800,centered,(ii) raw inputs,p6g3cau,raw_target,1,mse_db2,3.428777948167045
+600_800,centered,(ii) raw inputs,p6g3cau,raw_target,15,mae_db,0.9036400834996763
+600_800,centered,(ii) raw inputs,p6g3cau,raw_target,15,mse_db2,3.6472917370206077
+600_800,centered,(ii) raw inputs,p6g3cau,raw_target,60,mae_db,1.0062757466652548
+600_800,centered,(ii) raw inputs,p6g3cau,raw_target,60,mse_db2,4.20881787939796
+600_800,centered,(ii) raw inputs,p6g3cau,raw_target,mean,mae_db,0.9230559133088511
+600_800,centered,(ii) raw inputs,p6g3cau,raw_target,mean,mse_db2,3.7616291881952044
+600_800,causal,(i) model inputs,off,model_target,1,mae_db,0.46997595498583244
+600_800,causal,(i) model inputs,off,model_target,1,mse_db2,0.8618366106237261
+600_800,causal,(i) model inputs,off,model_target,15,mae_db,0.651557582712981
+600_800,causal,(i) model inputs,off,model_target,15,mse_db2,1.57397869157764
+600_800,causal,(i) model inputs,off,model_target,60,mae_db,0.7259988533532068
+600_800,causal,(i) model inputs,off,model_target,60,mse_db2,1.8883195733051439
+600_800,causal,(i) model inputs,off,model_target,mean,mae_db,0.6158441303506734
+600_800,causal,(i) model inputs,off,model_target,mean,mse_db2,1.4413782918355034
+600_800,causal,(i) model inputs,off,raw_target,1,mae_db,0.9140566734483424
+600_800,causal,(i) model inputs,off,raw_target,1,mse_db2,3.328298662548861
+600_800,causal,(i) model inputs,off,raw_target,15,mae_db,0.9417268130109707
+600_800,causal,(i) model inputs,off,raw_target,15,mse_db2,3.4630596271873793
+600_800,causal,(i) model inputs,off,raw_target,60,mae_db,1.0393416148227956
+600_800,causal,(i) model inputs,off,raw_target,60,mse_db2,4.019247145421999
+600_800,causal,(i) model inputs,off,raw_target,mean,mae_db,0.9650417004273696
+600_800,causal,(i) model inputs,off,raw_target,mean,mse_db2,3.603535145052746
+600_800,causal,(i) model inputs,p6g3cen,model_target,1,mae_db,0.46665738205366813
+600_800,causal,(i) model inputs,p6g3cen,model_target,1,mse_db2,0.8438254593865108
+600_800,causal,(i) model inputs,p6g3cen,model_target,15,mae_db,0.6386204541415145
+600_800,causal,(i) model inputs,p6g3cen,model_target,15,mse_db2,1.5141822613403193
+600_800,causal,(i) model inputs,p6g3cen,model_target,60,mae_db,0.7164153161191892
+600_800,causal,(i) model inputs,p6g3cen,model_target,60,mse_db2,1.839791480168453
+600_800,causal,(i) model inputs,p6g3cen,model_target,mean,mae_db,0.6072310507714572
+600_800,causal,(i) model inputs,p6g3cen,model_target,mean,mse_db2,1.3992664002984274
+600_800,causal,(i) model inputs,p6g3cen,raw_target,1,mae_db,0.9100520215110635
+600_800,causal,(i) model inputs,p6g3cen,raw_target,1,mse_db2,3.298924252379254
+600_800,causal,(i) model inputs,p6g3cen,raw_target,15,mae_db,0.9409233541108153
+600_800,causal,(i) model inputs,p6g3cen,raw_target,15,mse_db2,3.4561683786894997
+600_800,causal,(i) model inputs,p6g3cen,raw_target,60,mae_db,1.0385649511578123
+600_800,causal,(i) model inputs,p6g3cen,raw_target,60,mse_db2,4.011690824743464
+600_800,causal,(i) model inputs,p6g3cen,raw_target,mean,mae_db,0.9631801089265637
+600_800,causal,(i) model inputs,p6g3cen,raw_target,mean,mse_db2,3.588927818604073
+600_800,causal,(i) model inputs,p6g3cau,model_target,1,mae_db,0.495374639850368
+600_800,causal,(i) model inputs,p6g3cau,model_target,1,mse_db2,0.9401635264521445
+600_800,causal,(i) model inputs,p6g3cau,model_target,15,mae_db,0.6385519774229853
+600_800,causal,(i) model inputs,p6g3cau,model_target,15,mse_db2,1.514017066517517
+600_800,causal,(i) model inputs,p6g3cau,model_target,60,mae_db,0.7192147723912146
+600_800,causal,(i) model inputs,p6g3cau,model_target,60,mse_db2,1.8527359234107412
+600_800,causal,(i) model inputs,p6g3cau,model_target,mean,mae_db,0.6177137965548559
+600_800,causal,(i) model inputs,p6g3cau,model_target,mean,mse_db2,1.4356388387934675
+600_800,causal,(i) model inputs,p6g3cau,raw_target,1,mae_db,0.9193922102007572
+600_800,causal,(i) model inputs,p6g3cau,raw_target,1,mse_db2,3.3533290024527806
+600_800,causal,(i) model inputs,p6g3cau,raw_target,15,mae_db,0.9455931014588906
+600_800,causal,(i) model inputs,p6g3cau,raw_target,15,mse_db2,3.4823964867415267
+600_800,causal,(i) model inputs,p6g3cau,raw_target,60,mae_db,1.0427702634315466
+600_800,causal,(i) model inputs,p6g3cau,raw_target,60,mse_db2,4.03618147356017
+600_800,causal,(i) model inputs,p6g3cau,raw_target,mean,mae_db,0.9692518583637314
+600_800,causal,(i) model inputs,p6g3cau,raw_target,mean,mse_db2,3.6239689875848256
+600_800,causal,(ii) raw inputs,off,model_target,1,mae_db,0.4241430724928744
+600_800,causal,(ii) raw inputs,off,model_target,1,mse_db2,0.750443499139941
+600_800,causal,(ii) raw inputs,off,model_target,15,mae_db,0.645373350340337
+600_800,causal,(ii) raw inputs,off,model_target,15,mse_db2,1.7057779925546224
+600_800,causal,(ii) raw inputs,off,model_target,60,mae_db,0.7317254510709678
+600_800,causal,(ii) raw inputs,off,model_target,60,mse_db2,2.0662360640563384
+600_800,causal,(ii) raw inputs,off,model_target,mean,mae_db,0.6004139579680597
+600_800,causal,(ii) raw inputs,off,model_target,mean,mse_db2,1.5074858519169674
+600_800,causal,(ii) raw inputs,off,raw_target,1,mae_db,0.8499080069953309
+600_800,causal,(ii) raw inputs,off,raw_target,1,mse_db2,3.4037001018581234
+600_800,causal,(ii) raw inputs,off,raw_target,15,mae_db,0.9000477751267316
+600_800,causal,(ii) raw inputs,off,raw_target,15,mse_db2,3.6413316824203585
+600_800,causal,(ii) raw inputs,off,raw_target,60,mae_db,1.0023118482797146
+600_800,causal,(ii) raw inputs,off,raw_target,60,mse_db2,4.197558026917572
+600_800,causal,(ii) raw inputs,off,raw_target,mean,mae_db,0.917422543467259
+600_800,causal,(ii) raw inputs,off,raw_target,mean,mse_db2,3.7475299370653516
+600_800,causal,(ii) raw inputs,p6g3cen,model_target,1,mae_db,0.41826923243456077
+600_800,causal,(ii) raw inputs,p6g3cen,model_target,1,mse_db2,0.7169257764698896
+600_800,causal,(ii) raw inputs,p6g3cen,model_target,15,mae_db,0.6340363456680687
+600_800,causal,(ii) raw inputs,p6g3cen,model_target,15,mse_db2,1.6394819932595595
+600_800,causal,(ii) raw inputs,p6g3cen,model_target,60,mae_db,0.7220131772000868
+600_800,causal,(ii) raw inputs,p6g3cen,model_target,60,mse_db2,2.0054316677684403
+600_800,causal,(ii) raw inputs,p6g3cen,model_target,mean,mae_db,0.5914395851009054
+600_800,causal,(ii) raw inputs,p6g3cen,model_target,mean,mse_db2,1.453946479165963
+600_800,causal,(ii) raw inputs,p6g3cen,raw_target,1,mae_db,0.8312639022023269
+600_800,causal,(ii) raw inputs,p6g3cen,raw_target,1,mse_db2,3.2698892389702503
+600_800,causal,(ii) raw inputs,p6g3cen,raw_target,15,mae_db,0.899511919053654
+600_800,causal,(ii) raw inputs,p6g3cen,raw_target,15,mse_db2,3.621635083313915
+600_800,causal,(ii) raw inputs,p6g3cen,raw_target,60,mae_db,1.0018187417632833
+600_800,causal,(ii) raw inputs,p6g3cen,raw_target,60,mse_db2,4.178848121247532
+600_800,causal,(ii) raw inputs,p6g3cen,raw_target,mean,mae_db,0.9108648543397547
+600_800,causal,(ii) raw inputs,p6g3cen,raw_target,mean,mse_db2,3.6901241478438993
+600_800,causal,(ii) raw inputs,p6g3cau,model_target,1,mae_db,0.4390258599270512
+600_800,causal,(ii) raw inputs,p6g3cau,model_target,1,mse_db2,0.7915066317082832
+600_800,causal,(ii) raw inputs,p6g3cau,model_target,15,mae_db,0.6374464934567818
+600_800,causal,(ii) raw inputs,p6g3cau,model_target,15,mse_db2,1.6548887349643062
+600_800,causal,(ii) raw inputs,p6g3cau,model_target,60,mae_db,0.7246788139247484
+600_800,causal,(ii) raw inputs,p6g3cau,model_target,60,mse_db2,2.0181010105079458
+600_800,causal,(ii) raw inputs,p6g3cau,model_target,mean,mae_db,0.6003837224361938
+600_800,causal,(ii) raw inputs,p6g3cau,model_target,mean,mse_db2,1.4881654590601785
+600_800,causal,(ii) raw inputs,p6g3cau,raw_target,1,mae_db,0.8600137896615478
+600_800,causal,(ii) raw inputs,p6g3cau,raw_target,1,mse_db2,3.428756068048104
+600_800,causal,(ii) raw inputs,p6g3cau,raw_target,15,mae_db,0.9044179381053217
+600_800,causal,(ii) raw inputs,p6g3cau,raw_target,15,mse_db2,3.6471858564211916
+600_800,causal,(ii) raw inputs,p6g3cau,raw_target,60,mae_db,1.006451754761322
+600_800,causal,(ii) raw inputs,p6g3cau,raw_target,60,mse_db2,4.205780408383557
+600_800,causal,(ii) raw inputs,p6g3cau,raw_target,mean,mae_db,0.9236278275093972
+600_800,causal,(ii) raw inputs,p6g3cau,raw_target,mean,mse_db2,3.760574110950951
 2400_2600,off,(i) model inputs,off,model_target,1,mae_db,0.6626608153044066
 2400_2600,off,(i) model inputs,off,model_target,1,mse_db2,2.7215540922549746
 2400_2600,off,(i) model inputs,off,model_target,15,mae_db,0.7153590009097069
@@ -159,6 +319,22 @@ band,savgol,inputs,eval_smooth,target,horizon,metric,value
 2400_2600,off,(i) model inputs,p6g3cen,raw_target,60,mse_db2,3.9901614504669123
 2400_2600,off,(i) model inputs,p6g3cen,raw_target,mean,mae_db,0.7284880242502759
 2400_2600,off,(i) model inputs,p6g3cen,raw_target,mean,mse_db2,3.2453592602209764
+2400_2600,off,(i) model inputs,p6g3cau,model_target,1,mae_db,0.4686513950607098
+2400_2600,off,(i) model inputs,p6g3cau,model_target,1,mse_db2,1.2798802551514061
+2400_2600,off,(i) model inputs,p6g3cau,model_target,15,mae_db,0.5360590974497881
+2400_2600,off,(i) model inputs,p6g3cau,model_target,15,mse_db2,1.6772720272090575
+2400_2600,off,(i) model inputs,p6g3cau,model_target,60,mae_db,0.6621887134037461
+2400_2600,off,(i) model inputs,p6g3cau,model_target,60,mse_db2,2.574723105702776
+2400_2600,off,(i) model inputs,p6g3cau,model_target,mean,mae_db,0.5556330686380814
+2400_2600,off,(i) model inputs,p6g3cau,model_target,mean,mse_db2,1.8439584626877465
+2400_2600,off,(i) model inputs,p6g3cau,raw_target,1,mae_db,0.6720895882188774
+2400_2600,off,(i) model inputs,p6g3cau,raw_target,1,mse_db2,2.7861421154183383
+2400_2600,off,(i) model inputs,p6g3cau,raw_target,15,mae_db,0.718578707432933
+2400_2600,off,(i) model inputs,p6g3cau,raw_target,15,mse_db2,3.1347681585332277
+2400_2600,off,(i) model inputs,p6g3cau,raw_target,60,mae_db,0.8272674381222607
+2400_2600,off,(i) model inputs,p6g3cau,raw_target,60,mse_db2,4.032743383061322
+2400_2600,off,(i) model inputs,p6g3cau,raw_target,mean,mae_db,0.7393119112580236
+2400_2600,off,(i) model inputs,p6g3cau,raw_target,mean,mse_db2,3.3178845523376297
 2400_2600,off,(ii) raw inputs,off,model_target,1,mae_db,0.6626608153044066
 2400_2600,off,(ii) raw inputs,off,model_target,1,mse_db2,2.7215540922549746
 2400_2600,off,(ii) raw inputs,off,model_target,15,mae_db,0.7153590009097069
@@ -191,6 +367,22 @@ band,savgol,inputs,eval_smooth,target,horizon,metric,value
 2400_2600,off,(ii) raw inputs,p6g3cen,raw_target,60,mse_db2,3.9901614504669123
 2400_2600,off,(ii) raw inputs,p6g3cen,raw_target,mean,mae_db,0.7284880242502759
 2400_2600,off,(ii) raw inputs,p6g3cen,raw_target,mean,mse_db2,3.2453592602209764
+2400_2600,off,(ii) raw inputs,p6g3cau,model_target,1,mae_db,0.4686513950607098
+2400_2600,off,(ii) raw inputs,p6g3cau,model_target,1,mse_db2,1.2798802551514061
+2400_2600,off,(ii) raw inputs,p6g3cau,model_target,15,mae_db,0.5360590974497881
+2400_2600,off,(ii) raw inputs,p6g3cau,model_target,15,mse_db2,1.6772720272090575
+2400_2600,off,(ii) raw inputs,p6g3cau,model_target,60,mae_db,0.6621887134037461
+2400_2600,off,(ii) raw inputs,p6g3cau,model_target,60,mse_db2,2.574723105702776
+2400_2600,off,(ii) raw inputs,p6g3cau,model_target,mean,mae_db,0.5556330686380814
+2400_2600,off,(ii) raw inputs,p6g3cau,model_target,mean,mse_db2,1.8439584626877465
+2400_2600,off,(ii) raw inputs,p6g3cau,raw_target,1,mae_db,0.6720895882188774
+2400_2600,off,(ii) raw inputs,p6g3cau,raw_target,1,mse_db2,2.7861421154183383
+2400_2600,off,(ii) raw inputs,p6g3cau,raw_target,15,mae_db,0.718578707432933
+2400_2600,off,(ii) raw inputs,p6g3cau,raw_target,15,mse_db2,3.1347681585332277
+2400_2600,off,(ii) raw inputs,p6g3cau,raw_target,60,mae_db,0.8272674381222607
+2400_2600,off,(ii) raw inputs,p6g3cau,raw_target,60,mse_db2,4.032743383061322
+2400_2600,off,(ii) raw inputs,p6g3cau,raw_target,mean,mae_db,0.7393119112580236
+2400_2600,off,(ii) raw inputs,p6g3cau,raw_target,mean,mse_db2,3.3178845523376297
 2400_2600,centered,(i) model inputs,off,model_target,1,mae_db,0.17956844432838004
 2400_2600,centered,(i) model inputs,off,model_target,1,mse_db2,0.19479795994861274
 2400_2600,centered,(i) model inputs,off,model_target,15,mae_db,0.33559816358978384
@@ -223,6 +415,22 @@ band,savgol,inputs,eval_smooth,target,horizon,metric,value
 2400_2600,centered,(i) model inputs,p6g3cen,raw_target,60,mse_db2,3.8228218165835726
 2400_2600,centered,(i) model inputs,p6g3cen,raw_target,mean,mae_db,0.7425365599835678
 2400_2600,centered,(i) model inputs,p6g3cen,raw_target,mean,mse_db2,3.059954310811237
+2400_2600,centered,(i) model inputs,p6g3cau,model_target,1,mae_db,0.1982994230020395
+2400_2600,centered,(i) model inputs,p6g3cau,model_target,1,mse_db2,0.2357350408805078
+2400_2600,centered,(i) model inputs,p6g3cau,model_target,15,mae_db,0.3436534241362283
+2400_2600,centered,(i) model inputs,p6g3cau,model_target,15,mse_db2,0.6999506274173646
+2400_2600,centered,(i) model inputs,p6g3cau,model_target,60,mae_db,0.5102733689661427
+2400_2600,centered,(i) model inputs,p6g3cau,model_target,60,mse_db2,1.6205877030859517
+2400_2600,centered,(i) model inputs,p6g3cau,model_target,mean,mae_db,0.3507420720348035
+2400_2600,centered,(i) model inputs,p6g3cau,model_target,mean,mse_db2,0.852091123794608
+2400_2600,centered,(i) model inputs,p6g3cau,raw_target,1,mae_db,0.6711618960511925
+2400_2600,centered,(i) model inputs,p6g3cau,raw_target,1,mse_db2,2.482699951795615
+2400_2600,centered,(i) model inputs,p6g3cau,raw_target,15,mae_db,0.7368507012942167
+2400_2600,centered,(i) model inputs,p6g3cau,raw_target,15,mse_db2,2.990952350667768
+2400_2600,centered,(i) model inputs,p6g3cau,raw_target,60,mae_db,0.8398754929280052
+2400_2600,centered,(i) model inputs,p6g3cau,raw_target,60,mse_db2,3.8643769178325864
+2400_2600,centered,(i) model inputs,p6g3cau,raw_target,mean,mae_db,0.7492960300911381
+2400_2600,centered,(i) model inputs,p6g3cau,raw_target,mean,mse_db2,3.1126764067653236
 2400_2600,centered,(ii) raw inputs,off,model_target,1,mae_db,0.2672759451419818
 2400_2600,centered,(ii) raw inputs,off,model_target,1,mse_db2,0.3731277218960641
 2400_2600,centered,(ii) raw inputs,off,model_target,15,mae_db,0.3932906086427988
@@ -255,6 +463,118 @@ band,savgol,inputs,eval_smooth,target,horizon,metric,value
 2400_2600,centered,(ii) raw inputs,p6g3cen,raw_target,60,mse_db2,3.9901614504669123
 2400_2600,centered,(ii) raw inputs,p6g3cen,raw_target,mean,mae_db,0.7284880242502759
 2400_2600,centered,(ii) raw inputs,p6g3cen,raw_target,mean,mse_db2,3.2453592602209764
+2400_2600,centered,(ii) raw inputs,p6g3cau,model_target,1,mae_db,0.2752830126916377
+2400_2600,centered,(ii) raw inputs,p6g3cau,model_target,1,mse_db2,0.40116161664115657
+2400_2600,centered,(ii) raw inputs,p6g3cau,model_target,15,mae_db,0.39422044347863444
+2400_2600,centered,(ii) raw inputs,p6g3cau,model_target,15,mse_db2,0.8918473412388243
+2400_2600,centered,(ii) raw inputs,p6g3cau,model_target,60,mae_db,0.5423117082079041
+2400_2600,centered,(ii) raw inputs,p6g3cau,model_target,60,mse_db2,1.7899543839997796
+2400_2600,centered,(ii) raw inputs,p6g3cau,model_target,mean,mae_db,0.40393838812605876
+2400_2600,centered,(ii) raw inputs,p6g3cau,model_target,mean,mse_db2,1.0276544472932534
+2400_2600,centered,(ii) raw inputs,p6g3cau,raw_target,1,mae_db,0.6720895882188774
+2400_2600,centered,(ii) raw inputs,p6g3cau,raw_target,1,mse_db2,2.7861421154183383
+2400_2600,centered,(ii) raw inputs,p6g3cau,raw_target,15,mae_db,0.718578707432933
+2400_2600,centered,(ii) raw inputs,p6g3cau,raw_target,15,mse_db2,3.1347681585332277
+2400_2600,centered,(ii) raw inputs,p6g3cau,raw_target,60,mae_db,0.8272674381222607
+2400_2600,centered,(ii) raw inputs,p6g3cau,raw_target,60,mse_db2,4.032743383061322
+2400_2600,centered,(ii) raw inputs,p6g3cau,raw_target,mean,mae_db,0.7393119112580236
+2400_2600,centered,(ii) raw inputs,p6g3cau,raw_target,mean,mse_db2,3.3178845523376297
+2400_2600,causal,(i) model inputs,off,model_target,1,mae_db,0.3900248259930402
+2400_2600,causal,(i) model inputs,off,model_target,1,mse_db2,0.8747347397975902
+2400_2600,causal,(i) model inputs,off,model_target,15,mae_db,0.5838158971370995
+2400_2600,causal,(i) model inputs,off,model_target,15,mse_db2,1.911719322959579
+2400_2600,causal,(i) model inputs,off,model_target,60,mae_db,0.6496195072805476
+2400_2600,causal,(i) model inputs,off,model_target,60,mse_db2,2.462836474212234
+2400_2600,causal,(i) model inputs,off,model_target,mean,mae_db,0.5411534101368958
+2400_2600,causal,(i) model inputs,off,model_target,mean,mse_db2,1.7497635123231345
+2400_2600,causal,(i) model inputs,off,raw_target,1,mae_db,0.7242227792537173
+2400_2600,causal,(i) model inputs,off,raw_target,1,mse_db2,2.9087147375144977
+2400_2600,causal,(i) model inputs,off,raw_target,15,mae_db,0.764401118756854
+2400_2600,causal,(i) model inputs,off,raw_target,15,mse_db2,3.2320980243138204
+2400_2600,causal,(i) model inputs,off,raw_target,60,mae_db,0.8660190096848065
+2400_2600,causal,(i) model inputs,off,raw_target,60,mse_db2,4.139434926701985
+2400_2600,causal,(i) model inputs,off,raw_target,mean,mae_db,0.7848809692317925
+2400_2600,causal,(i) model inputs,off,raw_target,mean,mse_db2,3.4267492295101007
+2400_2600,causal,(i) model inputs,p6g3cen,model_target,1,mae_db,0.38830052255764236
+2400_2600,causal,(i) model inputs,p6g3cen,model_target,1,mse_db2,0.8669651281662355
+2400_2600,causal,(i) model inputs,p6g3cen,model_target,15,mae_db,0.5731991773588772
+2400_2600,causal,(i) model inputs,p6g3cen,model_target,15,mse_db2,1.8529232575587926
+2400_2600,causal,(i) model inputs,p6g3cen,model_target,60,mae_db,0.6411610994625642
+2400_2600,causal,(i) model inputs,p6g3cen,model_target,60,mse_db2,2.413741836709563
+2400_2600,causal,(i) model inputs,p6g3cen,model_target,mean,mae_db,0.5342202664596946
+2400_2600,causal,(i) model inputs,p6g3cen,model_target,mean,mse_db2,1.7112100741448637
+2400_2600,causal,(i) model inputs,p6g3cen,raw_target,1,mae_db,0.7210258517562184
+2400_2600,causal,(i) model inputs,p6g3cen,raw_target,1,mse_db2,2.8865125206592372
+2400_2600,causal,(i) model inputs,p6g3cen,raw_target,15,mae_db,0.7624070888687291
+2400_2600,causal,(i) model inputs,p6g3cen,raw_target,15,mse_db2,3.2160562034603495
+2400_2600,causal,(i) model inputs,p6g3cen,raw_target,60,mae_db,0.8643458142671573
+2400_2600,causal,(i) model inputs,p6g3cen,raw_target,60,mse_db2,4.124518574101196
+2400_2600,causal,(i) model inputs,p6g3cen,raw_target,mean,mae_db,0.7825929182973682
+2400_2600,causal,(i) model inputs,p6g3cen,raw_target,mean,mse_db2,3.409029099406928
+2400_2600,causal,(i) model inputs,p6g3cau,model_target,1,mae_db,0.41258350089983203
+2400_2600,causal,(i) model inputs,p6g3cau,model_target,1,mse_db2,0.9711588522684274
+2400_2600,causal,(i) model inputs,p6g3cau,model_target,15,mae_db,0.5761039885336445
+2400_2600,causal,(i) model inputs,p6g3cau,model_target,15,mse_db2,1.874121254985189
+2400_2600,causal,(i) model inputs,p6g3cau,model_target,60,mae_db,0.6442130211417106
+2400_2600,causal,(i) model inputs,p6g3cau,model_target,60,mse_db2,2.436185897274214
+2400_2600,causal,(i) model inputs,p6g3cau,model_target,mean,mae_db,0.544300170191729
+2400_2600,causal,(i) model inputs,p6g3cau,model_target,mean,mse_db2,1.7604886681759435
+2400_2600,causal,(i) model inputs,p6g3cau,raw_target,1,mae_db,0.7299914718457913
+2400_2600,causal,(i) model inputs,p6g3cau,raw_target,1,mse_db2,2.958248675236117
+2400_2600,causal,(i) model inputs,p6g3cau,raw_target,15,mae_db,0.7669300649598484
+2400_2600,causal,(i) model inputs,p6g3cau,raw_target,15,mse_db2,3.251993474281432
+2400_2600,causal,(i) model inputs,p6g3cau,raw_target,60,mae_db,0.8689270292330313
+2400_2600,causal,(i) model inputs,p6g3cau,raw_target,60,mse_db2,4.164989705311662
+2400_2600,causal,(i) model inputs,p6g3cau,raw_target,mean,mae_db,0.788616188679557
+2400_2600,causal,(i) model inputs,p6g3cau,raw_target,mean,mse_db2,3.4584106182764036
+2400_2600,causal,(ii) raw inputs,off,model_target,1,mae_db,0.3372627993300133
+2400_2600,causal,(ii) raw inputs,off,model_target,1,mse_db2,0.6054964071824175
+2400_2600,causal,(ii) raw inputs,off,model_target,15,mae_db,0.5268021512134559
+2400_2600,causal,(ii) raw inputs,off,model_target,15,mse_db2,1.5985690720220183
+2400_2600,causal,(ii) raw inputs,off,model_target,60,mae_db,0.6266238085899833
+2400_2600,causal,(ii) raw inputs,off,model_target,60,mse_db2,2.3215961823491136
+2400_2600,causal,(ii) raw inputs,off,model_target,mean,mae_db,0.4968962530444842
+2400_2600,causal,(ii) raw inputs,off,model_target,mean,mse_db2,1.5085538871845163
+2400_2600,causal,(ii) raw inputs,off,raw_target,1,mae_db,0.6626608153044066
+2400_2600,causal,(ii) raw inputs,off,raw_target,1,mse_db2,2.7215540922549746
+2400_2600,causal,(ii) raw inputs,off,raw_target,15,mae_db,0.7153590009097069
+2400_2600,causal,(ii) raw inputs,off,raw_target,15,mse_db2,3.114581679946164
+2400_2600,causal,(ii) raw inputs,off,raw_target,60,mae_db,0.8239306419330963
+2400_2600,causal,(ii) raw inputs,off,raw_target,60,mse_db2,4.006558670684146
+2400_2600,causal,(ii) raw inputs,off,raw_target,mean,mae_db,0.73398348604907
+2400_2600,causal,(ii) raw inputs,off,raw_target,mean,mse_db2,3.2808981476284287
+2400_2600,causal,(ii) raw inputs,p6g3cen,model_target,1,mae_db,0.333666690681282
+2400_2600,causal,(ii) raw inputs,p6g3cen,model_target,1,mse_db2,0.5933873781274847
+2400_2600,causal,(ii) raw inputs,p6g3cen,model_target,15,mae_db,0.5183611079004689
+2400_2600,causal,(ii) raw inputs,p6g3cen,model_target,15,mse_db2,1.5518748970810965
+2400_2600,causal,(ii) raw inputs,p6g3cen,model_target,60,mae_db,0.6181452212202342
+2400_2600,causal,(ii) raw inputs,p6g3cen,model_target,60,mse_db2,2.2699468889146557
+2400_2600,causal,(ii) raw inputs,p6g3cen,model_target,mean,mae_db,0.4900576732673283
+2400_2600,causal,(ii) raw inputs,p6g3cen,model_target,mean,mse_db2,1.471736388041079
+2400_2600,causal,(ii) raw inputs,p6g3cen,raw_target,1,mae_db,0.6495829290679573
+2400_2600,causal,(ii) raw inputs,p6g3cen,raw_target,1,mse_db2,2.6496442318769837
+2400_2600,causal,(ii) raw inputs,p6g3cen,raw_target,15,mae_db,0.7134946423373401
+2400_2600,causal,(ii) raw inputs,p6g3cen,raw_target,15,mse_db2,3.096272098319034
+2400_2600,causal,(ii) raw inputs,p6g3cen,raw_target,60,mae_db,0.8223865013455302
+2400_2600,causal,(ii) raw inputs,p6g3cen,raw_target,60,mse_db2,3.9901614504669123
+2400_2600,causal,(ii) raw inputs,p6g3cen,raw_target,mean,mae_db,0.7284880242502759
+2400_2600,causal,(ii) raw inputs,p6g3cen,raw_target,mean,mse_db2,3.2453592602209764
+2400_2600,causal,(ii) raw inputs,p6g3cau,model_target,1,mae_db,0.3506173429849846
+2400_2600,causal,(ii) raw inputs,p6g3cau,model_target,1,mse_db2,0.6626302021689905
+2400_2600,causal,(ii) raw inputs,p6g3cau,model_target,15,mae_db,0.5254052792845985
+2400_2600,causal,(ii) raw inputs,p6g3cau,model_target,15,mse_db2,1.5972246060991178
+2400_2600,causal,(ii) raw inputs,p6g3cau,model_target,60,mae_db,0.6211434057838332
+2400_2600,causal,(ii) raw inputs,p6g3cau,model_target,60,mse_db2,2.2926655619377736
+2400_2600,causal,(ii) raw inputs,p6g3cau,model_target,mean,mae_db,0.4990553426844721
+2400_2600,causal,(ii) raw inputs,p6g3cau,model_target,mean,mse_db2,1.5175067900686272
+2400_2600,causal,(ii) raw inputs,p6g3cau,raw_target,1,mae_db,0.6720895882188774
+2400_2600,causal,(ii) raw inputs,p6g3cau,raw_target,1,mse_db2,2.7861421154183383
+2400_2600,causal,(ii) raw inputs,p6g3cau,raw_target,15,mae_db,0.718578707432933
+2400_2600,causal,(ii) raw inputs,p6g3cau,raw_target,15,mse_db2,3.1347681585332277
+2400_2600,causal,(ii) raw inputs,p6g3cau,raw_target,60,mae_db,0.8272674381222607
+2400_2600,causal,(ii) raw inputs,p6g3cau,raw_target,60,mse_db2,4.032743383061322
+2400_2600,causal,(ii) raw inputs,p6g3cau,raw_target,mean,mae_db,0.7393119112580236
+2400_2600,causal,(ii) raw inputs,p6g3cau,raw_target,mean,mse_db2,3.3178845523376297
 600_800,off,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,model_target,1,mae_db,1.1481203978026164
 600_800,off,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,model_target,1,mse_db2,4.490363776926452
 600_800,off,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,model_target,15,mae_db,1.1710453476080824
@@ -351,6 +671,38 @@ band,savgol,inputs,eval_smooth,target,horizon,metric,value
 600_800,centered,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,raw_target,60,mse_db2,4.55720874616319
 600_800,centered,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,raw_target,mean,mae_db,1.1570091419411532
 600_800,centered,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,raw_target,mean,mse_db2,4.49652898631663
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,model_target,1,mae_db,0.8664990251339473
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,model_target,1,mse_db2,2.444358854253122
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,model_target,15,mae_db,0.9227836215716845
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,model_target,15,mse_db2,2.773445805552131
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,model_target,60,mae_db,0.8978185219950234
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,model_target,60,mse_db2,2.5880778754301694
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,model_target,mean,mae_db,0.8957003895668849
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,model_target,mean,mse_db2,2.601960845078474
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,raw_target,1,mae_db,1.1653984253263696
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,raw_target,1,mse_db2,4.5873257246252015
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,raw_target,15,mae_db,1.2005325779175926
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,raw_target,15,mse_db2,4.897832903907543
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,raw_target,60,mae_db,1.1904610965624827
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,raw_target,60,mse_db2,4.716067493326075
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,raw_target,mean,mae_db,1.1854640332688149
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,raw_target,mean,mse_db2,4.733742040619607
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,model_target,1,mae_db,0.8447014832280667
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,model_target,1,mse_db2,2.3259312209379237
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,model_target,15,mae_db,0.8883583127367484
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,model_target,15,mse_db2,2.5754082290571905
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,model_target,60,mae_db,0.8768696671104952
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,model_target,60,mse_db2,2.4699391179344032
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,model_target,mean,mae_db,0.8699764876917702
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,model_target,mean,mse_db2,2.457092855976506
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,raw_target,1,mae_db,1.1552123940715913
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,raw_target,1,mse_db2,4.510054277852729
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,raw_target,15,mae_db,1.1802628613916757
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,raw_target,15,mse_db2,4.743558410066689
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,raw_target,60,mae_db,1.1811059256631213
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,raw_target,60,mse_db2,4.643038431852139
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,raw_target,mean,mae_db,1.1721937270421292
+600_800,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,raw_target,mean,mse_db2,4.6322170399238525
 2400_2600,off,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,model_target,1,mae_db,0.8300974571413444
 2400_2600,off,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,model_target,1,mse_db2,3.6255943612620976
 2400_2600,off,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,model_target,15,mae_db,0.8411624321594303
@@ -383,3 +735,35 @@ band,savgol,inputs,eval_smooth,target,horizon,metric,value
 2400_2600,off,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,raw_target,60,mse_db2,3.9735522426543937
 2400_2600,off,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,raw_target,mean,mae_db,0.8337123660562848
 2400_2600,off,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,raw_target,mean,mse_db2,3.630927264920902
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,model_target,1,mae_db,0.5433508154636106
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,model_target,1,mse_db2,1.2864565190212867
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,model_target,15,mae_db,0.6375460518907308
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,model_target,15,mse_db2,1.9442729680676725
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,model_target,60,mae_db,0.6566594367930133
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,model_target,60,mse_db2,2.1047988912163524
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,model_target,mean,mae_db,0.6125187680491182
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,model_target,mean,mse_db2,1.7785094594351036
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,raw_target,1,mae_db,0.8020417750334344
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,raw_target,1,mse_db2,3.1377712470958046
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,raw_target,15,mae_db,0.8446067537116843
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,raw_target,15,mse_db2,3.6355332616918035
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,raw_target,60,mae_db,0.8621239540357999
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,raw_target,60,mse_db2,3.776671618101557
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,raw_target,mean,mae_db,0.8362574942603063
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",off,raw_target,mean,mse_db2,3.5166587089630545
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,model_target,1,mae_db,0.5249179274480579
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,model_target,1,mse_db2,1.1987881065239554
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,model_target,15,mae_db,0.6127805729441932
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,model_target,15,mse_db2,1.79956389301072
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,model_target,60,mae_db,0.6365049567273996
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,model_target,60,mse_db2,1.976374655995432
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,model_target,mean,mae_db,0.5914011523732169
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,model_target,mean,mse_db2,1.6582422185100358
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,raw_target,1,mae_db,0.794811047378475
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,raw_target,1,mse_db2,3.082309226510515
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,raw_target,15,mae_db,0.830923001305816
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,raw_target,15,mse_db2,3.52516179139606
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,raw_target,60,mae_db,0.8522416098864894
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,raw_target,60,mse_db2,3.688298390407124
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,raw_target,mean,mae_db,0.8259918861902602
+2400_2600,causal,"TSS-LCD (authors' defaults, mean of 5 seeds)",p6g3cau,raw_target,mean,mse_db2,3.4319231361045666
