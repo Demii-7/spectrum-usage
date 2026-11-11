@@ -123,5 +123,10 @@
   "id": "claude-uc-tsl-seedfix-default-gpu-3",
   "entrypoint": "python -u -m training.ray.tsl_runs run --models PatchTST Informer Reformer --datasets spec4 spec25 --horizons 12 48 192 --seeds 40 41 42 43 44 --output-prefix electrosense-results/seedfix-default --skip-done --gpu-fraction 0.25 --max-parallel 6",
   "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-tsslcd15-tune-2400-1",
+  "entrypoint": "python -u -m training.ray.tune_tsslcd --resolution 15min --band 2400_2600 --budget 16 --gpu-fraction 1.0 --max-parallel 3",
+  "max_restarts": 4
  }
 ]
