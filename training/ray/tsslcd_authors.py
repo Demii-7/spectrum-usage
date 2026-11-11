@@ -247,6 +247,7 @@ def run_one(args: dict[str, Any]) -> dict[str, Any]:
     device = torch.device("cuda" if torch.cuda.is_available() and args.get("device") != "cpu" else "cpu")
     seed, savgol = int(args["seed"]), args["savgol"]
     profile = args.get("resolution", "1min")
+    band = args.get("band", "600_800")
     CONTEXT, FUTURE, HORIZONS = (PROFILES[profile][k] for k in ("context", "future", "horizons"))      # shadow the 1-minute module constants
     hp = {"latent_dim": LATENT_DIM, "learning_rate": LEARNING_RATE, "batch_size": BATCH, "train_mask_ratio": TRAIN_MASK,
           **(args.get("hparams") or {})}          # the authors' defaults unless a tuning trial overrides them (constructor / optimiser settings only)
@@ -259,14 +260,14 @@ def run_one(args: dict[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {"savgol": savgol, "seed": seed, "epochs": args["epochs"], "device": str(device),
                               "context": CONTEXT, "future": FUTURE, "latent_dim": latent_dim, "n_timesteps": N_TIMESTEPS,
                               "batch_size": batch_size, "train_mask_ratio": train_mask, "learning_rate": learning_rate,
-                              "score_partition": score_partition, "resolution": profile, "horizons": list(HORIZONS),
+                              "score_partition": score_partition, "resolution": profile, "band": band, "horizons": list(HORIZONS),
                               "eval_mask_ratio": args["eval_mask_ratio"], "sites": list(SITES)}
 
     if profile != "1min":
         from training.ray.powder15 import ensure_powder15
-        ensure_powder15(args.get("band", "600_800"), root, tuple(SITES))
-    train_raw, train_model, train_bounds, scaler = build_partition(root, "train", None, savgol, profile=profile)
-    test_raw, test_model, test_bounds, _ = build_partition(root, score_partition, scaler, savgol, profile=profile)
+        ensure_powder15(band, root, tuple(SITES))
+    train_raw, train_model, train_bounds, scaler = build_partition(root, "train", None, savgol, band=band, profile=profile)
+    test_raw, test_model, test_bounds, _ = build_partition(root, score_partition, scaler, savgol, band=band, profile=profile)
     n_cols = train_model.shape[1]
     train_starts = window_starts(train_bounds, CONTEXT + FUTURE)
     test_starts = window_starts(test_bounds, CONTEXT + FUTURE, args["test_stride"])
@@ -400,6 +401,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--epochs-ctx", type=int, default=EPOCHS["ctx"])
     p.add_argument("--epochs-fut", type=int, default=EPOCHS["fut"])
     p.add_argument("--epochs-diff", type=int, default=EPOCHS["diff"])
+    p.add_argument("--band", default="600_800", choices=("600_800", "2400_2600"), help="the 4 core receivers, 200 one-MHz bins of this band")
     p.add_argument("--resolution", default="1min", choices=sorted(PROFILES), help="15min: benchmark windowing on data/powder15")
     p.add_argument("--hparams", default=None, help="JSON of constructor/optimiser overrides (latent_dim, learning_rate, batch_size, train_mask_ratio)")
     p.add_argument("--test-stride", type=int, default=1, help="1 for real results; larger only for timing runs")
@@ -436,7 +438,7 @@ def main(argv=None) -> None:
             specs.append({"savgol": savgol, "seed": seed, "repo_root": args.repo_root, "bucket": bucket,
                           "output_prefix": args.output_prefix, "device": args.device,
                           "epochs": {"ctx": args.epochs_ctx, "fut": args.epochs_fut, "diff": args.epochs_diff},
-                          "test_stride": args.test_stride, "eval_mask_ratio": args.eval_mask_ratio, "resolution": args.resolution,
+                          "test_stride": args.test_stride, "eval_mask_ratio": args.eval_mask_ratio, "resolution": args.resolution, "band": args.band,
                           "hparams": json.loads(args.hparams) if args.hparams else None,
                           "eval_smooth": eval_smooth})
     print(f"[tsslcd-authors] {len(specs)} runs", flush=True)
