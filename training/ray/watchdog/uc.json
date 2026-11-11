@@ -28,5 +28,60 @@
   "id": "claude-uc-tsslcd-finals-1",
   "entrypoint": "python -u -m training.ray.tune_tsslcd --budget 16 --skip-trials --max-parallel 5 --gpu-fraction 1.0",
   "max_restarts": 3
+ },
+ {
+  "id": "claude-uc-tsslcd15-tune-1",
+  "entrypoint": "python -u -m training.ray.tune_tsslcd --resolution 15min --budget 16 --gpu-fraction 1.0 --max-parallel 3",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-tsslcd15-2400-1",
+  "entrypoint": "python -u -m training.ray.tsslcd_authors --resolution 15min --band 2400_2600 --savgol off causal --eval-smooth 1:1:centered --output-prefix tsslcd-authors-15min-default-2400 --gpu-fraction 1.0",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-tsslcd1-2400-1",
+  "entrypoint": "bash -c \"python -u -m training.ray.tsslcd_authors --resolution 1min --band 2400_2600 --savgol off --eval-smooth 1:1:centered --eval-smooth 6:3:causal --output-prefix tsslcd-authors-full-2400 --gpu-fraction 1.0 && python -u -m training.ray.tsslcd_authors --resolution 1min --band 2400_2600 --savgol causal --eval-smooth 1:1:centered --eval-smooth 6:3:causal --output-prefix tsslcd-authors-full-2400 --gpu-fraction 1.0\"",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-tsslcd1-causal-1",
+  "entrypoint": "python -u -m training.ray.tsslcd_authors --resolution 1min --savgol causal --eval-smooth 1:1:centered --eval-smooth 6:3:causal --output-prefix tsslcd-authors-full --gpu-fraction 1.0",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-timeran1min-1",
+  "entrypoint": "python -u -m training.ray.tune_direct --resolution 1min --bucket spectrum --output-prefix direct-tuning --models timeran_lp moment_lp --max-parallel 2",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-rescore-fullrange-1",
+  "entrypoint": "python -u -m training.ray.rescore --sources oct p15tuned --skip-done --no-pin --max-parallel 4 --gpu-fraction 0.25",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-tall-direct-cheap-2",
+  "entrypoint": "python -u -m training.ray.transfer_all run --source direct --skip-done --max-parallel 30",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-tall-rolled-2",
+  "entrypoint": "python -u -m training.ray.transfer_all run --source rolled --skip-done --max-parallel 16 --memory-gb 12",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-tall-llm-1",
+  "entrypoint": "python -u -m training.ray.transfer_all run --source direct --models ofa ofa_rand ofa_scratch timeran_lp moment_lp --skip-done --max-parallel 8",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-tall-timellm-1",
+  "entrypoint": "python -u -m training.ray.transfer_all run --source direct --models timellm --seeds 40 41 42 --skip-done --max-parallel 3",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-july-transfer-3",
+  "entrypoint": "python -u -m training.ray.transfer_july run --skip-done --max-parallel 140 --memory-gb 3",
+  "max_restarts": 4
  }
 ]
