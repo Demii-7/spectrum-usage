@@ -16,6 +16,9 @@ Outputs: ``<prefix>/<regime>/<platform>/<site>/<run>/<band>/<rep>/<model>[/h<h>]
 
     python -m training.ray.transfer_all run --source direct --models revinmlp patchtst --skip-done
     python -m training.ray.transfer_all run --source rolled --regimes C Cm --skip-done
+    # June-July POWDER targets (frozen by ``training.ray.transfer_july freeze``), results under their own prefix:
+    python -m training.ray.transfer_all run --source direct --groups powder --no-core-powder --intervals evaluation/analysis/transfer_july_intervals.csv \\
+        --prefix transfer-all-july-2026 --skip-done
 """
 
 from __future__ import annotations
@@ -50,12 +53,26 @@ REGIME_TEXT = {
 
 
 # ---------------------------------------------------------------------------------------------- targets
-def targets(repo_root: str, groups: list[str], bands: list[str], intervals: str = "evaluation/analysis/transfer_external_intervals.csv") -> list[dict]:
+EXTERNAL_INTERVALS = "evaluation/analysis/transfer_external_intervals.csv"
+JULY_INTERVALS = "evaluation/analysis/transfer_july_intervals.csv"          # frozen June-July POWDER targets (``training.ray.transfer_july freeze``)
+
+
+def is_core_target(t: dict[str, Any]) -> bool:
+    """True for the October test-week POWDER targets (guesthouse, law73: converted by ``powder15``); every other target, including the frozen
+    June-July POWDER runs (platform ``powder``, a different run), is converted like an external site (``transfer_external.convert``)."""
+    from training.ray.powder15 import TEST_RUN
+
+    return t["platform"] == "powder" and t.get("run") == TEST_RUN
+
+
+def targets(repo_root: str, groups: list[str], bands: list[str], intervals: str = EXTERNAL_INTERVALS, core: bool = True) -> list[dict]:
+    """Targets to score. ``intervals`` is a frozen interval table (external sites by default, ``JULY_INTERVALS`` for the June-July POWDER runs);
+    ``core`` adds the October held-out receivers (set it False with a table of POWDER runs so they are not added again)."""
     from training.ray import transfer15 as t15
     from training.ray.powder15 import TEST_RUN
 
     out: list[dict[str, Any]] = []
-    if "powder" in groups:
+    if core and "powder" in groups:
         out += [{"platform": "powder", "site": r, "run": TEST_RUN, "band": b, "n_origins": POWDER_ORIGINS} for b in bands for r in t15.HELD_OUT]
     table = pd.read_csv(Path(repo_root) / intervals)
     for row in table.to_dict("records"):
@@ -73,7 +90,7 @@ def prepare_target(root: str, t: dict[str, Any]):
     from training.ray import transfer15 as t15
     from training.ray import transfer_external as te
 
-    if t["platform"] == "powder":
+    if is_core_target(t):
         from training.ray.powder15 import SPATIAL_NODES, ensure_powder15
 
         ensure_powder15(t["band"], root, SPATIAL_NODES)
@@ -198,7 +215,7 @@ def cmd_run(a: argparse.Namespace) -> None:
             revision = subprocess.run(["git", "-C", a.repo_root, "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
         except Exception:
             revision = "unknown"
-    tgts = targets(a.repo_root, a.groups, a.bands)
+    tgts = targets(a.repo_root, a.groups, a.bands, getattr(a, "intervals", None) or EXTERNAL_INTERVALS, not getattr(a, "no_core_powder", False))
     if a.targets:
         tgts = [t for t in tgts if any(s in target_key(t) for s in a.targets)]
     if a.source == "rolled":
@@ -273,6 +290,8 @@ def main(argv=None) -> None:
     r.add_argument("--bands", nargs="+", default=["600_800", "2400_2600"])
     r.add_argument("--groups", nargs="+", default=["powder", "cosmos", "aerpaw", "ara"])
     r.add_argument("--targets", nargs="+", help="only targets whose key contains one of these strings (smoke tests)")
+    r.add_argument("--intervals", default=EXTERNAL_INTERVALS, help=f"frozen interval table; {JULY_INTERVALS} for the June-July POWDER runs")
+    r.add_argument("--no-core-powder", action="store_true", help="do not add the October guesthouse/law73 targets (use with --intervals of POWDER runs)")
     r.add_argument("--reps", nargs="+", default=["1d", "2d"], choices=["1d", "2d"])
     r.add_argument("--seeds", type=int, nargs="+", default=[40, 41, 42, 43, 44])
     r.add_argument("--horizons", type=int, nargs="+", default=[1, 4, 12, 24, 48], help="trained horizons (direct source)")
