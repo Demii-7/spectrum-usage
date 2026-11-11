@@ -32,3 +32,13 @@ def test_negative_offsets_keep_their_sign():
     base, shifted = _forecasts((10, 3), lambda x: x - 5.0)
     row = response_rows(base, shifted, -5.0)[0]
     assert abs(row["gain"] - 1.0) < 1e-9 and abs(row["mean_shift_db"] + 5.0) < 1e-9
+
+
+def test_resources_for_large_and_cheap_models():
+    from training.ray.offset_response import resources_for
+
+    assert resources_for("revinmlp", None, 8.0) == (0.0, 8.0)                    # cheap models stay on CPU
+    assert resources_for("timellm", None, 8.0) == (1.0, 24.0)                    # the large models reserve a GPU share and 24 GB
+    assert resources_for("ofa", None, 8.0) == (0.5, 24.0)
+    assert resources_for("moment_lp", 0.1, 30.0) == (0.1, 30.0)                  # an explicit share wins; memory never drops below 24 GB
+    assert resources_for("patchtst", 0.25, 8.0) == (0.25, 8.0)
