@@ -91,6 +91,9 @@ def aggregate(raw: pd.DataFrame) -> pd.DataFrame:
                              ("linearar2d", "residuallinearar2d", "residualvanillalstm", "vanillalstm", "linearar1d", "residuallinearar1d")
                              and False else r["model"], axis=1)
     per_target = raw.groupby(["group", "band", "target", "regime", "rep", "model", "horizon"]).mae.mean().reset_index()
+    # the October POWDER group is the held-out receivers only (guesthouse, law73): the baselines also exist for the four core receivers, which no model is
+    # transferred to, so they must not count towards the expected number of targets
+    per_target = per_target[~((per_target.group == "powder") & ~per_target.target.str.contains("guesthouse|law73"))]
     group_mean = per_target.groupby(["group", "band", "regime", "rep", "model", "horizon"]).agg(mae=("mae", "mean"), n_targets=("target", "nunique")).reset_index()
     expected = (per_target[per_target.regime == "baseline"].groupby(["group", "band"]).target.nunique().rename("n_expected").reset_index())
     group_mean = group_mean.merge(expected, on=["group", "band"], how="left")
