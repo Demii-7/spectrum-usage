@@ -59,7 +59,15 @@ LOOKBACK = 96
 
 from training.ray import transfer_external as te  # noqa: E402
 
-te.BANDS.update(CROSS_BANDS)           # conversion and task construction of transfer_external know the new bands (also in every worker: module import)
+
+
+def register_bands() -> None:
+    """Make ``transfer_external`` (conversion, task construction) know the new bands. Called at import and again at the start of every worker
+    function: the driver runs as ``__main__``, so Ray pickles the worker functions by value and the import-time update does not run there."""
+    te.BANDS.update(CROSS_BANDS)
+
+
+register_bands()
 
 
 # ------------------------------------------------------------------------------------------ pure helpers
@@ -107,6 +115,7 @@ def targets(repo_root: str, bands: list[str], intervals: str = INTERVALS_CSV) ->
 # ---------------------------------------------------------------------------------------------- workers
 def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     """One model group on one frozen target, regimes on identical windows (``transfer_all.job`` with a per-source-band output prefix)."""
+    register_bands()
     from training.ray import transfer_all as ta
 
     source_band = spec["entries"][0]["band"]
@@ -115,6 +124,7 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
 
 def baseline_job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     """Persistence and the lookback mean on one frozen target (independent of the source band)."""
+    register_bands()
     return te.baseline_job(spec, args)
 
 
