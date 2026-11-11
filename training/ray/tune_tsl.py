@@ -14,6 +14,12 @@ Records are written as they finish, so a restart skips completed work:
 
     python -m training.ray.tsl_runs setup
     python -m training.ray.tune_tsl --models PatchTST DLinear --output-prefix electrosense-results/tuned-tsl
+
+Seed fix: the library's run.py hardcoded its seed, so the finals above (seeds 40-44) are identical runs. ``--winners-from`` re-runs only the
+finals with the winners already chosen (no new search) and real seeds (``tsl_runs.patch_seed`` makes run.py read ``TSL_SEED``):
+
+    python -m training.ray.tune_tsl --models DLinear PatchTST --winners-from electrosense-results/tuned-tsl \
+        --output-prefix electrosense-results/seedfix-tuned --datasets spec4 spec25 --horizons 12 48 192 --cpu --cpus 4 --max-parallel 12
 """
 
 from __future__ import annotations
@@ -117,6 +123,21 @@ def trial_key(prefix: str, dataset: str, model: str, index: int, horizon: int) -
     return f"{prefix.strip('/')}/trials/{dataset}/{model}/c{index:02d}_h{horizon}.json"
 
 
+def load_winners(client, bucket: str, prefixes: list[str], models, datasets) -> dict[tuple[str, str], dict[str, Any]]:
+    """Winners written by an earlier search (``<prefix>/winners.json``, keys 'dataset/model'), restricted to the requested models and datasets."""
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    for prefix in prefixes:
+        try:
+            table = json.loads(client.get_object(Bucket=bucket, Key=f"{prefix.strip('/')}/winners.json")["Body"].read())
+        except Exception as error:
+            raise SystemExit(f"cannot read {prefix}/winners.json: {error}")
+        for key, value in table.items():
+            dataset, model = key.split("/")
+            if model in models and dataset in datasets:
+                out[(dataset, model)] = value
+    return out
+
+
 def final_key(prefix: str, dataset: str, model: str, horizon: int, seed: int) -> str:
     return f"{prefix.strip('/')}/tsl/{dataset}/{model}/h{horizon}/seed-{seed}.json"
 
@@ -198,7 +219,7 @@ def launch(args: argparse.Namespace) -> None:
     # 1. trials (skipping finished ones; failed ones retried, e.g. GPU memory contention)
     scores: dict[tuple[str, str], dict[int, dict[int, float]]] = {}
     todo = []
-    for d in args.datasets:
+    for d in ([] if args.winners_from else args.datasets):
         for m in args.models:
             scores[(d, m)] = {}
             for i, params in enumerate(candidates[m]):
@@ -223,7 +244,11 @@ def launch(args: argparse.Namespace) -> None:
         todo = failed
     # 2. winners
     winners = {}
-    for (d, m), table in scores.items():
+    if args.winners_from:
+        winners = load_winners(client, bucket, args.winners_from, args.models, args.datasets)
+        missing = [(d, m) for d in args.datasets for m in args.models if (d, m) not in winners]
+        print(f"[tune-tsl] {len(winners)} winners reused from {args.winners_from}; missing: {missing}", flush=True)
+    for (d, m), table in ([] if args.winners_from else scores.items()):
         won = pick_winner(table)
         if won is None:
             print(f"[tune-tsl] no complete candidate for {d}/{m}; skipping finals", flush=True)
@@ -238,7 +263,7 @@ def launch(args: argparse.Namespace) -> None:
     jobs = []
     for (d, m), win in winners.items():
         for h in args.horizons:
-            for s in FINAL_SEEDS:
+            for s in args.seeds:
                 if not _exists(client, bucket, final_key(args.output_prefix, d, m, h, s), need_ok=True):
                     jobs.append({"model": m, "dataset": d, "horizon": h, "seed": s,
                                  "extra": flags(win["params"]) + (["--no_use_gpu"] if args.cpu else []),
@@ -259,6 +284,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--datasets", nargs="+", default=list(DATASETS), choices=list(DATASETS))
     p.add_argument("--horizons", nargs="+", type=int, default=list(HORIZONS))
     p.add_argument("--budget", type=int, default=BUDGET)
+    p.add_argument("--seeds", nargs="+", type=int, default=list(FINAL_SEEDS), help="seeds of the finals")
+    p.add_argument("--winners-from", nargs="+", metavar="PREFIX", help="skip the search: reuse <prefix>/winners.json (finals only)")
     p.add_argument("--gpu-fraction", type=float, default=0.25)
     p.add_argument("--cpu", action="store_true", help="train on CPU (library --no_use_gpu) and reserve no GPU")
     p.add_argument("--cpus", type=int, default=2, help="CPU cores reserved per run (more helps with --cpu)")

@@ -82,6 +82,25 @@ MODULE_TO_PACKAGE = {"patoolib": "patool", "sklearn": "scikit-learn", "reformer_
                      "skimage": "scikit-image", "PIL": "pillow", "yaml": "pyyaml"}
 
 
+SEED_LINE = "fix_seed = 2021"
+SEED_PATCH = "fix_seed = int(os.environ.get('TSL_SEED', 2021))"
+
+
+def patch_seed(text: str) -> tuple[str, bool]:
+    """Make the library's run.py take its random seed from the environment variable ``TSL_SEED``.
+
+    The pinned library hardcodes ``fix_seed = 2021`` (random, torch and numpy are seeded with it before the arguments are parsed) and its
+    ``--seed`` flag only reaches the augmentation helpers, so five "seeds" of one cell were five identical runs. The patch changes only that
+    one line; with ``TSL_SEED`` unset the default is still 2021, so every earlier result stays reproducible. ``run.py`` already imports ``os``.
+    Returns (new text, whether anything changed); an already patched text is returned unchanged.
+    """
+    if SEED_PATCH in text:
+        return text, False
+    if SEED_LINE not in text:
+        raise ValueError("run.py has no 'fix_seed = 2021' line: the pinned library changed")
+    return text.replace(SEED_LINE, SEED_PATCH, 1), True
+
+
 def download_library(commit: str, repo: str) -> None:
     """Fetch the pinned commit as a tarball (workers have no git) and extract it, refusing unsafe paths."""
     import tarfile
@@ -113,6 +132,11 @@ def setup_node(args: dict[str, Any]) -> dict[str, Any]:
     if not os.path.isfile(f"{repo}/run.py"):
         download_library(commit, repo)
     out["commit"] = commit
+    run_py = Path(f"{repo}/run.py")
+    patched_text, changed = patch_seed(run_py.read_text())
+    if changed:
+        run_py.write_text(patched_text)
+    out["seed_patch"] = "applied" if changed else "already applied"
     if not os.path.exists(f"{VENV}/bin/python"):
         f(f"python -m venv --system-site-packages {VENV}")
     # install only what the library's imports are missing, one at a time (never its pinned requirements)
@@ -167,7 +191,7 @@ def tsl_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         target = header[-1]
         common = dict(root=root, target=target, has_seed_flag=args["has_seed_flag"],
                       extra=job.get("extra"), des=job.get("des", "electrosense"))
-        env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+        env = {**os.environ, "PYTHONUNBUFFERED": "1", "TSL_SEED": str(seed)}     # the patched run.py seeds from this (see patch_seed)
         if job.get("threads"):                               # CPU runs: stay inside the reserved cores
             env.update(OMP_NUM_THREADS=str(job["threads"]), MKL_NUM_THREADS=str(job["threads"]))
         train = subprocess.run(run_command(model, dataset, horizon, seed, training=True, inverse=False, **common),
@@ -214,9 +238,26 @@ def launch(args: argparse.Namespace) -> None:
     worker_args = {**base, "timeout": args.timeout, "has_seed_flag": not args.no_seed_flag}
     jobs = [{"model": m, "dataset": d, "horizon": h, "seed": s}
             for d in args.datasets for m in args.models for h in args.horizons for s in args.seeds]
+    if args.skip_done:
+        def done(j):
+            try:
+                key = f"{args.output_prefix.strip('/')}/tsl/{j['dataset']}/{j['model']}/h{j['horizon']}/seed-{j['seed']}.json"
+                return bool(json.loads(client.get_object(Bucket=bucket, Key=key)["Body"].read()).get("ok"))
+            except Exception:
+                return False
+        jobs = [j for j in jobs if not done(j)]
+    if args.cpu:
+        jobs = [{**j, "threads": args.cpus, "extra": ["--no_use_gpu"]} for j in jobs]
     print(f"[tsl] {len(jobs)} runs", flush=True)
-    remote = ray.remote(num_cpus=2, num_gpus=args.gpu_fraction, max_retries=1)(tsl_job)
-    frame = pd.DataFrame(ray.get([remote.remote(j, worker_args) for j in jobs]))
+    remote = ray.remote(num_cpus=args.cpus if args.cpu else 2, num_gpus=0 if args.cpu else args.gpu_fraction, max_retries=1)(tsl_job)
+    from .tune_tsl import run_bounded
+
+    rows = []
+    for job, result in run_bounded(ray, remote, jobs, worker_args, args.max_parallel):
+        rows.append(result)
+        print(f"[tsl] {job['dataset']}/{job['model']}/h{job['horizon']}/seed{job['seed']} ok={result.get('ok')} "
+              f"mse_raw={result.get('mse_raw')} ({result.get('wall_seconds')}s) [{len(jobs) - len(rows)} left]", flush=True)
+    frame = pd.DataFrame(rows)
     stamp = time.strftime("%Y%m%dT%H%MZ", time.gmtime())
     key = f"{args.output_prefix.strip('/')}/summary_tsl_{stamp}.csv"
     buffer = io.StringIO()
@@ -247,6 +288,10 @@ def parse_args(argv=None) -> argparse.Namespace:
     run.add_argument("--gpu-fraction", type=float, default=0.25)
     run.add_argument("--timeout", type=int, default=5400)
     run.add_argument("--no-seed-flag", action="store_true", help="run.py has no --seed flag (set by setup output)")
+    run.add_argument("--max-parallel", type=int, default=None, help="cap on runs in flight (default: all at once)")
+    run.add_argument("--skip-done", action="store_true", help="skip cells that already have an ok record under the output prefix")
+    run.add_argument("--cpu", action="store_true", help="train on CPU (library --no_use_gpu) and reserve no GPU")
+    run.add_argument("--cpus", type=int, default=2, help="CPU cores reserved per run with --cpu")
     return parser.parse_args(argv)
 
 
