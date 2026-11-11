@@ -67,7 +67,7 @@ def choose(args) -> None:
     rows = []
     for key in sorted(k for k in listing(c, f"{PREFIX}/validation/") if k.endswith(".json")):
         rec = get_json(c, key)
-        if not rec.get("ok"):
+        if "designs" not in rec:                      # (the runner writes the record before it sets "ok", so test for the content)
             print("skipping failed validation record", key, rec.get("error"))
             continue
         for name, d in rec["designs"].items():

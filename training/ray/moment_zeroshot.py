@@ -213,6 +213,7 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
                 scored = score_target(forecaster, task, file, design)
                 record["designs"][design["name"]] = {"n_origins": scored["n_origins"], "forecast_seconds": scored["forecast_seconds"],
                                                      "metrics": scored["metrics"], "last_value_mae": scored["last_value_mae"]}
+            record["ok"] = True
             client.put_object(Bucket=bucket, Key=f"{args['prefix']}/validation/{t['band']}/{t['site']}.json", Body=json.dumps(record, default=str).encode())
         else:
             from training.ray import transfer_all as TA
