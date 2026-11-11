@@ -34,6 +34,11 @@ BANDS = ("600_800", "2400_2600")
 SAVGOL = ("off", "centered")
 EVAL_SMOOTH = [(1, 1, "centered"), (6, 3, "centered")]
 OUT = "evaluation/results/tsslcd_protocol_baseline.csv"
+OUT_FULL = "evaluation/results/tsslcd_protocol_baseline_fullweek.csv"
+# The stored 600-800 TSS-LCD runs with savgol off and centered (``tsslcd-authors-full/``, CAMPAIGN 22.2) were scored on 9,888 windows: the test files had been synced only
+# up to 2026-11-03 18:46 UTC, 74 minutes before the end of the test week (the current data give 9,962 windows; ending the range at 18:46 reproduces 9,888 exactly).
+# To compare like with like the 600-800 median is scored on that same window set in the main CSV; the full-week version is written separately.
+MATCHED_END = "2026-11-03T18:46:00Z"
 
 
 def trailing_median(series: np.ndarray, starts: np.ndarray, k: int, context: int, chunk: int = 400) -> np.ndarray:
@@ -58,12 +63,14 @@ def parse_metrics(metrics: dict, horizons) -> list[tuple]:
     return rows
 
 
-def band_job(band: str, savgol: str, selected: dict) -> dict:
+def band_job(band: str, savgol: str, selected: dict, test_end: str | None = None) -> dict:
     """One (band, savgol): both median variants under the harness protocol. Runs on a worker."""
     os.chdir(ROOT)
     sys.path.insert(0, ROOT)
     from training.ray import tsslcd_authors as T
 
+    if test_end:
+        T.RANGES["test"] = (T.RANGES["test"][0], test_end)
     prof = T.PROFILES["1min"]
     context, future, horizons = prof["context"], prof["future"], prof["horizons"]
     _, _, _, scaler = T.build_partition(ROOT, "train", None, savgol, band=band, profile="1min")
@@ -74,7 +81,7 @@ def band_job(band: str, savgol: str, selected: dict) -> dict:
     gt_raw_h = scaler.inverse(test_raw[horizon_rows])
     segment_of_window = np.searchsorted([b for _, b in bounds], starts, side="right")
     kph = {int(h): int(k) for h, k in selected[f"1min/{band}"]["k_per_horizon"].items()}
-    out = {"band": band, "savgol": savgol, "n_windows": int(len(starts)), "k_per_horizon": kph, "rows": []}
+    out = {"band": band, "savgol": savgol, "test_end": test_end or T.RANGES["test"][1], "n_windows": int(len(starts)), "k_per_horizon": kph, "rows": []}
     for label, series in (("(i) model inputs", test_model), ("(ii) raw inputs", test_raw)):
         med = {k: trailing_median(series, starts, k, context) for k in sorted(set(kph.values()))}
         pred = scaler.inverse(np.stack([med[kph[h]] for h in horizons], axis=1))
@@ -113,16 +120,22 @@ def main() -> None:
     selected = json.loads(client.get_object(Bucket="spectrum", Key="median-study/selected_k.json")["Body"].read())
     ray.init(address="auto", ignore_reinit_error=True)
     remote = ray.remote(num_cpus=4, memory=16 * 2 ** 30, max_retries=1)(band_job)
-    results = ray.get([remote.remote(b, s, selected) for b in BANDS for s in SAVGOL])
-    rows = [r for res in results for r in res["rows"]] + tsslcd_rows(client)
-    frame = pd.DataFrame(rows)
+    jobs = [(b, s, MATCHED_END if b == "600_800" else None) for b in BANDS for s in SAVGOL]
+    jobs_full = [("600_800", s, None) for s in SAVGOL]
+    refs = [remote.remote(b, s, selected, e) for b, s, e in jobs + jobs_full]
+    all_results = ray.get(refs)
+    results, results_full = all_results[:len(jobs)], all_results[len(jobs):]
+    tss = tsslcd_rows(client)
+    frame = pd.DataFrame([r for res in results for r in res["rows"]] + tss)
     Path(OUT).parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(OUT, index=False)
-    client.put_object(Bucket="spectrum", Key="analysis-outputs/tsslcd_protocol_baseline.csv", Body=open(OUT, "rb").read())
+    pd.DataFrame([r for res in results_full for r in res["rows"]] + [r for r in tss if r["band"] == "600_800"]).to_csv(OUT_FULL, index=False)
+    for f in (OUT, OUT_FULL):
+        client.put_object(Bucket="spectrum", Key="analysis-outputs/" + os.path.basename(f), Body=open(f, "rb").read())
     pd.set_option("display.width", 220)
     print("windows and selected k per horizon:")
-    for res in results:
-        print(f"  {res['band']} savgol={res['savgol']}: {res['n_windows']} windows, k_per_horizon={res['k_per_horizon']}")
+    for res in results + results_full:
+        print(f"  {res['band']} savgol={res['savgol']} test end {res['test_end']}: {res['n_windows']} windows, k_per_horizon={res['k_per_horizon']}")
     mae = frame[frame.metric == "mae_db"]
     # sanity 1: savgol off, no eval smoothing, raw target, raw inputs, per horizon
     s1 = mae[(mae.savgol == "off") & (mae.eval_smooth == "off") & (mae.target == "raw_target") & (mae.inputs == "(ii) raw inputs")]
