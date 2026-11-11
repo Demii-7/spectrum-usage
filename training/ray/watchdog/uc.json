@@ -163,5 +163,10 @@
   "id": "claude-uc-leveldrift-model-1",
   "entrypoint": "python -u -m training.ray.level_diagnostics_origins model --skip-done --stride 10 --max-parallel 8",
   "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-band2400-lstm1d-seeds-1",
+  "entrypoint": "python -u -m training.ray.fixed_train --band 2400_2600 --models vanillalstm1d --seeds 40 41 43 44 --no-include-reference --test-end 2026-11-03T20:00:00Z",
+  "max_restarts": 4
  }
 ]
