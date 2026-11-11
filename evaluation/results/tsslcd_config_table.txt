@@ -1,0 +1,45 @@
+                                                   0             1                 2                 3             4                 5             6
+resolution                                      1min          1min              1min             15min         15min             15min         15min
+band                                         600_800       600_800         2400_2600           600_800       600_800         2400_2600     2400_2600
+setting                             authors defaults  tuned winner  authors defaults  authors defaults  tuned winner  authors defaults  tuned winner
+seeds                                              5             5                 5                 5             5                 5             5
+context_steps                                     60            60                60               100           100               100           100
+future_steps                                      60            60                60                48            48                48            48
+latent_dim                                        32            64                32                32            32                32            32
+learning_rate                                 0.0001      0.000049            0.0001            0.0001      0.000223            0.0001      0.000223
+batch_size                                       256           128               256               256            64               256            64
+train_mask_ratio                                 0.1           0.1               0.1               0.1           0.2               0.1           0.2
+diffusion_steps                                 1000          1000              1000              1000          1000              1000          1000
+epochs_context                                   300           300               300               300           300               300           300
+epochs_future                                    300           300               300               300           300               300           300
+epochs_diffusion                                2000          2000              2000              2000          2000              2000          2000
+params_context_ae                           75752184      77313816          75752184         109023624     109023624         109023624     109023624
+params_future_ae                             2866240       2980960           2866240           2849600       2849600           2849600       2849600
+params_diffusion                              527168        989056            527168            527168        527168            527168        527168
+params_total                                79145592      81283832          79145592         112400392     112400392         112400392     112400392
+train_windows                                   9881          9881              9881               519           519               519           519
+test_windows                                    9888          9962              9962               625           625               625           625
+seconds_context_ae                            2388.0       3818.22           3494.72            268.84        309.78             265.9         303.9
+seconds_future_ae                              90.22         269.0            229.08             12.76         30.28             12.96          27.4
+seconds_diffusion                            4998.34       8619.46            7970.7            596.74        675.04            593.26        662.06
+seconds_per_epoch_context                      7.962        12.728            11.648             0.896         1.032             0.884         1.012
+seconds_per_epoch_diffusion                    2.498          4.31             3.984             0.296         0.338             0.298         0.332
+training_seconds_total                       7476.56      12706.68           11694.5            878.34        1015.1            872.12        993.36
+inference_seconds_all_test_windows             55.28         98.54             76.74               5.6          5.14              5.76          5.34
+inference_ms_per_window                     5.590615      9.891588          7.703272              8.96         8.224             9.216         8.544
+wall_seconds_run                             7545.24      12827.14          11790.22             897.2        1033.0            892.72        1011.8
+device                                          cuda          cuda              cuda              cuda          cuda              cuda          cuda
+
+                                         0                  1                  2
+resolution                            1min              15min              15min
+band                               600_800            600_800          2400_2600
+trials_ok                               16                 16                 14
+objective_defaults                1.130034           1.294008                NaN
+objective_winner                  1.122877           0.755604           0.699679
+winner_id                tsslcd-7ec88604c4  tsslcd-43aeb379e8  tsslcd-43aeb379e8
+winner_latent_dim                       64                 32                 32
+winner_learning_rate              0.000049           0.000223           0.000223
+winner_batch_size                      128                 64                 64
+winner_train_mask_ratio                0.1                0.2                0.2
+objective_worst                   1.820082           1.689711            1.55238
+trial_seconds_mean                 7051.05           916.1125         946.235714

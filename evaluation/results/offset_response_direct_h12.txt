@@ -1,0 +1,41 @@
+509 runs
+
+2400_2600: mean gain of the forecast shift to an input offset of c dB at t+12 (columns: c); 1 = level carried exactly
+                           -20    -10     -5     +5    +10    +20  n_runs
+rep model                                                                
+2d  dlinear              0.945  0.945  0.945  0.945  0.945  0.945      20
+    linearar2d           0.990  0.990  0.990  0.990  0.990  0.990      20
+    moment_lp            1.000  1.000  1.000  1.000  1.000  1.000      20
+    nlinear              1.000  1.000  1.000  1.000  1.000  1.000      20
+    ofa                  1.000  1.000  1.000  1.000  1.000  1.000      20
+    ofa_rand             1.000  1.000  1.000  1.000  1.000  1.000      15
+    ofa_scratch          1.000  1.000  1.000  1.000  1.000  1.000       6
+    patchtst             1.000  1.000  1.000  1.000  1.000  1.000      20
+    patchtst_joint       1.000  1.000  1.000  1.000  1.000  1.000      20
+    patchtst_noinorm     0.326  0.459  0.544  0.540  0.462  0.322      20
+    patchtst_nopatch     1.000  1.000  1.000  1.000  1.000  1.000      20
+    residuallinearar2d   1.000  1.000  1.000  1.000  1.000  1.000      20
+    residualnonlinear2d  1.000  1.000  1.000  1.000  1.000  1.000      20
+    revinmlp             1.000  1.000  1.000  1.000  1.000  1.000      20
+    timellm              1.000  1.000  1.000  1.000  1.000  1.000       6
+    timeran_lp           1.000  1.000  1.000  1.000  1.000  1.000       6
+
+600_800: mean gain of the forecast shift to an input offset of c dB at t+12 (columns: c); 1 = level carried exactly
+                           -20    -10     -5     +5    +10    +20  n_runs
+rep model                                                                
+2d  dlinear              0.998  0.998  0.998  0.998  0.998  0.998      20
+    linearar2d           0.977  0.977  0.977  0.977  0.977  0.977      20
+    moment_lp            1.000  1.000  1.000  1.000  1.000  1.000       6
+    nlinear              1.000  1.000  1.000  1.000  1.000  1.000      20
+    ofa                  1.000  1.000  1.000  1.000  1.000  1.000       6
+    ofa_rand             1.000  1.000  1.000  1.000  1.000  1.000       6
+    ofa_scratch          1.000  1.000  1.000  1.000  1.000  1.000       6
+    patchtst             1.000  1.000  1.000  1.000  1.000  1.000      20
+    patchtst_joint       1.000  1.000  1.000  1.000  1.000  1.000      20
+    patchtst_noinorm     0.408  0.563  0.674  0.651  0.534  0.367      20
+    patchtst_nopatch     1.000  1.000  1.000  1.000  1.000  1.000      20
+    residuallinearar2d   1.000  1.000  1.000  1.000  1.000  1.000      20
+    residualnonlinear2d  1.000  1.000  1.000  1.000  1.000  1.000      20
+    revinmlp             1.000  1.000  1.000  1.000  1.000  1.000      20
+    timellm              1.000  1.000  1.000  1.000  1.000  1.000       6
+    timeran_lp           1.000  1.000  1.000  1.000  1.000  1.000       6

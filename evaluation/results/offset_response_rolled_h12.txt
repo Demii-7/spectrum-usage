@@ -1,0 +1,31 @@
+432 runs
+
+2400_2600: mean gain of the forecast shift to an input offset of c dB at t+12 (columns: c); 1 = level carried exactly
+                           -20    -10     -5     +5    +10    +20  n_runs
+rep model                                                                
+1d  linearar1d           0.979  0.979  0.979  0.979  0.979  0.979      20
+    residuallinearar1d   1.000  1.000  1.000  1.000  1.000  1.000      20
+    residualvanillalstm  1.000  1.000  1.000  1.000  1.000  1.000      20
+    vanillalstm1d        0.328  0.458  0.518  0.346  0.316  0.143      20
+2d  autoformer_csa       1.000  1.000  1.000  1.000  1.000  1.000      20
+    linearar2d           0.957  0.957  0.957  0.957  0.957  0.957      20
+    lstmattn             0.127  0.246  0.426 -0.168 -0.084 -0.046      20
+    residuallinearar2d   1.000  1.000  1.000  1.000  1.000  1.000      20
+    residualvanillalstm  1.000  1.000  1.000  1.000  1.000  1.000      20
+    temporalconvnet      0.159  0.238  0.346  1.049  1.037  1.028      16
+    vanillalstm          0.090  0.172  0.301  0.957  0.473  0.237      20
+
+600_800: mean gain of the forecast shift to an input offset of c dB at t+12 (columns: c); 1 = level carried exactly
+                           -20    -10     -5     +5    +10    +20  n_runs
+rep model                                                                
+1d  linearar1d           0.989  0.989  0.989  0.989  0.989  0.989      20
+    residuallinearar1d   1.000  1.000  1.000  1.000  1.000  1.000      20
+    residualvanillalstm  1.000  1.000  1.000  1.000  1.000  1.000      20
+    vanillalstm1d        0.165  0.368  0.562  0.662  0.540  0.396      20
+2d  autoformer_csa       1.000  1.000  1.000  1.000  1.000  1.000      20
+    linearar2d           0.988  0.988  0.988  0.988  0.988  0.988      20
+    lstmattn             0.066  0.126  0.252  0.174  0.080  0.040      20
+    residuallinearar2d   1.000  1.000  1.000  1.000  1.000  1.000      20
+    residualvanillalstm  1.000  1.000  1.000  1.000  1.000  1.000      20
+    temporalconvnet      0.197  0.346  0.480  0.964  0.965  0.961      16
+    vanillalstm          0.075  0.147  0.285  0.165  0.077  0.038      20
