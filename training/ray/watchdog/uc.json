@@ -173,5 +173,10 @@
   "id": "claude-uc-spectral15t-1",
   "entrypoint": "python -u -m training.ray.spectral_context_fixed --resolution 15min --hyperparameters tuned15 --output-prefix oct2026-spectral-context-15min-tuned --seeds 40 41 42 --max-parallel 6 --gpu-fraction 0.25 --skip-done",
   "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-tcn15-seed42-1",
+  "entrypoint": "python -u -m training.ray.tune_fixed --source powder15 --datasets 600_800 2400_2600 --models temporalconvnet:2d --budget 16 --gpu-fraction 1.0 --max-parallel 2 --output-prefix tuning",
+  "max_restarts": 4
  }
 ]
