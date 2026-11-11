@@ -87,16 +87,16 @@ band,family,model,horizon,mean,sd,n_seeds
 2400_2600,heuristic,kalman,12,0.926300883293152,0.0,1
 2400_2600,heuristic,kalman,24,1.3180736303329468,0.0,1
 2400_2600,heuristic,kalman,48,1.5298680067062378,0.0,1
-2400_2600,heuristic,mean,1,0.4395729303359985,0.0,1
-2400_2600,heuristic,mean,4,0.6034092307090759,0.0,1
-2400_2600,heuristic,mean,12,0.962941586971283,0.0,1
-2400_2600,heuristic,mean,24,1.0493234395980835,0.0,1
-2400_2600,heuristic,mean,48,0.9680201411247252,0.0,1
-2400_2600,heuristic,median,1,0.4506872296333313,0.0,1
-2400_2600,heuristic,median,4,0.6039612293243408,0.0,1
-2400_2600,heuristic,median,12,0.9764002561569214,0.0,1
-2400_2600,heuristic,median,24,0.9446157813072203,0.0,1
-2400_2600,heuristic,median,48,0.9562159776687622,0.0,1
+2400_2600,heuristic,mean (tuned),1,0.4395729303359985,0.0,1
+2400_2600,heuristic,mean (tuned),4,0.6034092307090759,0.0,1
+2400_2600,heuristic,mean (tuned),12,0.962941586971283,0.0,1
+2400_2600,heuristic,mean (tuned),24,1.0493234395980835,0.0,1
+2400_2600,heuristic,mean (tuned),48,0.9680201411247252,0.0,1
+2400_2600,heuristic,median (tuned),1,0.4506872296333313,0.0,1
+2400_2600,heuristic,median (tuned),4,0.6039612293243408,0.0,1
+2400_2600,heuristic,median (tuned),12,0.9764002561569214,0.0,1
+2400_2600,heuristic,median (tuned),24,0.9446157813072203,0.0,1
+2400_2600,heuristic,median (tuned),48,0.9562159776687622,0.0,1
 2400_2600,heuristic,persistence,1,0.4595736265182495,0.0,1
 2400_2600,heuristic,persistence,4,0.6183062195777893,0.0,1
 2400_2600,heuristic,persistence,12,0.9464949369430542,0.0,1
@@ -107,6 +107,16 @@ band,family,model,horizon,mean,sd,n_seeds
 2400_2600,heuristic,train_mean,12,2.862910509109497,0.0,1
 2400_2600,heuristic,train_mean,24,2.849900007247925,0.0,1
 2400_2600,heuristic,train_mean,48,2.847240924835205,0.0,1
+2400_2600,heuristic (untuned),"mean (full lookback, 96)",1,0.9010365605354308,0.0,1
+2400_2600,heuristic (untuned),"mean (full lookback, 96)",4,0.924435257911682,0.0,1
+2400_2600,heuristic (untuned),"mean (full lookback, 96)",12,0.9871246218681335,0.0,1
+2400_2600,heuristic (untuned),"mean (full lookback, 96)",24,1.0493234395980835,0.0,1
+2400_2600,heuristic (untuned),"mean (full lookback, 96)",48,0.9680201411247252,0.0,1
+2400_2600,heuristic (untuned),"median (full lookback, 96)",1,0.87286376953125,0.0,1
+2400_2600,heuristic (untuned),"median (full lookback, 96)",4,0.8819576501846313,0.0,1
+2400_2600,heuristic (untuned),"median (full lookback, 96)",12,0.9086894989013672,0.0,1
+2400_2600,heuristic (untuned),"median (full lookback, 96)",24,0.9446157813072203,0.0,1
+2400_2600,heuristic (untuned),"median (full lookback, 96)",48,0.9562159776687622,0.0,1
 2400_2600,rolled-out,autoformer_csa (2d),1,0.960890817642212,0.024447203216058998,5
 2400_2600,rolled-out,autoformer_csa (2d),4,1.2554763317108155,0.05366388275232427,5
 2400_2600,rolled-out,autoformer_csa (2d),12,1.094034695625305,0.021619587413508598,5
@@ -260,16 +270,16 @@ band,family,model,horizon,mean,sd,n_seeds
 600_800,heuristic,kalman,12,0.9829249978065492,0.0,1
 600_800,heuristic,kalman,24,1.4457372426986694,0.0,1
 600_800,heuristic,kalman,48,1.8320910930633545,0.0,1
-600_800,heuristic,mean,1,0.4817320108413696,0.0,1
-600_800,heuristic,mean,4,0.6238416433334351,0.0,1
-600_800,heuristic,mean,12,0.9829519987106324,0.0,1
-600_800,heuristic,mean,24,1.2582672834396362,0.0,1
-600_800,heuristic,mean,48,1.1968258619308472,0.0,1
-600_800,heuristic,median,1,0.4928217530250549,0.0,1
-600_800,heuristic,median,4,0.6412266492843628,0.0,1
-600_800,heuristic,median,12,0.973926603794098,0.0,1
-600_800,heuristic,median,24,1.1523882150650024,0.0,1
-600_800,heuristic,median,48,1.1550387144088743,0.0,1
+600_800,heuristic,mean (tuned),1,0.4817320108413696,0.0,1
+600_800,heuristic,mean (tuned),4,0.6238416433334351,0.0,1
+600_800,heuristic,mean (tuned),12,0.9829519987106324,0.0,1
+600_800,heuristic,mean (tuned),24,1.2582672834396362,0.0,1
+600_800,heuristic,mean (tuned),48,1.1968258619308472,0.0,1
+600_800,heuristic,median (tuned),1,0.4928217530250549,0.0,1
+600_800,heuristic,median (tuned),4,0.6412266492843628,0.0,1
+600_800,heuristic,median (tuned),12,0.973926603794098,0.0,1
+600_800,heuristic,median (tuned),24,1.1523882150650024,0.0,1
+600_800,heuristic,median (tuned),48,1.1550387144088743,0.0,1
 600_800,heuristic,persistence,1,0.5053722262382507,0.0,1
 600_800,heuristic,persistence,4,0.659477949142456,0.0,1
 600_800,heuristic,persistence,12,0.9989314079284668,0.0,1
@@ -280,6 +290,16 @@ band,family,model,horizon,mean,sd,n_seeds
 600_800,heuristic,train_mean,12,2.642309188842773,0.0,1
 600_800,heuristic,train_mean,24,2.644468069076538,0.0,1
 600_800,heuristic,train_mean,48,2.655485153198242,0.0,1
+600_800,heuristic (untuned),"mean (full lookback, 96)",1,1.072354435920715,0.0,1
+600_800,heuristic (untuned),"mean (full lookback, 96)",4,1.103322982788086,0.0,1
+600_800,heuristic (untuned),"mean (full lookback, 96)",12,1.1795198917388916,0.0,1
+600_800,heuristic (untuned),"mean (full lookback, 96)",24,1.2582672834396362,0.0,1
+600_800,heuristic (untuned),"mean (full lookback, 96)",48,1.1968258619308472,0.0,1
+600_800,heuristic (untuned),"median (full lookback, 96)",1,1.069973111152649,0.0,1
+600_800,heuristic (untuned),"median (full lookback, 96)",4,1.087528109550476,0.0,1
+600_800,heuristic (untuned),"median (full lookback, 96)",12,1.122238039970398,0.0,1
+600_800,heuristic (untuned),"median (full lookback, 96)",24,1.1523882150650024,0.0,1
+600_800,heuristic (untuned),"median (full lookback, 96)",48,1.1550387144088743,0.0,1
 600_800,rolled-out,autoformer_csa (2d),1,0.9993633270263672,0.023902029274883316,5
 600_800,rolled-out,autoformer_csa (2d),4,0.9996931433677674,0.01104017788392914,5
 600_800,rolled-out,autoformer_csa (2d),12,1.2004679679870605,0.03319387971391668,5

@@ -61,9 +61,14 @@ def collect() -> pd.DataFrame:
                     rows.append({"family": "rolled-out", "band": d["band"], "model": f"{d['model']} ({d['rep']})", "horizon": h,
                                  "seed": int(d["seed"]), "mae": float(d[f"test_mae_db_t{h}"])})
     base = pd.read_csv("evaluation/results/baselines_all_horizons.csv")
-    base = base[(base.resolution == "15min") & (base.selection == "per_horizon")]
+    base = base[(base.resolution == "15min") & base.selection.isin(["per_horizon", "full_lookback"])]
     for r in base.itertuples():
-        rows.append({"family": "heuristic", "band": r.band, "model": r.family, "horizon": int(r.horizon), "seed": 0, "mae": float(r.mae_db)})
+        if r.selection == "full_lookback":                       # untuned: the statistic over the whole 96-step lookback window
+            rows.append({"family": "heuristic (untuned)", "band": r.band, "model": f"{r.family} (full lookback, 96)", "horizon": int(r.horizon), "seed": 0,
+                         "mae": float(r.mae_db)})
+        else:
+            rows.append({"family": "heuristic", "band": r.band, "model": r.family + (" (tuned)" if r.family in ("mean", "median") else ""),
+                         "horizon": int(r.horizon), "seed": 0, "mae": float(r.mae_db)})
     ts = pd.read_csv("evaluation/results/tsslcd_new_runs.csv")
     ts = ts[(ts.res == "15min") & ts.metric.str.startswith("mae_db_t")]
     for r in ts.itertuples():

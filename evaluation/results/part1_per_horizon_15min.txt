@@ -1,76 +1,80 @@
 
 600_800: 15-minute test MAE (dB) per horizon (steps of 15 min), mean over seeds
-horizon                                        1      4     12     24     48  mean_4h  seeds
-family     model                                                                            
-direct     revinmlp                        0.467  0.577  0.718  0.810  0.868    0.743      5
-           ofa                             0.473  0.585  0.723  0.814  0.874    0.749      5
-           ofa_scratch                     0.473  0.582  0.719  0.824  0.880    0.751      5
-           timellm                         0.471  0.583  0.728  0.819  0.878    0.752      5
-           patchtst                        0.476  0.591  0.727  0.824  0.878    0.755      5
-           ofa_rand                        0.479  0.587  0.737  0.830  0.883    0.759      5
-           patchtst_nopatch                0.474  0.594  0.730  0.834  0.887    0.761      5
-           residualnonlinear2d             0.480  0.590  0.730  0.829  0.908    0.764      5
-           moment_lp                         NaN  0.600  0.740  0.838  0.884    0.766      5
-           nlinear                         0.479  0.604  0.753  0.854  0.909    0.780      5
-           dlinear                         0.480  0.609  0.761  0.861  0.906    0.784      5
-           residuallinearar2d              0.490  0.607  0.759  0.857  0.930    0.788      5
-           timeran_lp                        NaN  0.624  0.765  0.856  0.914    0.790      5
-rolled-out residuallinearar1d (1d)         0.481  0.600  0.774  0.892  0.936    0.800      5
-           linearar1d (1d)                 0.479  0.598  0.773  0.892  0.938    0.800      5
-           residuallinearar2d (2d)         0.498  0.605  0.782  0.903  0.946    0.809      5
-direct     linearar2d                      0.558  0.638  0.786  0.880  0.944    0.812      5
-           patchtst_noinorm                0.553  0.640  0.797  0.901  0.944    0.820      5
-rolled-out linearar2d (2d)                 0.553  0.645  0.797  0.905  0.943    0.823      5
-direct     patchtst_joint                  0.629  0.690  0.784  0.878  0.988    0.835      5
-rolled-out temporalconvnet (2d)            0.573  0.680  0.816  0.911  0.956    0.841      4
-           vanillalstm (2d)                0.706  0.774  0.908  1.014  1.213    0.977      5
-heuristic  median                          0.493  0.641  0.974  1.152  1.155    0.980      1
-           mean                            0.482  0.624  0.983  1.258  1.197    1.016      1
-           ewma                            0.466  0.625  0.987  1.305  1.237    1.038      1
-rolled-out lstmattn (2d)                   0.743  0.846  0.979  1.112  1.272    1.052      5
-           residualvanillalstm (2d)        0.641  0.722  0.959  1.262  1.542    1.121      5
-TSS-LCD    tsslcd_authors (savgol causal)  1.048  1.064  1.130  1.203  1.096    1.123      5
-           tsslcd_authors (savgol off)     1.118  1.130  1.163  1.207  1.167    1.167      5
-heuristic  kalman                          0.462  0.621  0.983  1.446  1.832    1.220      1
-           persistence                     0.505  0.659  0.999  1.456  1.864    1.244      1
-rolled-out autoformer_csa (2d)             0.999  1.000  1.200  1.361  1.525    1.272      5
-heuristic  train_mean                      2.644  2.644  2.642  2.644  2.655    2.646      1
-rolled-out residualvanillalstm (1d)        0.467    NaN    NaN    NaN    NaN      NaN      5
-           vanillalstm1d (1d)              0.464    NaN    NaN    NaN    NaN      NaN      5
+horizon                                                 1      4     12     24     48  mean_4h  seeds
+family              model                                                                            
+direct              revinmlp                        0.467  0.577  0.718  0.810  0.868    0.743      5
+                    ofa                             0.473  0.585  0.723  0.814  0.874    0.749      5
+                    ofa_scratch                     0.473  0.582  0.719  0.824  0.880    0.751      5
+                    timellm                         0.471  0.583  0.728  0.819  0.878    0.752      5
+                    patchtst                        0.476  0.591  0.727  0.824  0.878    0.755      5
+                    ofa_rand                        0.479  0.587  0.737  0.830  0.883    0.759      5
+                    patchtst_nopatch                0.474  0.594  0.730  0.834  0.887    0.761      5
+                    residualnonlinear2d             0.480  0.590  0.730  0.829  0.908    0.764      5
+                    moment_lp                         NaN  0.600  0.740  0.838  0.884    0.766      5
+                    nlinear                         0.479  0.604  0.753  0.854  0.909    0.780      5
+                    dlinear                         0.480  0.609  0.761  0.861  0.906    0.784      5
+                    residuallinearar2d              0.490  0.607  0.759  0.857  0.930    0.788      5
+                    timeran_lp                        NaN  0.624  0.765  0.856  0.914    0.790      5
+rolled-out          residuallinearar1d (1d)         0.481  0.600  0.774  0.892  0.936    0.800      5
+                    linearar1d (1d)                 0.479  0.598  0.773  0.892  0.938    0.800      5
+                    residuallinearar2d (2d)         0.498  0.605  0.782  0.903  0.946    0.809      5
+direct              linearar2d                      0.558  0.638  0.786  0.880  0.944    0.812      5
+                    patchtst_noinorm                0.553  0.640  0.797  0.901  0.944    0.820      5
+rolled-out          linearar2d (2d)                 0.553  0.645  0.797  0.905  0.943    0.823      5
+direct              patchtst_joint                  0.629  0.690  0.784  0.878  0.988    0.835      5
+rolled-out          temporalconvnet (2d)            0.573  0.680  0.816  0.911  0.956    0.841      4
+                    vanillalstm (2d)                0.706  0.774  0.908  1.014  1.213    0.977      5
+heuristic           median (tuned)                  0.493  0.641  0.974  1.152  1.155    0.980      1
+                    mean (tuned)                    0.482  0.624  0.983  1.258  1.197    1.016      1
+                    ewma                            0.466  0.625  0.987  1.305  1.237    1.038      1
+rolled-out          lstmattn (2d)                   0.743  0.846  0.979  1.112  1.272    1.052      5
+                    residualvanillalstm (2d)        0.641  0.722  0.959  1.262  1.542    1.121      5
+TSS-LCD             tsslcd_authors (savgol causal)  1.048  1.064  1.130  1.203  1.096    1.123      5
+heuristic (untuned) median (full lookback, 96)      1.070  1.088  1.122  1.152  1.155    1.129      1
+TSS-LCD             tsslcd_authors (savgol off)     1.118  1.130  1.163  1.207  1.167    1.167      5
+heuristic (untuned) mean (full lookback, 96)        1.072  1.103  1.180  1.258  1.197    1.184      1
+heuristic           kalman                          0.462  0.621  0.983  1.446  1.832    1.220      1
+                    persistence                     0.505  0.659  0.999  1.456  1.864    1.244      1
+rolled-out          autoformer_csa (2d)             0.999  1.000  1.200  1.361  1.525    1.272      5
+heuristic           train_mean                      2.644  2.644  2.642  2.644  2.655    2.646      1
+rolled-out          residualvanillalstm (1d)        0.467    NaN    NaN    NaN    NaN      NaN      5
+                    vanillalstm1d (1d)              0.464    NaN    NaN    NaN    NaN      NaN      5
 
 2400_2600: 15-minute test MAE (dB) per horizon (steps of 15 min), mean over seeds
-horizon                                  1      4     12     24     48  mean_4h  seeds
-family     model                                                                      
-direct     revinmlp                  0.448  0.522  0.608  0.652  0.684    0.616      5
-           ofa                       0.436  0.523  0.619  0.660  0.688    0.622      5
-           ofa_rand                  0.482  0.531  0.614  0.651  0.703    0.625      5
-           timellm                   0.450  0.539  0.619  0.654  0.691    0.626      5
-           ofa_scratch               0.434  0.520  0.635  0.659  0.697    0.628      5
-           patchtst                  0.437  0.536  0.633  0.663  0.684    0.629      5
-           timeran_lp                  NaN  0.551  0.634  0.667  0.679    0.633      5
-           patchtst_nopatch          0.438  0.541  0.641  0.667  0.701    0.638      5
-           nlinear                   0.468  0.558  0.652  0.685  0.691    0.646      5
-           patchtst_noinorm          0.486  0.563  0.631  0.688  0.707    0.647      5
-           moment_lp                   NaN  0.576  0.645  0.681  0.699    0.650      5
-rolled-out residuallinearar1d (1d)   0.456  0.548  0.657  0.711  0.731    0.662      5
-direct     residuallinearar2d        0.483  0.585  0.661  0.692  0.719    0.664      5
-rolled-out linearar1d (1d)           0.439  0.543  0.663  0.720  0.736    0.666      5
-direct     patchtst_joint            0.545  0.604  0.664  0.704  0.710    0.670      5
-rolled-out residualvanillalstm (1d)  0.429  0.529  0.652  0.736  0.765    0.670      5
-direct     dlinear                   0.469  0.569  0.696  0.696  0.722    0.671      5
-           residualnonlinear2d       0.492  0.581  0.661  0.715  0.730    0.672      5
-rolled-out residuallinearar2d (2d)   0.541  0.591  0.682  0.737  0.742    0.688      5
-           temporalconvnet (2d)      0.466  0.567  0.679  0.741  0.765    0.688      4
-           linearar2d (2d)           0.550  0.603  0.684  0.733  0.750    0.692      5
-direct     linearar2d                0.544  0.629  0.679  0.759  0.739    0.702      5
-rolled-out vanillalstm1d (1d)        0.448  0.571  0.728  0.842  0.907    0.762      5
-heuristic  median                    0.451  0.604  0.976  0.945  0.956    0.870      1
-           mean                      0.440  0.603  0.963  1.049  0.968    0.896      1
-           ewma                      0.457  0.616  0.957  1.327  1.005    0.976      1
-rolled-out vanillalstm (2d)          0.609  0.681  0.895  1.167  1.235    0.995      5
-           lstmattn (2d)             0.541  0.684  0.967  1.138  1.301    1.022      5
-heuristic  kalman                    0.424  0.586  0.926  1.318  1.530    1.090      1
-           persistence               0.460  0.618  0.946  1.338  1.563    1.116      1
-rolled-out residualvanillalstm (2d)  0.470  0.585  0.910  1.388  1.713    1.149      5
-           autoformer_csa (2d)       0.961  1.255  1.094  1.170  1.101    1.155      5
-heuristic  train_mean                2.861  2.863  2.863  2.850  2.847    2.856      1
+horizon                                             1      4     12     24     48  mean_4h  seeds
+family              model                                                                        
+direct              revinmlp                    0.448  0.522  0.608  0.652  0.684    0.616      5
+                    ofa                         0.436  0.523  0.619  0.660  0.688    0.622      5
+                    ofa_rand                    0.482  0.531  0.614  0.651  0.703    0.625      5
+                    timellm                     0.450  0.539  0.619  0.654  0.691    0.626      5
+                    ofa_scratch                 0.434  0.520  0.635  0.659  0.697    0.628      5
+                    patchtst                    0.437  0.536  0.633  0.663  0.684    0.629      5
+                    timeran_lp                    NaN  0.551  0.634  0.667  0.679    0.633      5
+                    patchtst_nopatch            0.438  0.541  0.641  0.667  0.701    0.638      5
+                    nlinear                     0.468  0.558  0.652  0.685  0.691    0.646      5
+                    patchtst_noinorm            0.486  0.563  0.631  0.688  0.707    0.647      5
+                    moment_lp                     NaN  0.576  0.645  0.681  0.699    0.650      5
+rolled-out          residuallinearar1d (1d)     0.456  0.548  0.657  0.711  0.731    0.662      5
+direct              residuallinearar2d          0.483  0.585  0.661  0.692  0.719    0.664      5
+rolled-out          linearar1d (1d)             0.439  0.543  0.663  0.720  0.736    0.666      5
+direct              patchtst_joint              0.545  0.604  0.664  0.704  0.710    0.670      5
+rolled-out          residualvanillalstm (1d)    0.429  0.529  0.652  0.736  0.765    0.670      5
+direct              dlinear                     0.469  0.569  0.696  0.696  0.722    0.671      5
+                    residualnonlinear2d         0.492  0.581  0.661  0.715  0.730    0.672      5
+rolled-out          residuallinearar2d (2d)     0.541  0.591  0.682  0.737  0.742    0.688      5
+                    temporalconvnet (2d)        0.466  0.567  0.679  0.741  0.765    0.688      4
+                    linearar2d (2d)             0.550  0.603  0.684  0.733  0.750    0.692      5
+direct              linearar2d                  0.544  0.629  0.679  0.759  0.739    0.702      5
+rolled-out          vanillalstm1d (1d)          0.448  0.571  0.728  0.842  0.907    0.762      5
+heuristic           median (tuned)              0.451  0.604  0.976  0.945  0.956    0.870      1
+                    mean (tuned)                0.440  0.603  0.963  1.049  0.968    0.896      1
+heuristic (untuned) median (full lookback, 96)  0.873  0.882  0.909  0.945  0.956    0.923      1
+heuristic           ewma                        0.457  0.616  0.957  1.327  1.005    0.976      1
+heuristic (untuned) mean (full lookback, 96)    0.901  0.924  0.987  1.049  0.968    0.982      1
+rolled-out          vanillalstm (2d)            0.609  0.681  0.895  1.167  1.235    0.995      5
+                    lstmattn (2d)               0.541  0.684  0.967  1.138  1.301    1.022      5
+heuristic           kalman                      0.424  0.586  0.926  1.318  1.530    1.090      1
+                    persistence                 0.460  0.618  0.946  1.338  1.563    1.116      1
+rolled-out          residualvanillalstm (2d)    0.470  0.585  0.910  1.388  1.713    1.149      5
+                    autoformer_csa (2d)         0.961  1.255  1.094  1.170  1.101    1.155      5
+heuristic           train_mean                  2.861  2.863  2.863  2.850  2.847    2.856      1

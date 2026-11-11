@@ -19,6 +19,7 @@ import pandas as pd
 METRICS = {"mae_db": "test_mae_db_t{h}", "mse_db2": "test_mse_db2_t{h}", "rmse_db": "test_rmse_db_t{h}",
            "mape_linear_pct": "test_mape_linear_pct_t{h}", "mape_dbm_pct": "test_mape_dbm_pct_t{h}"}
 SELECT_HORIZONS = {"1min": (1, 15, 60), "15min": (4, 12, 24, 48)}
+FULL_LOOKBACK = {"1min": 60, "15min": 96}
 FAMILIES = {"train_mean": ("train_mean", None), "persistence": ("mean", 1), "mean": ("mean", None), "median": ("median", None),
             "ewma": ("ewma", None), "kalman": ("kalman", None)}
 
@@ -49,9 +50,11 @@ def table(sweeps: dict[tuple, dict]) -> pd.DataFrame:
             candidates = rows if fixed_k is None else [r for r in rows if r["k"] == fixed_k]
             if not candidates:
                 continue
-            for mode in ("per_horizon", "one_parameter"):
+            modes = ["per_horizon", "one_parameter"] + (["full_lookback"] if stat in ("mean", "median") and fixed_k is None else [])
+            for mode in modes:
                 for h in horizons:
-                    k = choose(candidates, SELECT_HORIZONS[resolution], mode, h)
+                    # full_lookback: the untuned statistic over the model's whole lookback window (96 steps at 15 minutes, 60 minutes at 1 minute)
+                    k = FULL_LOOKBACK[resolution] if mode == "full_lookback" else choose(candidates, SELECT_HORIZONS[resolution], mode, h)
                     test = next(r for r in rows_for(candidates, "test", k))
                     row = {"resolution": resolution, "band": band, "family": family, "selection": mode, "horizon": h, "parameter_key": k}
                     row.update({name: test["metrics"][pattern.format(h=h)] for name, pattern in METRICS.items()})
