@@ -12,8 +12,10 @@ import sys
 sys.path.insert(0, ".")
 from training.ray.storage import spectrum_s3_client
 c = spectrum_s3_client()
+import os
 for f in ("evaluation/analysis/moment_zeroshot_design.json", "evaluation/results/moment_zeroshot_choose.txt"):
-    c.put_object(Bucket="spectrum", Key="analysis-outputs/" + f.split("/")[-1], Body=open(f, "rb").read()); print("uploaded", f)
+    if os.path.exists(f):
+        c.put_object(Bucket="spectrum", Key="analysis-outputs/" + f.split("/")[-1], Body=open(f, "rb").read()); print("uploaded", f)
 PY
 else
   python -u evaluation/analysis/moment_zeroshot_table.py table "${@:2}" > evaluation/results/moment_zeroshot_table.txt 2>&1
