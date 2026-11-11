@@ -103,5 +103,15 @@
   "id": "claude-uc-offset-llm-1",
   "entrypoint": "python -u -m training.ray.offset_response --source direct --models ofa ofa_rand ofa_scratch timeran_lp moment_lp timellm --bands 600_800 2400_2600 --receivers humanities moran --seeds 40 41 42 --horizons 12 48 --skip-done --max-parallel 6",
   "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-tsl-seedfix-tuned-1",
+  "entrypoint": "python -u -m training.ray.tune_tsl --models DLinear PatchTST Informer Autoformer LightTS --winners-from electrosense-results/tuned-tsl electrosense-results/tuned-tsl-2 --datasets spec4 spec25 --horizons 12 48 192 --seeds 40 41 42 43 44 --output-prefix electrosense-results/seedfix-tuned --cpu --cpus 4 --max-parallel 10",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-tsl-seedfix-default-1",
+  "entrypoint": "python -u -m training.ray.tsl_runs run --models DLinear PatchTST Informer Autoformer LightTS Reformer --datasets spec4 spec25 --horizons 12 48 192 --seeds 40 41 42 43 44 --output-prefix electrosense-results/seedfix-default --cpu --cpus 4 --max-parallel 10 --skip-done",
+  "max_restarts": 4
  }
 ]
