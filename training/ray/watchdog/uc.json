@@ -83,5 +83,25 @@
   "id": "claude-uc-july-transfer-3",
   "entrypoint": "python -u -m training.ray.transfer_july run --skip-done --max-parallel 140 --memory-gb 3",
   "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-krige-600-res-1",
+  "entrypoint": "python -u -m training.ray.spatial15 --tuned --experiments s2 --variants core4-krige --prefix spatial15-tuned-oct2026 --memory-gb 12 --max-parallel 3 --skip-done --band 600_800 --models residuallinearar4d --seeds 40 41 42 43 44",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-krige-2400-1",
+  "entrypoint": "python -u -m training.ray.spatial15 --tuned --experiments s2 --variants core4-krige --prefix spatial15-tuned-oct2026 --memory-gb 12 --max-parallel 3 --skip-done --band 2400_2600 --models linearar4d residuallinearar4d lookbackmean4d --seeds 40 41 42 43 44",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-krige-600-lin-1",
+  "entrypoint": "python -u -m training.ray.spatial15 --tuned --experiments s2 --variants core4-krige --prefix spatial15-tuned-oct2026 --memory-gb 12 --max-parallel 3 --skip-done --band 600_800 --models linearar4d --seeds 41 42 43 44",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-offset-llm-1",
+  "entrypoint": "python -u -m training.ray.offset_response --source direct --models ofa ofa_rand ofa_scratch timeran_lp moment_lp timellm --bands 600_800 2400_2600 --receivers humanities moran --seeds 40 41 42 --horizons 12 48 --skip-done --max-parallel 6",
+  "max_restarts": 4
  }
 ]
