@@ -16,6 +16,11 @@ seeds 40-44 and score the test range with the same three eval-smoothing settings
 
     python -m training.ray.tune_tsslcd --budget 8 --trials-only      # round 1
     python -m training.ray.tune_tsslcd --budget 16                   # round 2 + winner + finals
+    python -m training.ray.tune_tsslcd --resolution 15min --budget 16 --gpu-fraction 1.0   # same search at 15 minutes (benchmark windowing)
+
+``--resolution 15min`` runs the identical search space and candidate draws on the 15-minute profile of ``training.ray.tsslcd_authors``
+(lookback 100, future 48, horizons 1/4/12/24/48; objective = validation raw-target mean-horizon MAE, no smoothing; finals scored with
+eval smoothing off), under separate prefixes (``tuning/tsslcd_authors/15min/600_800``, ``tsslcd-authors-15min-tuned``).
 """
 
 from __future__ import annotations
@@ -123,6 +128,7 @@ def main(argv=None) -> None:
     import ray
 
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--resolution", choices=("1min", "15min"), default="1min")
     p.add_argument("--budget", type=int, default=16)
     p.add_argument("--trials-only", action="store_true", help="trials only: no winner, no finals (a later larger --budget resumes)")
     p.add_argument("--skip-trials", action="store_true",
@@ -137,11 +143,14 @@ def main(argv=None) -> None:
     p.add_argument("--max-parallel", type=int, default=0)
     p.add_argument("--memory-gb", type=float, default=0.0)
     p.add_argument("--bucket", default=None)
-    p.add_argument("--tuning-prefix", default=f"tuning/tsslcd_authors/{BAND}")
-    p.add_argument("--output-prefix", default="tsslcd-authors-tuned", help="finals' result prefix")
+    p.add_argument("--tuning-prefix", default=None, help=f"default tuning/tsslcd_authors/{BAND} (1min) or tuning/tsslcd_authors/15min/{BAND}")
+    p.add_argument("--output-prefix", default=None, help="finals' result prefix (default tsslcd-authors-tuned, or tsslcd-authors-15min-tuned)")
     p.add_argument("--address", default="auto")
     p.add_argument("--repo-root", default="/workspace/spectrum-usage")
     args = p.parse_args(argv)
+    fifteen = args.resolution == "15min"
+    args.tuning_prefix = args.tuning_prefix or (f"tuning/tsslcd_authors/15min/{BAND}" if fifteen else f"tuning/tsslcd_authors/{BAND}")
+    args.output_prefix = args.output_prefix or ("tsslcd-authors-15min-tuned" if fifteen else "tsslcd-authors-tuned")
     sys.path.insert(0, args.repo_root)
     from training.ray.storage import spectrum_s3_client
     from training.ray.tsslcd_authors import DEFAULT_EVAL_SMOOTH, job, parse_eval_smooth
@@ -154,7 +163,8 @@ def main(argv=None) -> None:
         options["memory"] = int(args.memory_gb * 2 ** 30)
     epochs = {"ctx": args.epochs_ctx, "fut": args.epochs_fut, "diff": args.epochs_diff}
     base = {"repo_root": args.repo_root, "bucket": bucket, "device": None, "epochs": epochs, "savgol": "off",
-            "test_stride": 1, "eval_mask_ratio": 0.0, "output_prefix": args.output_prefix}
+            "test_stride": 1, "eval_mask_ratio": 0.0, "output_prefix": args.output_prefix, "resolution": args.resolution}
+    finals_smooth = ("1:1:centered",) if fifteen else DEFAULT_EVAL_SMOOTH
 
     candidates = candidate_list(args.budget)
     done = {r["candidate_id"] for r in read_trials(client, bucket, args.tuning_prefix) if r.get("ok")}
@@ -183,7 +193,7 @@ def main(argv=None) -> None:
         except Exception:
             pass
         finals.append({**base, "seed": seed, "hparams": winner["parameters"], "score_partition": "test", "save_weights": True,
-                       "eval_smooth": [parse_eval_smooth(s) for s in DEFAULT_EVAL_SMOOTH]})
+                       "eval_smooth": [parse_eval_smooth(s) for s in finals_smooth]})
     print(f"[tune-tsslcd] {len(finals)} final seed runs", flush=True)
     run_bounded(ray, job, finals, options, args.max_parallel)
 
