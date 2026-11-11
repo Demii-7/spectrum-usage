@@ -153,5 +153,15 @@
   "id": "claude-uc-offset1m-1",
   "entrypoint": "python -u -m training.ray.offset_response_1min --source both --skip-done --max-parallel 12",
   "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-leveldrift-level-1",
+  "entrypoint": "python -u -m training.ray.level_diagnostics_origins level --skip-done --max-parallel 8",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-leveldrift-model-1",
+  "entrypoint": "python -u -m training.ray.level_diagnostics_origins model --skip-done --stride 10 --max-parallel 8",
+  "max_restarts": 4
  }
 ]

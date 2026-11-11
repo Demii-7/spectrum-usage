@@ -46,3 +46,23 @@ def test_ols_from_statistics_matches_polyfit_and_pools_rows():
 def test_ols_degenerate_returns_nan():
     out = L.ols_from_stats(5.0, 10.0, 3.0, 6.0, 20.0, 2.0)          # x constant (all 2.0): zero variance
     assert np.isnan(out["slope"])
+
+
+def test_analysis_helpers_bootstrap_and_line_slope():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("lda", "evaluation/analysis/level_drift_analysis.py")
+    lda = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(lda)
+    rng = np.random.default_rng(2)
+    blocks = []
+    for _ in range(7):                                    # seven day blocks of (window, bin) points with a true slope of 0.5
+        x = rng.uniform(0, 4, 400)
+        y = 0.5 * x + rng.normal(scale=0.2, size=400)
+        blocks.append([400, x.sum(), y.sum(), (x * y).sum(), (x * x).sum(), (y * y).sum()])
+    blocks = np.array(blocks)
+    slope = lda.ols(*blocks.sum(axis=0))[0]
+    lo, hi = lda.bootstrap_slope(blocks, draws=300, rng=np.random.default_rng(3))
+    assert abs(slope - 0.5) < 0.02 and lo <= slope <= hi and hi - lo < 0.1
+    s, se = lda.line_slope(np.arange(7), 0.1 * np.arange(7) + np.array([0, .01, -.01, 0, .01, -.01, 0]))
+    assert abs(s - 0.1) < 0.01 and se < 0.01
+    assert abs(lda.gap(1.15, 1.0) - 0.15) < 1e-12
