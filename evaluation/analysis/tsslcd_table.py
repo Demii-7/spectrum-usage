@@ -27,7 +27,8 @@ SETS = [("1min", "600_800", "authors defaults", "tsslcd-authors-full", ("off", "
         ("1min", "2400_2600", "authors defaults", "tsslcd-authors-full-2400", ("off", "causal")),
         ("15min", "600_800", "authors defaults", "tsslcd-authors-15min-default", ("off", "causal")),
         ("15min", "600_800", "tuned winner", "tsslcd-authors-15min-tuned", ("off",)),
-        ("15min", "2400_2600", "authors defaults", "tsslcd-authors-15min-default-2400", ("off", "causal"))]
+        ("15min", "2400_2600", "authors defaults", "tsslcd-authors-15min-default-2400", ("off", "causal")),
+        ("15min", "2400_2600", "tuned winner", "tsslcd-authors-15min-tuned-2400", ("off",))]
 HORIZONS = {"1min": (1, 15, 60), "15min": (1, 4, 12, 24, 48)}
 
 
