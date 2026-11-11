@@ -47,6 +47,26 @@ def record_key(prefix: str, job: dict[str, Any]) -> str:
             f"-seed-{job['seed']}.json")
 
 
+def tuned15_entries(client, bucket: str, band: str, models: list[str]) -> list[dict[str, Any]]:
+    """One entry per 2D model carrying the 15-minute-tuned winner's parameters (``tuning/powder15/<band>/2d/<model>/final/seed-N.json``; the winner is the same
+    for every seed, so the first finished final is read)."""
+    entries = []
+    for model in models:
+        for seed in range(40, 45):
+            try:
+                record = json.loads(client.get_object(Bucket=bucket, Key=f"tuning/powder15/{band}/2d/{model}/final/seed-{seed}.json")["Body"].read())
+            except Exception:
+                continue
+            if record.get("ok") and record.get("parameters") is not None:
+                entries.append({"rep": "2d", "model": model, "source_prefix": "tuning/powder15", "costs_key": None, "source_objective": record.get("search_objective"),
+                                "parameters": record["parameters"], "candidate_id": record.get("candidate_id"),
+                                "config_source": f"tuned15:{record.get('candidate_id')}"})
+                break
+        else:
+            raise FileNotFoundError(f"no finished tuned 15-minute final for {model} in {band}")
+    return entries
+
+
 def ablation_entry(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     """Remote worker: train one (model, region, condition, seed) cell and record its region test metrics."""
     import sys
@@ -63,14 +83,30 @@ def ablation_entry(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     result = {"model": model, "seed": job["seed"], "condition": job["condition"],
               "band_id": str(region["band_id"]), "start_mhz": float(region["start_mhz"]),
               "end_mhz": float(region["end_mhz"]), "source_prefix": job.get("source_prefix", ""),
-              "resolution": args.get("resolution", "1min")}
+              "resolution": args.get("resolution", "1min"), "config_source": job.get("config_source", "inherited_1min_run_costs")}
     started = time.time()
     try:
-        base = yaml.safe_load(Path(config_file_for(model, job["rep"])).read_text())
-        costs = json.loads(client.get_object(Bucket=bucket, Key=job["costs_key"])["Body"].read())
-        config = build_eval_config(base, model, costs, test_start=args["test_start"], test_end=args["test_end"],
-                                   test_stride=args["test_stride"], device=args["device"])
-        if args.get("resolution") == "15min":
+        if job.get("parameters") is not None:
+            # the 15-minute-tuned winner: the tuned finals' own path (tune_fixed: base config of the model, the dataset applied, the winner's parameters injected),
+            # on the full test week
+            from training.ray.tune_fixed import base_config, prepared
+
+            config, _ = base_config("powder15", args["band"], model, job["rep"], args["repo_root"], client, bucket)
+            config = prepared(config, "powder15", model, job["parameters"], job["seed"])
+            config["data"]["split"]["ranges"]["test"] = {"start": args["test_start"], "end": args["test_end"]}
+            if args["test_stride"] is not None:
+                config[model]["train"]["test_stride"] = int(args["test_stride"])
+            config["training"] = {**config.get("training", {}), "models": [model]}
+            config["training"].pop("model_name", None)
+            if args["device"]:
+                config["training"]["device"] = args["device"]
+            result["candidate_id"] = job.get("candidate_id")
+        else:
+            base = yaml.safe_load(Path(config_file_for(model, job["rep"])).read_text())
+            costs = json.loads(client.get_object(Bucket=bucket, Key=job["costs_key"])["Body"].read())
+            config = build_eval_config(base, model, costs, test_start=args["test_start"], test_end=args["test_end"],
+                                       test_stride=args["test_stride"], device=args["device"])
+        if args.get("resolution") == "15min" and job.get("parameters") is None:
             from training.ray.powder15 import HORIZONS, apply_powder15, ensure_powder15, set_lookback_and_horizon
 
             ensure_powder15(args["band"], args["repo_root"])
@@ -86,6 +122,13 @@ def ablation_entry(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
             eval_dir.mkdir()
             evaluate_one_model(config, model, eval_dir, checkpoint, skip_plots=True)
             result.update(region_metrics_from_forecasts(config, eval_dir, region))
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                result["peak_gpu_mb"] = round(torch.cuda.max_memory_allocated() / 2 ** 20, 1)
+        except Exception:
+            pass
         result["ok"] = True
     except Exception as error:
         import traceback
@@ -110,7 +153,12 @@ def launch(args: argparse.Namespace) -> None:
 
     client = spectrum_s3_client()
     bucket = args.bucket or os.environ.get("SPECTRUM_S3_BUCKET", "spectrum")
-    entries = discover_models(client, bucket, args.prefixes, list(args.models))
+    if args.hyperparameters == "tuned15":
+        if args.resolution != "15min":
+            raise SystemExit("--hyperparameters tuned15 needs --resolution 15min")
+        entries = tuned15_entries(client, bucket, args.band, list(args.models))
+    else:
+        entries = discover_models(client, bucket, args.prefixes, list(args.models))
     regions = non_noise_regions(args.regions)
     if args.regions_only:
         regions = [r for r in regions if str(r["band_id"]) in set(args.regions_only)]
@@ -175,6 +223,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--test-stride", type=int, default=None, help="Override test stride (default: as selected)")
     parser.add_argument("--device", default=None)
     parser.add_argument("--resolution", choices=("1min", "15min"), default="1min")
+    parser.add_argument("--hyperparameters", choices=("inherited", "tuned15"), default="inherited",
+                        help="inherited: each model's 1-minute selected configuration (the original ablation); tuned15: the 15-minute-tuned winner of tuning/powder15 (needs --resolution 15min)")
     parser.add_argument("--band", default="600_800", help="band for --resolution 15min (the region plan exists for 600_800)")
     parser.add_argument("--memory-gb", type=float, default=8.0, help="memory reserved per cell so Ray never oversubscribes a node")
     parser.add_argument("--max-parallel", type=int, default=8, help="most cells in flight at once (keeps the queue short for other jobs)")
