@@ -24,7 +24,8 @@ TSL_SOURCES = {"electrosense-results/tuned-tsl/tsl/": ("DLinear", "PatchTST"), "
                "electrosense-results/rerun-a/tsl/": ("Reformer",)}
 # Seed-fixed reruns (the library's run.py now reads TSL_SEED; ``--seedfix``): tuned winners reused, library defaults, seeds 40-44, new prefixes.
 SEEDFIX_SOURCES = {"electrosense-results/seedfix-tuned/tsl/": (" (tuned)", ("DLinear", "PatchTST", "Informer", "Autoformer", "LightTS")),
-                   "electrosense-results/seedfix-default/tsl/": (" (defaults)", ("DLinear", "PatchTST", "Informer", "Autoformer", "LightTS", "Reformer"))}
+                   "electrosense-results/seedfix-default/tsl/": (" (defaults)", ("DLinear", "PatchTST", "Informer", "Autoformer", "LightTS", "Reformer")),
+                   "electrosense-results/seedfix-tuned-reformer/tsl/": (" (tuned)", ("Reformer",))}
 LLM_ARMS = {"timellm_gpt2": "Time-LLM (GPT-2)", "timellm_bert": "Time-LLM (BERT)", "ofa_gpt2": "OFA (GPT-2)"}
 
 

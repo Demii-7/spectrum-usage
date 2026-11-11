@@ -128,5 +128,10 @@
   "id": "claude-uc-tsslcd15-tune-2400-1",
   "entrypoint": "python -u -m training.ray.tune_tsslcd --resolution 15min --band 2400_2600 --budget 16 --gpu-fraction 1.0 --max-parallel 3",
   "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-tsl-reformer-tune-1",
+  "entrypoint": "python -u -m training.ray.tune_tsl --models Reformer --datasets spec4 spec25 --horizons 12 48 192 --output-prefix electrosense-results/seedfix-tuned-reformer --gpu-fraction 0.5 --max-parallel 4",
+  "max_restarts": 4
  }
 ]

@@ -1,4 +1,4 @@
-"""Equal-budget hyperparameter search for Time-Series-Library baselines (PatchTST, DLinear, Informer, Autoformer, LightTS).
+"""Equal-budget hyperparameter search for Time-Series-Library baselines (PatchTST, DLinear, Informer, Autoformer, LightTS, Reformer).
 
 Same protocol as ``tune_fixed`` for our models: 16 candidates per (dataset, model) -- the library defaults first, then
 random draws -- each trained with seed 42 and scored on *validation* data only (the lowest per-epoch ``Vali Loss``
@@ -50,9 +50,16 @@ DEFAULTS = {
     "Autoformer": {"learning_rate": 1e-4, "d_model": 512, "n_heads": 8, "e_layers": 2, "d_layers": 1, "d_ff": 2048,
                    "factor": 1, "moving_avg": 25, "dropout": 0.1, "batch_size": 32, "train_epochs": 10},
     "LightTS": {"learning_rate": 1e-4, "d_model": 512, "dropout": 0.1, "batch_size": 32, "train_epochs": 10},
+    # Reformer: the library's own defaults (the untuned reproduction rows); its LSH bucket size and hash count are fixed inside the model constructor
+    "Reformer": {"learning_rate": 1e-4, "d_model": 512, "n_heads": 8, "e_layers": 2, "d_ff": 2048, "dropout": 0.1,
+                 "batch_size": 32, "train_epochs": 10},
 }
 # ("choice", [..]) | ("loguniform", lo, hi) | ("uniform", lo, hi)
 SPACES = {
+    "Reformer": {"learning_rate": ("loguniform", 1e-4, 3e-3), "d_model": ("choice", [64, 128, 256, 512]),
+                 "n_heads": ("choice", [4, 8]), "e_layers": ("choice", [1, 2, 3]),
+                 "d_ff": ("choice", [256, 512, 1024, 2048]), "dropout": ("uniform", 0.0, 0.3),
+                 "batch_size": ("choice", [16, 32, 64]), "train_epochs": ("choice", [10, 20])},
     "PatchTST": {"learning_rate": ("loguniform", 1e-4, 3e-3), "d_model": ("choice", [32, 64, 128, 256, 512]),
                  "n_heads": ("choice", [4, 8]), "e_layers": ("choice", [1, 2, 3]),
                  "d_ff": ("choice", [128, 256, 512, 1024, 2048]), "dropout": ("uniform", 0.0, 0.3),
