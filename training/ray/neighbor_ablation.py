@@ -15,10 +15,15 @@ the control (it has no learned use of neighbour dynamics). Every mode of one (mo
 valid in all four modes, so the comparison is paired.
 
 Models: the tuned 15-minute 4D winners' final seeds (``tuning/powder15_4d/<band>/4d/<model>/weights/seed-N``), the same models as
-``core4-p2``. Output per (band, model, seed): ``<prefix>/<band>/<model>/seed-N/per_origin.npz`` (origin times and per-origin, per-horizon
-mean absolute error and signed bias in dB for every receiver x mode) and ``summary.json``.
+``core4-p2``. Linear models and the lookback-mean control run on CPU; the neural models (STS-PredNet, ResidualConvLSTM, ConvLSTM) run on a
+GPU share (``--gpu-fraction``, default 0.5; ``--gpu-fraction 0`` forces CPU, which is slow for them). STS-PredNet loads through
+``training.common.spatial_checkpoint_evaluation.load_stsprednet_for_forecast`` inside ``evaluate_condition``; ResidualConvLSTM's tuning finals
+(and so its weights) do not exist yet. Output per (band, model, seed): ``<prefix>/<band>/<model>/seed-N/per_origin.npz`` (origin times and
+per-origin, per-horizon mean absolute error and signed bias in dB for every receiver x mode) and ``summary.json``.
 
     python -m training.ray.neighbor_ablation --models linearar4d residuallinearar4d lookbackmean4d --seeds 40 41 42 43 44
+    python -m training.ray.neighbor_ablation --models stsprednet residualconvlstm --seeds 40 41 42 43 44 --skip-done --gpu-fraction 0.5
+    python -m training.ray.neighbor_ablation --models stsprednet --bands 600_800 --seeds 40 --origin-stride 20 --prefix neighbor-ablation-smoke   # smoke
 """
 
 from __future__ import annotations
@@ -38,6 +43,13 @@ import numpy as np
 import yaml
 
 MODES = (("real", None, 0), ("shift96", "shift", 96), ("shift210", "shift", 210), ("level", "level", 0))
+NEURAL = ("stsprednet", "residualconvlstm", "convlstm")        # GPU models; everything else (linear 4D, lookback mean) runs on CPU
+KNOWN_MODELS = ("linearar4d", "residuallinearar4d", "lookbackmean4d", *NEURAL)
+
+
+def device_for(model: str, gpu_fraction: float) -> str:
+    """"cuda" for the neural models when a GPU share is requested, "cpu" otherwise."""
+    return "cuda" if model in NEURAL and gpu_fraction > 0 else "cpu"
 
 
 def make_transform(keep: int, mode: str | None, shift: int):
@@ -84,7 +96,8 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     client, bucket, band = spectrum_s3_client(), args["bucket"], spec["band"]
     model, seed = spec["model"], int(spec["seed"])
     base = f"{args['prefix'].strip('/')}/{band}/{model}/seed-{seed}"
-    record: dict[str, Any] = {"band": band, "model": model, "seed": seed, "modes": [m[0] for m in MODES]}
+    record: dict[str, Any] = {"band": band, "model": model, "seed": seed, "modes": [m[0] for m in MODES],
+                              "origin_stride": args["origin_stride"], "device": device_for(model, args["gpu_fraction"])}
     started = time.time()
     try:
         import torch
@@ -122,7 +135,8 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
                         out = scratch / f"out-{receiver_index}-{mode_name}"
                         evaluate_condition(experiment_path=exp_path, model_config_path=model_config, checkpoint_path=checkpoint,
                                            model_name=model, seed=seed, condition="geometry_correct", output_directory=out,
-                                           batch_size=args["batch_size"], device="cpu",
+                                           batch_size=args["batch_size"], device=device_for(model, args["gpu_fraction"]),
+                                           origin_stride=args["origin_stride"],
                                            series_transform=make_transform(receiver_index, mode, shift))
                         with np.load(out / "receiver_forecasts.npz", allow_pickle=True) as npz:
                             errors = per_origin_errors(npz, receiver_index, normalization)
@@ -166,10 +180,12 @@ def main(argv=None) -> None:
 
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--bands", nargs="+", default=["600_800", "2400_2600"], choices=("600_800", "2400_2600"))
-    p.add_argument("--models", nargs="+", default=["linearar4d", "residuallinearar4d", "lookbackmean4d"])
+    p.add_argument("--models", nargs="+", default=["linearar4d", "residuallinearar4d", "lookbackmean4d"], choices=KNOWN_MODELS)
     p.add_argument("--seeds", type=int, nargs="+", default=[40, 41, 42, 43, 44])
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--memory-gb", type=float, default=24.0)
+    p.add_argument("--gpu-fraction", type=float, default=0.5, help="GPU share of each neural-model job (0 = CPU); the other models never use a GPU")
+    p.add_argument("--origin-stride", type=int, default=1, help="1 for real results; larger only for smoke tests (use another --prefix)")
     p.add_argument("--max-parallel", type=int, default=10)
     p.add_argument("--skip-done", action="store_true")
     p.add_argument("--bucket", default=None)
@@ -195,13 +211,15 @@ def main(argv=None) -> None:
         specs = [sp for sp in specs if not done(sp)]
     print(f"[neighbor-ablation] {len(specs)} jobs", flush=True)
     shared = {"repo_root": args.repo_root, "bucket": bucket, "prefix": args.prefix, "tuning_prefix": args.tuning_prefix,
-              "batch_size": args.batch_size}
+              "batch_size": args.batch_size, "gpu_fraction": args.gpu_fraction, "origin_stride": args.origin_stride}
     ray.init(address=args.address, ignore_reinit_error=True)
     remote = ray.remote(num_cpus=4, num_gpus=0, memory=int(args.memory_gb * 2 ** 30), max_retries=1)(job)
     queue, pending, ok = list(specs), [], 0
     while queue or pending:
         while queue and len(pending) < args.max_parallel:
-            pending.append(remote.remote(queue.pop(0), shared))
+            spec = queue.pop(0)
+            gpus = args.gpu_fraction if device_for(spec["model"], args.gpu_fraction) == "cuda" else 0
+            pending.append(remote.options(num_gpus=gpus).remote(spec, shared))
         finished, pending = ray.wait(pending, num_returns=1)
         try:
             row = ray.get(finished[0])
