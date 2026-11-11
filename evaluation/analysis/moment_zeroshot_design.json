@@ -1,0 +1,56 @@
+{
+ "model": "MOMENT-1 (frozen, pretrained reconstruction head), forecasting as masked reconstruction",
+ "rule": "lowest MAE on the validation range 2026-10-25 14:00 to 10-27 13:55 UTC, mean over horizons 1/4/12/24/48, the four core receivers and both bands (equal weight per cell)",
+ "design": {
+  "name": "chunk1",
+  "mode": "chunked",
+  "chunk_patches": 1
+ },
+ "validation": {
+  "pooled": {
+   "chunk1": {
+    "mae_mean": 1.15465,
+    "last_value": 1.05409,
+    "seconds": 172.5,
+    "t1": 1.29365,
+    "t4": 0.98423,
+    "t12": 0.96385,
+    "t24": 1.44204,
+    "t48": 1.08946
+   },
+   "single6": {
+    "mae_mean": 1.18105,
+    "last_value": 1.05409,
+    "seconds": 31.5,
+    "t1": 1.27443,
+    "t4": 1.01742,
+    "t12": 1.03834,
+    "t24": 1.43349,
+    "t48": 1.1416
+   },
+   "chunk3": {
+    "mae_mean": 1.18829,
+    "last_value": 1.05409,
+    "seconds": 57.5,
+    "t1": 1.31459,
+    "t4": 0.9693,
+    "t12": 1.01753,
+    "t24": 1.53183,
+    "t48": 1.1082
+   },
+   "per_horizon": {
+    "mae_mean": 1.18874,
+    "last_value": 1.05409,
+    "seconds": 145.0,
+    "t1": 1.29365,
+    "t4": 0.98423,
+    "t12": 0.99238,
+    "t24": 1.53183,
+    "t48": 1.1416
+   }
+  },
+  "n_cells": 8,
+  "origins_per_cell": 49
+ },
+ "frozen_before_test_scoring": true
+}
