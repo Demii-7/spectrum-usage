@@ -45,7 +45,10 @@ def main() -> None:
             continue
         m = lambda f: float(np.mean([f(r) for r in recs]))
         r0 = recs[0]
-        rows.append({"resolution": res, "band": band, "setting": setting, "seeds": len(recs), "context_steps": r0.get("context"), "future_steps": r0.get("future"),
+        # the first runs (``tsslcd-authors-full``) predate the hyperparameter fields: they used the authors' defaults
+        for key, default in (("latent_dim", 32), ("learning_rate", 1e-4), ("batch_size", 256), ("train_mask_ratio", 0.1), ("n_timesteps", 1000)):
+            r0.setdefault(key, (r0.get("hparams") or {}).get(key, default))
+        rows.append({"resolution": res, "band": band, "setting": setting, "seeds": len(recs), "context_steps": r0.get("context", 60), "future_steps": r0.get("future", 60),
                      "latent_dim": r0["latent_dim"], "learning_rate": r0["learning_rate"], "batch_size": r0["batch_size"], "train_mask_ratio": r0["train_mask_ratio"],
                      "diffusion_steps": r0["n_timesteps"], "epochs_context": r0["epochs"]["ctx"], "epochs_future": r0["epochs"]["fut"], "epochs_diffusion": r0["epochs"]["diff"],
                      "params_context_ae": r0["parameters"]["ae_ctx"], "params_future_ae": r0["parameters"]["ae_fut"], "params_diffusion": r0["parameters"]["diffusion"],
