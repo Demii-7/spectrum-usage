@@ -187,7 +187,7 @@ INTRINSIC = {"revinmlp": "full", "patchtst": "full", "ofa": "full", "timellm": "
 
 
 def evaluate_frozen(module, rep: str, task, source, name: str, checkpoint_path: Path, config: dict[str, Any], seed: int,
-                    center: bool) -> dict[str, Any]:
+                    center: bool, normalization_override: dict[str, Any] | None = None) -> dict[str, Any]:
     """Frozen forecasts on the stage's origins. ``center`` removes each window's per-bin lookback mean before prediction (in the
     source normalization, so the model sees the window at the source's mean level) and restores it afterwards."""
     import torch
@@ -201,6 +201,8 @@ def evaluate_frozen(module, rep: str, task, source, name: str, checkpoint_path: 
     normalization = checkpoint.get("normalization")
     if normalization is None:
         raise ValueError("checkpoint lacks normalization")
+    if normalization_override is not None:             # regime C: statistics refitted on a calibration interval before the scored one
+        normalization = normalization_override
     parameters = evaluation_parameters(config, name)
     flattened = rep == "1d"
     normalized = (module.apply_flattened_source_normalization(source.data, normalization, source.segments) if flattened
