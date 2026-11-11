@@ -187,7 +187,7 @@ INTRINSIC = {"revinmlp": "full", "patchtst": "full", "ofa": "full", "timellm": "
 
 
 def evaluate_frozen(module, rep: str, task, source, name: str, checkpoint_path: Path, config: dict[str, Any], seed: int,
-                    center: bool, normalization_override: dict[str, Any] | None = None) -> dict[str, Any]:
+                    center: bool, normalization_override: dict[str, Any] | None = None, origin_horizon: int | None = None) -> dict[str, Any]:
     """Frozen forecasts on the stage's origins. ``center`` removes each window's per-bin lookback mean before prediction (in the
     source normalization, so the model sees the window at the source's mean level) and restores it afterwards."""
     import torch
@@ -213,8 +213,10 @@ def evaluate_frozen(module, rep: str, task, source, name: str, checkpoint_path: 
     model.to(device).eval()
     torch.manual_seed(seed)
     np.random.seed(seed)
+    # origin_horizon: a horizon-specific direct model only needs its own horizon of future, but every model must be scored on the shared
+    # origins (full 48-step future), so the origin set is built for the larger of the two
     starts = module.target_window_starts(source.timestamps, source.segments, lookback=parameters["lookback"],
-                                         max_horizon=parameters["max_horizon"], stride=parameters["test_stride"],
+                                         max_horizon=max(parameters["max_horizon"], origin_horizon or 0), stride=parameters["test_stride"],
                                          target_start=task.target_start, target_end=task.target_end)
     if not len(starts):
         raise ValueError("no origins")

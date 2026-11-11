@@ -36,6 +36,7 @@ import pandas as pd
 PREFIX = "transfer-all-oct2026"
 LOOKBACK = 96
 ROLLED_HORIZONS = (1, 4, 12, 24, 48)
+POWDER_ORIGINS = 625                       # per receiver and band (transfer15)
 CHEAP_DIRECT = ("revinmlp", "patchtst", "patchtst_noinorm", "patchtst_joint", "patchtst_nopatch", "dlinear", "nlinear", "linearar2d",
                 "residuallinearar2d", "residualnonlinear2d")
 LLM_DIRECT = ("ofa", "ofa_rand", "ofa_scratch", "timellm", "timeran_lp", "moment_lp")
@@ -55,7 +56,7 @@ def targets(repo_root: str, groups: list[str], bands: list[str], intervals: str 
 
     out: list[dict[str, Any]] = []
     if "powder" in groups:
-        out += [{"platform": "powder", "site": r, "run": TEST_RUN, "band": b, "n_origins": None} for b in bands for r in t15.HELD_OUT]
+        out += [{"platform": "powder", "site": r, "run": TEST_RUN, "band": b, "n_origins": POWDER_ORIGINS} for b in bands for r in t15.HELD_OUT]
     table = pd.read_csv(Path(repo_root) / intervals)
     for row in table.to_dict("records"):
         if row["use"] and row["platform"] in groups and row["band"] in bands:
@@ -136,7 +137,8 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
                 for regime in regimes:
                     center, refit = R.regime_flags(label, regime)
                     override = R.refit_normalization(base_normalization, source2d.data, mask, refit) if refit else None
-                    result = t15.evaluate_frozen(module, rep, task, source, name, checkpoint, config, seed, center, override)
+                    result = t15.evaluate_frozen(module, rep, task, source, name, checkpoint, config, seed, center, override,
+                                                 origin_horizon=max(ROLLED_HORIZONS))
                     if reference_rows is None:
                         reference_rows = result["rows"]
                     elif not all(np.array_equal(reference_rows[h], result["rows"][h]) for h in horizons):
