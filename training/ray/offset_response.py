@@ -37,7 +37,12 @@ import numpy as np
 
 OFFSETS = (-20.0, -10.0, -5.0, 5.0, 10.0, 20.0)
 HORIZONS = (1, 4, 12, 24, 48)
-STRIDE = {"2d": 4, "1d": 8}                    # origins are thinned (the response does not need all 625 per receiver)
+STRIDE = {"2d": 4, "1d": 8}
+DIRECT_MODELS = ("revinmlp", "patchtst", "patchtst_noinorm", "patchtst_joint", "patchtst_nopatch", "dlinear", "nlinear",
+                 "linearar2d", "residuallinearar2d", "residualnonlinear2d")
+DIRECT_INTRINSIC = {"revinmlp": "full", "patchtst": "full", "patchtst_joint": "full", "patchtst_nopatch": "full", "patchtst_noinorm": "none",
+                    "dlinear": "decomposition (moving-average trend)", "nlinear": "last value subtracted", "linearar2d": "none",
+                    "residuallinearar2d": "partial", "residualnonlinear2d": "partial"}                    # origins are thinned (the response does not need all 625 per receiver)
 
 
 def response_rows(base: dict[int, np.ndarray], shifted: dict[int, np.ndarray], offset: float, horizons=HORIZONS) -> list[dict[str, Any]]:
@@ -62,11 +67,15 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     from training.ray.storage import spectrum_s3_client
 
     client, bucket = spectrum_s3_client(), args["bucket"]
-    name, seed = entry["model"], int(entry["seed"])
-    base = f"{args['prefix'].strip('/')}/{band}/{receiver}/{entry['rep']}/{name}/seed-{seed}"
-    record = {"kind": "offset_response", "band": band, "receiver": receiver, "rep": entry["rep"], "model": name, "seed": seed,
-              "checkpoint_key": entry["pt_key"], "intrinsic_window_normalization": t15.INTRINSIC.get(name, "none"),
-              "offsets_db": list(OFFSETS), "horizons": list(HORIZONS), "origin_stride": STRIDE[entry["rep"]]}
+    label, seed = entry["model"], int(entry["seed"])
+    name = entry.get("pipeline", label)                       # the pipeline's model name (several direct variants share one)
+    direct = entry.get("source") == "direct"
+    horizons = [int(entry["horizon"])] if direct else list(HORIZONS)          # a direct model is trained for one horizon
+    base = (f"{args['prefix'].strip('/')}/{band}/{receiver}/{entry['rep']}/{label}" + (f"/h{horizons[0]}" if direct else "") + f"/seed-{seed}")
+    intrinsic = DIRECT_INTRINSIC.get(label, "none") if direct else t15.INTRINSIC.get(label, "none")
+    record = {"kind": "offset_response", "band": band, "receiver": receiver, "rep": entry["rep"], "model": label, "seed": seed,
+              "trained_horizon": horizons[0] if direct else None, "checkpoint_key": entry["pt_key"], "intrinsic_window_normalization": intrinsic,
+              "offsets_db": list(OFFSETS), "horizons": horizons, "origin_stride": STRIDE[entry["rep"]]}
     started = time.time()
     try:
         from training.common import transfer_1d, transfer_2d
@@ -75,7 +84,7 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         ensure_powder15(band, root, SPATIAL_NODES)
         meta = json.loads(client.get_object(Bucket=bucket, Key=entry["meta_key"])["Body"].read())
         config = meta["config"]
-        config["windowing"] = {"lookback": t15.LOOKBACK, "horizons": list(HORIZONS)}
+        config["windowing"] = {"lookback": t15.LOOKBACK, "horizons": horizons}
         config[name].setdefault("train", {})["test_stride"] = STRIDE[entry["rep"]]
         module = transfer_2d if entry["rep"] == "2d" else transfer_1d
         task = t15.target_task(band, receiver)
@@ -88,10 +97,10 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
             for offset in OFFSETS:
                 shifted_source = dataclasses.replace(source, data=np.asarray(source.data, dtype=np.float32) + np.float32(offset))
                 out = t15.evaluate_frozen(module, entry["rep"], task, shifted_source, name, checkpoint, config, seed, center=False)
-                if not all(np.array_equal(out["rows"][h], reference["rows"][h]) for h in HORIZONS):
+                if not all(np.array_equal(out["rows"][h], reference["rows"][h]) for h in horizons):
                     raise RuntimeError("origins changed with the offset")
-                rows.extend(response_rows(reference["predictions"], out["predictions"], offset))
-        record.update(rows=rows, n_origins=int(len(reference["rows"][HORIZONS[0]]) // (200 if entry["rep"] == "1d" else 1)),
+                rows.extend(response_rows(reference["predictions"], out["predictions"], offset, horizons))
+        record.update(rows=rows, n_origins=int(len(reference["rows"][horizons[0]]) // (200 if entry["rep"] == "1d" else 1)),
                       checkpoint_sha256=meta.get("sha256"), code_revision=args["code_revision"], ok=True)
     except Exception as error:
         import traceback
@@ -112,6 +121,9 @@ def main(argv=None) -> None:
     p.add_argument("--receivers", nargs="+", default=["humanities", "moran"], choices=["humanities", "madsen", "moran", "sagepoint"])
     p.add_argument("--reps", nargs="+", default=["1d", "2d"], choices=["1d", "2d"])
     p.add_argument("--models", nargs="+")
+    p.add_argument("--source", choices=("rolled", "direct"), default="rolled",
+                   help="rolled: the tuned 1D/2D checkpoints (p15tuned); direct: the tune_direct finals (one checkpoint per trained horizon, 15 minutes)")
+    p.add_argument("--horizons", type=int, nargs="+", default=[12, 48], help="trained horizons to test (direct source)")
     p.add_argument("--seeds", type=int, nargs="+", default=[40, 41, 42])
     p.add_argument("--gpu-fraction", type=float, default=0.0, help="0 = CPU (the default; the GPUs are usually reserved)")
     p.add_argument("--memory-gb", type=float, default=8.0)
@@ -135,13 +147,21 @@ def main(argv=None) -> None:
             revision = subprocess.run(["git", "-C", args.repo_root, "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
         except Exception:
             revision = "unknown"
-    entries = [e for e in discover_sources(client, bucket, ["p15tuned"], args.models)
-               if e["band"] in args.bands and e["rep"] in args.reps and int(e["seed"]) in args.seeds]
+    if args.source == "direct":
+        if args.prefix == "offset-response-oct2026":
+            args.prefix = "offset-response-direct-oct2026"
+        entries = [e for e in discover_sources(client, bucket, ["direct"], args.models or list(DIRECT_MODELS))
+                   if e["resolution"] == "15min" and e["band"] in args.bands and int(e["seed"]) in args.seeds
+                   and int(e["horizon"]) in args.horizons]
+    else:
+        entries = [e for e in discover_sources(client, bucket, ["p15tuned"], args.models)
+                   if e["band"] in args.bands and e["rep"] in args.reps and int(e["seed"]) in args.seeds]
     jobs = [{"entry": e, "receiver": r, "band": e["band"]} for e in entries for r in args.receivers]
     if args.skip_done:
         def done(j):
             e = j["entry"]
-            key = f"{args.prefix.strip('/')}/{j['band']}/{j['receiver']}/{e['rep']}/{e['model']}/seed-{e['seed']}/summary.json"
+            key = (f"{args.prefix.strip('/')}/{j['band']}/{j['receiver']}/{e['rep']}/{e['model']}"
+                   + (f"/h{e['horizon']}" if e.get("source") == "direct" else "") + f"/seed-{e['seed']}/summary.json")
             try:
                 return bool(json.loads(client.get_object(Bucket=bucket, Key=key)["Body"].read()).get("ok"))
             except Exception:
@@ -161,9 +181,9 @@ def main(argv=None) -> None:
         except Exception as error:
             row = {"ok": False, "error": f"{type(error).__name__}: {str(error)[:200]}"}
         ok += bool(row.get("ok"))
-        g = [r["gain"] for r in (row.get("rows") or []) if r["horizon"] == 12 and r["offset_db"] == 10.0]
+        g = [r["gain"] for r in (row.get("rows") or []) if r["offset_db"] == 10.0][:1]
         print(f"[offset] {row.get('band')} {row.get('receiver')} {row.get('rep')} {row.get('model')} seed{row.get('seed')} ok={row.get('ok')} "
-              f"gain(+10 dB, t+12)={g[0] if g else None} {row.get('error', '')} ({row.get('wall_seconds')}s) [{len(queue) + len(pending)} left]", flush=True)
+              f"gain(+10 dB, t+{row.get('trained_horizon') or 12})={g[0] if g else None} {row.get('error', '')} ({row.get('wall_seconds')}s) [{len(queue) + len(pending)} left]", flush=True)
     print(f"[offset] done: {ok} ok", flush=True)
 
 
