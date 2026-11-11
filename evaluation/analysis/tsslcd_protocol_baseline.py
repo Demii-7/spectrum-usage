@@ -31,8 +31,8 @@ import pandas as pd
 
 ROOT = os.environ.get("REPO_ROOT", "/workspace/spectrum-usage")
 BANDS = ("600_800", "2400_2600")
-SAVGOL = ("off", "centered")
-EVAL_SMOOTH = [(1, 1, "centered"), (6, 3, "centered")]
+SAVGOL = ("off", "centered", "causal")
+EVAL_SMOOTH = [(1, 1, "centered"), (6, 3, "centered"), (6, 3, "causal")]
 OUT = "evaluation/results/tsslcd_protocol_baseline.csv"
 OUT_FULL = "evaluation/results/tsslcd_protocol_baseline_fullweek.csv"
 # The stored 600-800 TSS-LCD runs with savgol off and centered (``tsslcd-authors-full/``, CAMPAIGN 22.2) were scored on 9,888 windows: the test files had been synced only
@@ -120,7 +120,9 @@ def main() -> None:
     selected = json.loads(client.get_object(Bucket="spectrum", Key="median-study/selected_k.json")["Body"].read())
     ray.init(address="auto", ignore_reinit_error=True)
     remote = ray.remote(num_cpus=4, memory=16 * 2 ** 30, max_retries=1)(band_job)
-    jobs = [(b, s, MATCHED_END if b == "600_800" else None) for b in BANDS for s in SAVGOL]
+    # 600-800: savgol off and centered are matched to the 9,888-window set of the stored TSS-LCD runs; the causal TSS-LCD runs (and all of 2400-2600) were scored on the
+    # full week (9,962 windows), so those use the full week
+    jobs = [(b, s, MATCHED_END if (b == "600_800" and s in ("off", "centered")) else None) for b in BANDS for s in SAVGOL]
     jobs_full = [("600_800", s, None) for s in SAVGOL]
     refs = [remote.remote(b, s, selected, e) for b, s, e in jobs + jobs_full]
     all_results = ray.get(refs)
@@ -145,11 +147,18 @@ def main() -> None:
     t = mae[mae.inputs.str.startswith("TSS-LCD") & (mae.horizon == "mean")]
     print("\nsanity 2: TSS-LCD stored rows (mean MAE over t+1/15/60):")
     print(t.pivot_table(index=["band", "savgol"], columns=["target", "eval_smooth"], values="value").round(3).to_string())
+    print("\nCAUSAL filter + trailing 6:3 averaging (p6g3cau), MAE averaged over 1/15/60 minutes, by band and target:")
+    for band in BANDS:
+        d = mae[(mae.band == band) & (mae.savgol == "causal") & (mae.horizon == "mean") & (mae.eval_smooth == "p6g3cau")]
+        print(f"\n{band}:"); print(d.pivot_table(index="inputs", columns="target", values="value").round(3).to_string())
+        h = mae[(mae.band == band) & (mae.savgol == "causal") & (mae.horizon != "mean") & (mae.eval_smooth == "p6g3cau")]
+        print(h.pivot_table(index="inputs", columns=["target", "horizon"], values="value").round(3).to_string())
     print("\nMAE averaged over 1/15/60 minutes:")
     for band in BANDS:
         for savgol in SAVGOL:
             d = mae[(mae.band == band) & (mae.savgol == savgol) & (mae.horizon == "mean")]
             w = d.pivot_table(index="inputs", columns=["target", "eval_smooth"], values="value").round(3)
+            w = w[[c for c in w.columns if c[1] in ("off", "p6g3cen", "p6g3cau")]]
             print(f"\n{band}, savgol {savgol}:")
             print(w.to_string())
 
