@@ -22,9 +22,9 @@ from training.ray.storage import spectrum_s3_client  # noqa: E402
 PREFIX = "offset-response-oct2026/"
 
 
-def load(bucket: str = "spectrum") -> pd.DataFrame:
+def load(bucket: str = "spectrum", prefix: str = PREFIX) -> pd.DataFrame:
     client = spectrum_s3_client()
-    keys = [o["Key"] for page in client.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=PREFIX)
+    keys = [o["Key"] for page in client.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=prefix)
             for o in page.get("Contents", []) if o["Key"].endswith("/summary.json")]
     with ThreadPoolExecutor(16) as pool:
         records = list(pool.map(lambda k: json.loads(client.get_object(Bucket=bucket, Key=k)["Body"].read()), keys))
@@ -42,8 +42,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--horizon", type=int, default=12)
     parser.add_argument("--out", default="evaluation/results/offset_response.csv")
+    parser.add_argument("--prefix", default=PREFIX, help="offset-response-direct-oct2026/ for the direct models (one checkpoint per trained horizon)")
     args = parser.parse_args()
-    frame = load()
+    frame = load(prefix=args.prefix)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(args.out, index=False)
     pd.set_option("display.width", 250)
