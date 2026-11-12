@@ -258,6 +258,17 @@ def _condition_data(
     return series, input_indices, target_indices
 
 
+def center_window_batch(windows: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Per-window centring in the checkpoint's normalization: (windows minus their lookback mean, that mean with shape (N, 1, ...))."""
+    level = windows.mean(axis=1, keepdims=True)
+    return windows - level, level
+
+
+def own_window_levels(normalized_values: np.ndarray, origins: np.ndarray, lookback: int) -> np.ndarray:
+    """Each origin's lookback-window mean of a normalized series (T, R, F) -> (N, R, F); the window is rows origin-lookback+1 .. origin."""
+    return np.stack([normalized_values[int(o) - lookback + 1:int(o) + 1].mean(axis=0) for o in origins])
+
+
 def evaluate_condition(
     *,
     experiment_path: Path,
@@ -273,11 +284,19 @@ def evaluate_condition(
     batch_size: int = 8,
     device: str = "cuda",
     series_transform=None,
+    center_windows: str | None = None,
 ) -> dict[str, Any]:
     """Evaluate one frozen checkpoint and write physical-receiver metrics.
 
     ``series_transform`` (optional) is applied to the aligned receiver series right after loading, before the input maps and the targets
     are built; the neighbour ablation uses it to break other receivers' dynamics while keeping the scored receiver untouched.
+
+    ``center_windows`` (default None: behaviour unchanged) applies per-window centring, the 'centered' regime B of the transfer tables: each
+    input window's per-bin mean over the lookback is removed (in the checkpoint's normalization, so the model sees the window at the source's
+    mean level; the map is linear in the receiver series, so this equals centring every receiver's series before the map is built) and the
+    level is restored after the forecast: ``"own"`` adds each receiver's OWN window mean to its sampled forecast, ``"map"`` adds the map's
+    window mean back to the forecast map before it is read at the receivers. The main outputs follow the chosen mode; both readouts are also
+    saved as ``predictions_normalized_center_own`` / ``_center_map``.
     """
     started = time.perf_counter()
     experiment_path = experiment_path.resolve()
@@ -401,6 +420,11 @@ def evaluate_condition(
         stride=1,                       # stride and limit were applied before stacking (in_scoring_range)
         limit=None,
     )
+    level_map = None
+    if center_windows:
+        if center_windows not in ("own", "map"):
+            raise ValueError("center_windows must be None, 'own' or 'map'")
+        windows, level_map = center_window_batch(windows)                  # window mean per cell and bin, normalized units
     predictions = infer_frozen_model(
         checkpoint_path,
         model_name,
@@ -415,9 +439,21 @@ def evaluate_condition(
     target_names = [series.names[index] for index in target_indices]
     target_lons = series.longitudes[target_indices]
     target_lats = series.latitudes[target_indices]
-    sampled, inside, outside_distance = sample_forecast_grid(
-        predictions, grid, target_lons, target_lats
-    )
+    centered_outputs: dict[str, np.ndarray] = {}
+    if center_windows:
+        lookback_rows = int(experiment.get("lookback", 60))
+        own_values = normalize_with_checkpoint(series.values_dbm[:, target_indices], normalization)             # (T, R, F)
+        own_level = own_window_levels(own_values, origins, lookback_rows)                                  # (N, R, F)
+        sampled_centered, inside, outside_distance = sample_forecast_grid(predictions, grid, target_lons, target_lats)
+        centered_outputs["predictions_normalized_center_own"] = sampled_centered + own_level[:, None]
+        predictions = predictions + level_map                                                              # restored forecast maps
+        sampled_map, _, _ = sample_forecast_grid(predictions, grid, target_lons, target_lats)
+        centered_outputs["predictions_normalized_center_map"] = sampled_map
+        sampled = centered_outputs["predictions_normalized_center_own" if center_windows == "own" else "predictions_normalized_center_map"]
+    else:
+        sampled, inside, outside_distance = sample_forecast_grid(
+            predictions, grid, target_lons, target_lats
+        )
     region_definitions = _regions(_resolve(experiment["regions"], root))
     metric_rows: list[dict[str, Any]] = []
     for horizon_index, horizon in enumerate(horizons):
@@ -493,6 +529,7 @@ def evaluate_condition(
         origin_timestamps=series.timestamps[origins].astype(str).to_numpy(),
         frequencies_mhz=frequencies,
         receivers=np.asarray(target_names),
+        **centered_outputs,
     )
     permutation_names = None
     if coordinate_permutation is not None:
@@ -516,6 +553,7 @@ def evaluate_condition(
         "input_receivers": list(input_series.names),
         "target_receivers": target_names,
         "n_origins": len(origins),
+        "center_windows": center_windows,
         "origin_stride": origin_stride,
         "horizons": horizons,
         "sampling_policy": "idw_extrapolation_from_frozen_grid",
