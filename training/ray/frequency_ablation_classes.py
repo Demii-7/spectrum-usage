@@ -72,8 +72,14 @@ def class_table(root: str, band: str, client=None, bucket: str = "spectrum") -> 
     return out
 
 
-def conditions() -> list[tuple[str, str, str]]:
-    return [("real", "real", "real")] + [(f"{s}_{d}", s, d) for s in CLASS_SETS for d in DISTURBANCES]
+SAME_REGION_SETS = ("sr_even", "sr_odd")        # optional variant: inside each region the even- (odd-) indexed bins are disturbed and the odd- (even-) indexed bins are scored
+
+
+def conditions(same_region: bool = False) -> list[tuple[str, str, str]]:
+    out = [("real", "real", "real")] + [(f"{s}_{d}", s, d) for s in CLASS_SETS for d in DISTURBANCES]
+    if same_region:
+        out += [(f"{s}_{d}", s, d) for s in SAME_REGION_SETS for d in ("shift96", "shift210")]
+    return out
 
 
 def stored_per_bin(client, bucket: str, entry: dict[str, Any]):
@@ -133,7 +139,7 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         frequencies = band_frequencies(band)
         masks = {r["band_id"]: region_mask(frequencies, r["start_mhz"], r["end_mhz"]) for r in regions}
         classes = class_table(root, band, client, bucket)
-        cond_list = [c for c in conditions() if not args.get("only_conditions") or c[0] in args["only_conditions"] or c[0] == "real"]
+        cond_list = [c for c in conditions(bool(args.get("same_region"))) if not args.get("only_conditions") or c[0] in args["only_conditions"] or c[0] == "real"]
         collected: dict[str, np.ndarray] = {}
         with tempfile.TemporaryDirectory(prefix="freq-cls-") as scratch_dir:
             path = Path(scratch_dir) / Path(entry["pt_key"]).name
@@ -247,13 +253,22 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
                 bin_nw = {c: np.full((len(horizons), 200), np.nan, dtype=np.float32) for c, _, _ in cond_list}
                 skipped: dict[str, list[str]] = {}
                 targets = {h: real[h][1] for h in real}
-                for region_id, rmask in masks.items():
+                for region_id, region_bins in masks.items():
                     for cname, cset, dist in cond_list:
+                        rmask = region_bins                                  # the bins scored (all of the region, or one parity class in the same-region variant)
                         if cname == "real":
                             errs = err_real
                         else:
-                            dmask = disturbed_mask(rmask, classes[receiver], cset)
-                            if not dmask.any():
+                            if cset in SAME_REGION_SETS:
+                                idx = np.flatnonzero(region_bins)
+                                dist_idx, score_idx = (idx[0::2], idx[1::2]) if cset == "sr_even" else (idx[1::2], idx[0::2])
+                                dmask = np.zeros(len(region_bins), dtype=bool)
+                                dmask[dist_idx] = True
+                                rmask = np.zeros(len(region_bins), dtype=bool)
+                                rmask[score_idx] = True
+                            else:
+                                dmask = disturbed_mask(region_bins, classes[receiver], cset)
+                            if not dmask.any() or not rmask.any():
                                 skipped.setdefault(cname, []).append(region_id)
                                 continue
                             if dist == "level":
@@ -330,6 +345,7 @@ def main(argv=None) -> None:
     p.add_argument("--receivers", nargs="+", default=list(RECEIVERS), choices=list(RECEIVERS))
     p.add_argument("--max-regions", type=int, default=0, help="smoke tests only (use another --prefix)")
     p.add_argument("--only-conditions", nargs="+", help="smoke tests only: restrict the conditions (real is always kept)")
+    p.add_argument("--same-region", action="store_true", help="add the same-service-neighbour conditions (even/odd bins of a region disturbed, the others scored; shift96 and shift210)")
     p.add_argument("--probe", action="store_true", help="identity probe: compare real per-bin errors with the stored table for origin-set variants")
     p.add_argument("--stride", type=int, default=1)
     p.add_argument("--gpu-fraction", type=float, default=0.1)
@@ -376,7 +392,7 @@ def main(argv=None) -> None:
     print(f"[freq-classes] {len(jobs)} jobs (of {len(entries)} checkpoints), revision {revision[:12]}{' PROBE' if args.probe else ''}", flush=True)
     shared = {"repo_root": args.repo_root, "bucket": bucket, "prefix": args.prefix, "code_revision": revision, "threads": args.threads,
               "stride": args.stride, "max_regions": args.max_regions, "receivers": args.receivers, "probe": args.probe,
-              "only_conditions": args.only_conditions}
+              "only_conditions": args.only_conditions, "same_region": args.same_region}
     ray.init(address=args.address, ignore_reinit_error=True)
     remote = ray.remote(num_cpus=2, max_retries=1)(job)
     queue, pending, ok = list(jobs), [], 0

@@ -30,7 +30,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 HERE = Path(__file__).resolve().parent
 RECEIVERS = ("humanities", "madsen", "moran", "sagepoint")
-CLASS_SETS = ("all", "P_only", "N_only", "noise_only")
+CLASS_SETS = ("all", "P_only", "N_only", "noise_only", "sr_even", "sr_odd")      # sr_*: same-region variant (even/odd-indexed bins of the region disturbed, the other parity scored)
 DISTURBANCES = ("shift96", "shift192", "shift144", "shift210", "level")
 CONTROLS = ("revinmlp", "patchtst", "linearar2d", "residuallinearar2d", "nlinear", "dlinear", "temporalconvnet")
 DIRECT = ("revinmlp", "revinmlp_mix", "patchtst", "patchtst_joint", "itransformer", "nlinear", "dlinear")
