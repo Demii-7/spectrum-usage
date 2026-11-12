@@ -28,9 +28,9 @@ PREFIX = "transfer-ncar-2026-11/cells"
 ROLLED = ("linearar1d", "residuallinearar1d", "vanillalstm1d", "residualvanillalstm", "linearar2d", "residuallinearar2d", "vanillalstm",
           "lstmattn", "temporalconvnet", "autoformer_csa")
 DIRECT_CORE = ("revinmlp", "revinmlp_mix", "patchtst", "patchtst_joint", "nlinear", "dlinear", "linearar2d", "residuallinearar2d",
-               # added 11-12 22:30 UTC: every other 15-minute direct model with finals in S3 (Part 1 ran the first three; iTransformer and
-               # DeepSPred had no transfer run). Launched as separate jobs (--models) so running jobs are not duplicated.
-               "patchtst_noinorm", "patchtst_nopatch", "residualnonlinear2d", "itransformer", "deepspred2d")
+               # added 11-12 22:30 UTC: every other 15-minute direct model with finals in S3 (Part 1 ran the first three, and
+               # DeepSPred had no transfer run; iTransformer left out on request). Separate jobs (--models), so running jobs are not duplicated.
+               "patchtst_noinorm", "patchtst_nopatch", "residualnonlinear2d", "deepspred2d")
 DIRECT_LLM = ("timellm", "ofa", "moment_lp", "timeran_lp", "ofa_rand", "ofa_scratch")
 SEEDS = {"temporalconvnet": (40, 41, 43, 44), "timellm": (40, 41, 42)}
 DEFAULT_SEEDS = (40, 41, 42, 43, 44)

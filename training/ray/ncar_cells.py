@@ -32,9 +32,9 @@ CORE4 = ("humanities", "madsen", "moran", "sagepoint")
 # 200 channels): yes. TimeRAN/MOMENT reshape channels into the batch: no.
 SPECTRAL_YES = {"linearar2d", "residuallinearar2d", "vanillalstm", "residualvanillalstm:2d", "lstmattn", "autoformer_csa",
                 "patchtst_joint", "revinmlp_mix", "tsslcd",
-                # not in the brief's lists: Residual nonlinear 2D (ResidualLinearAR 2D base), iTransformer (variates are the tokens),
-                # DeepSPred (3D Swin over time x frequency frames) all mix bins
-                "residualnonlinear2d", "itransformer", "deepspred2d"}
+                # not in the brief's lists: Residual nonlinear 2D (ResidualLinearAR 2D base) and
+                # DeepSPred (3D Swin over time x frequency frames) both mix bins
+                "residualnonlinear2d", "deepspred2d"}
 SPATIAL_YES = {"linearar4d", "residuallinearar4d", "convlstm", "residualconvlstm", "dswinlstm_i", "stsprednet", "tsslcd", "revinmlp_nbr",
                "lookbackmean4d"}
 LEVEL_KEEPING = {"revinmlp", "patchtst", "ofa", "timellm", "moment_lp", "timeran_lp", "nlinear", "residuallinearar1d", "residuallinearar2d"}
