@@ -1,0 +1,247 @@
+"""Reduced 15-minute search for DSwinLSTM-I (both bands), then automatic finals for a winner that beats the inherited configuration.
+
+Why: the only 15-minute DSwinLSTM-I result (seed 42) uses the 1-minute round-2 configuration (``inherited:1min-r2``, no 15-minute search); it is last
+or near last among the 4D models. STS-PredNet and ResidualConvLSTM already have 16-trial 15-minute searches, so only this model is searched here.
+
+Search space: the registry's (``training/ray/registry.py``: five architecture presets x learning rate x weight decay x batch size), the same space the
+1-minute search drew from; 8 candidates per band = the three anchors (candidate 2 IS the inherited configuration: embed 32, lr 1e-4, batch 2, weight
+decay 0, which gives a paired replicate of the existing seed-42 final) plus five seeded random draws (``tune_fixed.candidate_list``, identical to what
+``tune_fixed --budget 8`` would draw). Every candidate is trained with seed 42 exactly like the inherited final (``apply_fixed_config``: output length
+48, strides as the finals, selection by validation MAE ``val_mean_horizon_mae_db``), so objectives are directly comparable. Nothing is written to the
+existing ``tuning/`` prefix.
+
+    python -m training.ray.tune_dswin15 run [--bands 600_800 2400_2600] [--only-index N] [--epochs E] [--prefix tuning-dswin-search]
+    python -m training.ray.tune_dswin15 decide          # winner per band, verdict JSON + trials CSV, finals for a winner >= 3% better
+"""
+from __future__ import annotations
+
+import argparse
+import copy
+import io
+import json
+import os
+import random
+import tempfile
+import time
+from pathlib import Path
+from typing import Any
+
+MODEL, REP, SOURCE = "dswinlstm_i", "4d", "powder15_4d"
+BANDS = ("600_800", "2400_2600")
+INHERITED = "training/configs/fixed/dswinlstm_i_inherited_1min_r2.json"
+BASELINE_PREFIX = "tuning"                       # the existing seed-42 finals live here (read only)
+DEFAULT_PREFIX = "tuning-dswin-search"
+SEARCH_SEED = 42
+FINAL_SEEDS = (40, 41, 42, 43, 44)
+IMPROVEMENT = 0.03                               # a winner must beat the inherited validation objective by this fraction to get finals
+
+
+def candidates_for(spec, band: str, budget: int = 8) -> list[dict[str, Any]]:
+    from .tune_fixed import candidate_list
+
+    return candidate_list(spec, budget, random.Random(f"{SOURCE}|{band}|{REP}|{MODEL}"))
+
+
+def fixed_from_candidate(candidate: dict[str, Any], inherited: dict[str, Any], label: str, epochs: int | None = None) -> dict[str, Any]:
+    """A ``tune_fixed`` fixed-config dict ({"label", "model", "train"}) from a registry candidate, overlaid on the inherited configuration."""
+    model = copy.deepcopy(inherited["model"])
+    train = copy.deepcopy(inherited["train"])
+    for key, value in candidate.items():
+        if key == "architecture":
+            for name, v in value.items():
+                model[name.removeprefix("model.")] = copy.deepcopy(v)
+        elif key.startswith("train."):
+            train[key.removeprefix("train.")] = value
+        elif key.startswith("model."):
+            model[key.removeprefix("model.")] = copy.deepcopy(value)
+        else:
+            raise KeyError(f"unexpected candidate key {key!r}")
+    if epochs:
+        train["epochs"] = int(epochs)
+    return {"label": label, "model": model, "train": train}
+
+
+def group_prefix(prefix: str, band: str) -> str:
+    return f"{prefix.strip('/')}/{SOURCE}/{band}/{REP}/{MODEL}"
+
+
+def trial_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    import sys
+
+    sys.path.insert(0, args["repo_root"])
+    os.chdir(args["repo_root"])
+    from training.ray.storage import spectrum_s3_client
+    from training.ray.tune_fixed import apply_fixed_config, base_config, train_prepared
+
+    client, bucket = spectrum_s3_client(), args["bucket"]
+    record = {"kind": "trial", "source": SOURCE, "dataset": job["band"], "model": MODEL, "rep": REP, "candidate_id": job["cid"],
+              "parameters": job["parameters"], "seed": SEARCH_SEED, "index": job["index"], "epochs": job["fixed"]["train"]["epochs"]}
+    started = time.time()
+    try:
+        config, _ = base_config(SOURCE, job["band"], MODEL, REP, args["repo_root"], client, bucket)
+        config = apply_fixed_config(config, MODEL, job["fixed"], SEARCH_SEED)
+        with tempfile.TemporaryDirectory(prefix="dswin-trial-") as scratch:
+            result = train_prepared(config, MODEL, Path(scratch) / "trial")
+        record.update(ok=True, objective=result["objective"], objective_name=result["objective_name"])
+        costs = result.get("run_costs") or {}
+        record["run_costs"] = {k: v for k, v in costs.items() if isinstance(v, (int, float, str, bool))}
+    except Exception as error:
+        import traceback
+
+        record.update(ok=False, error=f"{type(error).__name__}: {error}"[:300], trace=traceback.format_exc()[-700:])
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            record["peak_gpu_mb"] = round(torch.cuda.max_memory_allocated() / 1e6, 1)
+    except Exception:
+        pass
+    record["wall_seconds"] = round(time.time() - started, 1)
+    try:
+        client.put_object(Bucket=bucket, Key=f"{job['prefix']}/trial-{job['cid']}.json", Body=json.dumps(record, default=str).encode())
+    except Exception:
+        pass
+    return record
+
+
+def run_calls(calls: list, max_parallel: int, address: str, worker_args: dict[str, Any], label: str) -> list:
+    """Run (function, ray options, job) calls with at most ``max_parallel`` in flight (queued tasks fill whatever GPU fractions are free)."""
+    import ray
+
+    ray.init(address=address, ignore_reinit_error=True)
+    queue, pending, results = list(calls), [], []
+    while queue or pending:
+        while queue and len(pending) < max_parallel:
+            fn, opts, job = queue.pop(0)
+            pending.append(ray.remote(**opts)(fn).remote(job, worker_args))
+        done, pending = ray.wait(pending, num_returns=1)
+        row = ray.get(done[0])
+        results.append(row)
+        print(f"[dswin15] {label} {row.get('kind')} {row.get('dataset')} cand={row.get('candidate_id')} ok={row.get('ok')} "
+              f"obj={row.get('objective')} ({row.get('wall_seconds')}s, peak {row.get('peak_gpu_mb')} MB) [{len(queue) + len(pending)} left]", flush=True)
+    return results
+
+
+def ray_options(spec, gpu_fraction: float, memory_gb: float) -> dict[str, Any]:
+    resources = dict(spec.resources.as_ray())
+    opts = {"num_cpus": resources["cpu"], "num_gpus": gpu_fraction, "max_retries": 1}
+    if memory_gb:
+        opts["memory"] = int(memory_gb * 2 ** 30)
+    return opts
+
+
+def read_trials(client, bucket: str, prefix: str) -> list[dict[str, Any]]:
+    out = []
+    for page in client.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=prefix + "/trial-"):
+        for obj in page.get("Contents", []):
+            out.append(json.loads(client.get_object(Bucket=bucket, Key=obj["Key"])["Body"].read()))
+    return out
+
+
+def cmd_run(a: argparse.Namespace) -> None:
+    from .registry import get_model_spec
+    from .storage import spectrum_s3_client
+
+    client, bucket = spectrum_s3_client(), a.bucket or os.environ.get("SPECTRUM_S3_BUCKET", "spectrum")
+    inherited = json.loads(Path(a.repo_root, INHERITED).read_text())
+    spec = get_model_spec(MODEL, require_executable=True)
+    opts = ray_options(spec, a.gpu_fraction, a.memory_gb)
+    calls = []
+    from .candidate import candidate_id
+
+    for band in a.bands:
+        prefix = group_prefix(a.prefix, band)
+        done = {t.get("candidate_id") for t in read_trials(client, bucket, prefix) if t.get("ok")}
+        for index, cand in enumerate(candidates_for(spec, band, a.budget)):
+            if a.only_index and index not in a.only_index:
+                continue
+            cid = candidate_id(MODEL, cand)
+            if cid in done:
+                continue
+            fixed = fixed_from_candidate(cand, inherited, cid, a.epochs)
+            calls.append((trial_job, opts, {"band": band, "prefix": prefix, "index": index, "cid": cid, "parameters": cand, "fixed": fixed}))
+    print(f"[dswin15] {len(calls)} trials to run (prefix {a.prefix})", flush=True)
+    run_calls(calls, a.max_parallel, a.address, {"repo_root": a.repo_root, "bucket": bucket}, "search")
+
+
+def cmd_decide(a: argparse.Namespace) -> None:
+    import pandas as pd
+
+    from .registry import get_model_spec
+    from .storage import spectrum_s3_client
+    from .tune_fixed import final_job, read_records
+
+    client, bucket = spectrum_s3_client(), a.bucket or os.environ.get("SPECTRUM_S3_BUCKET", "spectrum")
+    inherited = json.loads(Path(a.repo_root, INHERITED).read_text())
+    spec = get_model_spec(MODEL, require_executable=True)
+    opts = ray_options(spec, a.gpu_fraction, a.memory_gb)
+    rows, verdict, final_calls = [], {"improvement_threshold": IMPROVEMENT, "bands": {}}, []
+    for band in a.bands:
+        prefix = group_prefix(a.prefix, band)
+        trials = read_trials(client, bucket, prefix)
+        base = json.loads(client.get_object(Bucket=bucket, Key=f"{group_prefix(BASELINE_PREFIX, band)}/final/seed-42.json")["Body"].read())
+        baseline = float(base["objective"])
+        ok = [t for t in trials if t.get("ok") and t.get("objective") == t.get("objective")]
+        for t in trials:
+            rows.append({"band": band, "index": t.get("index"), "candidate_id": t.get("candidate_id"), "ok": t.get("ok"),
+                         "objective": t.get("objective"), "wall_seconds": t.get("wall_seconds"), "peak_gpu_mb": t.get("peak_gpu_mb"),
+                         "parameters": json.dumps(t.get("parameters"), default=str), "error": t.get("error")})
+        if not ok:
+            verdict["bands"][band] = {"verdict": "no completed trials", "baseline_objective": baseline, "trials": len(trials)}
+            continue
+        win = min(ok, key=lambda t: (t["objective"], t["candidate_id"]))
+        gain = (baseline - win["objective"]) / baseline
+        entry = {"baseline_objective": baseline, "baseline_label": base.get("candidate_id"), "winner": win["candidate_id"], "winner_index": win.get("index"),
+                 "winner_objective": win["objective"], "improvement": gain, "trials": len(trials), "trials_ok": len(ok),
+                 "winner_parameters": win["parameters"], "verdict": "improves" if gain >= IMPROVEMENT else "does not improve"}
+        verdict["bands"][band] = entry
+        if gain >= IMPROVEMENT and not a.no_finals:
+            fixed = fixed_from_candidate(win["parameters"], inherited, win["candidate_id"])
+            done = {r["seed"] for r in read_records(client, bucket, group_prefix(a.prefix, band) + "/final")
+                    if r.get("ok") and r.get("candidate_id") == win["candidate_id"]}
+            for seed in a.final_seeds:
+                if seed not in done:
+                    final_calls.append((final_job, opts, {"source": SOURCE, "dataset": band, "model": MODEL, "rep": REP, "prefix": group_prefix(a.prefix, band),
+                                                          "parameters": {}, "seed": int(seed), "candidate_id": win["candidate_id"], "search_objective": win["objective"],
+                                                          "budget": 0, "fixed": fixed}))
+    buffer = io.StringIO()
+    pd.DataFrame(rows).to_csv(buffer, index=False)
+    for key, body in (("analysis-outputs/dswin_search_trials.csv", buffer.getvalue().encode()),
+                      ("analysis-outputs/dswin_search_verdict.json", json.dumps(verdict, indent=1, default=str).encode())):
+        client.put_object(Bucket=bucket, Key=key, Body=body)
+    print("[dswin15] verdict " + json.dumps(verdict, default=str)[:1500], flush=True)
+    if final_calls:
+        print(f"[dswin15] {len(final_calls)} final runs for improving winners", flush=True)
+        results = run_calls(final_calls, a.max_parallel, a.address, {"repo_root": a.repo_root, "bucket": bucket}, "finals")
+        verdict["finals"] = [{"dataset": r.get("dataset"), "seed": r.get("seed"), "ok": r.get("ok"), "objective": r.get("objective"),
+                              "mae_t12": r.get("test_mae_db_t12")} for r in results]
+        client.put_object(Bucket=bucket, Key="analysis-outputs/dswin_search_verdict.json", Body=json.dumps(verdict, indent=1, default=str).encode())
+
+
+def main(argv=None) -> None:
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    for name in ("run", "decide", "all"):
+        s = sub.add_parser(name)
+        s.add_argument("--bands", nargs="+", default=list(BANDS), choices=BANDS)
+        s.add_argument("--prefix", default=DEFAULT_PREFIX)
+        s.add_argument("--budget", type=int, default=8)
+        s.add_argument("--only-index", type=int, nargs="+")
+        s.add_argument("--epochs", type=int, default=None, help="override the epochs (smoke tests only; use another --prefix)")
+        s.add_argument("--gpu-fraction", type=float, default=0.5)
+        s.add_argument("--memory-gb", type=float, default=12.0)
+        s.add_argument("--max-parallel", type=int, default=12)
+        s.add_argument("--no-finals", action="store_true")
+        s.add_argument("--final-seeds", type=int, nargs="+", default=list(FINAL_SEEDS))
+        s.add_argument("--bucket", default=None)
+        s.add_argument("--address", default="auto")
+        s.add_argument("--repo-root", default="/workspace/spectrum-usage")
+    a = p.parse_args(argv)
+    if a.cmd in ("run", "all"):
+        cmd_run(a)
+    if a.cmd in ("decide", "all"):
+        cmd_decide(a)
+
+
+if __name__ == "__main__":
+    main()
