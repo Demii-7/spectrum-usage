@@ -220,16 +220,6 @@
   "max_restarts": 4
  },
  {
-  "id": "claude-uc-tcn-trials-1",
-  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_fixed --source powder15 --datasets 600_800 2400_2600 --models temporalconvnet:2d --trials-only --output-prefix tuning-tcn-full16 --gpu-fraction 1.0 --max-parallel 7\"",
-  "max_restarts": 4
- },
- {
-  "id": "claude-uc-tcn-decide-1",
-  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-uc-tcn-trials-1 --then 'python -u training/ray/scripts/tcn_full16_decide.py'\"",
-  "max_restarts": 4
- },
- {
   "id": "claude-uc-dswin15s-600_800-1",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_fixed --source powder15_4d --datasets 600_800 --models dswinlstm_i:4d --fixed-config training/configs/fixed/dswinlstm_i_inherited_1min_r2.json --fixed-seeds 40 41 43 44 --output-prefix tuning --gpu-fraction 0.5 --memory-gb 12\"",
   "max_restarts": 4

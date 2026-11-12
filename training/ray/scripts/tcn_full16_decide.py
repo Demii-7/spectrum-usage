@@ -53,7 +53,7 @@ def main():
         print("[decide] winner unchanged in both bands: no extra finals", flush=True)
         return
     cmd = ["python", "-u", "-m", "training.ray.tune_fixed", "--source", "powder15", "--datasets", *changed, "--models", "temporalconvnet:2d",
-           "--output-prefix", NEW, "--gpu-fraction", "1.0", "--max-parallel", "5"]
+           "--output-prefix", NEW, "--gpu-fraction", "0.6", "--max-parallel", "5"]
     print("[decide] winner changed in", changed, "->", " ".join(cmd), flush=True)
     raise SystemExit(subprocess.call(cmd, cwd="/workspace/spectrum-usage"))
 

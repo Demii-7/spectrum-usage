@@ -253,5 +253,15 @@
   "id": "claude-final-tsslcd-week2full-1",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tsslcd_authors --test-start 2026-11-03T20:00:00Z --test-end 2026-11-10T20:00:00Z --eval-only --resolution 15min --gpu-fraction 0.1 --weights-prefix tsslcd-authors-15min-tuned --band 600_800 --savgol off --output-prefix tsslcd-authors-15min-tuned-week2full && python -u -m training.ray.tsslcd_authors --test-start 2026-11-03T20:00:00Z --test-end 2026-11-10T20:00:00Z --eval-only --resolution 15min --gpu-fraction 0.1 --weights-prefix tsslcd-authors-15min-tuned-2400 --band 2400_2600 --savgol off --output-prefix tsslcd-authors-15min-tuned-2400-week2full && python -u -m training.ray.tsslcd_authors --test-start 2026-11-03T20:00:00Z --test-end 2026-11-10T20:00:00Z --eval-only --resolution 15min --gpu-fraction 0.1 --weights-prefix tsslcd-authors-15min-default --band 600_800 --savgol off causal --output-prefix tsslcd-authors-15min-default-week2full && python -u -m training.ray.tsslcd_authors --test-start 2026-11-03T20:00:00Z --test-end 2026-11-10T20:00:00Z --eval-only --resolution 15min --gpu-fraction 0.1 --weights-prefix tsslcd-authors-15min-default-2400 --band 2400_2600 --savgol off causal --output-prefix tsslcd-authors-15min-default-2400-week2full\"",
   "max_restarts": 4
+ },
+ {
+  "id": "claude-final-tcn-trials-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_fixed --source powder15 --datasets 600_800 2400_2600 --models temporalconvnet:2d --trials-only --output-prefix tuning-tcn-full16 --gpu-fraction 0.6 --max-parallel 4\"",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-final-tcn-decide-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-final-tcn-trials-1 --then 'python -u training/ray/scripts/tcn_full16_decide.py'\"",
+  "max_restarts": 4
  }
 ]
