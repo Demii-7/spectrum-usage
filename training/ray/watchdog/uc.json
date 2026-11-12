@@ -203,5 +203,10 @@
   "id": "claude-uc-julyall-timellm-w2",
   "entrypoint": "python -u -m training.ray.transfer_all run --source direct --models timellm --seeds 40 41 42 --groups powder --no-core-powder --intervals evaluation/analysis/transfer_july_intervals.csv --prefix transfer-all-july-2026 --skip-done --gpu-fraction 1.0 --max-parallel 4",
   "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-week2-rolled-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.rescore --sources p15 p15tuned --max-parallel 6 --gpu-fraction 0.1 --test-start 2026-11-03T20:00:00Z --test-end 2026-11-09T02:00:00Z --output-prefix rescored-week2 --skip-done --no-pin\"",
+  "max_restarts": 4
  }
 ]

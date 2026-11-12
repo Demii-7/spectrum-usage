@@ -228,5 +228,10 @@
   "id": "claude-final-nbr-score-1",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-final-nbr-tune-1 --then 'bash training/ray/scripts/run_revinmlp_neighbors_score.sh'\"",
   "max_restarts": 2
+ },
+ {
+  "id": "claude-final-week2-direct-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.rescore --sources direct --resolution 15min --max-parallel 6 --gpu-fraction 0.1 --test-start 2026-11-03T20:00:00Z --test-end 2026-11-09T02:00:00Z --output-prefix rescored-week2 --skip-done --no-pin\"",
+  "max_restarts": 4
  }
 ]
