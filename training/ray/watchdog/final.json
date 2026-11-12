@@ -278,5 +278,15 @@
   "id": "claude-final-offsetx-poller-2",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-final-offsetx-rcl-1 --then 'python -u training/ray/scripts/offset_extra_poller.py --interval 600 --max-hours 24'\"",
   "max_restarts": 2
+ },
+ {
+  "id": "claude-final-tsslcd-abl-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tsslcd_spectral_ablation --seeds 42 --gpu-fraction 0.25 --max-parallel 6\"",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-final-tsslcd-abl-table-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-final-tsslcd-abl-1 --then 'bash training/ray/scripts/run_tsslcd_ablation_table.sh'\"",
+  "max_restarts": 2
  }
 ]
