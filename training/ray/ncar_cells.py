@@ -27,7 +27,10 @@ WEEK2 = (pd.Timestamp("2026-11-03T20:00:00Z"), pd.Timestamp("2026-11-10T20:00:00
 CORE4 = ("humanities", "madsen", "moran", "sagepoint")
 
 # --------------------------------------------------------------------------------------------- tags
-SPECTRAL_YES = {"linearar2d", "residuallinearar2d", "vanillalstm", "residualvanillalstm:2d", "lstmattn", "temporalconvnet", "autoformer_csa",
+# TCN is NOT in this set: every tuned 15-minute TCN final (both bands, seeds 40-44) has model.feature_mode = "independent", which reshapes
+# the bins into the batch (models/TemporalConvNet.py), so it never mixes bins. Autoformer-CSA embeds all bins jointly (TokenEmbedding over
+# 200 channels): yes. TimeRAN/MOMENT reshape channels into the batch: no.
+SPECTRAL_YES = {"linearar2d", "residuallinearar2d", "vanillalstm", "residualvanillalstm:2d", "lstmattn", "autoformer_csa",
                 "patchtst_joint", "revinmlp_mix", "tsslcd"}
 SPATIAL_YES = {"linearar4d", "residuallinearar4d", "convlstm", "residualconvlstm", "dswinlstm_i", "stsprednet", "tsslcd", "revinmlp_nbr",
                "lookbackmean4d"}

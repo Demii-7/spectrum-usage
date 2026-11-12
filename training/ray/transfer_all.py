@@ -185,6 +185,8 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
                         ncar_cells.save_cell(client, bucket, base, ncar_cells.matrices(result, rep), ncar_cells.band_frequencies(t["band"]))
                     record["mae"].setdefault(regime, {}).update({str(h): scored["metrics"][str(h)]["mae_db"] for h in horizons})
         record["ok"] = True
+        if torch.cuda.is_available():
+            record["gpu_peak_gb"] = round(torch.cuda.max_memory_allocated() / 2 ** 30, 2)
     except Exception as error:
         import traceback
 
@@ -289,7 +291,7 @@ def cmd_run(a: argparse.Namespace) -> None:
         shown = {r: next(iter(m.values())) if len(m) == 1 else m.get("12") for r, m in (row.get("mae") or {}).items()}
         print(f"[transfer-all] {row.get('target')} {row.get('model')} seed{row.get('seed')} ok={row.get('ok')} "
               f"mae={{{', '.join(f'{r}:{v:.3f}' for r, v in shown.items() if v is not None)}}} {row.get('error', '')} "
-              f"({row.get('wall_seconds')}s) [{len(queue) + len(pending)} left]", flush=True)
+              f"({row.get('wall_seconds')}s, gpu peak {row.get('gpu_peak_gb')} GB) [{len(queue) + len(pending)} left]", flush=True)
     print(f"[transfer-all] done: {ok} ok, {failed} failed", flush=True)
 
 
