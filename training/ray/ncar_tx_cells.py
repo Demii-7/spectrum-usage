@@ -60,7 +60,7 @@ def model_groups(client, bucket: str, stage: str, bands: list[str], models: list
     out: list[list[dict]] = []
     if stage == "core":
         rolled = [m for m in ROLLED if not models or m in models]
-        for e in discover_sources(client, bucket, ["p15tuned"], rolled):
+        for e in (discover_sources(client, bucket, ["p15tuned"], rolled) if rolled else []):   # empty would mean "every model"
             if e["band"] in bands and int(e["seed"]) in SEEDS.get(e["model"], DEFAULT_SEEDS):
                 out.append([{**e, "source_kind": "rolled"}])
     direct = [m for m in (DIRECT_CORE if stage == "core" else DIRECT_LLM) if not models or m in models]
