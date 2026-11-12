@@ -88,7 +88,7 @@ def design(stamps: pd.DatetimeIndex, x: np.ndarray, k: int, h: int, start: pd.Ti
 
     Returns (origin rows, lag deviations D[l] of shape (N, 4, bins) for l = 0..3, target deviation Y of shape (N, 4, bins))."""
     n = len(stamps)
-    gap = np.concatenate([[0], np.cumsum(np.diff(stamps.to_numpy()) != STEP.to_timedelta64())])
+    gap = np.concatenate([[0], np.cumsum(np.diff(stamps.asi8) != STEP.value)])
     rows = np.arange(max(k - 1, LAGS - 1), n - h)
     target_time = stamps[rows + h]
     keep = (target_time >= start) & (target_time <= end) & (gap[rows - (k - 1)] == gap[rows + h])
