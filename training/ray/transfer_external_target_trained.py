@@ -105,6 +105,9 @@ def cell_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
             record[f"{k}_mae_db"], record[f"{k}_mse_db"] = float(np.mean(np.abs(err))), float(np.mean(err ** 2))
         with tempfile.TemporaryDirectory(prefix="ext-tt-") as scratch:
             result = train_prepared(config, name, Path(scratch) / "run")
+            from training.ray.artifacts import save_artifact
+            record.update(save_artifact(client, bucket, f"{args['prefix'].strip('/')}/weights/{t['platform']}/{t['site']}/{t['run']}/{t['band']}/h{horizon}/seed-{seed}",
+                                        result["checkpoint"], meta={"model": "revinmlp", "target": t, "horizon": horizon, "seed": seed, "parameters": params}))
             eval_dir = Path(scratch) / "eval"
             eval_dir.mkdir()
             evaluate_one_model(config, name, eval_dir, result["checkpoint"], skip_plots=True)
