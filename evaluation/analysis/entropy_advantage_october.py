@@ -35,7 +35,9 @@ BASELINE_K = {"1min": 60, "15min": 96}
 # Direct finals (one model trained per horizon): every horizon is scored from its OWN checkpoint, so a model's per-bin table set is the union over horizons (and seeds)
 # of ``rescored/per-bin/direct/<res>/<band>/2d/<model>/h<h>/seed-N.csv`` (stride-1 rescoring); where the rescoring does not cover all horizons yet (Time-LLM at 1 minute) the
 # finals' own tables ``direct-tuning/<res>/<band>/<model>/per-bin/h<h>/seed-N.csv`` are used (1-minute test windows thinned 15x).
-DIRECT_MODELS = ("revinmlp", "patchtst", "ofa", "timellm", "nlinear", "dlinear")
+DIRECT_MODELS = ("revinmlp", "patchtst", "ofa", "timellm", "nlinear", "dlinear", "deepspred2d")
+# Collapsed finals left out, as in the per-horizon tables (seed MSE above 1.5x the cell median): 3D-SwinSTB, 15 minutes, 2400-2600, seed 43 at 3 h and 6 h.
+EXCLUDED = ("direct-tuning/15min/2400_2600/deepspred2d/per-bin/h12/seed-43.csv", "direct-tuning/15min/2400_2600/deepspred2d/per-bin/h24/seed-43.csv")
 
 
 def read_csv(client, key: str) -> pd.DataFrame:
@@ -72,7 +74,7 @@ def direct_model_tables(client, resolution: str, band: str) -> dict[str, list[st
     for model in DIRECT_MODELS:
         rescored = [k for k in listing(client, f"rescored/per-bin/direct/{resolution}/{band}/2d/{model}/") if k.endswith(".csv")]
         finals = [k for k in listing(client, f"direct-tuning/{resolution}/{band}/{model}/per-bin/") if k.endswith(".csv")]
-        keys = rescored if len(rescored) >= len(finals) else finals
+        keys = [k for k in (rescored if len(rescored) >= len(finals) else finals) if k not in EXCLUDED]
         if keys:
             out[f"direct {model}"] = sorted(keys)
     return out
