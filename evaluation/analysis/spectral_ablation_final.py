@@ -108,7 +108,9 @@ def bootstrap(d: np.ndarray) -> tuple[float, float]:
 
 def strong_main(out_path: str) -> None:
     """spectral_ablation_strong.csv (per band and model) and _by_region.csv. delta = region_only - full_context (mean over horizons, seeds averaged,
-    each region once); for the matched pair also input_only and the difference input_only - region_only (> 0: the lost training signal, not
+    each region once; > 0 = removing the other bins' inputs made the region's MAE worse = the context helps. ``regions_context_helps`` / ``_hurts`` count the
+    regions with delta > 0 / < 0; they replace the earlier ``regions_hurt``, which counted delta > 0, i.e. the regions where the context helped);
+    for the matched pair also input_only and the difference input_only - region_only (> 0: the lost training signal, not
     the lost inputs, hurts)."""
     frame = load_strong()
     wide = frame.pivot_table(index=["band", "source", "model", "region", "seed", "start_mhz", "end_mhz"], columns="condition", values="mae").reset_index()
@@ -130,7 +132,7 @@ def strong_main(out_path: str) -> None:
         low, high = bootstrap(d)
         row = {"band": band, "source": source, "model": model, "regions": len(g), "seeds_per_cell": int(g["n_seeds"].max()),
                "mean_full": g.full_context.mean(), "mean_region_only": g.region_only.mean(), "mean_delta": d.mean(), "ci_low": low, "ci_high": high,
-               "bin_weighted_delta": float(np.average(d, weights=g.width_mhz)), "regions_hurt": int((d > 0).sum()),
+               "bin_weighted_delta": float(np.average(d, weights=g.width_mhz)), "regions_context_helps": int((d > 0).sum()), "regions_context_hurts": int((d < 0).sum()),
                "delta_pct_of_full": 100 * d.mean() / g.full_context.mean()}
         h = g[g["input_only_minus_region_only"].notna()]
         if len(h):
@@ -174,7 +176,7 @@ def main() -> None:
         draws = np.array([d[RNG.integers(0, len(d), len(d))].mean() for _ in range(2000)])
         out.append({"resolution": resolution, "model": model, "regions": len(g), "mean_full": g.full.mean(), "mean_region_only": g.region_only.mean(),
                     "mean_delta": d.mean(), "ci_low": np.percentile(draws, 2.5), "ci_high": np.percentile(draws, 97.5),
-                    "bin_weighted_delta": np.average(d, weights=g.width_mhz), "regions_hurt": int((d > 0).sum()),
+                    "bin_weighted_delta": np.average(d, weights=g.width_mhz), "regions_context_helps": int((d > 0).sum()), "regions_context_hurts": int((d < 0).sum()),
                     "delta_pct_of_full": 100 * d.mean() / g.full.mean()})
     summary = pd.DataFrame(out)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
