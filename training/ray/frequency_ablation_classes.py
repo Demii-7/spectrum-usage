@@ -10,7 +10,8 @@ only the target region's bins are scored) with a CLASS of the other bins and a K
 For rolled-out models the disturbance applies to the initial input window only. For every (receiver, condition) the output keeps
 
     cls|<recv>|<cond>|<P|N|M>   per-origin, per-horizon SUM of the absolute errors over the target bins of that class (target bins = the bins of every
-                                non-noise region; each region is its own forward pass with its own disturbed bins), float32 (origins, horizons)
+                                non-noise region in which the condition disturbs at least one bin; each region is its own forward pass), float32 (origins, horizons)
+    clsr|...                    the same sums of the REAL-input errors over exactly the same regions; cnt|<recv>|<cond>: number of target bins (P, N, middle)
     bin|<recv>|<cond>           per-target-bin mean absolute error over the main origins (lookback inside the test week), (horizons, 200); ``binnw`` the same
                                 over the origins that contain no wrapped rows (start >= 210)
     rmae|<recv>|<region>|<cond> region-mean per-origin errors for the conditions real, all_shift96, all_shift210 only (reproduces the existing ablation)
@@ -240,6 +241,8 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
                     continue
                 # --- conditions
                 cls_arrays = {c: {k: np.zeros((len(starts), len(horizons)), dtype=np.float32) for k in ("P", "N", "M")} for c, _, _ in cond_list}
+                clsr_arrays = {c: {k: np.zeros((len(starts), len(horizons)), dtype=np.float32) for k in ("P", "N", "M")} for c, _, _ in cond_list}
+                cnt_arrays = {c: {k: 0 for k in ("P", "N", "M")} for c, _, _ in cond_list}       # target bins of the regions that contribute to the condition
                 bin_main = {c: np.full((len(horizons), 200), np.nan, dtype=np.float32) for c, _, _ in cond_list}
                 bin_nw = {c: np.full((len(horizons), 200), np.nan, dtype=np.float32) for c, _, _ in cond_list}
                 skipped: dict[str, list[str]] = {}
@@ -258,10 +261,14 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
                             else:
                                 shifted = predict(source, disturb_series(data, dmask, dist), starts)
                             errs = {h: np.abs(shifted[h][0] - targets[h]) for h in shifted}
+                        for key, short in (("P", "P"), ("N", "N"), ("middle", "M")):
+                            cnt_arrays[cname][short] += int((rmask & (classes[receiver] == key)).sum())
                         for j, h in enumerate(horizons):
                             sums = class_bin_sums(errs[h], rmask, classes[receiver])
+                            real_sums = class_bin_sums(err_real[h], rmask, classes[receiver])
                             for key, short in (("P", "P"), ("N", "N"), ("middle", "M")):
                                 cls_arrays[cname][short][:, j] += sums[key].astype(np.float32)
+                                clsr_arrays[cname][short][:, j] += real_sums[key].astype(np.float32)
                             bin_main[cname][j, rmask] = errs[h][main][:, rmask].mean(axis=0)
                             bin_nw[cname][j, rmask] = errs[h][nowrap][:, rmask].mean(axis=0) if nowrap.any() else np.nan
                         if cname in REGION_CONDITIONS:
@@ -270,6 +277,8 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
                 for cname, _, _ in cond_list:
                     for short in ("P", "N", "M"):
                         collected[f"cls|{receiver}|{cname}|{short}"] = cls_arrays[cname][short]
+                        collected[f"clsr|{receiver}|{cname}|{short}"] = clsr_arrays[cname][short]
+                    collected[f"cnt|{receiver}|{cname}"] = np.asarray([cnt_arrays[cname][k] for k in ("P", "N", "M")], dtype=np.int32)
                     collected[f"bin|{receiver}|{cname}"] = bin_main[cname]
                     collected[f"binnw|{receiver}|{cname}"] = bin_nw[cname]
                 if skipped:

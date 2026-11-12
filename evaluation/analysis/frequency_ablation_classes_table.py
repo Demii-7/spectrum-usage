@@ -75,7 +75,7 @@ def load_run(client, keys: dict) -> dict:
     if len(parts) > 1:
         out["horizons"] = np.concatenate([p["horizons"] for p in parts])
         for k in parts[0]:
-            if k.startswith(("cls|", "rmae|", "mae|")):
+            if k.startswith(("cls|", "clsr|", "rmae|", "mae|")):
                 out[k] = np.concatenate([p[k] for p in parts], axis=1)
             elif k.startswith(("bin|", "binnw|", "binmae_main|", "binmae_all|")):
                 out[k] = np.concatenate([p[k] for p in parts], axis=0)
@@ -135,10 +135,11 @@ def main() -> None:
                 series: dict[tuple, dict] = {}
                 for s in seeds:
                     for r in receivers:
-                        n_bins = sum(counts[r][k] for k in shorts)
+                        cnt = data[s][f"cnt|{r}|{cond}"]                      # target bins (P, N, middle) of the regions that contribute to this condition
+                        n_bins = int(sum(cnt[{"P": 0, "N": 1, "M": 2}[k]] for k in shorts))
                         if n_bins == 0:
                             continue
-                        real = sum(data[s][f"cls|{r}|real|{k}"] for k in shorts) / n_bins
+                        real = sum(data[s][f"clsr|{r}|{cond}|{k}"] for k in shorts) / n_bins
                         dis = sum(data[s][f"cls|{r}|{cond}|{k}"] for k in shorts) / n_bins
                         series[(s, r)] = {"real": real.astype(np.float64), "dis": dis.astype(np.float64), "starts": data[s][f"starts|{r}"], "n": n_bins}
                 if not series:
@@ -185,7 +186,7 @@ def main() -> None:
                     continue
                 for r in receivers:
                     for k in ("P", "N", "M"):
-                        worst = max(worst, float(np.abs(d[f"cls|{r}|{cond}|{k}"] - d[f"cls|{r}|real|{k}"]).max()))
+                        worst = max(worst, float(np.abs(d[f"cls|{r}|{cond}|{k}"] - d[f"clsr|{r}|{cond}|{k}"]).max()))
             checks.append({"band": band, "model": model, "seed": s, "check": "max |disturbed - real| over all conditions (class sums, dB x bins)",
                            "value": worst, "control": model in CONTROLS})
             old_keys = old_runs.get((model, band, s))
