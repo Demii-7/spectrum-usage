@@ -8,7 +8,7 @@ before the map is built; the level is restored after the forecast, either the re
 (``own``, the brief's definition) or the map's window mean added back to the forecast map before it is read (``map``)).
 
     <output-prefix>/<band>/core4-p2/<model>/seed-N/per_origin.npz   keys: horizons, "<receiver>|times", "<receiver>|mae" (as trained),
-                                                                    "<receiver>|mae_center_own", "<receiver>|mae_center_map" (N, H)
+                                                                    "<receiver>|mae_center_own", "<receiver>|mae_center_map" (N, H); the same with ``mse`` (dB^2)
     <output-prefix>/<band>/core4-p2/<model>/seed-N/summary.json     (seed, configuration label, origins identical, per-receiver means)
 
 STS-PredNet and ResidualConvLSTM run on the CPU, DSwinLSTM-I on a GPU share. Resumable (--skip-done).
@@ -32,9 +32,18 @@ import numpy as np
 import yaml
 
 GPU_MODELS = ("dswinlstm_i",)
-CONFIG_LABEL = {"stsprednet": "tuned", "residualconvlstm": "tuned", "dswinlstm_i": "inherited:1min-r2"}
+CONFIG_LABEL = {"stsprednet": "tuned", "residualconvlstm": "tuned", "dswinlstm_i": "inherited:1min-r2", "linearar4d": "tuned", "residuallinearar4d": "tuned"}
 VARIANT = "core4-p2"
 READOUT = "sample_forecast_grid: IDW over the grid cells with the map's own power (2)"
+
+
+def mse_errors(npz, receiver_index: int, normalization) -> np.ndarray:
+    """Per-origin, per-horizon mean squared error (dB^2, mean over bins) at one receiver."""
+    prediction = np.asarray(npz["predictions_normalized"])[:, :, receiver_index, :].astype(np.float64)
+    target = np.asarray(npz["targets_dbm"])[:, :, receiver_index, :].astype(np.float64)
+    if normalization is not None:
+        prediction = prediction * np.asarray(normalization["std_dbm"], dtype=np.float64).squeeze() + np.asarray(normalization["mean_dbm"], dtype=np.float64).squeeze()
+    return ((prediction - target) ** 2).mean(axis=2)
 
 
 def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
@@ -92,10 +101,12 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
                 for index, receiver in enumerate(names):
                     base_errors = per_origin_errors(plain, index, normalization)
                     collected[f"{receiver}|times"], collected[f"{receiver}|mae"] = base_errors["times"], base_errors["mae"]
+                    collected[f"{receiver}|mse"] = mse_errors(plain, index, normalization)
                     for tag, array_key in (("own", "predictions_normalized_center_own"), ("map", "predictions_normalized_center_map")):
                         shim = {"predictions_normalized": centered[array_key], "targets_dbm": centered["targets_dbm"],
                                 "origin_timestamps": centered["origin_timestamps"]}
                         collected[f"{receiver}|mae_center_{tag}"] = per_origin_errors(shim, index, normalization)["mae"]
+                        collected[f"{receiver}|mse_center_{tag}"] = mse_errors(shim, index, normalization)
             from training.ray.spatial15 import HORIZONS
             buffer = io.BytesIO()
             np.savez_compressed(buffer, horizons=np.asarray(HORIZONS), **collected)
@@ -117,7 +128,7 @@ def main(argv=None) -> None:
 
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--bands", nargs="+", default=["600_800", "2400_2600"], choices=("600_800", "2400_2600"))
-    p.add_argument("--models", nargs="+", default=["stsprednet", "residualconvlstm", "dswinlstm_i"])
+    p.add_argument("--models", nargs="+", default=["stsprednet", "residualconvlstm", "dswinlstm_i"], help="also linearar4d, residuallinearar4d (for the MSE of the paired tables)")
     p.add_argument("--seeds", type=int, nargs="+", default=[40, 41, 42, 43, 44])
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--memory-gb", type=float, default=12.0)

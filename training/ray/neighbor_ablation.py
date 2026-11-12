@@ -19,7 +19,7 @@ Models: the tuned 15-minute 4D winners' final seeds (``tuning/powder15_4d/<band>
 GPU share (``--gpu-fraction``, default 0.5; ``--gpu-fraction 0`` forces CPU, which is slow for them). STS-PredNet loads through
 ``training.common.spatial_checkpoint_evaluation.load_stsprednet_for_forecast`` inside ``evaluate_condition``; ResidualConvLSTM and DSwinLSTM-I load
 like the other neural models from their tuning finals (DSwinLSTM-I: seed 42 only). Output per (band, model, seed): ``<prefix>/<band>/<model>/seed-N/per_origin.npz`` (origin times and
-per-origin, per-horizon mean absolute error and signed bias in dB for every receiver x mode) and ``summary.json``.
+per-origin, per-horizon mean absolute error, signed bias in dB and mean squared error in dB^2 (``mse``, added 2026-11-12) for every receiver x mode) and ``summary.json``.
 
     python -m training.ray.neighbor_ablation --models linearar4d residuallinearar4d lookbackmean4d --seeds 40 41 42 43 44
     python -m training.ray.neighbor_ablation --models stsprednet residualconvlstm --seeds 40 41 42 43 44 --skip-done --gpu-fraction 0.5
@@ -81,7 +81,8 @@ def per_origin_errors(npz, receiver_index: int, normalization) -> dict[str, np.n
         std = np.asarray(normalization["std_dbm"], dtype=np.float64).squeeze()
         prediction = prediction * std + mean
     error = prediction - target
-    return {"times": np.asarray(npz["origin_timestamps"]).astype(str), "mae": np.abs(error).mean(axis=2), "bias": error.mean(axis=2)}
+    return {"times": np.asarray(npz["origin_timestamps"]).astype(str), "mae": np.abs(error).mean(axis=2), "bias": error.mean(axis=2),
+            "mse": (error ** 2).mean(axis=2)}
 
 
 def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
