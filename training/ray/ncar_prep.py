@@ -185,16 +185,16 @@ def setup_on_node(repo_root: str, bucket: str) -> dict[str, Any]:
 
 
 def node_strategy(node: str | None):
-    """Scheduling strategy pinning a task to the live Ray node whose IP or hostname contains ``node`` (None: no pinning)."""
+    """Scheduling strategy pinning a task to the live Ray node (GPU or CPU-only) whose IP or hostname contains ``node`` (None: no pinning)."""
     if not node:
         return None
     import ray
     from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 
-    live = [n for n in ray.nodes() if n.get("Alive") and n.get("Resources", {}).get("GPU", 0) > 0]
+    live = [n for n in ray.nodes() if n.get("Alive")]                # GPU hosts and the x86 CPU workers (cpu-3/4, 11-12 23:20 UTC)
     hits = [n for n in live if node in n.get("NodeManagerAddress", "") or node in n.get("NodeManagerHostname", "") or node == n["NodeID"]]
     if len(hits) != 1:
-        raise SystemExit(f"--node {node!r} matches {len(hits)} GPU nodes: {[(n['NodeManagerAddress'], n.get('NodeManagerHostname')) for n in live]}")
+        raise SystemExit(f"--node {node!r} matches {len(hits)} nodes: {[(n['NodeManagerAddress'], n.get('NodeManagerHostname')) for n in live]}")
     return NodeAffinitySchedulingStrategy(hits[0]["NodeID"], soft=False)
 
 
