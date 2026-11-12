@@ -52,11 +52,18 @@ def out_base(prefix: str, entry: dict[str, Any]) -> str:
     return base + (f"/h{entry['horizon']}" if entry.get("source") == "direct" else "")
 
 
-def class_table(root: str, band: str) -> dict[str, np.ndarray]:
-    """receiver -> array (200,) of classes P / N / middle / noise."""
+CLASS_KEY = "analysis-inputs/bin_periodicity_classes.csv"      # copy of evaluation/results/bin_periodicity_classes.csv (code sync does not ship evaluation/results)
+
+
+def class_table(root: str, band: str, client=None, bucket: str = "spectrum") -> dict[str, np.ndarray]:
+    """receiver -> array (200,) of classes P / N / middle / noise (local file if present, else the S3 copy)."""
     import pandas as pd
 
-    frame = pd.read_csv(Path(root) / CLASS_FILE)
+    local = Path(root) / CLASS_FILE
+    if local.exists():
+        frame = pd.read_csv(local)
+    else:
+        frame = pd.read_csv(io.BytesIO(client.get_object(Bucket=bucket, Key=CLASS_KEY)["Body"].read()))
     frame = frame[frame["band"] == band]
     out = {}
     for receiver, part in frame.groupby("receiver"):
@@ -124,7 +131,7 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         receivers = list(args.get("receivers") or RECEIVERS)
         frequencies = band_frequencies(band)
         masks = {r["band_id"]: region_mask(frequencies, r["start_mhz"], r["end_mhz"]) for r in regions}
-        classes = class_table(root, band)
+        classes = class_table(root, band, client, bucket)
         cond_list = [c for c in conditions() if not args.get("only_conditions") or c[0] in args["only_conditions"] or c[0] == "real"]
         collected: dict[str, np.ndarray] = {}
         with tempfile.TemporaryDirectory(prefix="freq-cls-") as scratch_dir:
