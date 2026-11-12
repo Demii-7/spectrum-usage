@@ -7,6 +7,8 @@ same origins). Also pooled rows (platform = ALL per band). Reads the bucket; run
     python evaluation/analysis/transfer_external_target_trained.py --out evaluation/results/transfer_external_target_trained.csv
 """
 import argparse
+import sys
+sys.path.insert(0, ".")
 import json
 import os
 
