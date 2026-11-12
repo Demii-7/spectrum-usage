@@ -31,7 +31,9 @@ DIRECT_CORE = ("revinmlp", "revinmlp_mix", "patchtst", "patchtst_joint", "nlinea
 DIRECT_LLM = ("timellm", "ofa", "moment_lp", "timeran_lp")
 SEEDS = {"temporalconvnet": (40, 41, 43, 44), "timellm": (40, 41, 42)}
 DEFAULT_SEEDS = (40, 41, 42, 43, 44)
-GROUP_ORDER = ("external", "heldout", "july", "core4_oct", "core4_week2")
+GROUP_ORDER = ("external", "heldout", "core4_oct", "july", "core4_week2")    # deadline order: the reference week before July, week 2 last
+# brief item 9: the June-July gaps for the large models are OFA and MOMENT at 600-800, Time-LLM everywhere, TimeRAN in both bands
+JULY_ITEM9 = {"ofa": ("600_800",), "moment_lp": ("600_800",), "timellm": ("600_800", "2400_2600"), "timeran_lp": ("600_800", "2400_2600")}
 
 
 def group_targets(root: str, group: str, bands: list[str]) -> list[dict[str, Any]]:
@@ -70,7 +72,8 @@ def model_groups(client, bucket: str, stage: str, bands: list[str], models: list
     return out
 
 
-def build_jobs(root: str, groups: list[str], model_sets: list[list[dict]], targets_filter: list[str] | None) -> list[dict[str, Any]]:
+def build_jobs(root: str, groups: list[str], model_sets: list[list[dict]], targets_filter: list[str] | None,
+               july_item9: bool = False) -> list[dict[str, Any]]:
     from training.common.transfer_regimes import intrinsic_class
     from training.ray import transfer_all as ta
     from training.ray.ncar_cells import LEVEL_KEEPING
@@ -85,6 +88,8 @@ def build_jobs(root: str, groups: list[str], model_sets: list[list[dict]], targe
                 if g[0]["band"] != t["band"]:
                     continue
                 model = g[0]["model"]
+                if july_item9 and group == "july" and model in JULY_ITEM9 and t["band"] not in JULY_ITEM9[model]:
+                    continue
                 full = intrinsic_class(model) == "full"
                 regimes = ["A"] if (full or group in ("core4_oct", "core4_week2")) else ["A", "B", "C", "Cm"]
                 priority = (0 if (group == "external" and model in LEVEL_KEEPING) else 1, GROUP_ORDER.index(group))
@@ -109,6 +114,7 @@ def main(argv=None) -> None:
     p.add_argument("--max-parallel", type=int, default=16)
     p.add_argument("--limit", type=int, default=0, help="stop after this many jobs (smoke tests)")
     p.add_argument("--skip-done", action="store_true")
+    p.add_argument("--july-item9", action="store_true", help="June-July large-model cells only where brief item 9 asks for them")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--prefix", default=PREFIX)
     p.add_argument("--code-revision", default=None, help="the commit synced to the cluster (recorded in every summary)")
@@ -125,7 +131,7 @@ def main(argv=None) -> None:
     client, bucket = spectrum_s3_client(), os.environ.get("SPECTRUM_S3_BUCKET", "spectrum")
     revision = a.code_revision or "unknown"            # the NCAR snapshot is not a git clone: pass the synced commit
     sets = model_groups(client, bucket, a.stage, a.bands, a.models, a.horizons)
-    jobs = build_jobs(a.repo_root, a.groups, sets, a.targets)
+    jobs = build_jobs(a.repo_root, a.groups, sets, a.targets, a.july_item9)
     overrides = {k: float(v) for k, v in (s.split("=") for s in a.gpu_share)}
 
     def done(j: dict[str, Any]) -> bool:
