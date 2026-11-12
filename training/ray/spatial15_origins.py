@@ -75,12 +75,12 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     try:
         import torch  # noqa: F401  (the evaluator imports torch lazily)
 
-        variant = next(v for v in variants(["s2"]) if v["name"] == variant_name)
+        variant = next(v for v in variants(["s2", "solo"]) if v["name"] == variant_name)
         grid = grid_for(variant, six_receiver_frame(root))
         if grid.get("method") == "kriging":
             grid = {**grid, "variogram": load_variogram(root, band)}
         ensure_powder15(band, root, tuple(SIX))
-        names = [SIX[n] for n in CORE]
+        names = [SIX[n] for n in variant["nodes"]]        # the map's receivers (the core four, or one receiver for a solo variant)
         with tempfile.TemporaryDirectory(prefix="s15-origins-") as scratch_dir:
             scratch = Path(scratch_dir)
             checkpoint, normalization = None, None
@@ -99,7 +99,7 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
             model_config = scratch / "models.yaml"
             model_config.write_text(yaml.safe_dump(model_yaml))
             exp_path = Path(root) / "training/configs" / f".s15origins-{os.getpid()}-{variant_name}-{model}-{seed}.yaml"
-            exp_path.write_text(yaml.safe_dump(experiment_yaml(band, list(CORE), None, grid)))
+            exp_path.write_text(yaml.safe_dump(experiment_yaml(band, list(variant["nodes"]), None, grid)))
             try:
                 out = scratch / "out"
                 evaluate_condition(experiment_path=exp_path, model_config_path=model_config, checkpoint_path=checkpoint, model_name=model,

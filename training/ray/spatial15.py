@@ -17,6 +17,8 @@ Variants (``--experiments``):
     s3   leave one receiver out of the six (six folds)
     s5   receiver count: 2 and 3 of the core four (three subsets each); evaluated at guest house and law 73
          (the full core four is s2's default)
+    solo one core receiver alone (``solo-<receiver>``: nodes=[receiver], the grid frame unchanged, so the IDW map is constant in space); scored at that
+         receiver only (geometry_correct); the matched 'own receiver only' control of the four-receiver model
 
 Outputs (durable bucket): ``<prefix>/<band>/<variant>/<model>/seed-<n>/{result.json, eval/<condition>-<receiver>/...}`` plus
 weights and the training config, saved with ``save_run``.
@@ -99,6 +101,9 @@ def variants(experiments: list[str]) -> list[dict[str, Any]]:
             for index, subset in enumerate(itertools.combinations(CORE, k)):
                 if index < 3:
                     out.append({"name": f"k{k}-{index}", "nodes": list(subset), "grid": {}})
+    if "solo" in experiments:
+        for node in CORE:
+            out.append({"name": f"solo-{SIX[node].replace(' ', '')}", "nodes": [node], "grid": {}, "solo": True})
     return out
 
 
@@ -145,7 +150,7 @@ def physical_scores(client, bucket: str, base: str, root: str, args: dict[str, A
 
     model_config = scratch / "models.yaml"
     model_config.write_text(yaml.safe_dump(model_config_for(config, model)))
-    held_out = [n for n in SIX if n not in variant["nodes"]]
+    held_out = [] if variant.get("solo") else [n for n in SIX if n not in variant["nodes"]]       # solo: its own receiver only
     scored: dict[str, Any] = {}
     for held in held_out or [None]:
         exp_path = Path(root) / "training/configs" / f".spatial15-{os.getpid()}-{variant['name']}.yaml"
@@ -376,7 +381,7 @@ def main(argv=None) -> None:
 
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--band", default="600_800", choices=("600_800", "2400_2600"))
-    p.add_argument("--experiments", nargs="+", default=["s2"], choices=("s2", "s3", "s5"))
+    p.add_argument("--experiments", nargs="+", default=["s2"], choices=("s2", "s3", "s5", "solo"))
     p.add_argument("--variants", nargs="+", help="only these variant names")
     p.add_argument("--models", nargs="+", default=["lookbackmean4d", "linearar4d", "residuallinearar4d", "residualconvlstm"])
     p.add_argument("--seeds", type=int, nargs="+", default=list(SEEDS))
