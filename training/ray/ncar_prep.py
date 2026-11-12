@@ -184,12 +184,28 @@ def setup_on_node(repo_root: str, bucket: str) -> dict[str, Any]:
     return row
 
 
+def node_strategy(node: str | None):
+    """Scheduling strategy pinning a task to the live Ray node whose IP or hostname contains ``node`` (None: no pinning)."""
+    if not node:
+        return None
+    import ray
+    from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
+
+    live = [n for n in ray.nodes() if n.get("Alive") and n.get("Resources", {}).get("GPU", 0) > 0]
+    hits = [n for n in live if node in n.get("NodeManagerAddress", "") or node in n.get("NodeManagerHostname", "") or node == n["NodeID"]]
+    if len(hits) != 1:
+        raise SystemExit(f"--node {node!r} matches {len(hits)} GPU nodes: {[(n['NodeManagerAddress'], n.get('NodeManagerHostname')) for n in live]}")
+    return NodeAffinitySchedulingStrategy(hits[0]["NodeID"], soft=False)
+
+
 def cmd_setup(a: argparse.Namespace) -> None:
     import ray
 
     ray.init(address=a.address, ignore_reinit_error=True)
     bucket = os.environ.get("SPECTRUM_S3_BUCKET", "spectrum")
-    row = ray.get(ray.remote(num_cpus=4, num_gpus=0)(setup_on_node).remote(a.repo_root, bucket))
+    task = ray.remote(num_cpus=4, num_gpus=0)(setup_on_node)
+    strategy = node_strategy(a.node)
+    row = ray.get((task.options(scheduling_strategy=strategy) if strategy else task).remote(a.repo_root, bucket))
     print(json.dumps(row, indent=1, default=str), flush=True)
     if a.output_key:
         put_json(a.output_key, row)
@@ -203,6 +219,7 @@ def main(argv=None) -> None:
         s.add_argument("--repo-root", default="/workspace/spectrum-usage")
         s.add_argument("--address", default="auto")
         s.add_argument("--output-key", default=None)
+        s.add_argument("--node", default=None, help="pin the setup to this node (IP or hostname substring); default: any node")
         if name == "fingerprint":
             s.add_argument("--paths", nargs="+", required=True)
     a = p.parse_args(argv)

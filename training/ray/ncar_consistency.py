@@ -60,10 +60,16 @@ def cmd_transfer(a: argparse.Namespace) -> None:
     shared = {"repo_root": a.repo_root, "bucket": bucket, "prefix": f"{PREFIX}/{source_tag(a)}", "code_revision": a.code_revision or "ncar",
               "threads": 4, "save_arrays": False}
     ray.init(address=a.address, ignore_reinit_error=True)
+    from training.ray.ncar_prep import node_strategy
+
+    strategy = node_strategy(a.node)
     refs = []
     for spec, cell in specs:
         gpu = a.gpu_fraction if a.gpu_fraction is not None else ta.GPU_FRACTION.get(cell[0], 0.0)
-        refs.append((ray.remote(num_cpus=4, num_gpus=gpu, memory=int(24 * 2 ** 30), max_retries=0)(ta.job).remote(spec, shared), spec, cell))
+        task = ray.remote(num_cpus=4, num_gpus=gpu, memory=int(24 * 2 ** 30), max_retries=0)(ta.job)
+        if strategy:
+            task = task.options(scheduling_strategy=strategy)
+        refs.append((task.remote(spec, shared), spec, cell))
     rows = []
     for ref, spec, (model, rep, source, regime, seed) in refs:
         record = ray.get(ref)
@@ -105,6 +111,7 @@ def main(argv=None) -> None:
     t.add_argument("--tag", default="run1", help="sub-prefix for this attempt (never reused)")
     t.add_argument("--out-key", default=None)
     t.add_argument("--regimes", nargs="+", help="only cells in these regimes")
+    t.add_argument("--node", default=None, help="run every cell on this node (IP or hostname substring), e.g. a newly joined worker")
     t.add_argument("--gpu-fraction", type=float, default=None, help="override the GPU share (e.g. score CPU-stored cells on the GPU)")
     t.add_argument("--code-revision", default=None)
     t.add_argument("--address", default="auto")
