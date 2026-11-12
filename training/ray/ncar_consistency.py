@@ -46,7 +46,7 @@ def cmd_transfer(a: argparse.Namespace) -> None:
     from training.ray.storage import spectrum_s3_client
 
     client, bucket = spectrum_s3_client(), os.environ.get("SPECTRUM_S3_BUCKET", "spectrum")
-    cells = [c for c in CELLS if not a.models or c[0] in a.models]
+    cells = [c for c in CELLS if (not a.models or c[0] in a.models) and (not a.regimes or c[3] in a.regimes)]
     specs = []
     for model, rep, source, regime, seed in cells:
         kind = "p15tuned" if source == "rolled" else "direct"
@@ -62,7 +62,7 @@ def cmd_transfer(a: argparse.Namespace) -> None:
     ray.init(address=a.address, ignore_reinit_error=True)
     refs = []
     for spec, cell in specs:
-        gpu = ta.GPU_FRACTION.get(cell[0], 0.0)
+        gpu = a.gpu_fraction if a.gpu_fraction is not None else ta.GPU_FRACTION.get(cell[0], 0.0)
         refs.append((ray.remote(num_cpus=4, num_gpus=gpu, memory=int(24 * 2 ** 30), max_retries=0)(ta.job).remote(spec, shared), spec, cell))
     rows = []
     for ref, spec, (model, rep, source, regime, seed) in refs:
@@ -104,6 +104,8 @@ def main(argv=None) -> None:
     t.add_argument("--horizons", type=int, nargs="+", default=[4, 12, 24, 48])
     t.add_argument("--tag", default="run1", help="sub-prefix for this attempt (never reused)")
     t.add_argument("--out-key", default=None)
+    t.add_argument("--regimes", nargs="+", help="only cells in these regimes")
+    t.add_argument("--gpu-fraction", type=float, default=None, help="override the GPU share (e.g. score CPU-stored cells on the GPU)")
     t.add_argument("--code-revision", default=None)
     t.add_argument("--address", default="auto")
     t.add_argument("--repo-root", default="/workspace/spectrum-usage")
