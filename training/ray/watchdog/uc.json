@@ -208,5 +208,10 @@
   "id": "claude-uc-week2-rolled-1",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.rescore --sources p15 p15tuned --max-parallel 6 --gpu-fraction 0.1 --test-start 2026-11-03T20:00:00Z --test-end 2026-11-09T02:00:00Z --output-prefix rescored-week2 --skip-done --no-pin\"",
   "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-week2full-rolled-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.rescore --sources p15 p15tuned --max-parallel 6 --gpu-fraction 0.1 --test-start 2026-11-03T20:00:00Z --test-end 2026-11-10T20:00:00Z --output-prefix rescored-week2full --skip-done --no-pin\"",
+  "max_restarts": 4
  }
 ]

@@ -243,5 +243,15 @@
   "id": "claude-final-tsslcd-week2-1",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tsslcd_authors --test-start 2026-11-03T20:00:00Z --test-end 2026-11-09T02:00:00Z --eval-only --resolution 15min --gpu-fraction 0.1 --weights-prefix tsslcd-authors-15min-tuned --band 600_800 --savgol off --output-prefix tsslcd-authors-15min-tuned-week2 && python -u -m training.ray.tsslcd_authors --test-start 2026-11-03T20:00:00Z --test-end 2026-11-09T02:00:00Z --eval-only --resolution 15min --gpu-fraction 0.1 --weights-prefix tsslcd-authors-15min-tuned-2400 --band 2400_2600 --savgol off --output-prefix tsslcd-authors-15min-tuned-2400-week2 && python -u -m training.ray.tsslcd_authors --test-start 2026-11-03T20:00:00Z --test-end 2026-11-09T02:00:00Z --eval-only --resolution 15min --gpu-fraction 0.1 --weights-prefix tsslcd-authors-15min-default --band 600_800 --savgol off causal --output-prefix tsslcd-authors-15min-default-week2 && python -u -m training.ray.tsslcd_authors --test-start 2026-11-03T20:00:00Z --test-end 2026-11-09T02:00:00Z --eval-only --resolution 15min --gpu-fraction 0.1 --weights-prefix tsslcd-authors-15min-default-2400 --band 2400_2600 --savgol off causal --output-prefix tsslcd-authors-15min-default-2400-week2\"",
   "max_restarts": 4
+ },
+ {
+  "id": "claude-final-week2full-direct-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.rescore --sources direct --resolution 15min --max-parallel 6 --gpu-fraction 0.1 --test-start 2026-11-03T20:00:00Z --test-end 2026-11-10T20:00:00Z --output-prefix rescored-week2full --skip-done --no-pin\"",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-final-tsslcd-week2full-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tsslcd_authors --test-start 2026-11-03T20:00:00Z --test-end 2026-11-10T20:00:00Z --eval-only --resolution 15min --gpu-fraction 0.1 --weights-prefix tsslcd-authors-15min-tuned --band 600_800 --savgol off --output-prefix tsslcd-authors-15min-tuned-week2full && python -u -m training.ray.tsslcd_authors --test-start 2026-11-03T20:00:00Z --test-end 2026-11-10T20:00:00Z --eval-only --resolution 15min --gpu-fraction 0.1 --weights-prefix tsslcd-authors-15min-tuned-2400 --band 2400_2600 --savgol off --output-prefix tsslcd-authors-15min-tuned-2400-week2full && python -u -m training.ray.tsslcd_authors --test-start 2026-11-03T20:00:00Z --test-end 2026-11-10T20:00:00Z --eval-only --resolution 15min --gpu-fraction 0.1 --weights-prefix tsslcd-authors-15min-default --band 600_800 --savgol off causal --output-prefix tsslcd-authors-15min-default-week2full && python -u -m training.ray.tsslcd_authors --test-start 2026-11-03T20:00:00Z --test-end 2026-11-10T20:00:00Z --eval-only --resolution 15min --gpu-fraction 0.1 --weights-prefix tsslcd-authors-15min-default-2400 --band 2400_2600 --savgol off causal --output-prefix tsslcd-authors-15min-default-2400-week2full\"",
+  "max_restarts": 4
  }
 ]
