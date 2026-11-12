@@ -168,5 +168,15 @@
   "id": "claude-final-dswin15-tables-1",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-final-dswin15-score-1 --then 'bash training/ray/scripts/run_spatial15_tables.sh'\"",
   "max_restarts": 2
+ },
+ {
+  "id": "claude-final-spectral-direct-itr-2",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.spectral_context_direct --models itransformer --seeds 42 --max-parallel 2\"",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-final-rescore-timellm1min-w3",
+  "entrypoint": "python -u -m training.ray.rescore --sources direct --resolution 1min --models timellm --skip-done --no-pin --max-parallel 10 --gpu-fraction 0.15",
+  "max_restarts": 4
  }
 ]
