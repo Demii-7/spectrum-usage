@@ -26,6 +26,9 @@ from pathlib import Path
 
 REPO = '/workspace/spectrum-usage'
 DSDIR = {'fm': 'FM-Spectrum-Dataset', 'lte': 'LTE-Spectrum-Dataset'}
+# Every node-local output goes under the untracked data/ tree: tasks run as root, and root-owned directories inside tracked paths
+# make sync-cluster-code.py fail on that host. The durable copies are on the object store (<prefix>/...).
+OUT = Path(REPO) / 'data' / 'deepspred-repro'
 EXPECTED_FILES = {'fm': 10800, 'lte': 2400}
 TRAIN_RUNS = {                                                   # the Appendix-A grayscale comparison, without JPEG
     'gray32-tukey224d': ['--render-spec', 'tukey224d', '--gray', '--embed-dim', '32'],
@@ -113,7 +116,7 @@ def _score(client, bucket: str, prefix: str, sha12: str, results: str | None = N
     dataset = run_key.split('|')[0]
     ds_dir = stage_dataset(client, bucket, dataset)
     build_cache(ds_dir, m.group(1), m.group(2), '|gray' in run_key)
-    out = Path(REPO) / 'training' / 'DeepSPred' / 'repro' / 'dbspace' / f'{sha12}.json'
+    out = OUT / 'dbspace' / f'{sha12}.json'
     cmd = [sys.executable, '-u', 'training/DeepSPred/repro/dbspace_score.py', sha12, '--out', str(out)]
     if results:
         cmd += ['--results', results]
@@ -140,7 +143,7 @@ def task(spec: dict) -> dict:
             name, extra = spec['name'], TRAIN_RUNS[spec['name']]
             ds_dir = stage_dataset(client, bucket, 'fm')
             build_cache(ds_dir, extra[1], 'full', '--gray' in extra)
-            results = Path(REPO) / 'training' / 'DeepSPred' / 'repro' / 'campaign' / f'{name}.json'
+            results = OUT / 'campaign' / f'{name}.json'
             results.parent.mkdir(parents=True, exist_ok=True)
             cmd = [sys.executable, '-u', 'training/DeepSPred/repro/run_paper_faithful.py', '--data', str(ds_dir), '--horizon', '20',
                    '--seed', str(spec.get('seed', 0)), '--range-scope', 'full', '--results', str(results), *extra]
