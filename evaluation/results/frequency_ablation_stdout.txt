@@ -1,0 +1,71 @@
+Frozen-input frequency ablation (15 minutes). Nothing is retrained: the other bins' inputs are replaced by the same bins shifted in time and the region's bins are scored.
+delta = MAE(shifted) - MAE(real), dB, on the region's bins, mean over the four core receivers and seeds; delta > 0: breaking the other bins hurts (the model uses them).
+Caveat: a frozen model fed inconsistent inputs can do worse for reasons other than lost information; the 24 h shift is the control. Rolled-out models: the shift applies to the initial input window only.
+
+Mean over horizons (t+4/12/24/48), mean over regions:
+  2400_2600 autoformer_csa       real 1.985  24h +0.072 [+0.007, +0.090] (5 up/0 down)  52.5h +0.018 [-0.009, +0.052] (5 up/0 down)
+  2400_2600 dlinear              real 1.072  24h +0.000 [+0.000, +0.000] (0 up/0 down)  52.5h +0.000 [+0.000, +0.000] (0 up/0 down)
+  2400_2600 itransformer         real 1.078  24h +0.016 [-0.006, +0.033] (4 up/1 down)  52.5h +0.058 [+0.016, +0.066] (5 up/0 down)
+  2400_2600 linearar2d           real 1.136  24h +0.000 [+0.000, +0.000] (0 up/0 down)  52.5h +0.000 [+0.000, +0.000] (0 up/0 down)
+  2400_2600 lstmattn             real 1.631  24h +0.123 [-0.038, +0.129] (5 up/0 down)  52.5h +0.563 [+0.490, +0.645] (5 up/0 down)
+  2400_2600 nlinear              real 1.055  24h +0.000 [+0.000, +0.000] (0 up/0 down)  52.5h +0.000 [+0.000, +0.000] (0 up/0 down)
+  2400_2600 patchtst             real 1.023  24h +0.000 [+0.000, +0.000] (0 up/0 down)  52.5h +0.000 [+0.000, +0.000] (0 up/0 down)
+  2400_2600 patchtst_joint       real 1.111  24h +0.025 [-0.039, +0.039] (5 up/0 down)  52.5h +0.747 [+0.548, +0.809] (5 up/0 down)
+  2400_2600 residuallinearar2d   real 1.145  24h +0.000 [+0.000, +0.000] (0 up/0 down)  52.5h +0.000 [+0.000, +0.000] (0 up/0 down)
+  2400_2600 residualvanillalstm  real 1.851  24h +0.049 [-0.015, +0.070] (5 up/0 down)  52.5h +0.574 [+0.548, +0.660] (5 up/0 down)
+  2400_2600 revinmlp             real 1.025  24h +0.000 [+0.000, +0.000] (0 up/0 down)  52.5h +0.000 [+0.000, +0.000] (0 up/0 down)
+  2400_2600 revinmlp_mix         real 1.016  24h -0.020 [-0.040, -0.012] (0 up/5 down)  52.5h +0.224 [+0.130, +0.233] (5 up/0 down)
+  2400_2600 temporalconvnet      real 1.122  24h +0.000 [+0.000, +0.000] (0 up/0 down)  52.5h +0.000 [+0.000, +0.000] (0 up/0 down)
+  2400_2600 tsslcd_default       real 1.858  24h -0.015 [-0.043, +0.006] (0 up/5 down)  52.5h +0.266 [+0.227, +0.322] (5 up/0 down)
+  2400_2600 tsslcd_tuned         real 1.290  24h +0.032 [-0.020, +0.025] (5 up/0 down)  52.5h +0.738 [+0.635, +0.825] (5 up/0 down)
+  2400_2600 vanillalstm          real 1.660  24h +0.094 [-0.037, +0.157] (5 up/0 down)  52.5h +0.429 [+0.359, +0.514] (5 up/0 down)
+  600_800   autoformer_csa       real 1.475  24h +0.041 [+0.039, +0.066] (12 up/1 down)  52.5h +0.048 [+0.038, +0.071] (12 up/1 down)
+  600_800   dlinear              real 0.959  24h +0.000 [+0.000, +0.000] (0 up/0 down)  52.5h +0.000 [+0.000, +0.000] (0 up/0 down)
+  600_800   itransformer         real 0.932  24h +0.008 [-0.001, +0.012] (10 up/3 down)  52.5h +0.092 [+0.047, +0.107] (12 up/1 down)
+  600_800   linearar2d           real 1.010  24h +0.000 [+0.000, +0.000] (0 up/0 down)  52.5h +0.000 [+0.000, +0.000] (0 up/0 down)
+  600_800   lstmattn             real 1.312  24h +0.040 [-0.017, +0.042] (12 up/1 down)  52.5h +0.497 [+0.404, +0.524] (13 up/0 down)
+  600_800   nlinear              real 0.956  24h +0.000 [+0.000, +0.000] (0 up/0 down)  52.5h +0.000 [+0.000, +0.000] (0 up/0 down)
+  600_800   patchtst             real 0.917  24h +0.000 [+0.000, +0.000] (0 up/0 down)  52.5h +0.000 [+0.000, +0.000] (0 up/0 down)
+  600_800   patchtst_joint       real 1.010  24h +0.071 [+0.016, +0.072] (12 up/1 down)  52.5h +0.418 [+0.298, +0.442] (13 up/0 down)
+  600_800   residuallinearar2d   real 0.975  24h +0.000 [+0.000, +0.000] (0 up/0 down)  52.5h +0.000 [+0.000, +0.000] (0 up/0 down)
+  600_800   residualvanillalstm  real 1.219  24h +0.078 [+0.026, +0.102] (12 up/1 down)  52.5h +0.441 [+0.325, +0.475] (13 up/0 down)
+  600_800   revinmlp             real 0.910  24h +0.000 [+0.000, +0.000] (0 up/0 down)  52.5h +0.000 [+0.000, +0.000] (0 up/0 down)
+  600_800   revinmlp_mix         real 0.910  24h +0.011 [+0.004, +0.016] (10 up/3 down)  52.5h +0.120 [+0.067, +0.127] (12 up/1 down)
+  600_800   temporalconvnet      real 1.025  24h +0.000 [+0.000, +0.000] (0 up/0 down)  52.5h +0.000 [+0.000, +0.000] (0 up/0 down)
+  600_800   tsslcd_default       real 1.385  24h +0.021 [-0.006, +0.016] (13 up/0 down)  52.5h +0.270 [+0.216, +0.292] (13 up/0 down)
+  600_800   tsslcd_tuned         real 1.103  24h +0.105 [+0.069, +0.130] (13 up/0 down)  52.5h +0.558 [+0.497, +0.615] (13 up/0 down)
+  600_800   vanillalstm          real 1.265  24h +0.071 [+0.001, +0.084] (13 up/0 down)  52.5h +0.391 [+0.316, +0.443] (13 up/0 down)
+
+Identity check (recomputed real-mode per-bin errors vs the stored rescored per-bin files, max abs difference in dB):
+  2400_2600 autoformer_csa       seed 42: max 2.02e-02 mean 3.21e-03
+  600_800   autoformer_csa       seed 42: max 2.50e-02 mean 1.78e-03
+  2400_2600 dlinear              seed 42: max 1.73e-03 mean 3.07e-04
+  600_800   dlinear              seed 42: max 1.43e-03 mean 2.72e-04
+  2400_2600 itransformer         seed 42: n/a
+  600_800   itransformer         seed 42: n/a
+  2400_2600 linearar2d           seed 42: max 4.05e-03 mean 8.01e-04
+  600_800   linearar2d           seed 42: max 2.23e-03 mean 2.57e-04
+  2400_2600 lstmattn             seed 42: max 5.42e-03 mean 1.11e-03
+  600_800   lstmattn             seed 42: max 3.17e-03 mean 4.34e-04
+  2400_2600 nlinear              seed 42: max 1.89e-03 mean 3.21e-04
+  600_800   nlinear              seed 42: max 1.26e-03 mean 2.48e-04
+  2400_2600 patchtst             seed 42: max 1.45e-03 mean 3.61e-04
+  600_800   patchtst             seed 42: max 1.97e-03 mean 5.52e-04
+  2400_2600 patchtst_joint       seed 42: max 2.30e-03 mean 6.55e-04
+  600_800   patchtst_joint       seed 42: max 3.07e-03 mean 5.07e-04
+  2400_2600 residuallinearar2d   seed 42: max 4.09e-03 mean 8.67e-04
+  600_800   residuallinearar2d   seed 42: max 1.93e-03 mean 2.46e-04
+  2400_2600 residualvanillalstm  seed 42: max 5.02e-03 mean 1.13e-03
+  600_800   residualvanillalstm  seed 42: max 2.63e-03 mean 3.66e-04
+  2400_2600 revinmlp             seed 42: max 1.78e-03 mean 4.07e-04
+  600_800   revinmlp             seed 42: max 2.39e-03 mean 5.52e-04
+  2400_2600 revinmlp_mix         seed 42: n/a
+  600_800   revinmlp_mix         seed 42: n/a
+  2400_2600 temporalconvnet      seed 42: max 2.39e-03 mean 5.76e-04
+  600_800   temporalconvnet      seed 42: max 5.35e-03 mean 5.68e-04
+  2400_2600 tsslcd_default       seed 42: max 5.47e-05 mean nan
+  600_800   tsslcd_default       seed 42: max 8.78e-05 mean nan
+  2400_2600 tsslcd_tuned         seed 42: max 3.48e-05 mean nan
+  600_800   tsslcd_tuned         seed 42: max 7.66e-06 mean nan
+  2400_2600 vanillalstm          seed 42: max 6.95e-03 mean 1.09e-03
+  600_800   vanillalstm          seed 42: max 3.79e-03 mean 4.27e-04
