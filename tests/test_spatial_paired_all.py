@@ -24,7 +24,7 @@ def make_npz(receiver, mode):
     n = 5
     mae = np.tile(np.arange(n, dtype=float)[:, None], (1, 4))            # (origins, horizons)
     mid = f"|{mode}" if mode else ""
-    np.savez(buf, horizons=np.array([4, 12, 24, 48]), **{f"{receiver}{mid}|mae": mae, f"{receiver}{mid}|times": np.arange(n).astype(str)})
+    np.savez(buf, horizons=np.array([4, 12, 24, 48]), **{f"{receiver}{mid}|mae": mae, f"{receiver}{mid}|times": pd.date_range("2026-10-27", periods=n, freq="15min").astype(str).to_numpy()})
     return buf.getvalue()
 
 
