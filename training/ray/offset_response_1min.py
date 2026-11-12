@@ -46,14 +46,17 @@ STRIDE = {"2d": 20, "1d": 100}
 RANGE = ("2026-10-27T20:00:00Z", "2026-11-03T20:00:00Z")
 ONE_STEP_MODELS = ("linearar1d", "residuallinearar1d", "vanillalstm1d", "residualvanillalstm", "linearar2d", "residuallinearar2d", "vanillalstm", "lstmattn",
                    "temporalconvnet", "autoformer_csa")
-DIRECT_MODELS = ("revinmlp", "patchtst", "nlinear", "dlinear", "residuallinearar2d", "linearar2d", "residualnonlinear2d")
+DIRECT_MODELS = ("revinmlp", "patchtst", "nlinear", "dlinear", "residuallinearar2d", "linearar2d", "residualnonlinear2d", "deepspred2d")
 NEURAL = {"vanillalstm1d", "residualvanillalstm", "vanillalstm", "lstmattn", "temporalconvnet", "autoformer_csa"}
 INTRINSIC = {"revinmlp": "full", "patchtst": "full", "nlinear": "last value subtracted", "dlinear": "decomposition (moving-average trend)",
-             "residuallinearar1d": "partial", "residuallinearar2d": "partial", "residualvanillalstm": "partial", "residualnonlinear2d": "partial"}
+             "residuallinearar1d": "partial", "residuallinearar2d": "partial", "residualvanillalstm": "partial", "residualnonlinear2d": "partial",
+             "deepspred2d": "none (encoder-decoder skip connections; inputs clipped at the rendered z range)"}
 
 
 def resources_for(model: str, direct: bool) -> float:
     """GPU share of one task: the small neural 1-minute models use a small share (they are a few hundred MB), everything else runs on CPU."""
+    if model == "deepspred2d":                                   # a 3D Swin on colour frames: a quarter GPU, as in its tuning
+        return 0.25
     return 0.125 if (model in NEURAL and not direct) else 0.0
 
 

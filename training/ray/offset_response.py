@@ -39,20 +39,23 @@ OFFSETS = (-20.0, -10.0, -5.0, 5.0, 10.0, 20.0)
 HORIZONS = (1, 4, 12, 24, 48)
 STRIDE = {"2d": 4, "1d": 8}
 DIRECT_MODELS = ("revinmlp", "patchtst", "patchtst_noinorm", "patchtst_joint", "patchtst_nopatch", "dlinear", "nlinear",
-                 "linearar2d", "residuallinearar2d", "residualnonlinear2d")
+                 "linearar2d", "residuallinearar2d", "residualnonlinear2d", "deepspred2d")
 # Large direct models (isolated libraries, pretrained weights; GPU): the share of a GPU and host memory (GB) a task reserves, as in training.ray.transfer_all.
 LLM_MODELS = ("ofa", "ofa_rand", "ofa_scratch", "timellm", "timeran_lp", "moment_lp")
 LLM_GPU = {"timellm": 1.0, "ofa": 0.5, "ofa_rand": 0.5, "ofa_scratch": 0.5, "timeran_lp": 0.25, "moment_lp": 0.25}
 LLM_MEMORY_GB = 24.0
 DIRECT_INTRINSIC = {**{m: "full" for m in LLM_MODELS}, "revinmlp": "full", "patchtst": "full", "patchtst_joint": "full", "patchtst_nopatch": "full", "patchtst_noinorm": "none",
                     "dlinear": "decomposition (moving-average trend)", "nlinear": "last value subtracted", "linearar2d": "none",
-                    "residuallinearar2d": "partial", "residualnonlinear2d": "partial"}                    # origins are thinned (the response does not need all 625 per receiver)
+                    "residuallinearar2d": "partial", "residualnonlinear2d": "partial",
+                    "deepspred2d": "none (encoder-decoder skip connections; inputs clipped at the rendered z range)"}                    # origins are thinned (the response does not need all 625 per receiver)
 
 
 def resources_for(label: str, gpu_override: float | None, memory_gb: float) -> tuple[float, float]:
     """(GPU share, host memory in GB) of one task: the large models reserve a GPU share and 24 GB, every other model runs on CPU."""
     if label in LLM_MODELS:
         return (gpu_override if gpu_override is not None else LLM_GPU[label]), max(memory_gb, LLM_MEMORY_GB)
+    if label == "deepspred2d":                                   # a 3D Swin on colour frames: a quarter GPU, as in its tuning
+        return (gpu_override if gpu_override is not None else 0.25), max(memory_gb, 16.0)
     return (gpu_override or 0.0), memory_gb
 
 
