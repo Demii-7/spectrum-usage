@@ -329,7 +329,11 @@ def run_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         elif args.get("fixed_config"):       # a FIXED configuration (no search), e.g. DSwinLSTM-I's inherited:1min-r2 (training/configs/fixed/*.json)
             from training.ray.tune_fixed import apply_fixed_config, tuning_base
 
-            fixed = json.loads(Path(args["fixed_config"]).read_text())
+            if str(args["fixed_config"]).startswith("s3://"):          # s3://<bucket>/<key>: the same file for workers on every node
+                bucket_, key_ = str(args["fixed_config"])[5:].split("/", 1)
+                fixed = json.loads(client.get_object(Bucket=bucket_, Key=key_)["Body"].read())
+            else:
+                fixed = json.loads(Path(args["fixed_config"]).read_text())
             result["hyperparameters"] = f"{fixed.get('label', 'fixed')} (fixed configuration, no 15-minute search; {Path(args['fixed_config']).name})"
             config = apply_fixed_config(tuning_base(model, "4d"), model, fixed, seed)
         elif args.get("tuned"):

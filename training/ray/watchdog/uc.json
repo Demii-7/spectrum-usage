@@ -388,5 +388,10 @@
   "id": "claude-uc-solo-origins-1",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-uc-solo-sts-600-1 claude-uc-solo-sts-2400-1 --then 'python -u -m training.ray.spatial15_origins --bands 600_800 2400_2600 --models stsprednet --seeds 40 41 42 --prefix spatial15-solo-oct2026 --output-prefix spatial15-solo-origin-errors-oct2026 --skip-done --max-parallel 8' && bash training/ray/scripts/run_solo_vs_core4.sh\"",
   "max_restarts": 2
+ },
+ {
+  "id": "claude-uc-dswin-tuned-p4krige-poller-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/dswin_tuned_p4krige_poller.py --interval 600 --giveup-hours 24\"",
+  "max_restarts": 3
  }
 ]

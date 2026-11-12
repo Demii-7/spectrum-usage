@@ -281,7 +281,11 @@ def main() -> None:
     parser.add_argument("--out", default="evaluation/results/spatial15", help="prefix of the result CSVs")
     parser.add_argument("--cache", type=Path, default=None, help="pickle of the downloaded result files (reused if it exists)")
     parser.add_argument("--no-references", action="store_true", help="skip the per-receiver 1D/2D reference lookups")
+    parser.add_argument("--prefix", default=None, help="S3 prefix of the cell results (default spatial15-tuned-oct2026/), e.g. spatial15-tuned-dswin-oct2026/")
     args = parser.parse_args()
+    if args.prefix:
+        global PREFIX
+        PREFIX = args.prefix.rstrip("/") + "/"
     from training.ray.storage import spectrum_s3_client
 
     client = spectrum_s3_client()
