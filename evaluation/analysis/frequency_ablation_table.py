@@ -153,9 +153,9 @@ def main() -> None:
                 for h in horizons:
                     series[(region, mode, h)] = np.mean([loaded[s]["mae"][(r, region, mode, h)] for s in seeds for r in receivers], axis=0)
         n_all = len(series[(regions[0], "real", horizons[0])])
-        lo = 0 if model.startswith("tsslcd") else LO_MAIN          # TSS-LCD windows are scored as in the paper (all windows of its padded test partition)
-        series = {k: v[lo:] for k, v in series.items()}
-        n = n_all - lo
+        first = 0 if model.startswith("tsslcd") else LO_MAIN          # TSS-LCD windows are scored as in the paper (all windows of its padded test partition)
+        series = {k: v[first:] for k, v in series.items()}
+        n = n_all - first
         for region in regions:
             for mode in MODES:
                 for label in (*horizons, "mean"):
@@ -165,7 +165,7 @@ def main() -> None:
                     delta = shifted - real
                     rows.append({"model": model, "band": band, "region": region, "start_mhz": plan.loc[region, "start_mhz"], "end_mhz": plan.loc[region, "end_mhz"],
                                  "n_bins": int(plan.loc[region, "bin_count"]), "horizon": label, "mode": mode, "mae_real": float(real.mean()), "mae_shifted": float(shifted.mean()),
-                                 "delta": float(delta.mean()), "delta_no_wrap": float(delta[WRAP - lo:].mean()), "n_origins": n, "n_seeds": len(seeds), "seeds": " ".join(map(str, seeds)),
+                                 "delta": float(delta.mean()), "delta_no_wrap": float(delta[WRAP - first:].mean()), "n_origins": n, "n_seeds": len(seeds), "seeds": " ".join(map(str, seeds)),
                                  "n_receivers": len(receivers)})
         frame = pd.DataFrame([r for r in rows if r["model"] == model and r["band"] == band])
         for mode in MODES:
@@ -177,7 +177,7 @@ def main() -> None:
                     b = block_bootstrap(d)
                     draws.append(b)
                     deltas.append(float(d.mean()))
-                    dnw.append(float(d[WRAP - lo:].mean()))
+                    dnw.append(float(d[WRAP - first:].mean()))
                     lo, hi = np.percentile(b, [2.5, 97.5])
                     up_ci += lo > 0
                     down_ci += hi < 0
