@@ -105,3 +105,13 @@ def test_fixed_config_overlays_architecture_and_sets_the_15_minute_output_length
         assert fixed_final_calls(args, fixed, None, "b", lambda model: {}) == []
     finally:
         tf.read_records = tf_read
+
+
+def test_finals_only_options_default_off_and_parse():
+    from training.ray.tune_fixed import parse_args
+
+    args = parse_args(["--source", "powder15_4d", "--models", "residualconvlstm:4d"])
+    assert args.trials_prefix is None and args.final_seeds is None                    # default behaviour unchanged
+    args = parse_args(["--source", "powder15_4d", "--models", "residualconvlstm:4d", "--trials-prefix", "tuning",
+                       "--output-prefix", "tuning-h100", "--final-seeds", "40", "41"])
+    assert args.trials_prefix == "tuning" and args.output_prefix == "tuning-h100" and args.final_seeds == [40, 41]

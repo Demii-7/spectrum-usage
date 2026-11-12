@@ -61,3 +61,10 @@ def test_cli_rejects_unknown_models_and_accepts_the_neural_ones():
             N.main()
     finally:
         sys.argv = old
+
+
+def test_dswinlstm_i_is_a_gpu_model_with_one_seed():
+    assert "dswinlstm_i" in N.NEURAL and "dswinlstm_i" in N.KNOWN_MODELS
+    assert N.device_for("dswinlstm_i", 0.5) == "cuda" and N.device_for("dswinlstm_i", 0) == "cpu"
+    assert N.SINGLE_SEED["dswinlstm_i"] == [42] and N.SINGLE_SEED["lookbackmean4d"] == [42]
+    assert "residualconvlstm" not in N.SINGLE_SEED                                    # five seeds

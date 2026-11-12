@@ -193,5 +193,20 @@
   "id": "claude-final-rescore-timellm1min-b",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.rescore --sources direct --resolution 1min --models timellm --skip-done --no-pin --max-parallel 5 --gpu-fraction 0.5 --seeds 43 44\"",
   "max_restarts": 4
+ },
+ {
+  "id": "claude-final-rcl-h100-finals-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_fixed --source powder15_4d --datasets 600_800 --models residualconvlstm:4d --output-prefix tuning-h100 --trials-prefix tuning --final-seeds 40 41 42 43 44 --gpu-fraction 0.5 --max-parallel 5 --memory-gb 12\"",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-final-rcl-chain-600-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/rcl_chain.py --band 600_800 --h100-prefix tuning-h100 --deadline-utc 2026-11-12T23:00Z\"",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-final-dswin-nbr-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-final-dswin15-600_800-1 claude-final-dswin15-2400_2600-1 --then 'python -u -m training.ray.neighbor_ablation --models dswinlstm_i --seeds 42 --gpu-fraction 0.5 --max-parallel 2 --skip-done'\"",
+  "max_restarts": 4
  }
 ]

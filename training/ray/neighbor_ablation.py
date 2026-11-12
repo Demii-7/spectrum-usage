@@ -17,8 +17,8 @@ valid in all four modes, so the comparison is paired.
 Models: the tuned 15-minute 4D winners' final seeds (``tuning/powder15_4d/<band>/4d/<model>/weights/seed-N``), the same models as
 ``core4-p2``. Linear models and the lookback-mean control run on CPU; the neural models (STS-PredNet, ResidualConvLSTM, ConvLSTM) run on a
 GPU share (``--gpu-fraction``, default 0.5; ``--gpu-fraction 0`` forces CPU, which is slow for them). STS-PredNet loads through
-``training.common.spatial_checkpoint_evaluation.load_stsprednet_for_forecast`` inside ``evaluate_condition``; ResidualConvLSTM's tuning finals
-(and so its weights) do not exist yet. Output per (band, model, seed): ``<prefix>/<band>/<model>/seed-N/per_origin.npz`` (origin times and
+``training.common.spatial_checkpoint_evaluation.load_stsprednet_for_forecast`` inside ``evaluate_condition``; ResidualConvLSTM and DSwinLSTM-I load
+like the other neural models from their tuning finals (DSwinLSTM-I: seed 42 only). Output per (band, model, seed): ``<prefix>/<band>/<model>/seed-N/per_origin.npz`` (origin times and
 per-origin, per-horizon mean absolute error and signed bias in dB for every receiver x mode) and ``summary.json``.
 
     python -m training.ray.neighbor_ablation --models linearar4d residuallinearar4d lookbackmean4d --seeds 40 41 42 43 44
@@ -43,7 +43,8 @@ import numpy as np
 import yaml
 
 MODES = (("real", None, 0), ("shift96", "shift", 96), ("shift210", "shift", 210), ("level", "level", 0))
-NEURAL = ("stsprednet", "residualconvlstm", "convlstm")        # GPU models; everything else (linear 4D, lookback mean) runs on CPU
+NEURAL = ("stsprednet", "residualconvlstm", "convlstm", "dswinlstm_i")        # GPU models; everything else (linear 4D, lookback mean) runs on CPU
+SINGLE_SEED = {"lookbackmean4d": [42], "dswinlstm_i": [42]}      # the control has no weights; dswinlstm_i is one seed (inherited configuration)
 KNOWN_MODELS = ("linearar4d", "residuallinearar4d", "lookbackmean4d", *NEURAL)
 
 
@@ -200,7 +201,7 @@ def main(argv=None) -> None:
     bucket = args.bucket or os.environ.get("SPECTRUM_S3_BUCKET", "spectrum")
     client = spectrum_s3_client()
     specs = [{"band": b, "model": m, "seed": s} for b in args.bands for m in args.models
-             for s in ([42] if m == "lookbackmean4d" else args.seeds)]
+             for s in (SINGLE_SEED.get(m) or args.seeds)]
     if args.skip_done:
         def done(spec):
             try:

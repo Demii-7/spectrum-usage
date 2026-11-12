@@ -348,14 +348,15 @@ def launch(args: argparse.Namespace) -> None:
         for model, rep in parse_models(args.models):
             spec = get_model_spec(model, require_executable=True)
             prefix = group_prefix(args.output_prefix, args.source, dataset, rep, model)
+            trials_prefix = group_prefix(args.trials_prefix, args.source, dataset, rep, model) if args.trials_prefix else prefix
             candidates = candidate_list(spec, args.budget, random.Random(f"{args.source}|{dataset}|{rep}|{model}"))
             from .candidate import candidate_id
 
-            done = {r.get("candidate_id") for r in read_records(client, bucket, prefix)
+            done = {r.get("candidate_id") for r in read_records(client, bucket, trials_prefix)
                     if r.get("kind") == "trial" and r.get("ok")}
-            groups.append({"dataset": dataset, "model": model, "rep": rep, "prefix": prefix, "n": len(candidates)})
+            groups.append({"dataset": dataset, "model": model, "rep": rep, "prefix": prefix, "trials_prefix": trials_prefix, "n": len(candidates)})
             for index, params in enumerate(candidates):
-                if candidate_id(model, params) in done:
+                if args.trials_prefix or candidate_id(model, params) in done:        # --trials-prefix: finals only, the search is read, never run
                     continue
                 job = {"source": args.source, "dataset": dataset, "model": model, "rep": rep, "prefix": prefix,
                        "parameters": params, "index": index}
@@ -370,7 +371,7 @@ def launch(args: argparse.Namespace) -> None:
     final_calls = []
     winners = []
     for group in groups:
-        trials = [r for r in read_records(client, bucket, group["prefix"]) if r.get("kind") == "trial"]
+        trials = [r for r in read_records(client, bucket, group["trials_prefix"]) if r.get("kind") == "trial"]
         try:
             winner = pick_winner(trials)
         except ValueError:
@@ -382,7 +383,7 @@ def launch(args: argparse.Namespace) -> None:
         # only finals trained from the CURRENT winner count; a rerun that finds a better candidate redoes them
         finished = {r["seed"] for r in read_records(client, bucket, group["prefix"] + "/final")
                     if r.get("ok") and r.get("candidate_id") == winner["candidate_id"]}
-        for seed in FINAL_SEEDS:
+        for seed in (args.final_seeds or FINAL_SEEDS):
             if seed in finished:
                 continue
             job = {"source": args.source, "dataset": group["dataset"], "model": group["model"], "rep": group["rep"],
@@ -440,6 +441,10 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--fixed-config", default=None,
                         help="JSON {model, train, label}: skip the search and train FINAL runs with this configuration (default off)")
     parser.add_argument("--fixed-seeds", type=int, nargs="+", default=[42], help="seeds for --fixed-config runs")
+    parser.add_argument("--trials-prefix", default=None,
+                        help="read the finished search (trials, winner) from this output prefix and run only the finals, which go to --output-prefix "
+                             "(a second cluster can train finals of an already searched winner without repeating or overwriting anything)")
+    parser.add_argument("--final-seeds", type=int, nargs="+", default=None, help="seeds of the finals of a tuned winner (default: all FINAL_SEEDS)")
     parser.add_argument("--gpu-fraction", type=float, default=0.25)
     parser.add_argument("--max-parallel", type=int, default=0, help="most tasks in flight at once (0 = all at once)")
     parser.add_argument("--memory-gb", type=float, default=0.0, help="host memory to reserve per task (0 = none)")
