@@ -308,5 +308,25 @@
   "id": "claude-uc-freqcls-tcn-control",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.frequency_ablation_classes --models temporalconvnet --seeds 42 --bands 600_800 --max-regions 2 --prefix frequency-ablation-2026-11-classes-tcncontrol --gpu-fraction 0.25 --max-parallel 2 --skip-done\"",
   "max_restarts": 2
+ },
+ {
+  "id": "claude-uc-mse-direct-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.origin_errors --res 15min --models revinmlp --seeds 40 41 42 --prefix origin-errors-oct2026-mse --skip-done --max-parallel 16 & python -u -m training.ray.neighbor_origin_errors --seeds 40 41 42 --prefix origin-errors-oct2026-mse --skip-done --max-parallel 8 & wait\"",
+  "max_restarts": 3
+ },
+ {
+  "id": "claude-uc-mse-nbrabl-linear-1",
+  "entrypoint": "python -u -m training.ray.neighbor_ablation --models linearar4d residuallinearar4d lookbackmean4d --prefix neighbor-ablation-oct2026-mse --skip-done --max-parallel 10 --gpu-fraction 0",
+  "max_restarts": 3
+ },
+ {
+  "id": "claude-uc-mse-nbrabl-sts-1",
+  "entrypoint": "python -u -m training.ray.neighbor_ablation --models stsprednet --prefix neighbor-ablation-oct2026-mse --skip-done --max-parallel 10 --gpu-fraction 0",
+  "max_restarts": 3
+ },
+ {
+  "id": "claude-uc-mse-nbrabl-rcl-dswin-1",
+  "entrypoint": "python -u -m training.ray.neighbor_ablation --models residualconvlstm --prefix neighbor-ablation-oct2026-mse --skip-done --max-parallel 6 --gpu-fraction 0.5",
+  "max_restarts": 3
  }
 ]
