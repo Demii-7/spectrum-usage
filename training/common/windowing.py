@@ -95,7 +95,10 @@ class WindowDataset(Dataset):
         lookback: int,
         rollout_horizon: int,
         segments: tuple[SequenceSegment, ...] = (),
+        target_data: np.ndarray | None = None,
     ):
+        # ``target_data`` (same layout as ``data``): the series the targets are read from when it differs from the inputs (input-only masking).
+        self.targets = None if target_data is None else torch.from_numpy(to_model_layout(target_data)).float()
         # If data is a 4D map (T, Lat, Long, Freq), swap axes to (T, Freq, Lat, Long)
         # Complete dataset with time as dimension 0.
         self.data = torch.from_numpy(
@@ -138,7 +141,7 @@ class WindowDataset(Dataset):
         ]
 
         # Future target immediately after the input window.
-        y = self.data[
+        y = (self.data if self.targets is None else self.targets)[
             start + self.lookback : start + self.lookback + self.rollout_horizon
         ]
 
@@ -222,6 +225,8 @@ def build_window_loaders(
     data_loader_config: dict | None = None,
     val_data: np.ndarray | None = None,
     val_segments: tuple[SequenceSegment, ...] = (),
+    target_data: np.ndarray | None = None,
+    val_target_data: np.ndarray | None = None,
 ) -> tuple[DataLoader, DataLoader]:
 
     """Create training and validation DataLoaders."""
@@ -239,6 +244,9 @@ def build_window_loaders(
     # Split data into train and Validation sets
     train_data = data[:split_index]
     val_data = data[split_index:] if val_data is None else val_data
+    if target_data is not None:
+        val_target_data = target_data[split_index:] if val_target_data is None else val_target_data
+        target_data = target_data[:split_index]
 
     train_segments = tuple(
         SequenceSegment(segment.start, min(segment.end, split_index), segment.label)
@@ -279,6 +287,7 @@ def build_window_loaders(
         lookback=lookback,
         rollout_horizon=rollout_horizon,
         segments=train_segments,
+        target_data=target_data,
     )
 
     val_dataset = WindowDataset(
@@ -287,6 +296,7 @@ def build_window_loaders(
         lookback=lookback,
         rollout_horizon=rollout_horizon,
         segments=val_segments,
+        target_data=val_target_data,
     )
     
     # Create loaders for training and validation with torch DataLoader

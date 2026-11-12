@@ -57,10 +57,11 @@ def regional_config(
     config["data"]["loss_frequency_ranges"] = bounds
     if condition in ("region_only", "input_only"):
         if condition == "input_only":
-            config["data"].pop("loss_frequency_ranges", None)
+            config["data"].pop("loss_frequency_ranges", None)             # loss over every bin
         config["data"]["mask"] = {
             "frequency_ranges": bounds,
             "replacement": "low_tail_gaussian",
+            "real_targets": condition == "input_only",                    # inputs masked, targets the real series
             "calibration_frequency_ranges": NOISE_RANGES if noise_ranges is None else noise_ranges,
             "low_tail_quantile": 0.05,
             "minimum_noise_std_db": 0.05,

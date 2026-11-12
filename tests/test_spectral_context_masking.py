@@ -156,3 +156,28 @@ def test_target_region_loss_runs_through_training_and_validation():
         normalization={"std_dbm": np.ones(4, dtype=np.float32)},
     )
     assert np.isfinite(results["best_selection_value"])
+
+
+def test_input_only_masks_inputs_but_the_loader_serves_real_normalized_targets(tmp_path):
+    from training.common.windowing import build_window_loaders
+
+    train_path, test_path = tmp_path / "train.csv", tmp_path / "test.csv"
+    _write_csv(train_path, "2026-01-01", np.arange(40, dtype=np.float32).reshape(10, 4) - 120)
+    _write_csv(test_path, "2026-01-02", np.arange(40, 80, dtype=np.float32).reshape(10, 4) - 120)
+    config = _config(train_path, test_path)
+    unmasked = load_chunk(config, ChunkSpec("test", 100.0, 104.0), 0.1)
+    config["data"]["mask"] = {"frequency_ranges": [[101.5, 102.5]], "replacement": "low_tail_gaussian",
+                              "calibration_frequency_ranges": [[100.5, 100.5]], "low_tail_quantile": 0.05, "seed": 3,
+                              "real_targets": True}
+    masked = load_chunk(config, ChunkSpec("test", 100.0, 104.0), 0.1)
+    train, plain = masked.splits[masked.train_split], unmasked.splits[unmasked.train_split]
+    np.testing.assert_allclose(train.model_target, plain.model_input, atol=1e-5)       # real series, same scaling as the unmasked run
+    assert not np.array_equal(train.model_input[:, [0, 3]], plain.model_input[:, [0, 3]])
+    val = masked.splits[masked.validation_split]
+    loaders = build_window_loaders(train.model_input, 2, 1, 2, 0.1, 1, 1, train.segments, val_data=val.model_input,
+                                   val_segments=val.segments, target_data=train.model_target, val_target_data=val.model_target)
+    x, y = next(iter(loaders[0]))
+    assert x.shape[1] == 2 and y.shape[1] == 1
+    dataset = loaders[0].dataset
+    first = int(dataset.starts[0])
+    np.testing.assert_allclose(dataset[0][1][0].numpy(), plain.model_input[first + 2], atol=1e-5)

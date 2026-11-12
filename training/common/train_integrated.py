@@ -91,6 +91,8 @@ def train_model(
     normalization: dict[str, Any] | None = None,
     site_grid_indices: dict[str, tuple[int, int]] | None = None,
     frequencies: list[float] | None = None,
+    train_target: np.ndarray | None = None,
+    val_target: np.ndarray | None = None,
 ):
     """ Integrated Training, Validation, and Logging """
     print(f"[DEBUG] train_model entry: model_name={model_name}, train_data.shape={train_data.shape}")
@@ -152,6 +154,8 @@ def train_model(
         data_loader_config=config.get("data_loader"),
         val_data=val_data,
         val_segments=val_segments,
+        target_data=train_target,
+        val_target_data=val_target,
     )
     print(f"[DEBUG] window loaders built: train={len(train_loader.dataset)} windows, val={len(val_loader.dataset) if val_loader else 0} windows")
 
@@ -866,6 +870,8 @@ def train_one_model(
             segments=data.splits[data.train_split].segments,
             val_data=None if validation is None else validation.model_input,
             val_segments=() if validation is None else validation.segments,
+            train_target=data.splits[data.train_split].model_target,
+            val_target=None if validation is None else validation.model_target,
             callback=callback,
             chunk_id=chunk.chunk_id,
             normalization=data.normalization,

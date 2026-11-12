@@ -30,3 +30,13 @@ def test_gpu_request_is_capped_at_half():
         "--output-dir", "out", "--table", "table.csv", "--prefix", "prefix",
     ]
     assert parse_args(required).gpus_per_task == 0.5
+
+
+def test_input_only_masks_inputs_keeps_real_targets_and_full_loss_and_noise_ranges_are_overridable():
+    base = {"data": {"value": 1}}
+    region = {"band_id": "R3", "start_mhz": 622.5, "end_mhz": 641.5}
+    only = regional_config(base, region, "input_only", 41, noise_ranges=[[2400.5, 2496.5]])
+    assert "loss_frequency_ranges" not in only["data"]
+    assert only["data"]["mask"]["real_targets"] is True
+    assert only["data"]["mask"]["calibration_frequency_ranges"] == [[2400.5, 2496.5]]
+    assert regional_config(base, region, "region_only", 41)["data"]["mask"]["real_targets"] is False

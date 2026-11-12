@@ -405,13 +405,17 @@ def load_chunk(
             training_data=training_fit_data, split_seed_offset=2,
         )
     normalization = None
+    real_targets = False
+    train_target = validation_target = None
     train_model = train_input
     validation_model = validation_input
     test_model = test_input
     if bool(preprocessing.get("normalize", True)):
         print(f"[DEBUG] load_chunk: fitting per-frequency normalization on first {fit_end} rows ...")
+        real_targets = bool(mask_cfg.get("real_targets", False)) and bool(mask_cfg)
+        # real_targets (input-only masking): statistics from the real series, so real targets and unmasked bins are scaled as in the unmasked run.
         mean, std = fit_per_frequency_normalization(
-            train_input[:fit_end], allow_zero_variance=bool(mask_cfg)
+            (train_data if real_targets else train_input)[:fit_end], allow_zero_variance=bool(mask_cfg)
         )
         print(f"[DEBUG] load_chunk: normalization stats: mean.shape={mean.shape}, std.shape={std.shape}")
         train_model = apply_per_frequency_normalization(train_input, mean, std).astype(np.float32)
@@ -420,6 +424,10 @@ def load_chunk(
                 validation_input, mean, std
             ).astype(np.float32)
         test_model = apply_per_frequency_normalization(test_input, mean, std).astype(np.float32)
+        if real_targets:
+            train_target = apply_per_frequency_normalization(train_data, mean, std).astype(np.float32)
+            validation_target = (None if validation_data is None
+                                 else apply_per_frequency_normalization(validation_data, mean, std).astype(np.float32))
         print(f"[DEBUG] load_chunk: normalization applied, train_model.shape={train_model.shape}")
         normalization = {
             "mean_dbm": mean,
@@ -475,7 +483,7 @@ def load_chunk(
     print(f"[DEBUG] load_chunk: returning, train_model.shape={train_model.shape if hasattr(train_model, 'shape') else '?'}, test_model.shape={test_model.shape if hasattr(test_model, 'shape') else '?'}")
     splits = {
         f"{reference_site}_train": SplitArrays(
-            train_data, train_model, train_start, len(train_data) - 1, train_segments
+            train_data, train_model, train_start, len(train_data) - 1, train_segments, train_target
         ),
         f"{reference_site}_test": SplitArrays(
             test_data, test_model, test_start, test_start + len(test_data) - 1, test_segments
@@ -488,6 +496,7 @@ def load_chunk(
             validation_start,
             validation_start + len(validation_data) - 1,
             validation_segments,
+            validation_target,
         )
     return LoadedSpectrumData(
         files={**train_files, **test_files},

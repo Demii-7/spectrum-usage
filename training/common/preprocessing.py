@@ -66,6 +66,8 @@ class SplitArrays:
     row_start: int
     row_end: int
     segments: tuple[SequenceSegment, ...] = ()
+    # Normalized REAL values when the inputs are masked but the targets must stay real (``data.mask.real_targets``); None = targets are ``model_input``.
+    model_target: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
