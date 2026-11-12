@@ -27,8 +27,8 @@ about 10 GPU-hours), far below the 60 GPU-hour ceiling (1-minute: 840 s per epoc
 | id | what | state |
 |---|---|---|
 | `claude-final-dswin15-600_800-1`, `-2400_2600-1` | finals, seed 42, `tuning/powder15_4d/<band>/4d/dswinlstm_i/` | running since 02:54 UTC |
-| `claude-final-dswin15-score-1` | after both: eval-only (map, receivers, left-out/added), permuted x5, per-origin errors | queued (watchdog) |
-| `claude-final-dswin15-tables-1` | after scoring: `run_spatial15_tables.sh` | queued (watchdog) |
+| `claude-final-dswin15-score-1b` | after both: eval-only (map, receivers, left-out/added), permuted x5, per-origin errors | queued (watchdog) |
+| `claude-final-dswin15-tables-2` | after scoring: `run_spatial15_tables.sh` | queued (watchdog) |
 
 Outputs: `spatial15-tuned-oct2026/<band>/core4-p2/dswinlstm_i/seed-42/`, `.../permuted/dswinlstm_i/seed-42/p*/`,
 `spatial15-origin-errors-oct2026/<band>/core4-p2/dswinlstm_i/seed-42/per_origin.npz`; tables `s3://spectrum/analysis-outputs/spatial15_*.csv`
