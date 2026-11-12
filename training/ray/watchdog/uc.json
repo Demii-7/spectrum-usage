@@ -353,5 +353,10 @@
   "id": "claude-uc-s15nearest-table-1",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-uc-s15nearest-asev-1 claude-uc-s15nearest-near-1 --then 'bash training/ray/scripts/run_spatial15_nearest.sh'\"",
   "max_restarts": 2
+ },
+ {
+  "id": "claude-uc-rescore-timeran1min-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.rescore --sources direct --resolution 1min --models timeran_lp --skip-done --no-pin --max-parallel 10 --gpu-fraction 0.25\"",
+  "max_restarts": 3
  }
 ]
