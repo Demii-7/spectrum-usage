@@ -122,6 +122,7 @@ def main() -> None:
         seeds = sorted(data)
         first = data[seeds[0]]
         horizons = [int(h) for h in first["horizons"]]
+        nowrap_min = int(first["nowrap_min_start"]) if "nowrap_min_start" in first else NOWRAP_MIN_START          # TSS-LCD stores its own wrap threshold
         conds = [str(c) for c in first["conditions"]]
         receivers = [str(r) for r in first["receivers"]]
         # per-seed per-origin sums, aligned by origin time across receivers and seeds
@@ -155,7 +156,7 @@ def main() -> None:
                     real = sum(w * series[m]["real"] for w, m in zip(ws, members))
                     dis = sum(w * series[m]["dis"] for w, m in zip(ws, members))
                     main = starts >= MAIN_MIN_START
-                    nowrap = starts >= NOWRAP_MIN_START
+                    nowrap = starts >= nowrap_min
                     n_bins = int(sum(series[m]["n"] for m in members if m[0] == members[0][0]))
                     for hlabel, js in (("mean", list(range(len(horizons)))), *[(h, [j]) for j, h in enumerate(horizons)]):
                         r_h, d_h = real[:, js].mean(axis=1), dis[:, js].mean(axis=1)

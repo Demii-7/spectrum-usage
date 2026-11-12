@@ -200,7 +200,12 @@ def build_partition(root: str, partition: str, scaler: MinMax | None, savgol: st
     prof = PROFILES[profile]
     values, _, valid = load_partition(root, partition, band, profile=profile)
     values = apply_input_offset(values, input_offset_db)
-    if input_shift:                        # frozen-input frequency ablation: the bins outside a region replaced by the same bins shifted in time (all receivers), before the scaler
+    if input_shift and "columns" in input_shift:     # class-crossed frequency ablation: an explicit boolean column mask (receivers x bins) rolled in time, before the scaler
+        values = np.array(values, copy=True)
+        columns = np.asarray(input_shift["columns"], dtype=bool)
+        if columns.any():
+            values[:, columns] = np.roll(values[:, columns], int(input_shift["shift"]), axis=0)
+    elif input_shift:                      # frozen-input frequency ablation: the bins outside a region replaced by the same bins shifted in time (all receivers), before the scaler
         from training.common.frequency_shift import shift_other_bins_multi_receiver
         values = shift_other_bins_multi_receiver(values, input_shift["in_region"], int(input_shift["shift"]))
     if spectral_mask:                      # region-only ablation: the other bins (inputs AND targets) become noise-floor noise, before the scaler is fit
@@ -359,6 +364,115 @@ def freq_sweep(args, build, scaler, savgol, band, profile, partition, test_start
                     preds.append(inference(ae_ctx, ae_fut, diffusion, masked(ctx, args["eval_mask_ratio"]), device)[:, [h - 1 for h in horizons]])
             shifted_pred = scaler.inverse(np.concatenate(preds))
             out[f"mae|all|{region.band_id}|{mode}"] = np.abs(shifted_pred - gt_raw)[:, pick][:, :, cols].mean(axis=2).astype(np.float32)
+    return out
+
+
+def freq_sweep_classes(args, build, scaler, savgol, band, profile, partition, test_starts, batch, masked, nets, device, seed, base_pred, gt_raw, horizons):
+    """Periodicity-crossed frozen-input frequency ablation (evaluation only), the TSS-LCD counterpart of ``training.ray.frequency_ablation_classes``: for each non-noise
+    region, disturbed set (all / P_only / N_only / noise_only, class per receiver and bin from analysis-inputs/bin_periodicity_classes.csv) and disturbance (shift96, shift192,
+    shift144, shift210 or level), the raw inputs of the disturbed columns at the four receivers are replaced (before the scaler fit on the unshifted training partition; ``level``:
+    each disturbed column replaced by its mean over the input window), the forecasts are sampled with the SAME sampler seed and origins as the unshifted run, and the region's
+    bins are scored per receiver against the real raw targets. Returns the arrays of the classes driver (cls / clsr / cnt / bin / binnw / rmae / allbin per receiver)."""
+    import io as _io
+
+    import pandas as pd
+    import torch
+
+    from training.common.frequency_shift import (SHIFT_STEPS, band_frequencies, class_bin_sums, disturbed_mask, region_mask)
+    from training.ray.storage import spectrum_s3_client
+
+    ae_ctx, ae_fut, diffusion, inference = nets
+    columns = base_pred.shape[2]
+    n_bins = columns // len(SITES)
+    receivers = [site.split("-")[0] for site in SITES]
+    frequencies = band_frequencies(band, n_bins)
+    plan = pd.read_csv(Path(args["repo_root"]) / args["freq_plan"])
+    plan = plan[~plan["is_noise_floor"].astype(str).str.lower().isin({"true", "1"})]
+    if args.get("freq_max_regions"):
+        plan = plan.head(int(args["freq_max_regions"]))                       # smoke tests only
+    frame = pd.read_csv(_io.BytesIO(spectrum_s3_client().get_object(Bucket=args["bucket"], Key="analysis-inputs/bin_periodicity_classes.csv")["Body"].read()))
+    frame = frame[frame["band"] == band]
+    classes = {r: part.sort_values("bin")["class"].to_numpy(dtype=object) for r, part in frame.groupby("receiver")}
+    keep = [4, 12, 24, 48]
+    pick = [horizons.index(h) for h in keep]
+    n = len(test_starts)
+    starts = np.asarray(test_starts, dtype=np.int64) + 96            # main origins = all; 'wrapped rows' begin before row `shift` of the partition: nowrap_min_start = 210 + 96
+    class_sets = ("all", "P_only", "N_only", "noise_only")
+    disturbances = ("shift96", "shift192", "shift144", "shift210", "level")
+    cond_list = [("real", "real", "real")] + [(f"{c}_{d}", c, d) for c in class_sets for d in disturbances]
+    region_conds = ("real", "all_shift96", "all_shift210")
+    err_real = np.abs(base_pred - gt_raw)[:, pick]                         # (N, 4, columns)
+    err_real_r = {r: err_real[:, :, i * n_bins:(i + 1) * n_bins] for i, r in enumerate(receivers)}
+    out: dict[str, np.ndarray] = {"starts_all": starts, "nowrap_min_start": np.asarray(306)}
+    for r in receivers:
+        out[f"starts|{r}"] = starts
+        out[f"times|{r}"] = np.asarray([str(i) for i in range(n)])
+        out[f"allbin|{r}"] = err_real_r[r].mean(axis=2).astype(np.float32)                  # (N, 4)
+        out[f"binmae_main|{r}"] = err_real_r[r].mean(axis=0)                                # (4, bins)
+        out[f"binmae_all|{r}"] = err_real_r[r].mean(axis=0)
+    nowrap = starts >= 306
+    acc = {r: {c: {"cls": {k: np.zeros((n, 4), dtype=np.float32) for k in "PNM"}, "clsr": {k: np.zeros((n, 4), dtype=np.float32) for k in "PNM"},
+                   "cnt": {k: 0 for k in "PNM"}, "bin": np.full((4, n_bins), np.nan, dtype=np.float32), "binnw": np.full((4, n_bins), np.nan, dtype=np.float32)}
+               for c, _, _ in cond_list} for r in receivers}
+    series0 = None
+    for region in plan.itertuples():
+        rmask = region_mask(frequencies, region.start_mhz, region.end_mhz)
+        for cname, cset, dist in cond_list:
+            if cname == "real":
+                errs = err_real_r
+            else:
+                dmasks = {r: disturbed_mask(rmask, classes[r], cset) for r in receivers}
+                cols = np.concatenate([dmasks[r] for r in receivers])
+                if not cols.any():
+                    continue
+                if dist == "level":
+                    if series0 is None:
+                        _, series0, _, _ = build(args["repo_root"], partition, scaler, savgol, band=band, profile=profile)
+                    series = torch.as_tensor(series0, dtype=torch.float32, device=device)
+                else:
+                    _, shifted_model, _, _ = build(args["repo_root"], partition, scaler, savgol, band=band, profile=profile,
+                                                   input_shift={"columns": cols, "shift": SHIFT_STEPS[dist]})
+                    series = torch.as_tensor(shifted_model, dtype=torch.float32, device=device)
+                cols_t = torch.as_tensor(np.flatnonzero(cols), device=device)
+                torch.manual_seed(seed + 1000)
+                preds = []
+                with torch.no_grad():
+                    for lo in range(0, len(test_starts), BATCH):
+                        idx = torch.as_tensor(test_starts[lo:lo + BATCH], device=device)
+                        ctx, _ = batch(series, idx)
+                        if dist == "level":
+                            ctx = ctx.clone()
+                            ctx[:, :, cols_t] = ctx[:, :, cols_t].mean(dim=1, keepdim=True)
+                        preds.append(inference(ae_ctx, ae_fut, diffusion, masked(ctx, args["eval_mask_ratio"]), device)[:, [h - 1 for h in horizons]])
+                shifted_pred = scaler.inverse(np.concatenate(preds))
+                err_d = np.abs(shifted_pred - gt_raw)[:, pick]
+                errs = {r: err_d[:, :, i * n_bins:(i + 1) * n_bins] for i, r in enumerate(receivers)}
+            for r in receivers:
+                a = acc[r][cname]
+                for key, short in (("P", "P"), ("N", "N"), ("middle", "M")):
+                    a["cnt"][short] += int((rmask & (classes[r] == key)).sum())
+                sums, real_sums = {}, {}
+                for j in range(4):
+                    s_d = class_bin_sums(errs[r][:, j, :], rmask, classes[r])
+                    s_r = class_bin_sums(err_real_r[r][:, j, :], rmask, classes[r])
+                    for key, short in (("P", "P"), ("N", "N"), ("middle", "M")):
+                        a["cls"][short][:, j] += s_d[key].astype(np.float32)
+                        a["clsr"][short][:, j] += s_r[key].astype(np.float32)
+                a["bin"][:, rmask] = errs[r][:, :, rmask].mean(axis=0)
+                a["binnw"][:, rmask] = errs[r][nowrap][:, :, rmask].mean(axis=0) if nowrap.any() else np.nan
+                if cname in region_conds:
+                    out[f"rmae|{r}|{region.band_id}|{cname}"] = errs[r][:, :, rmask].mean(axis=2).astype(np.float32)
+    for r in receivers:
+        for cname, _, _ in cond_list:
+            a = acc[r][cname]
+            for short in "PNM":
+                out[f"cls|{r}|{cname}|{short}"] = a["cls"][short]
+                out[f"clsr|{r}|{cname}|{short}"] = a["clsr"][short]
+            out[f"cnt|{r}|{cname}"] = np.asarray([a["cnt"][k] for k in "PNM"], dtype=np.int32)
+            out[f"bin|{r}|{cname}"] = a["bin"]
+            out[f"binnw|{r}|{cname}"] = a["binnw"]
+    out["conditions_list"] = np.asarray([c[0] for c in cond_list])
+    out["regions_list"] = np.asarray([str(r.band_id) for r in plan.itertuples()])
     return out
 
 
@@ -555,6 +669,9 @@ def run_one(args: dict[str, Any]) -> dict[str, Any]:
         result["freq_arrays"] = freq_sweep(args, build_partition, scaler, savgol, band, profile, score_partition, test_starts, batch, masked,
                                            (ae_ctx, ae_fut, diffusion, inference), device, seed, pred_h, gt_raw_h, HORIZONS)
         result["freq_n_origins"] = int(len(test_starts))
+    if args.get("freq_classes_prefix"):
+        result["freq_classes_arrays"] = freq_sweep_classes(args, build_partition, scaler, savgol, band, profile, score_partition, test_starts, batch, masked,
+                                                           (ae_ctx, ae_fut, diffusion, inference), device, seed, pred_h, gt_raw_h, HORIZONS)
     result["hparams"] = {"latent_dim": latent_dim, "learning_rate": learning_rate, "batch_size": batch_size,
                          "train_mask_ratio": train_mask}
     result["objective"] = result["metrics"].get("raw_target__off__mean_horizon_mae_db")    # tuning objective: raw-target MAE, no smoothing
@@ -617,6 +734,26 @@ def job(spec: dict[str, Any]) -> dict[str, Any]:
                  "wall_seconds": record.get("wall_seconds"), "ok": bool(record.get("ok"))}, default=str).encode())
         except Exception:
             pass
+    class_arrays = record.pop("freq_classes_arrays", None)     # class-crossed frequency ablation: layout of training.ray.frequency_ablation_classes (per receiver)
+    if class_arrays:
+        import io as _io
+
+        regions = [str(x) for x in class_arrays.pop("regions_list")]
+        conditions_list = class_arrays.pop("conditions_list")
+        buffer = _io.BytesIO()
+        np.savez_compressed(buffer, horizons=np.asarray([4, 12, 24, 48]), regions=np.asarray(regions), receivers=np.asarray([s.split("-")[0] for s in SITES]),
+                            conditions=conditions_list, **class_arrays)
+        base = f"{spec['freq_classes_prefix'].strip('/')}/{spec['freq_tag']}/{record.get('band')}/seed-{spec['seed']}"
+        try:
+            client = spectrum_s3_client()
+            client.put_object(Bucket=spec["bucket"], Key=f"{base}/per_origin.npz", Body=buffer.getvalue())
+            client.put_object(Bucket=spec["bucket"], Key=f"{base}/summary.json", Body=json.dumps(
+                {"kind": "frequency_ablation_classes", "model": spec["freq_tag"], "band": record.get("band"), "seed": spec["seed"], "savgol": spec["savgol"],
+                 "weights_prefix": spec.get("weights_prefix"), "n_origins": record.get("freq_n_origins"), "regions": regions,
+                 "scored_columns": "region's bins per receiver", "zero_shift_max_abs_diff_db": record.get("zero_offset_max_abs_diff_db"),
+                 "wall_seconds": record.get("wall_seconds"), "ok": bool(record.get("ok"))}, default=str).encode())
+        except Exception:
+            pass
     key = f"{spec['output_prefix'].strip('/')}/savgol-{spec['savgol']}/seed-{spec['seed']}.json"
     try:
         spectrum_s3_client().put_object(Bucket=spec["bucket"], Key=key, Body=json.dumps(record, default=str).encode())
@@ -655,7 +792,11 @@ def parse_args(argv=None) -> argparse.Namespace:
                    help="eval-only: frozen-input frequency ablation (needs --freq-tag; default off): per region of the band's plan, the inputs of the other bins are "
                         "replaced by the same bins shifted by 24 h / 52.5 h (all receivers, before the scaler) and the region is scored; per-origin arrays go to "
                         "<prefix>/<tag>/<band>/seed-N/per_origin.npz")
-    p.add_argument("--freq-tag", default=None, help="with --freq-shift-prefix: label of the weights set (e.g. tuned, default)")
+    p.add_argument("--freq-tag", default=None, help="with --freq-shift-prefix or --freq-classes-prefix: label of the weights set (e.g. tsslcd_tuned, tsslcd_default)")
+    p.add_argument("--freq-max-regions", type=int, default=0, help="with --freq-classes-prefix: score only the first N regions (smoke tests; use another prefix)")
+    p.add_argument("--freq-classes-prefix", default=None,
+                   help="eval-only: periodicity-crossed frozen-input frequency ablation (needs --freq-tag; default off): per region, disturbed set (all / P_only / N_only / "
+                        "noise_only) and disturbance (shift96/192/144/210, level) the region's bins are scored per receiver; arrays go to <prefix>/<tag>/<band>/seed-N/per_origin.npz")
     p.add_argument("--bucket", default=None)
     p.add_argument("--output-prefix", default="tsslcd-authors-results")
     p.add_argument("--address", default="auto")
@@ -683,8 +824,10 @@ def main(argv=None) -> None:
             raise SystemExit("--input-offsets needs --offset-prefix, different from --weights-prefix and --output-prefix")
         if args.freq_shift_prefix and (not args.freq_tag or args.freq_shift_prefix.strip("/") in (args.weights_prefix.strip("/"), args.output_prefix.strip("/"))):
             raise SystemExit("--freq-shift-prefix needs --freq-tag, and must differ from --weights-prefix and --output-prefix")
-    elif args.input_offsets or args.freq_shift_prefix:
-        raise SystemExit("--input-offsets and --freq-shift-prefix are eval-only options")
+        if args.freq_classes_prefix and (not args.freq_tag or args.freq_classes_prefix.strip("/") in (args.weights_prefix.strip("/"), args.output_prefix.strip("/"))):
+            raise SystemExit("--freq-classes-prefix needs --freq-tag, and must differ from --weights-prefix and --output-prefix")
+    elif args.input_offsets or args.freq_shift_prefix or args.freq_classes_prefix:
+        raise SystemExit("--input-offsets, --freq-shift-prefix and --freq-classes-prefix are eval-only options")
     specs = []
     for savgol in args.savgol:
         for seed in args.seeds:
@@ -710,6 +853,11 @@ def main(argv=None) -> None:
                     extra["test_range"] = [args.test_start, args.test_end]
                 if args.input_offsets:
                     extra.update(input_offsets=list(args.input_offsets), offset_prefix=args.offset_prefix, source_metrics=source.get("metrics"))
+                if args.freq_classes_prefix:
+                    extra.update(freq_classes_prefix=args.freq_classes_prefix, freq_tag=args.freq_tag, source_metrics=source.get("metrics"),
+                                 freq_max_regions=args.freq_max_regions,
+                                 freq_plan={"600_800": "evaluation/analysis/plan_regions_600_800.csv",
+                                            "2400_2600": "evaluation/analysis/plan_regions_2400_2600.csv"}[extra["band"]])
                 if args.freq_shift_prefix:
                     extra.update(freq_shift_prefix=args.freq_shift_prefix, freq_tag=args.freq_tag, source_metrics=source.get("metrics"),
                                  freq_plan={"600_800": "evaluation/analysis/plan_regions_600_800.csv",
