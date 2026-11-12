@@ -157,6 +157,28 @@ def prepared(config: dict[str, Any], source: str, model: str, parameters: dict[s
     return set_lookback_and_horizon(injected, model, None)
 
 
+def apply_fixed_config(config: dict[str, Any], model: str, fixed: dict[str, Any], seed: int) -> dict[str, Any]:
+    """A prepared config for a FIXED configuration (no search): ``fixed`` is ``{"model": {...}, "train": {...}, "label": str}``.
+
+    The architecture and optimiser settings are overlaid on the dataset's base config; the lookback, the strides and the output
+    length are the dataset's, as for tuned models (a direct multi-step model emits one step per forecast step up to the longest
+    horizon, e.g. 48 at 15 minutes). The seed is set last; selection by validation MAE without early stopping, as in the searches.
+    """
+    from .config import inject_parameters
+    from .powder15 import set_lookback_and_horizon
+
+    config = inject_parameters(config, model, {}, seed=seed)
+    section = config[model]
+    section["model"].update({k: v for k, v in (fixed.get("model") or {}).items()
+                             if k not in ("input_sequence_length", "prediction_horizon")})
+    section["train"].update({k: v for k, v in (fixed.get("train") or {}).items()
+                             if k not in ("seed", "train_stride", "val_stride", "test_stride", "selection_metric", "early_stopping")})
+    direct = int((fixed.get("model") or {}).get("prediction_horizon", 1)) > 1
+    config = set_lookback_and_horizon(config, model, max(config["windowing"]["horizons"]) if direct else None)
+    config[model]["train"]["seed"] = int(seed)
+    return config
+
+
 # ------------------------------------------------------------------------------------------- workers
 def train_prepared(config: dict[str, Any], model: str, trial_dir: Path) -> dict[str, Any]:
     """Train a fully prepared config; return the validation objective and the checkpoint path (no Ray Tune)."""
@@ -229,10 +251,13 @@ def final_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     record = {"kind": "final", "source": source, "dataset": dataset, "model": model, "rep": rep, "seed": seed,
               "candidate_id": job["candidate_id"], "parameters": job["parameters"],
               "search_objective": job["search_objective"], "hyperparameters": f"tuned ({job['budget']} candidates)"}
+    if job.get("fixed"):
+        record["hyperparameters"] = job["fixed"].get("label", "fixed")        # e.g. inherited:1min-r2; no search, single seed
     started = time.time()
     try:
         config, metrics = base_config(source, dataset, model, rep, args["repo_root"], client, bucket)
-        config = prepared(config, source, model, job["parameters"], seed)
+        config = (apply_fixed_config(config, model, job["fixed"], seed) if job.get("fixed")
+                  else prepared(config, source, model, job["parameters"], seed))
         with tempfile.TemporaryDirectory(prefix="tune-final-") as scratch:
             result = train_prepared(config, model, Path(scratch) / "trial")
             eval_dir = Path(scratch) / "eval"
@@ -243,7 +268,9 @@ def final_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
 
             record.update(save_artifact(client, bucket, f"{job['prefix']}/weights/seed-{seed}", result["checkpoint"],
                                         {"config": config, "parameters": job["parameters"], "seed": seed,
-                                         "candidate_id": job["candidate_id"], "kind": "tuned_final"}))
+                                         "candidate_id": job["candidate_id"],
+                                         "kind": "fixed_final" if job.get("fixed") else "tuned_final",
+                                         **({"hyperparameters": job["fixed"].get("label", "fixed")} if job.get("fixed") else {})}))
         record.update(ok=True, objective=result["objective"], objective_name=result["objective_name"])
     except Exception as error:
         import traceback
@@ -309,6 +336,10 @@ def launch(args: argparse.Namespace) -> None:
                   f"obj={row.get('objective')} ({row.get('wall_seconds')}s) [{len(queue) + len(pending)} left]", flush=True)
         return results
 
+    fixed = json.loads(Path(args.fixed_config).read_text()) if getattr(args, "fixed_config", None) else None
+    if fixed:
+        launch_fixed(args, fixed, client, bucket, options, run_bounded)
+        return
     groups = []
     trial_calls = []
     for dataset in args.datasets:
@@ -370,6 +401,32 @@ def launch(args: argparse.Namespace) -> None:
     print(f"[tune] done; {len(failed)} failed final runs", flush=True)
 
 
+def fixed_final_calls(args, fixed: dict[str, Any], client, bucket: str, options) -> list:
+    """Final-run calls for a fixed configuration: one per (dataset, model, seed) whose record is not already ok (resumable)."""
+    label = fixed.get("label", "fixed")
+    calls = []
+    for dataset in args.datasets:
+        for model, rep in parse_models(args.models):
+            prefix = group_prefix(args.output_prefix, args.source, dataset, rep, model)
+            done = {r["seed"] for r in read_records(client, bucket, prefix + "/final")
+                    if r.get("ok") and r.get("candidate_id") == label}
+            for seed in args.fixed_seeds:
+                if seed in done:
+                    continue
+                calls.append((final_job, options(model), {
+                    "source": args.source, "dataset": dataset, "model": model, "rep": rep, "prefix": prefix, "parameters": {},
+                    "seed": int(seed), "candidate_id": label, "search_objective": None, "budget": 0, "fixed": fixed}))
+    return calls
+
+
+def launch_fixed(args, fixed: dict[str, Any], client, bucket: str, options, run_bounded) -> None:
+    calls = fixed_final_calls(args, fixed, client, bucket, options)
+    print(f"[tune] --fixed-config {fixed.get('label', 'fixed')}: no search; {len(calls)} final runs", flush=True)
+    results = run_bounded(calls)
+    failed = [r for r in results if not r.get("ok")]
+    print(f"[tune] done; {len(failed)} failed final runs", flush=True)
+
+
 def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", choices=list(SOURCE_DATASETS), required=True)
@@ -378,6 +435,9 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--budget", type=int, default=16)
     parser.add_argument("--trials-only", action="store_true",
                         help="run the search trials only (no winner, no finals); a later run with a larger --budget resumes from these records")
+    parser.add_argument("--fixed-config", default=None,
+                        help="JSON {model, train, label}: skip the search and train FINAL runs with this configuration (default off)")
+    parser.add_argument("--fixed-seeds", type=int, nargs="+", default=[42], help="seeds for --fixed-config runs")
     parser.add_argument("--gpu-fraction", type=float, default=0.25)
     parser.add_argument("--max-parallel", type=int, default=0, help="most tasks in flight at once (0 = all at once)")
     parser.add_argument("--memory-gb", type=float, default=0.0, help="host memory to reserve per task (0 = none)")

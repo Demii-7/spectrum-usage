@@ -67,3 +67,41 @@ def test_finals_from_an_older_winner_are_not_counted_as_done():
 
     source = inspect.getsource(tune_fixed.launch)
     assert 'r.get("candidate_id") == winner["candidate_id"]' in source
+
+
+def test_fixed_config_overlays_architecture_and_sets_the_15_minute_output_length():
+    from training.ray.powder15 import CORE_NODES, apply_powder15_4d
+    from training.ray.tune_fixed import apply_fixed_config, fixed_final_calls, parse_args
+
+    base = yaml.safe_load(Path(config_file_for("dswinlstm_i", "4d")).read_text())
+    config = apply_powder15_4d(base, "600_800", list(HORIZONS), CORE_NODES, {"height": 10, "width": 10}, "p15_600_800_core4-p2")
+    fixed = {"label": "inherited:1min-r2",
+             "model": {"embed_dim": 48, "hidden_dims": [48, 96], "input_sequence_length": 60, "prediction_horizon": 60},
+             "train": {"batch_size": 3, "learning_rate": 5e-4, "train_stride": 5, "seed": 1, "early_stopping": True}}
+    out = apply_fixed_config(config, "dswinlstm_i", fixed, 42)
+    section = out["dswinlstm_i"]
+    assert section["model"]["embed_dim"] == 48 and section["model"]["hidden_dims"] == [48, 96]
+    assert section["model"]["input_sequence_length"] == LOOKBACK              # the dataset's lookback, not the 1-minute 60
+    assert section["model"]["prediction_horizon"] == max(HORIZONS) == 48      # direct output covers the longest horizon
+    assert section["train"]["batch_size"] == 3 and section["train"]["learning_rate"] == 5e-4
+    assert section["train"]["seed"] == 42 and section["train"]["train_stride"] == 1      # dataset strides and seed win
+    assert section["train"]["early_stopping"] is False                                   # selection as in the searches
+    # a one-step model stays one-step
+    one = apply_fixed_config(config, "dswinlstm_i", {"model": {"embed_dim": 16}}, 7)
+    assert one["dswinlstm_i"]["model"]["prediction_horizon"] == 1
+
+    class Client:       # no finished records: every seed is launched; a finished one is skipped
+        records: list = []
+    import training.ray.tune_fixed as tf
+    args = parse_args(["--source", "powder15_4d", "--models", "dswinlstm_i:4d", "--fixed-config", "x.json"])
+    assert args.fixed_config == "x.json" and args.fixed_seeds == [42] and args.datasets == ["600_800", "2400_2600"]
+    tf_read = tf.read_records
+    try:
+        tf.read_records = lambda client, bucket, prefix: Client.records
+        calls = fixed_final_calls(args, fixed, None, "b", lambda model: {})
+        assert [(c[2]["dataset"], c[2]["seed"], c[2]["candidate_id"]) for c in calls] == [
+            ("600_800", 42, "inherited:1min-r2"), ("2400_2600", 42, "inherited:1min-r2")]
+        Client.records = [{"ok": True, "seed": 42, "candidate_id": "inherited:1min-r2"}]
+        assert fixed_final_calls(args, fixed, None, "b", lambda model: {}) == []
+    finally:
+        tf.read_records = tf_read
