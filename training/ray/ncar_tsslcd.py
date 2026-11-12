@@ -19,6 +19,9 @@ Conditions
 Windows: the benchmark's (``transfer_2d.target_window_starts``): origin = last observed step; a window is kept when its first target is at or
 after ``target_start`` and its last target (t+48) before ``target_end``; history 100 blocks (TSS-LCD needs a multiple of its 5 heads, so
 100, not 96); no window crosses a gap (receivers joined on common blocks, gaps up to 9 blocks interpolated as in ``tsslcd_authors``).
+Record fields: ``windows_without_gaps`` = origins the range would give with complete data; ``windows_lost_to_gaps`` = those lost to missing
+data, INCLUDING the 4 first origins of a June-July / new-band target whose data start exactly 96 blocks before ``target_start`` (TSS-LCD's
+100-block history reaches before the first block); ``frozen_n_origins`` per position = that receiver's own frozen origin count.
 NB: the stock TSS-LCD 15-minute pipeline's origins are one block later (first origin 20:00, not 19:45, on the October week);
 ``--origin-convention tsslcd`` reproduces them (used for the step-0c check only).
 
