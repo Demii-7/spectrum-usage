@@ -333,5 +333,15 @@
   "id": "claude-final-dswin-search-2400_2600-1",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_dswin15 all --bands 2400_2600 --max-parallel 40 --gpu-fraction 0.25 --memory-gb 12\"",
   "max_restarts": 4
+ },
+ {
+  "id": "claude-final-dswin-solo-600-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.spatial15 --band 600_800 --experiments solo --models dswinlstm_i --seeds 42 --fixed-config training/configs/fixed/dswinlstm_i_inherited_1min_r2.json --prefix spatial15-solo-oct2026 --memory-gb 16 --gpu-fraction 0.15 --max-parallel 4 --skip-done\"",
+  "max_restarts": 3
+ },
+ {
+  "id": "claude-final-dswin-solo-2400-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.spatial15 --band 2400_2600 --experiments solo --models dswinlstm_i --seeds 42 --fixed-config training/configs/fixed/dswinlstm_i_inherited_1min_r2.json --prefix spatial15-solo-oct2026 --memory-gb 16 --gpu-fraction 0.15 --max-parallel 4 --skip-done\"",
+  "max_restarts": 3
  }
 ]
