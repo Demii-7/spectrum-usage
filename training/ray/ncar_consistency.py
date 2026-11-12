@@ -66,7 +66,7 @@ def cmd_transfer(a: argparse.Namespace) -> None:
     refs = []
     for spec, cell in specs:
         gpu = a.gpu_fraction if a.gpu_fraction is not None else ta.GPU_FRACTION.get(cell[0], 0.0)
-        task = ray.remote(num_cpus=4, num_gpus=gpu, memory=int(24 * 2 ** 30), max_retries=0)(ta.job)
+        task = ray.remote(num_cpus=4, num_gpus=gpu, memory=int(a.memory_gb * 2 ** 30), max_retries=0)(ta.job)
         if strategy:
             task = task.options(scheduling_strategy=strategy)
         refs.append((task.remote(spec, shared), spec, cell))
@@ -113,6 +113,7 @@ def main(argv=None) -> None:
     t.add_argument("--regimes", nargs="+", help="only cells in these regimes")
     t.add_argument("--node", default=None, help="run every cell on this node (IP or hostname substring), e.g. a newly joined worker")
     t.add_argument("--gpu-fraction", type=float, default=None, help="override the GPU share (e.g. score CPU-stored cells on the GPU)")
+    t.add_argument("--memory-gb", type=float, default=24.0, help="Ray memory per cell (the x86 CPU workers advertise 40 GiB each)")
     t.add_argument("--code-revision", default=None)
     t.add_argument("--address", default="auto")
     t.add_argument("--repo-root", default="/workspace/spectrum-usage")
