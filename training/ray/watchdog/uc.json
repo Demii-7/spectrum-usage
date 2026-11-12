@@ -393,5 +393,40 @@
   "id": "claude-uc-dswin-tuned-p4krige-poller-1",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/dswin_tuned_p4krige_poller.py --interval 600 --giveup-hours 24\"",
   "max_restarts": 3
+ },
+ {
+  "id": "claude-uc-solo-sts-600-2",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.spatial15 --band 600_800 --experiments solo --models stsprednet --seeds 40 41 42 --tuned --prefix spatial15-solo-oct2026 --memory-gb 0 --gpu-fraction 0.25 --max-parallel 12 --skip-done\"",
+  "max_restarts": 3
+ },
+ {
+  "id": "claude-uc-dswin-p4krige-600-2",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.spatial15 --band 600_800 --experiments s2 --variants core4-p4 core4-krige --models dswinlstm_i --seeds 42 --fixed-config training/configs/fixed/dswinlstm_i_inherited_1min_r2.json --prefix spatial15-tuned-oct2026 --memory-gb 0 --gpu-fraction 0.15 --max-parallel 4 --skip-done\"",
+  "max_restarts": 3
+ },
+ {
+  "id": "claude-uc-dswin-solo-600-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.spatial15 --band 600_800 --experiments solo --models dswinlstm_i --seeds 42 --fixed-config training/configs/fixed/dswinlstm_i_inherited_1min_r2.json --prefix spatial15-solo-oct2026 --memory-gb 0 --gpu-fraction 0.15 --max-parallel 4 --skip-done\"",
+  "max_restarts": 3
+ },
+ {
+  "id": "claude-uc-solo-sts-2400-2",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.spatial15 --band 2400_2600 --experiments solo --models stsprednet --seeds 40 41 42 --tuned --prefix spatial15-solo-oct2026 --memory-gb 0 --gpu-fraction 0.25 --max-parallel 12 --skip-done\"",
+  "max_restarts": 3
+ },
+ {
+  "id": "claude-uc-dswin-p4krige-2400-2",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.spatial15 --band 2400_2600 --experiments s2 --variants core4-p4 core4-krige --models dswinlstm_i --seeds 42 --fixed-config training/configs/fixed/dswinlstm_i_inherited_1min_r2.json --prefix spatial15-tuned-oct2026 --memory-gb 0 --gpu-fraction 0.15 --max-parallel 4 --skip-done\"",
+  "max_restarts": 3
+ },
+ {
+  "id": "claude-uc-dswin-solo-2400-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.spatial15 --band 2400_2600 --experiments solo --models dswinlstm_i --seeds 42 --fixed-config training/configs/fixed/dswinlstm_i_inherited_1min_r2.json --prefix spatial15-solo-oct2026 --memory-gb 0 --gpu-fraction 0.15 --max-parallel 4 --skip-done\"",
+  "max_restarts": 3
+ },
+ {
+  "id": "claude-uc-solo-origins-2",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-uc-solo-sts-600-2 claude-uc-solo-sts-2400-2 --then 'python -u -m training.ray.spatial15_origins --bands 600_800 2400_2600 --models stsprednet --seeds 40 41 42 --prefix spatial15-solo-oct2026 --output-prefix spatial15-solo-origin-errors-oct2026 --skip-done --memory-gb 0 --max-parallel 8' && bash training/ray/scripts/run_solo_vs_core4.sh\"",
+  "max_restarts": 2
  }
 ]

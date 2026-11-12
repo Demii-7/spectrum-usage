@@ -46,12 +46,12 @@ def decide(entry: dict | None) -> tuple[str, str]:
 
 def entrypoint(band: str) -> str:
     fixed = f"s3://spectrum/{FIXED_KEY.format(band=band)}"
-    common = f"--memory-gb 16 --gpu-fraction 0.15 --max-parallel 2 --skip-done"
+    common = "--memory-gb 0 --gpu-fraction 0.15 --max-parallel 2 --skip-done"
     return ("bash -c \"cd /workspace/spectrum-usage && "
             f"python -u -m training.ray.spatial15 --band {band} --experiments s2 --variants core4-p4 core4-krige --models dswinlstm_i --seeds 42 "
             f"--fixed-config {fixed} --prefix {NEW_PREFIX} {common} && "
             f"python -u -m training.ray.spatial15_origins --bands {band} --models dswinlstm_i --seeds 42 --variants core4-p4 core4-krige "
-            f"--prefix {NEW_PREFIX} --output-prefix {ORIGIN_PREFIX} --skip-done --memory-gb 16 --gpu-fraction 0.15 --max-parallel 2\"")
+            f"--prefix {NEW_PREFIX} --output-prefix {ORIGIN_PREFIX} --skip-done --memory-gb 0 --gpu-fraction 0.15 --max-parallel 2\"")
 
 
 def table_entrypoint() -> str:
