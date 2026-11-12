@@ -95,6 +95,8 @@ def baseline_forecasts(data: np.ndarray, starts: np.ndarray, k_sets: dict[str, d
     for name, k_per_h in k_sets.items():
         out[name] = {}
         for h in HORIZONS:
+            if h not in k_per_h:              # the validation selection covers 4/12/24/48 only (median_study SELECT_HORIZONS)
+                continue
             k = int(k_per_h[h])
             if k not in cache:
                 cache[k] = rolled_median(windows, k, max(HORIZONS))
@@ -151,7 +153,7 @@ def job(t: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         record["mae"] = {}
         for name, by_h in preds.items():
             mats, predictions, targets, bins, times = {}, {}, {}, {}, {}
-            for h in HORIZONS:
+            for h in sorted(by_h):
                 rows = starts + LOOKBACK + h - 1
                 origin = t15.origin_times(source, rows, h)
                 mats[h] = {"origin": origin.astype("datetime64[s]").astype(np.int64), "pred": by_h[h].astype(np.float32), "target": data[rows]}
@@ -164,10 +166,11 @@ def job(t: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
                        "window": t.get("window") or ("oct" if t["group"] in ("heldout_oct", "core4_oct") else "frozen_interval"),
                        "target_start": str(task.target_start), "target_end": str(task.target_end), "n_windows": int(len(starts)),
                        "k_per_horizon": {str(h): int(v) for h, v in k_sets[name].items()} if name in k_sets else None,
-                       "k_source": SELECTED_K_KEY if name in k_sets else None, "lookback": LOOKBACK, "horizons": list(HORIZONS),
+                       "k_source": SELECTED_K_KEY if name in k_sets else None, "lookback": LOOKBACK, "horizons": sorted(by_h),
                        "code_revision": args["code_revision"], "metrics": scored["metrics"]}
             client.put_object(Bucket=bucket, Key=f"{base}/summary.json", Body=json.dumps(summary, default=str, indent=1).encode())
             record["mae"][name] = {str(h): round(scored["metrics"][str(h)]["mae_db"], 4) for h in (4, 48)}
+            del mats, predictions, targets
         record["ok"] = True
     except Exception as error:
         import traceback

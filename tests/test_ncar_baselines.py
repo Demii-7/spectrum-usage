@@ -18,7 +18,8 @@ def test_rolled_median_matches_pipeline():
         m = LookbackMeanForecaster({"model": {"prediction_horizon": 1, "input_sequence_length": 96, "statistic": "median", "window": k}})
         ref = autoregressive_rollout(m, w, 48).numpy()
         assert np.abs(ref - rolled_median(w.numpy(), k, 48)).max() == 0
-    p = baseline_forecasts(data, starts, {"tuned_median": {1: 3, 4: 3, 12: 2, 24: 96, 48: 96}})
+    p = baseline_forecasts(data, starts, {"tuned_median": {4: 3, 12: 2, 24: 96, 48: 96}})
+    assert sorted(p["tuned_median"]) == [4, 12, 24, 48]
     for h in (1, 4, 12, 24, 48):
         assert np.array_equal(p["same_time_yesterday"][h], data[starts + h - 1])
         assert np.array_equal(p["persistence"][h], data[starts + 95])
