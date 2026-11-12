@@ -1,0 +1,313 @@
+model,source,device,stored_record,cell,metric,stored,ncar,diff,pass
+revinmlp,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h4 t+4,mae,0.5505578060913086,0.5505578022460937,-3.845214813225084e-09,True
+revinmlp,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h4 t+4,mse,0.8380725182846845,0.8380725248612882,6.576603706065498e-09,
+revinmlp,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h4 t+4,rmse,0.9154630076003532,0.9154630111923082,3.591954955695087e-09,
+revinmlp,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h4 t+4,mape_linear,13.116021590087891,13.11602223049736,6.404094694545392e-07,
+revinmlp,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h12 t+12,mae,0.6665908885498046,0.6665908888549805,3.051758845629138e-10,True
+revinmlp,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h12 t+12,mse,1.133680272404236,1.1336802825175454,1.011330952316314e-08,
+revinmlp,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h12 t+12,rmse,1.0647442286315694,1.0647442333807426,4.7491732768634165e-09,
+revinmlp,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h12 t+12,mape_linear,15.919911171291352,15.91991178167343,6.103820791025782e-07,
+revinmlp,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h24 t+24,mae,0.7080618176269531,0.7080618226928711,5.065918018409832e-09,True
+revinmlp,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h24 t+24,mse,1.2901094726107885,1.2901094845095635,1.1898775076346624e-08,
+revinmlp,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h24 t+24,rmse,1.1358298607673547,1.135829866005276,5.237921429923631e-09,
+revinmlp,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h24 t+24,mape_linear,16.987495319288254,16.987496129014968,8.097267141238262e-07,
+revinmlp,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h48 t+48,mae,0.7286100031738282,0.7286099951171875,-8.056640687925665e-09,True
+revinmlp,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h48 t+48,mse,1.331874156039673,1.3318741283014317,-2.773824148150084e-08,
+revinmlp,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h48 t+48,rmse,1.1540685231127623,1.1540685110951738,-1.2017588701951354e-08,
+revinmlp,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h48 t+48,mape_linear,17.258400850276946,17.258401289897918,4.3962097251437626e-07,
+residuallinearar2d,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h4 t+4,mae,0.5844396263427735,0.5844396244506836,-1.8920898181562507e-09,True
+residuallinearar2d,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h4 t+4,mse,0.8797348175773294,0.8797348105155681,-7.061761286841772e-09,
+residuallinearar2d,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h4 t+4,rmse,0.9379417986087032,0.9379417948442048,-3.764498601732669e-09,
+residuallinearar2d,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h4 t+4,mape_linear,13.90430499976349,13.904305614469529,6.147060389594117e-07,
+residuallinearar2d,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h12 t+12,mae,0.7128069306640625,0.7128069274902343,-3.173828200253581e-09,True
+residuallinearar2d,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h12 t+12,mse,1.2470267567655742,1.2470267393054684,-1.7460105805611192e-08,
+residuallinearar2d,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h12 t+12,rmse,1.1167035223216475,1.1167035145039477,-7.817699820833468e-09,
+residuallinearar2d,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h12 t+12,mape_linear,17.190736609960556,17.190737127132415,5.17171859115706e-07,
+residuallinearar2d,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h24 t+24,mae,0.776583258178711,0.7765832523193359,-5.859375096228803e-09,True
+residuallinearar2d,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h24 t+24,mse,1.5105472317550843,1.510547222670405,-9.08467923110834e-09,
+residuallinearar2d,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h24 t+24,rmse,1.2290432180176107,1.2290432143217769,-3.69583386117256e-09,
+residuallinearar2d,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h24 t+24,mape_linear,19.00397629078293,19.0039767412796,4.504966710783265e-07,
+residuallinearar2d,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h48 t+48,mae,0.8200980871582031,0.8200980822753906,-4.8828124876720835e-09,True
+residuallinearar2d,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h48 t+48,mse,1.680776208554838,1.6807762001070687,-8.447769150876638e-09,
+residuallinearar2d,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h48 t+48,rmse,1.2964475340540542,1.296447530796009,-3.2580451669872446e-09,
+residuallinearar2d,direct,cpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h48 t+48,mape_linear,20.28770409368324,20.287704619026183,5.253429407048316e-07,
+autoformer_csa,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,mae,1.092037971862793,1.0920848799438476,4.690808105456412e-05,True
+autoformer_csa,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,mse,2.9009549118565,2.900851761754842,-0.0001031501016579,
+autoformer_csa,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,rmse,1.7032189852912338,1.7031887040944236,-3.028119681025565e-05,
+autoformer_csa,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,mape_linear,27.29956538191223,27.30010349004745,0.000538108135224,
+autoformer_csa,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,mae,1.162165259399414,1.1629911545410156,0.0008258951416015,True
+autoformer_csa,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,mse,3.5026574898204914,3.5062103021270987,0.0035528123066073,
+autoformer_csa,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,rmse,1.8715388026489037,1.872487730834864,0.0009489281859607,
+autoformer_csa,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,mape_linear,26.293363871589666,26.30048154722977,0.0071176756401065,
+autoformer_csa,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,mae,1.3701501909179687,1.366627521850586,-0.0035226690673828,False
+autoformer_csa,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,mse,4.611550084295895,4.571731377425554,-0.0398187068703412,
+autoformer_csa,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,rmse,2.1474519981354403,2.1381607463952643,-0.0092912517401759,
+autoformer_csa,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,mape_linear,37.170951766502384,36.72206736772728,-0.4488843987751068,
+autoformer_csa,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,mae,1.5537309385986329,1.5484901994628906,-0.0052407391357423,False
+autoformer_csa,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,mse,5.783246953836929,5.749580034763634,-0.033666919073295,
+autoformer_csa,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,rmse,2.4048382386008686,2.3978281912521657,-0.0070100473487029,
+autoformer_csa,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,mape_linear,45.936998395591736,45.59926958778572,-0.3377288078060161,
+autoformer_csa,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,mae,1.423336744567871,1.4278065541992186,0.0044698096313475,False
+autoformer_csa,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,mse,5.020145298477788,5.026944076314932,0.0067987778371438,
+autoformer_csa,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,rmse,2.2405680749483574,2.242084761179856,0.0015166862314983,
+autoformer_csa,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,mape_linear,43.6230606456089,43.48096509357643,-0.1420955520324724,
+autoformer_csa,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,mae,0.9823797685546874,0.9823797438354492,-2.4719238211901032e-08,True
+autoformer_csa,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,mse,2.453893593873856,2.453893428224305,-1.6564955052089658e-07,
+autoformer_csa,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,rmse,1.5664908534280868,1.566490800555275,-5.287281212851269e-08,
+autoformer_csa,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,mape_linear,24.205820194889068,24.205819402412416,-7.924766514122439e-07,
+autoformer_csa,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,mae,0.9887687728881835,0.988768771484375,-1.403808513877891e-09,True
+autoformer_csa,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,mse,2.863869370891034,2.863869245862176,-1.2502885837761826e-07,
+autoformer_csa,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,rmse,1.6922970693383104,1.6922970323977335,-3.694057681968843e-08,
+autoformer_csa,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,mape_linear,26.513816555742263,26.513814868732453,-1.6870098100696396e-06,
+autoformer_csa,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,mae,1.1581556161499025,1.1581555911254884,-2.5024413874419338e-08,True
+autoformer_csa,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,mse,3.3883530559329635,3.3883528147598763,-2.411730872786677e-07,
+autoformer_csa,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,rmse,1.8407479610019848,1.840747895492448,-6.55095364621161e-08,
+autoformer_csa,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,mape_linear,31.12549445713806,31.12549207188606,-2.3852519994704835e-06,
+autoformer_csa,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,mae,1.3151830947265626,1.3151831291503906,3.442382801033261e-08,True
+autoformer_csa,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,mse,4.380428342467722,4.380428725555374,3.8308765226702246e-07,
+autoformer_csa,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,rmse,2.092947286117766,2.0929473776364693,9.151870328238942e-08,
+autoformer_csa,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,mape_linear,39.08682202193451,39.08682023356819,-1.78836631903323e-06,
+autoformer_csa,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,mae,1.3777562760620117,1.377756073425293,-2.0263671873799185e-07,True
+autoformer_csa,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,mse,4.71866319863771,4.718660683056964,-2.515580746376145e-06,
+autoformer_csa,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,rmse,2.172248420102477,2.1722478410754524,-5.790270249939056e-07,
+autoformer_csa,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,mape_linear,39.87303556601143,39.87303274350548,-2.822505955180077e-06,
+lstmattn,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,mae,3.6054081730957033,3.605404378723145,-3.794372558818537e-06,True
+lstmattn,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,mse,26.712888302373774,26.71330192833136,0.0004136259575879,
+lstmattn,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,rmse,5.168451247943989,5.168491262286448,4.001434245903823e-05,
+lstmattn,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,mape_linear,80.17464840084457,80.17341139957047,-0.0012370012741058,
+lstmattn,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,mae,3.8542685849609377,3.85426488458252,-3.700378418347583e-06,True
+lstmattn,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,mse,30.240934700034312,30.24170285033313,0.0007681502988177,
+lstmattn,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,rmse,5.49917582006925,5.49924566193702,6.984186777003742e-05,
+lstmattn,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,mape_linear,87.13311540876961,87.12949215474129,-0.0036232540283265,
+lstmattn,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,mae,3.9459862467041016,3.94597027154541,-1.5975158691450275e-05,True
+lstmattn,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,mse,31.54176547962393,31.54225848416729,0.0004930045433617,
+lstmattn,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,rmse,5.616205612299458,5.616249503375655,4.389107619662269e-05,
+lstmattn,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,mape_linear,87.51361742847443,87.5132524316864,-0.0003649967880363,
+lstmattn,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,mae,4.009630986694336,4.009608948425293,-2.2038269042568004e-05,True
+lstmattn,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,mse,32.11390579694694,32.114186850139035,0.0002810531920971,
+lstmattn,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,rmse,5.666913251228303,5.666938048906044,2.4797677740551197e-05,
+lstmattn,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,mape_linear,82.96312968517303,82.96162250987815,-0.0015071752948756,
+lstmattn,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,mae,3.999360194641113,3.999501893493653,0.0001416988525391,True
+lstmattn,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,mse,32.29306470990391,32.294728973082655,0.0016642631787462,
+lstmattn,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,rmse,5.6826987171504975,5.682845147730374,0.0001464305798766,
+lstmattn,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,mape_linear,82.22812224452973,82.22169639370347,-0.0064258508262611,
+lstmattn,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,mae,1.0156738095092774,1.0156738282470703,1.8737792872869363e-08,True
+lstmattn,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,mse,2.4025539974681136,2.402554058933422,6.146530839856723e-08,
+lstmattn,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,rmse,1.5500174184402296,1.5500174382675254,1.982729580518594e-08,
+lstmattn,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,mape_linear,29.43523553277016,29.435236867530826,1.3347606646618717e-06,
+lstmattn,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,mae,1.1842872205200194,1.1842872274169922,6.896972770675802e-09,True
+lstmattn,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,mse,3.3075978459768782,3.307597866501322,2.0524443922198543e-08,
+lstmattn,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,rmse,1.8186802484155584,1.8186802540582336,5.642675215966619e-09,
+lstmattn,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,mape_linear,37.36685212455559,37.3668530401268,9.155712135111572e-07,
+lstmattn,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,mae,1.3478815497436525,1.347881526428223,-2.3315429587000835e-08,True
+lstmattn,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,mse,4.460087060649781,4.460086893164586,-1.6748519460207945e-07,
+lstmattn,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,rmse,2.111891820299937,2.1118917806470545,-3.9652882311003175e-08,
+lstmattn,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,mape_linear,47.91145730770111,47.911456065597534,-1.2421035791021495e-06,
+lstmattn,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,mae,1.670812473999023,1.6708124583129882,-1.568603513746325e-08,True
+lstmattn,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,mse,7.189003518482218,7.18900332283926,-1.9564295783425226e-07,
+lstmattn,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,rmse,2.681231716670944,2.68123168018716,-3.64837839939014e-08,
+lstmattn,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,mape_linear,74.9900628975792,74.99006083524895,-2.062330239027688e-06,
+lstmattn,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,mae,1.932764815917969,1.9327648114624023,-4.455566360306307e-09,True
+lstmattn,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,mse,8.952044459648036,8.952044396755287,-6.28927487866804e-08,
+lstmattn,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,rmse,2.991996734565069,2.9919967240549057,-1.0510163406252104e-08,
+lstmattn,rolled,cpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,mape_linear,90.24871066653633,90.24871038877868,-2.777576355583733e-07,
+residuallinearar2d,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,mae,0.4799430169067383,0.4799429987792968,-1.8127441436810443e-08,True
+residuallinearar2d,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,mse,0.633871657242103,0.6338716468836348,-1.0358468194304749e-08,
+residuallinearar2d,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,rmse,0.7961605725242258,0.7961605660189626,-6.5052632169937405e-09,
+residuallinearar2d,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,mape_linear,11.356329223754884,11.356328778003691,-4.457511906252876e-07,
+residuallinearar2d,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,mae,0.5801648240356445,0.5801647892456054,-3.479003907180811e-08,True
+residuallinearar2d,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,mse,0.87579715910269,0.8757971031177756,-5.5984914371087775e-08,
+residuallinearar2d,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,rmse,0.9358403491529363,0.9358403192413628,-2.9911573773411255e-08,
+residuallinearar2d,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,mape_linear,13.850340907463076,13.850339244564056,-1.662899018484154e-06,
+residuallinearar2d,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,mae,0.7291792670898437,0.7291791868286133,-8.026123043958222e-08,True
+residuallinearar2d,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,mse,1.3094942614372065,1.3094941311039827,-1.3033322376898584e-07,
+residuallinearar2d,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,rmse,1.1443313599815423,1.1443313030342144,-5.6947327964351764e-08,
+residuallinearar2d,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,mape_linear,17.61608506093788,17.616079653491973,-5.407445907934516e-06,
+residuallinearar2d,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,mae,0.821394091003418,0.8213939584960938,-1.3250732422420697e-07,True
+residuallinearar2d,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,mse,1.625161745324912,1.6251614707112694,-2.7461364271452737e-07,
+residuallinearar2d,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,rmse,1.274818318555594,1.2748182108486172,-1.0770697689288514e-07,
+residuallinearar2d,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,mape_linear,20.066967845033645,20.066957852571488,-9.99246215727112e-06,
+residuallinearar2d,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,mae,0.834163104309082,0.8341629346923828,-1.696166992415371e-07,True
+residuallinearar2d,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,mse,1.6565930415076673,1.656592628785262,-4.127224053629419e-07,
+residuallinearar2d,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,rmse,1.2870870372696896,1.2870868769377075,-1.6033198191323097e-07,
+residuallinearar2d,rolled,cpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,mape_linear,20.386565722682956,20.386551618822097,-1.4103860856096162e-05,
+ofa,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h4 t+4,mae,0.5614519911499023,0.5614519938354492,2.6855468959752216e-09,True
+ofa,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h4 t+4,mse,0.8567823399162828,0.856782342917142,3.000859116752963e-09,
+ofa,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h4 t+4,rmse,0.9256253777399812,0.9256253793609712,1.6209900088881566e-09,
+ofa,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h4 t+4,mape_linear,13.377121351051333,13.37712225166893,9.006175982761988e-07,
+ofa,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h12 t+12,mae,0.6864518951416015,0.686451904296875,9.155273428262944e-09,True
+ofa,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h12 t+12,mse,1.1770463115617027,1.1770463550658152,4.350411253462028e-08,
+ofa,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h12 t+12,rmse,1.084917651972583,1.0849176720220826,2.0049499616092703e-08,
+ofa,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h12 t+12,mape_linear,17.145728602113724,17.145729681058885,1.0789451607706724e-06,
+ofa,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h24 t+24,mae,0.7171416804199219,0.717141682800293,2.3803711224346102e-09,True
+ofa,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h24 t+24,mse,1.3312808917767434,1.3312809148315317,2.305478830066932e-08,
+ofa,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h24 t+24,rmse,1.1538114628381635,1.1538114728288724,9.990708704776809e-09,
+ofa,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h24 t+24,mape_linear,17.058553607723237,17.05855432653618,7.18812941613578e-07,
+ofa,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h48 t+48,mae,0.7462839569091797,0.7462839537353516,-3.1738280892312787e-09,True
+ofa,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h48 t+48,mse,1.4495095728835976,1.449509579686272,6.802674423767031e-09,
+ofa,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h48 t+48,rmse,1.2039558018812806,1.2039558047064154,2.8251347927721326e-09,
+ofa,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h48 t+48,mape_linear,16.23590709022522,16.235907499168395,4.089431762110962e-07,
+timellm,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h4 t+4,mae,0.5493287225952148,0.5493287202758789,-2.3193359455220275e-09,True
+timellm,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h4 t+4,mse,0.8673887141361726,0.8673886824323725,-3.1703800029703195e-08,
+timellm,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h4 t+4,rmse,0.9313370572119272,0.9313370401913436,-1.7020583498172925e-08,
+timellm,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h4 t+4,mape_linear,12.73467802525139,12.734678898956298,8.737049093099358e-07,
+timellm,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h12 t+12,mae,0.6944150154418945,0.6944150307617187,1.5319824187010056e-08,True
+timellm,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h12 t+12,mse,1.2873949294736204,1.2873949722004692,4.2726848725749285e-08,
+timellm,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h12 t+12,rmse,1.1346342712405704,1.1346342900690376,1.8828467229781157e-08,
+timellm,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h12 t+12,mape_linear,16.478407864070892,16.478409679937364,1.8158664722989213e-06,
+timellm,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h24 t+24,mae,0.7207162263183594,0.7207162233886719,-2.92968749260325e-09,True
+timellm,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h24 t+24,mse,1.3767116038543834,1.3767116079913515,4.1369683234648855e-09,
+timellm,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h24 t+24,rmse,1.1733335433091407,1.1733335450720532,1.7629124826612495e-09,
+timellm,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h24 t+24,mape_linear,16.61672169261551,16.61672200023842,3.076229084797433e-07,
+timellm,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h48 t+48,mae,0.7280311674804687,0.7280311678466796,3.6621095045319407e-10,True
+timellm,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h48 t+48,mse,1.3507269954593415,1.350726945166275,-5.0293066600204384e-08,
+timellm,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h48 t+48,rmse,1.162207810789164,1.162207789152299,-2.1636864966367853e-08,
+timellm,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h48 t+48,mape_linear,16.925838880994796,16.925840148183823,1.2671890274873476e-06,
+moment_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h4 t+4,mae,0.5730874423217773,0.5730874472045898,4.8828124876720835e-09,True
+moment_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h4 t+4,mse,0.8648766228818376,0.8648766200035806,-2.878257077121304e-09,
+moment_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h4 t+4,rmse,0.9299874315719744,0.9299874300245032,-1.547471040197479e-09,
+moment_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h4 t+4,mape_linear,13.88812472192955,13.88812558532524,8.633956909420704e-07,
+moment_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h12 t+12,mae,0.6834453876953125,0.6834453947143555,7.019043013478665e-09,True
+moment_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h12 t+12,mse,1.1615828939462136,1.1615829090848486,1.5138635012235113e-08,
+moment_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h12 t+12,rmse,1.077767550980365,1.0777675580035098,7.023144732443143e-09,
+moment_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h12 t+12,mape_linear,16.556351999685287,16.556352889556884,8.898715968541637e-07,
+moment_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h24 t+24,mae,0.7458489946899414,0.7458489795532226,-1.513671876729461e-08,True
+moment_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h24 t+24,mse,1.3667525811859504,1.366752540025486,-4.1160464370193495e-08,
+moment_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h24 t+24,rmse,1.169081939466157,1.1690819218624011,-1.7603755342321392e-08,
+moment_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h24 t+24,mape_linear,18.79329000006676,18.79329014940262,1.4933586101051333e-07,
+moment_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h48 t+48,mae,0.7524935810546876,0.7524935606689453,-2.0385742205419888e-08,True
+moment_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h48 t+48,mse,1.4095972989533134,1.4095972867900366,-1.216327683017937e-08,
+moment_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h48 t+48,rmse,1.1872646288647335,1.1872646237423383,-5.122394952650211e-09,
+moment_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h48 t+48,mape_linear,18.26764858043861,18.26764870276642,1.223278047746135e-07,
+timeran_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h4 t+4,mae,0.5835757619628906,0.583575760192871,-1.7700195753533874e-09,True
+timeran_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h4 t+4,mse,0.8846180217717439,0.8846180310287843,9.257040467502977e-09,
+timeran_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h4 t+4,rmse,0.9405413450623762,0.9405413499834998,4.9211236197166386e-09,
+timeran_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h4 t+4,mape_linear,14.307885490476608,14.307886187610626,6.971340180683683e-07,
+timeran_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h12 t+12,mae,0.6937713393554688,0.693771335144043,-4.211425763678278e-09,True
+timeran_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h12 t+12,mse,1.2185461825748145,1.2185461645967546,-1.79780597076018e-08,
+timeran_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h12 t+12,rmse,1.1038777933153716,1.103877785172233,-8.14313860786342e-09,
+timeran_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h12 t+12,mape_linear,17.07968997726059,17.079690457525253,4.802646635937435e-07,
+timeran_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h24 t+24,mae,0.7815096819458007,0.7815096887817383,6.835937593763219e-09,True
+timeran_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h24 t+24,mse,1.5987213838887322,1.5987214246364017,4.074766946082775e-08,
+timeran_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h24 t+24,rmse,1.26440554565722,1.26440556177059,1.6113369971648694e-08,
+timeran_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h24 t+24,mape_linear,18.18173451208687,18.18173544964981,9.375629410612872e-07,
+timeran_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h48 t+48,mae,0.7907078618774414,0.7907078592529296,-2.6245117190626392e-09,True
+timeran_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h48 t+48,mse,1.4894460250094528,1.489446034991691,9.982238147188129e-09,
+timeran_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h48 t+48,rmse,1.2204286234800676,1.220428627569712,4.0896444009064226e-09,
+timeran_lp,direct,gpu,"transfer-all-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h48 t+48,mape_linear,19.285764542272567,19.285765117393492,5.751209286586345e-07,
+residuallinearar2d,direct,gpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h4 t+4,mae,0.5844396263427735,0.5844396484375,2.2094726492838393e-08,True
+residuallinearar2d,direct,gpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h4 t+4,mse,0.8797348175773294,0.8797348365210435,1.894371404187467e-08,
+residuallinearar2d,direct,gpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h4 t+4,rmse,0.9379417986087032,0.9379418087072584,1.0098555214277384e-08,
+residuallinearar2d,direct,gpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h4 t+4,mape_linear,13.90430499976349,13.904306915893557,1.916130065282573e-06,
+residuallinearar2d,direct,gpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h12 t+12,mae,0.7128069306640625,0.7128069436645508,1.3000488241488029e-08,True
+residuallinearar2d,direct,gpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h12 t+12,mse,1.2470267567655742,1.2470267627281924,5.962618176980072e-09,
+residuallinearar2d,direct,gpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h12 t+12,rmse,1.1167035223216475,1.1167035249913884,2.669740872818238e-09,
+residuallinearar2d,direct,gpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h12 t+12,mape_linear,17.190736609960556,17.190738299951555,1.6899909986989314e-06,
+residuallinearar2d,direct,gpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h24 t+24,mae,0.776583258178711,0.776583275756836,1.75781249556195e-08,True
+residuallinearar2d,direct,gpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h24 t+24,mse,1.5105472317550843,1.5105472706631635,3.890807920292616e-08,
+residuallinearar2d,direct,gpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h24 t+24,rmse,1.2290432180176107,1.2290432338462156,1.58286048712597e-08,
+residuallinearar2d,direct,gpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h24 t+24,mape_linear,19.00397629078293,19.003978182445525,1.8916625954545907e-06,
+residuallinearar2d,direct,gpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h48 t+48,mae,0.8200980871582031,0.820098114074707,2.6916503914620197e-08,True
+residuallinearar2d,direct,gpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h48 t+48,mse,1.680776208554838,1.6807762712204712,6.266563334911268e-08,
+residuallinearar2d,direct,gpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h48 t+48,rmse,1.2964475340540542,1.2964475582222643,2.4168210099873025e-08,
+residuallinearar2d,direct,gpu,"transfer-all-oct2026 (CPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 trained h48 t+48,mape_linear,20.28770409368324,20.28770629030037,2.196617128191747e-06,
+autoformer_csa,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,mae,1.092037971862793,1.092090377502441,5.24056396482564e-05,True
+autoformer_csa,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,mse,2.9009549118565,2.9008793115970253,-7.56002594748395e-05,
+autoformer_csa,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,rmse,1.7032189852912338,1.7031967917997688,-2.2193491465039017e-05,
+autoformer_csa,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,mape_linear,27.29956538191223,27.30022214793396,0.0006567660217307,
+autoformer_csa,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,mae,1.162165259399414,1.1628121950073242,0.0006469356079101,True
+autoformer_csa,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,mse,3.5026574898204914,3.5055416489725038,0.0028841591520119,
+autoformer_csa,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,rmse,1.8715388026489037,1.872309175583056,0.0007703729341526,
+autoformer_csa,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,mape_linear,26.293363871589666,26.299662895355223,0.006299023765564,
+autoformer_csa,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,mae,1.3701501909179687,1.366882980529785,-0.0032672103881836,False
+autoformer_csa,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,mse,4.611550084295895,4.573980881369615,-0.0375692029262797,
+autoformer_csa,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,rmse,2.1474519981354403,2.138686718846315,-0.0087652792891255,
+autoformer_csa,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,mape_linear,37.170951766502384,36.743241596160885,-0.4277101703414985,
+autoformer_csa,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,mae,1.5537309385986329,1.5474359006347655,-0.0062950379638673,False
+autoformer_csa,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,mse,5.783246953836929,5.740347902893808,-0.042899050943121,
+autoformer_csa,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,rmse,2.4048382386008686,2.3959023149731724,-0.0089359236276962,
+autoformer_csa,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,mape_linear,45.936998395591736,45.6089907128582,-0.328007682733535,
+autoformer_csa,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,mae,1.423336744567871,1.4267885482177731,0.0034518036499022,False
+autoformer_csa,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,mse,5.020145298477788,5.019605262136425,-0.0005400363413627,
+autoformer_csa,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,rmse,2.2405680749483574,2.24044755844372,-0.0001205165046376,
+autoformer_csa,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,mape_linear,43.6230606456089,43.29095108993149,-0.3321095556774125,
+autoformer_csa,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,mae,0.9823797685546874,0.9823852932739258,5.524719238314546e-06,True
+autoformer_csa,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,mse,2.453893593873856,2.4539404409223757,4.684704851953825e-05,
+autoformer_csa,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,rmse,1.5664908534280868,1.5665058062204478,1.4952792360967138e-05,
+autoformer_csa,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,mape_linear,24.205820194889068,24.206054716114043,0.000234521224975,
+autoformer_csa,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,mae,0.9887687728881835,0.9887761456298828,7.372741699263052e-06,True
+autoformer_csa,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,mse,2.863869370891034,2.863916466823969,4.709593293483749e-05,
+autoformer_csa,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,rmse,1.6922970693383104,1.6923109840759083,1.3914737597930936e-05,
+autoformer_csa,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,mape_linear,26.513816555742263,26.513898729883195,8.217414093181219e-05,
+autoformer_csa,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,mae,1.1581556161499025,1.158107266418457,-4.834973144518528e-05,True
+autoformer_csa,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,mse,3.3883530559329635,3.387840892183761,-0.0005121637492027,
+autoformer_csa,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,rmse,1.8407479610019848,1.8406088373643543,-0.00013912363763,
+autoformer_csa,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,mape_linear,31.12549445713806,31.1259711547184,0.0004766975803391,
+autoformer_csa,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,mae,1.3151830947265626,1.314637717163086,-0.0005453775634767,True
+autoformer_csa,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,mse,4.380428342467722,4.376997533290122,-0.0034308091776003,
+autoformer_csa,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,rmse,2.092947286117766,2.092127513630592,-0.0008197724871741,
+autoformer_csa,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,mape_linear,39.08682202193451,39.079302159799575,-0.0075198621349343,
+autoformer_csa,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,mae,1.3777562760620117,1.3769263646240235,-0.0008299114379881,True
+autoformer_csa,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,mse,4.71866319863771,4.7099404421449815,-0.0087227564927285,
+autoformer_csa,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,rmse,2.172248420102477,2.170239719972193,-0.0020087001302848,
+autoformer_csa,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,mape_linear,39.87303556601143,39.698605349123,-0.1744302168884317,
+lstmattn,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,mae,3.6054081730957033,3.6054081730957033,0.0,True
+lstmattn,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,mse,26.712888302373774,26.712888302373774,0.0,
+lstmattn,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,rmse,5.168451247943989,5.168451247943989,0.0,
+lstmattn,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,mape_linear,80.17464840084457,80.1746488296833,4.288387316364606e-07,
+lstmattn,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,mae,3.8542685849609377,3.8542685849609377,0.0,True
+lstmattn,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,mse,30.240934700034312,30.240934700034312,0.0,
+lstmattn,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,rmse,5.49917582006925,5.49917582006925,0.0,
+lstmattn,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,mape_linear,87.13311540876961,87.13311580275345,3.939838393307582e-07,
+lstmattn,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,mae,3.9459862467041016,3.9459862467041016,0.0,True
+lstmattn,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,mse,31.54176547962393,31.54176547962393,0.0,
+lstmattn,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,rmse,5.616205612299458,5.616205612299458,0.0,
+lstmattn,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,mape_linear,87.51361742847443,87.51361791465759,4.86183154180253e-07,
+lstmattn,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,mae,4.009630986694336,4.009630986694336,0.0,True
+lstmattn,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,mse,32.11390579694694,32.11390579694694,0.0,
+lstmattn,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,rmse,5.666913251228303,5.666913251228303,0.0,
+lstmattn,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,mape_linear,82.96312968517303,82.96313006318283,3.78009801238477e-07,
+lstmattn,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,mae,3.999360194641113,3.999360194641113,0.0,True
+lstmattn,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,mse,32.29306470990391,32.29306470990391,0.0,
+lstmattn,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,rmse,5.6826987171504975,5.6826987171504975,0.0,
+lstmattn,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,mape_linear,82.22812224452973,82.22812260720254,3.626728073413688e-07,
+lstmattn,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,mae,1.0156738095092774,1.0156823790893554,8.569580077999461e-06,True
+lstmattn,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,mse,2.4025539974681136,2.4025916784698027,3.768100168910493e-05,
+lstmattn,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,rmse,1.5500174184402296,1.5500295734178116,1.2154977582001791e-05,
+lstmattn,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,mape_linear,29.43523553277016,29.435646181423188,0.0004106486530304,
+lstmattn,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,mae,1.1842872205200194,1.184298848449707,1.162792968756321e-05,True
+lstmattn,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,mse,3.3075978459768782,3.3076506821445606,5.283616768236854e-05,
+lstmattn,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,rmse,1.8186802484155584,1.818694774321563,1.452590600425907e-05,
+lstmattn,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,mape_linear,37.36685212455559,37.36735599737549,0.0005038728199053,
+lstmattn,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,mae,1.3478815497436525,1.3479125502929687,3.100054931648444e-05,True
+lstmattn,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,mse,4.460087060649781,4.460255187072916,0.0001681264231345,
+lstmattn,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,rmse,2.111891820299937,2.111931624620673,3.980432073635853e-05,
+lstmattn,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,mape_linear,47.91145730770111,47.91317529504013,0.0017179873390205,
+lstmattn,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,mae,1.670812473999023,1.670887118347168,7.464434814474785e-05,True
+lstmattn,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,mse,7.189003518482218,7.189675857347815,0.0006723388655975,
+lstmattn,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,rmse,2.681231716670944,2.681357092471612,0.000125375800668,
+lstmattn,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,mape_linear,74.9900628975792,74.9983977705288,0.0083348729496037,
+lstmattn,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,mae,1.932764815917969,1.9328199879150392,5.517199707050224e-05,True
+lstmattn,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,mse,8.952044459648036,8.952608159184146,0.0005636995361104,
+lstmattn,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,rmse,2.991996734565069,2.992090934310678,9.419974560875843e-05,
+lstmattn,rolled,gpu,"transfer-all-oct2026 (CPU, x86)",C powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,mape_linear,90.24871066653633,90.25721933262253,0.0085086660862003,
+residuallinearar2d,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,mae,0.4799430169067383,0.4799430169067383,0.0,True
+residuallinearar2d,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,mse,0.633871657242103,0.633871657242103,0.0,
+residuallinearar2d,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,rmse,0.7961605725242258,0.7961605725242258,0.0,
+residuallinearar2d,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+1,mape_linear,11.356329223754884,11.35632992890358,7.051486967668552e-07,
+residuallinearar2d,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,mae,0.5801648240356445,0.5801648240356445,0.0,True
+residuallinearar2d,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,mse,0.87579715910269,0.87579715910269,0.0,
+residuallinearar2d,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,rmse,0.9358403491529363,0.9358403491529363,0.0,
+residuallinearar2d,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+4,mape_linear,13.850340907463076,13.85034157770729,6.702442156836241e-07,
+residuallinearar2d,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,mae,0.7291792670898437,0.7291792670898437,0.0,True
+residuallinearar2d,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,mse,1.3094942614372065,1.3094942614372065,0.0,
+residuallinearar2d,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,rmse,1.1443313599815423,1.1443313599815423,0.0,
+residuallinearar2d,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+12,mape_linear,17.61608506093788,17.616085680265428,6.193275474686288e-07,
+residuallinearar2d,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,mae,0.821394091003418,0.821394091003418,0.0,True
+residuallinearar2d,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,mse,1.625161745324912,1.625161745324912,0.0,
+residuallinearar2d,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,rmse,1.274818318555594,1.274818318555594,0.0,
+residuallinearar2d,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+24,mape_linear,20.066967845033645,20.066968426364895,5.813312533575754e-07,
+residuallinearar2d,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,mae,0.834163104309082,0.834163104309082,0.0,True
+residuallinearar2d,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,mse,1.6565930415076673,1.6565930415076673,0.0,
+residuallinearar2d,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,rmse,1.2870870372696896,1.2870870372696896,0.0,
+residuallinearar2d,rolled,gpu,"transfer15-oct2026 (GPU, x86)",A powder/guesthouse/20261025T1355Z/600_800 seed 40 t+48,mape_linear,20.386565722682956,20.386566295770645,5.730876928566886e-07,
