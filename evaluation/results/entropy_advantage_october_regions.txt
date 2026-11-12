@@ -1,0 +1,34 @@
+                                    n  seeds    gap
+resolution model                                   
+15min      1d linearar1d           13      5 -0.229
+           1d residuallinearar1d   13      5 -0.229
+           1d residualvanillalstm  13      5 -0.254
+           1d vanillalstm1d        13      5 -0.229
+           2d autoformer_csa       13      5  0.330
+           2d linearar2d           13      5 -0.214
+           2d lstmattn             13      5  0.075
+           2d residuallinearar2d   13      5 -0.234
+           2d residualvanillalstm  13      5  0.048
+           2d temporalconvnet      13      4 -0.171
+           2d vanillalstm          13      5  0.003
+           direct dlinear          13      5 -0.256
+           direct nlinear          13      5 -0.262
+           direct ofa              13      5 -0.298
+           direct patchtst         13      5 -0.291
+           direct revinmlp         13      5 -0.306
+           direct timellm          13      5 -0.294
+1min       1d linearar1d           13      5  0.013
+           1d residuallinearar1d   13      5  0.009
+           2d autoformer_csa       13      5  0.048
+           2d linearar2d           13      5  0.013
+           2d lstmattn             13      5  0.239
+           2d residuallinearar2d   13      5  0.005
+           2d residualvanillalstm  13      5  0.033
+           2d temporalconvnet      13      5  0.016
+           2d vanillalstm          13      5  0.298
+           direct dlinear          13      5  0.032
+           direct nlinear          13      5  0.021
+           direct ofa              13      5  0.003
+           direct patchtst         13      5  0.002
+           direct revinmlp         13      5  0.003
+           direct timellm          13      5 -0.000
