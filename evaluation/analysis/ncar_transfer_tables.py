@@ -157,14 +157,15 @@ def read_npz(client, key: str):
 # ------------------------------------------------------------------------------------------ aggregation
 def receiver_level(per_bin: pd.DataFrame, keys: list[str]) -> pd.DataFrame:
     """Mean over bins per cell, then over a receiver's targets (runs); one row per (keys, receiver, horizon, seed)."""
-    cell_keys = keys + ["receiver", "target", "horizon", "seed"]
+    cell_keys = list(dict.fromkeys(keys + ["receiver", "target", "horizon", "seed"]))
     agg = {m: "mean" for m in METRICS if m in per_bin}
     agg["n_windows"] = "first"
     cell = per_bin.groupby(cell_keys, dropna=False).agg(agg).reset_index()
     cell["rmse_pooled_db"] = np.sqrt(cell["mse_db2"])
+    cell["n_targets"] = 1
     agg = {m: "mean" for m in METRICS if m in cell}
-    agg.update(n_windows="sum", target="nunique")
-    rec = cell.groupby(keys + ["receiver", "horizon", "seed"], dropna=False).agg(agg).reset_index().rename(columns={"target": "n_targets"})
+    agg.update(n_windows="sum", n_targets="sum")
+    rec = cell.groupby(list(dict.fromkeys(keys + ["receiver", "horizon", "seed"])), dropna=False).agg(agg).reset_index()
     rec["share_removed"] = 1 - rec["mae_after_per_bin_offset"] / rec["mae_db"]
     return rec
 
@@ -267,7 +268,15 @@ def item3(client, cells_meta, base_meta, tt_meta, workers) -> tuple[pd.DataFrame
     if not tt_sum:
         return pd.DataFrame(), pd.DataFrame()
     windows = pd.DataFrame(tt_sum).groupby(["target", "horizon"]).agg(first=("first", "first"), n_tt=("n_tt", "first")).reset_index()
-    wmap = {(r.target, int(r.horizon)): (r.first, r.n_tt) for r in windows.itertuples()}
+    # the transfer cells need the full 48-step future, so their last windows end earlier than the target-trained test windows: every
+    # series (transfer models, baselines, target-trained) is restricted to target times in [first target-trained target, last transfer target]
+    last = {}
+    for m in base_meta:
+        if m["baseline"] == "persistence" and m["platform"] in ("aerpaw", "ara", "cosmos"):
+            mats = read_npz(client, m["key"].replace("per_bin.csv", "forecasts.npz"))
+            for h, x in mats.items():
+                last[(m["target"], h)] = pd.to_datetime(x["origin"].max(), unit="s", utc=True) + pd.Timedelta(minutes=15 * h)
+    wmap = {(r.target, int(r.horizon)): (r.first, r.n_tt, last.get((r.target, int(r.horizon)))) for r in windows.itertuples()}
     ext = [m for m in cells_meta if m["platform"] in ("aerpaw", "ara", "cosmos") and m["regime"] == "A"]
     ext_base = [{**m, "model": m["baseline"], "rep": "baseline", "source": "baseline", "condition": "baseline", "source_band": m["target_band"],
                  "shift": SHIFT[m["group"]], "seed": 0, "trained_horizon": None}
@@ -279,11 +288,12 @@ def item3(client, cells_meta, base_meta, tt_meta, workers) -> tuple[pd.DataFrame
         for h in mats:
             if h not in HORIZONS or (m.get("trained_horizon") and h != m["trained_horizon"]) or (m["target"], h) not in wmap:
                 continue
-            first, n_tt = wmap[(m["target"], h)]
-            keep = restrict_windows(mats, h, first, None)
+            first, n_tt, last_target = wmap[(m["target"], h)]
+            keep = restrict_windows(mats, h, first, last_target)
             t = per_bin_table({h: mats[h]}, {h: keep})
             if len(t):
-                t["n_windows_target_trained"] = n_tt
+                t["n_windows_target_trained_full"] = n_tt
+                t["window_first_target"], t["window_last_target"] = str(first), str(last_target)
                 for k, v in m.items():
                     if k != "key":
                         t[k] = v
@@ -362,6 +372,9 @@ def build(a) -> None:
     rec = receiver_level(per_bin, MODEL_KEYS) if len(per_bin) else pd.DataFrame()
     rec_s = seed_summary(rec, MODEL_KEYS + ["receiver", "horizon"])
     rec_s["level"] = "receiver"
+    tgt = receiver_level(per_bin, MODEL_KEYS + ["target"])            # one target (run) at a time, for comparisons with stored per-target values
+    tgt_s = seed_summary(tgt, MODEL_KEYS + ["target", "receiver", "horizon"])
+    tgt_s["level"] = "target"
     grp = group_level(rec, MODEL_KEYS)
     grp["level"] = "group"
     gb = group_baselines(rec, base_rec, MODEL_KEYS)
@@ -373,6 +386,7 @@ def build(a) -> None:
     rec_s["mae_ratio_same_time_yesterday"] = rec_s["mae_db"] / rec_s["same_time_yesterday_mae_db"]
     both = finish(pd.concat([rec_s, grp], ignore_index=True))
     put("ncar_transfer_all_levels.csv", both)
+    put("ncar_transfer_target_level.csv", finish(tgt_s))
 
     # per-bin files (S3 only) per shift and model, with an index
     index = []
