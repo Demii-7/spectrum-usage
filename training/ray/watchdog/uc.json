@@ -328,5 +328,15 @@
   "id": "claude-uc-mse-nbrabl-rcl-dswin-1",
   "entrypoint": "python -u -m training.ray.neighbor_ablation --models residualconvlstm --prefix neighbor-ablation-oct2026-mse --skip-done --max-parallel 6 --gpu-fraction 0.5",
   "max_restarts": 3
+ },
+ {
+  "id": "claude-uc-centered-1",
+  "entrypoint": "python -u -m training.ray.spatial15_centered --models stsprednet residualconvlstm dswinlstm_i --skip-done --max-parallel 14 --gpu-fraction 0.25",
+  "max_restarts": 3
+ },
+ {
+  "id": "claude-uc-neural4d-collect-1",
+  "entrypoint": "python -u training/ray/scripts/neural4d_collect.py --deadline-utc 2026-11-13T14:00Z --interval 900",
+  "max_restarts": 3
  }
 ]
