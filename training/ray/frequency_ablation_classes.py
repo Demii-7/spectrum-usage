@@ -164,11 +164,18 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
                         for h in parts:
                             parts[h].append(predicted[:, h - 1].cpu().numpy())
                 out = {}
+                n_bins = data.shape[1]
                 for h, chunk in parts.items():
                     rows = starts + parameters["lookback"] + h - 1
-                    pred_db, target_db, _, _ = calculate_errors_and_export_arrays(
-                        prediction_normalized=np.concatenate(chunk), target_raw_model_layout=source.data[rows], normalization=dict(normalization))
-                    out[h] = (np.asarray(pred_db, dtype=np.float64), np.asarray(target_db, dtype=np.float64))
+                    valid = rows < len(source.data)                      # origins added by the probe may lack the target row of a long horizon
+                    pred_db = np.full((len(starts), n_bins), np.nan)
+                    target_db = np.full((len(starts), n_bins), np.nan)
+                    if valid.any():
+                        p_db, t_db, _, _ = calculate_errors_and_export_arrays(
+                            prediction_normalized=np.concatenate(chunk)[valid], target_raw_model_layout=source.data[rows[valid]],
+                            normalization=dict(normalization))
+                        pred_db[valid], target_db[valid] = np.asarray(p_db, dtype=np.float64), np.asarray(t_db, dtype=np.float64)
+                    out[h] = (pred_db, target_db)
                 return out
 
             probe_rows: dict[str, Any] = {}
