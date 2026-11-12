@@ -25,7 +25,12 @@ CELLS = [("revinmlp", "2d", "direct", "A", 40), ("residuallinearar2d", "2d", "di
          ("lstmattn", "2d", "rolled", "A", 40), ("lstmattn", "2d", "rolled", "C", 40),
          ("residuallinearar2d", "2d", "rolled", "A", 40),
          ("ofa", "2d", "direct", "A", 40), ("timellm", "2d", "direct", "A", 40), ("moment_lp", "2d", "direct", "A", 40),
-         ("timeran_lp", "2d", "direct", "A", 40)]
+         ("timeran_lp", "2d", "direct", "A", 40),
+         # added 11-12 23:55 UTC for the x86 CPU workers (CPU-scored rolled models; regime C, stored by transfer_all)
+         ("temporalconvnet", "2d", "rolled", "C", 40), ("vanillalstm", "2d", "rolled", "C", 40),
+         ("residualvanillalstm", "2d", "rolled", "C", 40), ("vanillalstm1d", "1d", "rolled", "C", 40),
+         ("residualvanillalstm", "1d", "rolled", "C", 40), ("linearar1d", "1d", "rolled", "C", 40),
+         ("residuallinearar1d", "1d", "rolled", "C", 40), ("linearar2d", "2d", "rolled", "C", 40)]
 METRICS = {"mae_db": "mae", "mse_db2": "mse", "rmse_db": "rmse", "mape_linear_pct": "mape_linear"}
 
 
