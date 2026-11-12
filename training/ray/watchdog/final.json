@@ -195,18 +195,28 @@
   "max_restarts": 4
  },
  {
-  "id": "claude-final-rcl-h100-finals-1",
+  "id": "claude-final-rcl-h100-finals-2",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_fixed --source powder15_4d --datasets 600_800 --models residualconvlstm:4d --output-prefix tuning-h100 --trials-prefix tuning --final-seeds 40 41 42 43 44 --gpu-fraction 0.5 --max-parallel 5 --memory-gb 12\"",
   "max_restarts": 4
  },
  {
-  "id": "claude-final-rcl-chain-600-1",
-  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/rcl_chain.py --band 600_800 --h100-prefix tuning-h100 --deadline-utc 2026-11-12T23:00Z\"",
+  "id": "claude-final-rcl-chain-600-2",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/rcl_chain.py --band 600_800 --h100-prefix tuning-h100 --deadline-utc 2026-11-12T23:00Z --min-free-gpus 1.0\"",
   "max_restarts": 4
  },
  {
-  "id": "claude-final-dswin-nbr-1",
-  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-final-dswin15-600_800-1 claude-final-dswin15-2400_2600-1 --then 'python -u -m training.ray.neighbor_ablation --models dswinlstm_i --seeds 42 --gpu-fraction 0.5 --max-parallel 2 --skip-done'\"",
+  "id": "claude-final-dswin-nbr-run-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.neighbor_ablation --models dswinlstm_i --seeds 42 --gpu-fraction 0.5 --max-parallel 2 --skip-done\"",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-final-rcl-h100-gate-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/start_when_gpus_free.py --min-free 2.5 --id claude-final-rcl-h100-finals-2 --watchdog-file training/ray/watchdog/final.json\"",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-final-dswin-nbr-chain-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-final-dswin15-600_800-1 claude-final-dswin15-2400_2600-1 --then 'python -u training/ray/scripts/start_when_gpus_free.py --min-free 1.0 --id claude-final-dswin-nbr-run-1 --watchdog-file training/ray/watchdog/final.json'\"",
   "max_restarts": 4
  }
 ]

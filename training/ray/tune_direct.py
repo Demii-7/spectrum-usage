@@ -43,7 +43,7 @@ PIPELINE_NAME = {"ofa": "ofa", "timellm": "spectrumllm", "patchtst": "patchtst",
                  "residualnonlinear2d": "residualnonlinear2d", "ofa_rand": "ofa", "ofa_scratch": "ofa",
                  # simple baselines and PatchTST ablations (cheap tests of what makes OFA and PatchTST work)
                  "residuallinearar2d": "residuallinearar2d", "linearar2d": "linearar2d", "nlinear": "nlinear", "revinmlp": "revinmlp",
-                 "revinmlp_mix": "revinmlp", "itransformer": "itransformer",
+                 "revinmlp_mix": "revinmlp", "revinmlp_nbr": "revinmlp", "itransformer": "itransformer",
                  "patchtst_noinorm": "patchtst", "patchtst_joint": "patchtst", "patchtst_nopatch": "patchtst",
                  # TimeRAN (MOMENT continued-pretrained on RAN telemetry) and its controls; all MOMENT-1-small, 512-step padded context
                  "timeran_lp": "timeran", "timeran_ff": "timeran", "moment_lp": "timeran", "moment_ff": "timeran", "moment_rand": "timeran"}
@@ -54,7 +54,8 @@ PIPELINE_NAME = {"ofa": "ofa", "timellm": "spectrumllm", "patchtst": "patchtst",
 #   patchtst_noinorm  no per-window normalization
 #   patchtst_joint    every patch token spans all channels (instead of one shared model per channel)
 #   patchtst_nopatch  one token per time step (patch length 1, stride 1)
-CONTROLS = {"revinmlp_mix": {"channel_mixing": True},      # RevIN-MLP plus one residual linear mixing across the bins
+CONTROLS = {"revinmlp_nbr": {"neighbor_inputs": True, "n_receivers": 4},   # each (receiver, bin) series also sees the same bin at the other three core receivers
+            "revinmlp_mix": {"channel_mixing": True},      # RevIN-MLP plus one residual linear mixing across the bins
             "ofa_rand": {"backbone_init": "random", "backbone_trainable": "ofa"},
             "ofa_scratch": {"backbone_init": "random", "backbone_trainable": "all"},
             "patchtst_noinorm": {"instance_norm": False},
@@ -82,17 +83,17 @@ def family(model: str) -> str:
         return "ofa"
     if model in TIMERAN_FAMILY:
         return "timeran"
-    if model == "revinmlp_mix":
+    if model in ("revinmlp_mix", "revinmlp_nbr"):
         return "revinmlp"
     return "patchtst" if model in PATCHTST_FAMILY else model
 # (CPUs, GPU share). Time-LLM peaks near 45-50 GB at the pipeline batch size, so it needs a share of 0.6 of a 93 GB H100; each task is also
 # capped to its share (torch memory fraction) so a task that outgrows it fails alone instead of starving its neighbours.
 RESOURCES = {"ofa": (4, 0.25), "ofa_rand": (4, 0.25), "ofa_scratch": (4, 0.25), "timellm": (4, 0.6), "patchtst": (4, 0.25), "dlinear": (2, 0.125),
              "residualnonlinear2d": (2, 0.125), "residuallinearar2d": (2, 0.125), "linearar2d": (2, 0.125), "nlinear": (2, 0.125),
-             "revinmlp": (2, 0.125), "revinmlp_mix": (2, 0.125), "itransformer": (2, 0.125), "patchtst_noinorm": (4, 0.25), "patchtst_joint": (4, 0.25), "patchtst_nopatch": (4, 0.25),
+             "revinmlp": (2, 0.125), "revinmlp_mix": (2, 0.125), "revinmlp_nbr": (2, 0.125), "itransformer": (2, 0.125), "patchtst_noinorm": (4, 0.25), "patchtst_joint": (4, 0.25), "patchtst_nopatch": (4, 0.25),
              **{m: (4, 1.0) for m in ("timeran_lp", "timeran_ff", "moment_lp", "moment_ff", "moment_rand")}}  # one 24 GB RTX 6000 each
 EPOCHS = {"ofa": 10, "ofa_rand": 10, "ofa_scratch": 10, "timellm": 10, "patchtst": 20, "dlinear": 20, "residualnonlinear2d": 10,
-          "residuallinearar2d": 10, "linearar2d": 10, "nlinear": 20, "revinmlp": 20, "revinmlp_mix": 20, "itransformer": 20, "patchtst_noinorm": 20, "patchtst_joint": 20,
+          "residuallinearar2d": 10, "linearar2d": 10, "nlinear": 20, "revinmlp": 20, "revinmlp_mix": 20, "revinmlp_nbr": 20, "itransformer": 20, "patchtst_noinorm": 20, "patchtst_joint": 20,
           "patchtst_nopatch": 20, **{m: 10 for m in ("timeran_lp", "timeran_ff", "moment_lp", "moment_ff", "moment_rand")}}
 PATIENCE = 5
 MODEL_KEYS = {"patch_length", "patch_stride", "d_model", "d_ff", "llm_layers", "n_heads", "e_layers", "dropout", "moving_avg",
@@ -118,6 +119,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
 for _variant in ("timeran_lp", "timeran_ff", "moment_lp", "moment_ff", "moment_rand"):
     DEFAULTS[_variant] = {"learning_rate": 1e-4, "batch_size": 16, "head_dropout": 0.1, "weight_decay": 0.0}
 DEFAULTS["revinmlp_mix"] = dict(DEFAULTS["revinmlp"])
+DEFAULTS["revinmlp_nbr"] = dict(DEFAULTS["revinmlp"])
 for _control in ("patchtst_noinorm", "patchtst_joint", "patchtst_nopatch"):
     DEFAULTS[_control] = dict(DEFAULTS["patchtst"])
     if _control == "patchtst_nopatch":
@@ -163,7 +165,7 @@ def draw(model: str, rng: random.Random) -> dict[str, Any]:
         return {"learning_rate": _loguniform(rng, 1e-4, 2e-3), "d_model": rng.choice([64, 128, 256]), "n_heads": rng.choice([4, 8]),
                 "e_layers": rng.choice([1, 2, 3]), "d_ff": rng.choice([128, 256, 512]), "dropout": rng.choice([0.0, 0.1, 0.2]),
                 "batch_size": rng.choice([8, 16, 32])}
-    if model in ("revinmlp", "revinmlp_mix"):
+    if model in ("revinmlp", "revinmlp_mix", "revinmlp_nbr"):
         return {"learning_rate": _loguniform(rng, 1e-4, 2e-3), "mlp_hidden": rng.choice([64, 128, 256]), "mlp_layers": rng.choice([1, 2, 3]),
                 "mlp_dropout": rng.choice([0.0, 0.1, 0.2]), "batch_size": rng.choice([16, 32, 64])}
     raise ValueError(f"unknown model {model!r}")
@@ -254,6 +256,12 @@ def build_config(model: str, resolution: str, band: str, horizon: int, seed: int
         from training.ray.powder15 import apply_powder15
 
         config = apply_powder15(config, band, repo_root, [horizon])
+        if model == "revinmlp_nbr":
+            # the four core receivers side by side on their common timestamps (one 4 x 200 column row per time), receiver order = file order
+            config["data"]["concat"] = "columns"
+            order = {n: i for i, n in enumerate(("humanities", "madsen", "moran", "sagepoint"))}
+            config["data"]["files"] = sorted(config["data"]["files"], key=lambda e: ({"train": 0, "validation": 1, "test": 2}[e["partition"]],
+                                                                                    order[next(n for n in order if f"/{n}-nuc1/" in e["path"])]))
     else:
         for entry in config["data"]["files"]:
             entry["path"] = entry["path"].replace("/600_800/", f"/{band}/")

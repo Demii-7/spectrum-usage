@@ -180,8 +180,8 @@
   "max_restarts": 4
  },
  {
-  "id": "claude-uc-rcl-chain-2400-1",
-  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/rcl_chain.py --band 2400_2600\"",
+  "id": "claude-uc-rcl-chain-2400-2",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/rcl_chain.py --band 2400_2600 --min-free-gpus 1.0\"",
   "max_restarts": 4
  }
 ]

@@ -49,6 +49,7 @@ def main():
     p.add_argument("--interval", type=int, default=600)
     p.add_argument("--gpu-fraction", type=float, default=0.25)
     p.add_argument("--nbr-gpu-fraction", type=float, default=0.5)
+    p.add_argument("--min-free-gpus", type=float, default=0.0, help="start the GPU scoring only after this many GPUs have been free for 3 polls in a row (never takes GPUs from running jobs)")
     a = p.parse_args()
     import sys
     sys.path.insert(0, "/workspace/spectrum-usage")
@@ -68,6 +69,18 @@ def main():
         if len(have) == len(a.seeds) or (late and have):
             break
         time.sleep(a.interval)
+    if a.min_free_gpus > 0:
+        import ray
+
+        ray.init(address="auto", logging_level="ERROR")
+        ok = 0
+        while ok < 3:
+            free = ray.available_resources().get("GPU", 0.0)
+            ok = ok + 1 if free >= a.min_free_gpus else 0
+            print(f"[rcl-chain] {time.strftime('%F %T', time.gmtime())} free GPU {free:.2f} (need {a.min_free_gpus}), {ok}/3", flush=True)
+            if ok < 3:
+                time.sleep(300)
+        ray.shutdown()
     seeds = " ".join(map(str, have))
     common = f"--tuned --experiments s2 --variants core4-p2 --models {MODEL} --seeds {seeds} --prefix spatial15-tuned-oct2026 --memory-gb 16 " \
              f"--max-parallel 5 --gpu-fraction {a.gpu_fraction} --skip-done --band {a.band}"
