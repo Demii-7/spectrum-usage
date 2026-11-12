@@ -194,14 +194,19 @@ def main() -> None:
             if old_keys:
                 od = load_run(client, old_keys)
                 for new_cond, old_mode in (("real", "real"), ("all_shift96", "shift96"), ("all_shift210", "shift210")):
-                    worst_region = 0.0
-                    for r in receivers:
-                        for region in [str(x) for x in d["regions"]]:
-                            a, b = d.get(f"rmae|{r}|{region}|{new_cond}"), od.get(f"mae|{r}|{region}|{old_mode}")
+                    worst_region, n_compared = 0.0, 0
+                    for region in [str(x) for x in d["regions"]]:
+                        if f"mae|all|{region}|{old_mode}" in od:             # TSS-LCD's existing run stores the mean over the four receivers only
+                            mine = np.mean([d[f"rmae|{r}|{region}|{new_cond}"] for r in receivers if f"rmae|{r}|{region}|{new_cond}" in d], axis=0)
+                            pairs = [(mine, od[f"mae|all|{region}|{old_mode}"])]
+                        else:
+                            pairs = [(d.get(f"rmae|{r}|{region}|{new_cond}"), od.get(f"mae|{r}|{region}|{old_mode}")) for r in receivers]
+                        for a, b in pairs:
                             if a is not None and b is not None and a.shape == b.shape:
                                 worst_region = max(worst_region, float(np.abs(a - b).max()))
-                    checks.append({"band": band, "model": model, "seed": s, "check": f"max |region MAE per origin, {new_cond} - existing ablation {old_mode}|",
-                                   "value": worst_region, "control": model in CONTROLS})
+                                n_compared += 1
+                    checks.append({"band": band, "model": model, "seed": s, "check": f"max |region MAE per origin, {new_cond} - existing ablation {old_mode}| ({n_compared} arrays)",
+                                   "value": worst_region if n_compared else float("nan"), "control": model in CONTROLS})
     cdf = pd.DataFrame(rows)
     cdf.to_csv(out / f"frequency_ablation_classes{args.suffix}.csv", index=False)
     pd.DataFrame(checks).to_csv(out / f"frequency_ablation_classes_checks{args.suffix}.csv", index=False)
