@@ -478,5 +478,10 @@
   "id": "claude-uc-freqcls-2400-2d",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.frequency_ablation_classes --models vanillalstm residualvanillalstm lstmattn linearar2d residuallinearar2d --seeds 40 41 42 43 44 --bands 2400_2600 --gpu-fraction 0.25 --max-parallel 6 --skip-done\"",
   "max_restarts": 3
+ },
+ {
+  "id": "claude-uc-freqpred-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u evaluation/analysis/frequency_predictability.py --root . --out-dir /tmp/fp_full --upload\"",
+  "max_restarts": 2
  }
 ]
