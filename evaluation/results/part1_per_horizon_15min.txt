@@ -21,7 +21,7 @@ rolled-out          residuallinearar1d (1d)                   0.481  0.600  0.77
 direct              linearar2d                                0.558  0.638  0.786  0.880  0.944     0.761
                     patchtst_noinorm                          0.553  0.640  0.797  0.901  0.944     0.767
 rolled-out          linearar2d (2d)                           0.553  0.645  0.797  0.905  0.943     0.768
-                    temporalconvnet (2d)                      0.573  0.680  0.816  0.911  0.956     0.787
+                    temporalconvnet (2d)                      0.569  0.677  0.814  0.910  0.955     0.785
 direct              patchtst_joint                            0.629  0.690  0.784  0.878  0.988     0.794
 heuristic           median (tuned)                            0.493  0.641  0.974  1.152  1.155     0.883
 TSS-LCD             tsslcd (tuned winner, savgol off)         0.850  0.872  0.896  0.923  0.948     0.898
@@ -66,7 +66,7 @@ direct              patchtst_noinorm                           0.960   1.332   2
 rolled-out          residuallinearar2d (2d)                    0.899   1.303   2.107   2.693   2.869     1.974
                     linearar2d (2d)                            1.045   1.415   2.107   2.608   2.740     1.983
                     vanillalstm1d (1d)                         0.834   1.285   2.109   2.791   3.075     2.019
-                    temporalconvnet (2d)                       1.167   1.573   2.160   2.590   2.800     2.058
+                    temporalconvnet (2d)                       1.153   1.555   2.144   2.578   2.787     2.043
 direct              patchtst_joint                             1.277   1.567   2.031   2.497   3.141     2.103
 TSS-LCD             tsslcd (tuned winner, savgol off)          2.345   2.519   2.680   2.860   3.025     2.686
 rolled-out          vanillalstm (2d)                           1.588   1.906   2.557   3.125   4.461     2.727
@@ -107,7 +107,7 @@ rolled-out          linearar1d (1d)                           0.439  0.543  0.66
 direct              residuallinearar2d                        0.483  0.585  0.661  0.692  0.719     0.628
                     dlinear                                   0.469  0.569  0.696  0.696  0.722     0.630
                     residualnonlinear2d                       0.492  0.581  0.661  0.715  0.730     0.636
-rolled-out          temporalconvnet (2d)                      0.466  0.567  0.679  0.741  0.765     0.644
+rolled-out          temporalconvnet (2d)                      0.465  0.566  0.678  0.739  0.763     0.642
 direct              patchtst_joint                            0.545  0.604  0.664  0.704  0.710     0.645
 rolled-out          residuallinearar2d (2d)                   0.541  0.591  0.682  0.737  0.742     0.659
                     linearar2d (2d)                           0.550  0.603  0.684  0.733  0.750     0.664
@@ -155,7 +155,7 @@ direct              residuallinearar2d                         1.226   1.749   2
                     linearar2d                                 1.449   1.853   2.212   2.496   2.457     2.093
                     patchtst_joint                             1.526   1.912   2.175   2.437   2.515     2.113
 rolled-out          residuallinearar2d (2d)                    1.542   1.831   2.309   2.533   2.554     2.154
-                    temporalconvnet (2d)                       1.142   1.757   2.377   2.726   2.857     2.172
+                    temporalconvnet (2d)                       1.149   1.758   2.378   2.722   2.854     2.172
                     linearar2d (2d)                            1.562   1.871   2.314   2.556   2.639     2.188
                     vanillalstm1d (1d)                         1.194   1.949   2.809   3.278   3.534     2.553
 TSS-LCD             tsslcd (tuned winner, savgol off)          2.218   2.332   2.460   2.892   2.921     2.564
