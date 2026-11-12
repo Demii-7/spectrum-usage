@@ -28,40 +28,51 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parents[1]))
 import map_construction_vs_per_receiver as M  # noqa: E402
+import neighbor_value as NV  # noqa: E402   (metric- and horizon-aware per-receiver / persistence loaders)
 from training.ray.storage import spectrum_s3_client  # noqa: E402
 
 BANDS, HORIZONS = M.BANDS, M.HORIZONS
 NBR_PREFIX = "neighbor-ablation-oct2026"
 DIRECT_PREFIX = "origin-errors-oct2026"
+DIRECT_MSE_PREFIX = "origin-errors-oct2026-mse"            # the same direct finals re-scored with ``mse_db2`` stored
+CENTERED_PREFIX = "spatial15-centered-oct2026"             # per_origin.npz of the base map with ``<receiver>|mse`` (training.ray.spatial15_centered)
+MSE_ABLATION_PREFIX = "neighbor-ablation-oct2026-mse"     # real mode of the re-run neighbour ablation with ``|real|mse``
+H3 = (4, 12, 24)                                          # 1, 3 and 6 hours at 15 minutes
 MODELS_4D = ("linearar4d", "residuallinearar4d", "stsprednet", "residualconvlstm", "dswinlstm_i")
 DIRECT = ("revinmlp", "revinmlp_nbr")
 EXPECTED = {"linearar4d": (40, 41, 42, 43, 44), "residuallinearar4d": (40, 41, 42, 43, 44), "stsprednet": (40, 41, 42, 43, 44),
-            "residualconvlstm": (40, 41, 42, 43, 44), "dswinlstm_i": (42,), "lookbackmean4d": (42,),
+            "residualconvlstm": (40, 41, 42, 43, 44), "dswinlstm_i": (40, 41, 42, 43, 44), "lookbackmean4d": (42,),
             "revinmlp": (40, 41, 42), "revinmlp_nbr": (40, 41, 42)}
-NOTES = {"dswinlstm_i": "single seed (42); inherited:1min-r2 configuration, no 15-minute search",
+NOTES = {"dswinlstm_i": "inherited:1min-r2 configuration (no 15-minute search; a reduced search is running); seeds 40-44 of that configuration",
          "residualconvlstm": "weights of finals trained on the UC or final cluster (same winner configuration; see CAMPAIGN_STATUS)",
          "revinmlp_nbr": "RevIN-MLP with the same bin at the other three core receivers as extra input channels (matched control)"}
 BASE_VARIANT = "core4-p2"
 
 
-def npz_series(client, key: str, receiver: str, mode: str | None):
-    """Per-origin mean-over-horizons MAE of one receiver from a per_origin.npz (``<receiver>|mae`` or ``<receiver>|<mode>|mae``)."""
+def npz_series(client, key: str, receiver: str, mode: str | None, metric: str = "mae", horizons: tuple = HORIZONS):
+    """Per-origin mean-over-horizons error of one receiver from a per_origin.npz (``<receiver>|<metric>`` or ``<receiver>|<mode>|<metric>``)."""
     mid = f"|{mode}" if mode else ""
     try:
         with np.load(io.BytesIO(M.read(client, key)), allow_pickle=True) as npz:
-            horizons = list(npz["horizons"])
-            pick = [horizons.index(h) for h in HORIZONS]
-            return pd.Series(npz[f"{receiver}{mid}|mae"][:, pick].mean(axis=1), index=M.utc(npz[f"{receiver}{mid}|times"]))
+            hs = list(npz["horizons"])
+            pick = [hs.index(h) for h in horizons]
+            return pd.Series(npz[f"{receiver}{mid}|{metric}"][:, pick].mean(axis=1), index=M.utc(npz[f"{receiver}{mid}|times"]))
     except Exception:
         return None
 
 
-def series_4d(client, band: str, model: str, receiver: str):
+def series_4d(client, band: str, model: str, receiver: str, metric: str = "mae", horizons: tuple = HORIZONS):
+    """MAE: spatial15 per-origin file, else the neighbour ablation's real mode. MSE (dB^2): the centred job's per-origin file, else the re-run ablation."""
     frames = []
     for seed in EXPECTED[model]:
-        s = npz_series(client, f"{M.ORIGIN_PREFIX}/{band}/{BASE_VARIANT}/{model}/seed-{seed}/per_origin.npz", receiver, None)
-        if s is None:
-            s = npz_series(client, f"{NBR_PREFIX}/{band}/{model}/seed-{seed}/per_origin.npz", receiver, "real")
+        if metric == "mae":
+            s = npz_series(client, f"{M.ORIGIN_PREFIX}/{band}/{BASE_VARIANT}/{model}/seed-{seed}/per_origin.npz", receiver, None, "mae", horizons)
+            if s is None:
+                s = npz_series(client, f"{NBR_PREFIX}/{band}/{model}/seed-{seed}/per_origin.npz", receiver, "real", "mae", horizons)
+        else:
+            s = npz_series(client, f"{CENTERED_PREFIX}/{band}/{BASE_VARIANT}/{model}/seed-{seed}/per_origin.npz", receiver, None, "mse", horizons)
+            if s is None:
+                s = npz_series(client, f"{MSE_ABLATION_PREFIX}/{band}/{model}/seed-{seed}/per_origin.npz", receiver, "real", "mse", horizons)
         if s is not None:
             frames.append(s)
     if not frames:
@@ -69,15 +80,16 @@ def series_4d(client, band: str, model: str, receiver: str):
     return pd.concat(frames, axis=1).mean(axis=1, skipna=False).dropna().rename("mae").to_frame(), len(frames)
 
 
-def series_direct(client, band: str, model: str, receiver: str):
-    """revinmlp / revinmlp_nbr: per seed the horizons 4/12/24/48 (one model each) averaged per origin time, then the seed mean."""
+def series_direct(client, band: str, model: str, receiver: str, metric: str = "mae", horizons: tuple = HORIZONS):
+    """revinmlp / revinmlp_nbr: per seed the horizons (one model each) averaged per origin time, then the seed mean (MSE from the re-scored prefix)."""
+    prefix, column = (DIRECT_PREFIX, "mae_db") if metric == "mae" else (DIRECT_MSE_PREFIX, "mse_db2")
     frames = []
     for seed in EXPECTED[model]:
         per_h = []
-        for h in HORIZONS:
+        for h in horizons:
             try:
-                raw = M.read(client, f"{DIRECT_PREFIX}/15min/{band}/{receiver}/direct/{model}/h{h}/seed-{seed}/per_origin.csv")
-                per_h.append(pd.read_csv(io.BytesIO(raw)).set_index("time").mae_db)
+                raw = M.read(client, f"{prefix}/15min/{band}/{receiver}/direct/{model}/h{h}/seed-{seed}/per_origin.csv")
+                per_h.append(pd.read_csv(io.BytesIO(raw)).set_index("time")[column])
             except Exception:
                 per_h = []
                 break
@@ -90,10 +102,10 @@ def series_direct(client, band: str, model: str, receiver: str):
     return pd.concat(frames, axis=1).mean(axis=1, skipna=False).dropna().rename("mae").to_frame(), len(frames)
 
 
-def load(client, band: str, model: str, receiver_4d: str, receiver: str):
+def load(client, band: str, model: str, receiver_4d: str, receiver: str, metric: str = "mae", horizons: tuple = HORIZONS):
     if model in DIRECT:
-        return series_direct(client, band, model, receiver)
-    return series_4d(client, band, model, receiver_4d)
+        return series_direct(client, band, model, receiver, metric, horizons)
+    return series_4d(client, band, model, receiver_4d, metric, horizons)
 
 
 def status(model: str, n_seeds: int) -> str:
@@ -103,27 +115,28 @@ def status(model: str, n_seeds: int) -> str:
     return "all seeds" if n_seeds >= exp else f"partial seeds ({n_seeds} of {exp})"
 
 
-def compare(client) -> pd.DataFrame:
+def compare(client, metric: str = "mae", horizons: tuple = HORIZONS) -> pd.DataFrame:
     rows = []
     for band in BANDS:
         refs = {}
         for r4, r in M.RECEIVERS.items():
             for rep, name in M.PER_RECEIVER:
-                refs[(r4, f"{rep} {name}")] = M.per_receiver_series(client, band, r, rep, name)
-            refs[(r4, "persistence")] = M.persistence_series(client, band, r)
-            refs[(r4, "4D lookback mean (same map)")] = series_4d(client, band, "lookbackmean4d", r4)[0]
+                refs[(r4, f"{rep} {name}")] = NV.per_receiver_series(client, band, r, rep, name, metric, horizons)
+            refs[(r4, "persistence")] = NV.persistence_series(client, band, r, metric, horizons)
+            refs[(r4, "4D lookback mean (same map)")] = (series_4d(client, band, "lookbackmean4d", r4, metric, horizons)[0] if metric == "mae" else
+                                                         NV.four_d_series(client, band, "lookbackmean4d", "real", r4, metric, horizons))
         for model in (*MODELS_4D, *DIRECT):
-            ours = {r4: load(client, band, model, r4, r) for r4, r in M.RECEIVERS.items()}
+            ours = {r4: load(client, band, model, r4, r, metric, horizons) for r4, r in M.RECEIVERS.items()}
             if any(v[0] is None for v in ours.values()):
-                print(f"[paired] {band} {model}: not available yet, skipped", flush=True)
+                print(f"[paired] {band} {model} ({metric}, {len(horizons)} horizons): not available yet, skipped", flush=True)
                 continue
             versus = {name: {r4: refs[(r4, name)] for r4 in M.RECEIVERS} for name in
                       [f"{rep} {n}" for rep, n in M.PER_RECEIVER] + ["persistence", "4D lookback mean (same map)"]}
             if model == "revinmlp_nbr":
-                versus["revinmlp (no neighbours)"] = {r4: load(client, band, "revinmlp", r4, r)[0] for r4, r in M.RECEIVERS.items()}
+                versus["revinmlp (no neighbours)"] = {r4: load(client, band, "revinmlp", r4, r, metric, horizons)[0] for r4, r in M.RECEIVERS.items()}
             if model in MODELS_4D:
                 for d in DIRECT:
-                    versus[f"{d} (per receiver, direct)"] = {r4: load(client, band, d, r4, r)[0] for r4, r in M.RECEIVERS.items()}
+                    versus[f"{d} (per receiver, direct)"] = {r4: load(client, band, d, r4, r, metric, horizons)[0] for r4, r in M.RECEIVERS.items()}
             for name, others in versus.items():
                 entries = []
                 for r4 in M.RECEIVERS:
@@ -144,6 +157,26 @@ def compare(client) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+EXTRA = (("mae", H3, "_h3"), ("mse", HORIZONS, ""), ("mse", H3, "_h3"))     # (metric, horizons, horizon suffix of the new columns)
+KEYS = ["band", "model", "versus"]
+
+
+def add_extra(table: pd.DataFrame, client) -> pd.DataFrame:
+    """Next to the existing columns (MAE, t+4/12/24/48; unchanged): MAE over t+4/12/24 (1, 3, 6 h) ``*_h3``; squared error (dB^2) ``mse_*`` and ``*_mse``; both ``*_mse_h3``."""
+    for metric, horizons, hsuffix in EXTRA:
+        extra = compare(client, metric, horizons)
+        if extra.empty:
+            continue
+        mae = metric == "mae"
+        tag = "" if mae else "_mse"
+        names = {"mae_model": "mae_model" if mae else "mse_model", "mae_other": "mae_other" if mae else "mse_other",
+                 "delta_model_minus_other": "delta_model_minus_other" if mae else "delta_mse"}
+        cols = {old: new + hsuffix for old, new in names.items()}
+        cols.update({"ci_low": f"ci_low{tag}{hsuffix}", "ci_high": f"ci_high{tag}{hsuffix}", "n_origins": f"n_origins{tag}{hsuffix}"})
+        table = table.merge(extra[KEYS + list(cols)].rename(columns=cols), on=KEYS, how="left")
+    return table
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", default="evaluation/results/spatial_paired_all.csv")
@@ -151,6 +184,8 @@ def main() -> None:
     a = ap.parse_args()
     client = spectrum_s3_client()
     table = compare(client)
+    if len(table):
+        table = add_extra(table, client)
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     table.to_csv(out, index=False)
