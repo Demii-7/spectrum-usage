@@ -218,5 +218,15 @@
   "id": "claude-final-dswin-nbr-chain-1",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-final-dswin15-600_800-1 claude-final-dswin15-2400_2600-1 --then 'python -u training/ray/scripts/start_when_gpus_free.py --min-free 1.0 --id claude-final-dswin-nbr-run-1 --watchdog-file training/ray/watchdog/final.json'\"",
   "max_restarts": 4
+ },
+ {
+  "id": "claude-final-nbr-tune-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_direct --resolution 15min --models revinmlp_nbr --seeds 40 41 42 --max-parallel 4\"",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-final-nbr-score-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-final-nbr-tune-1 --then 'bash training/ray/scripts/run_revinmlp_neighbors_score.sh'\"",
+  "max_restarts": 2
  }
 ]
