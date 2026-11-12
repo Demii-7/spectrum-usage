@@ -261,16 +261,22 @@ def cmd_bench(a: argparse.Namespace) -> None:
     spec = get_model_spec(MODEL, require_executable=True)
     cand = candidates_for(spec, a.bands[0], 8)[2]                      # candidate 2 = the inherited configuration
     ray.init(address=a.address, ignore_reinit_error=True)
+    from ray.util.placement_group import placement_group
+    from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
+
     refs = []
     for group in a.groups:
-        ip, n = group.split(":")
+        ip, n = group.split(":")           # "ip" is only a label here: a STRICT_PACK placement group puts the N copies on one node that has a free card
         n = int(n)
         base = ray_options(spec, 1.0 / n, a.memory_gb)
+        pg = placement_group([{"CPU": base["num_cpus"], "GPU": base["num_gpus"], "memory": base["memory"]}] * n, strategy="STRICT_PACK")
+        ray.get(pg.ready(), timeout=a.pg_timeout)
         for i in range(n):
             cid = f"{candidate_id(MODEL, cand)}-bench{n}-{ip}-{i}"
             job = {"band": a.bands[0], "prefix": group_prefix(a.prefix, a.bands[0]) + f"/n{n}-{ip}", "index": 2, "cid": cid, "parameters": cand,
                    "fixed": fixed_from_candidate(cand, inherited, cid, a.epochs)}
-            refs.append((ip, n, ray.remote(**base, resources={f"node:{ip}": 0.001})(trial_job).remote(job, {"repo_root": a.repo_root, "bucket": bucket})))
+            opts = {**base, "scheduling_strategy": PlacementGroupSchedulingStrategy(placement_group=pg, placement_group_bundle_index=i)}
+            refs.append((ip, n, ray.remote(**opts)(trial_job).remote(job, {"repo_root": a.repo_root, "bucket": bucket})))
     rows = []
     for ip, n, ref in refs:
         r = ray.get(ref)
@@ -306,7 +312,8 @@ def main(argv=None) -> None:
         s.add_argument("--bucket", default=None)
         s.add_argument("--address", default="auto")
         s.add_argument("--repo-root", default="/workspace/spectrum-usage")
-        s.add_argument("--groups", nargs="+", default=[], help="bench only: node_ip:N pairs")
+        s.add_argument("--groups", nargs="+", default=[], help="bench only: label:N pairs (N copies on one card)")
+        s.add_argument("--pg-timeout", type=float, default=900.0, help="bench only: seconds to wait for a node with a free card")
     a = p.parse_args(argv)
     if a.cmd == "bench":
         a.epochs = a.epochs or 3
