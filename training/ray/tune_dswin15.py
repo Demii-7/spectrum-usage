@@ -75,7 +75,8 @@ def trial_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
 
     client, bucket = spectrum_s3_client(), args["bucket"]
     record = {"kind": "trial", "source": SOURCE, "dataset": job["band"], "model": MODEL, "rep": REP, "candidate_id": job["cid"],
-              "parameters": job["parameters"], "seed": SEARCH_SEED, "index": job["index"], "epochs": job["fixed"]["train"]["epochs"]}
+              "parameters": job["parameters"], "seed": SEARCH_SEED, "index": job["index"], "epochs": job["fixed"]["train"]["epochs"],
+              "budget": job.get("budget")}
     started = time.time()
     try:
         config, _ = base_config(SOURCE, job["band"], MODEL, REP, args["repo_root"], client, bucket)
@@ -159,7 +160,7 @@ def cmd_run(a: argparse.Namespace) -> None:
             if cid in done:
                 continue
             fixed = fixed_from_candidate(cand, inherited, cid, a.epochs)
-            calls.append((trial_job, opts, {"band": band, "prefix": prefix, "index": index, "cid": cid, "parameters": cand, "fixed": fixed}))
+            calls.append((trial_job, opts, {"band": band, "prefix": prefix, "index": index, "cid": cid, "parameters": cand, "fixed": fixed, "budget": a.budget}))
     print(f"[dswin15] {len(calls)} trials to run (prefix {a.prefix})", flush=True)
     run_calls(calls, a.max_parallel, a.address, {"repo_root": a.repo_root, "bucket": bucket}, "search")
 
@@ -175,10 +176,10 @@ def cmd_decide(a: argparse.Namespace) -> None:
     inherited = json.loads(Path(a.repo_root, INHERITED).read_text())
     spec = get_model_spec(MODEL, require_executable=True)
     opts = ray_options(spec, a.gpu_fraction, a.memory_gb)
-    rows, verdict, final_calls = [], {"improvement_threshold": IMPROVEMENT, "bands": {}}, []
+    rows, verdict, final_calls = [], {"improvement_threshold": IMPROVEMENT, "budget": a.budget, "bands": {}}, []
     for band in a.bands:
         prefix = group_prefix(a.prefix, band)
-        trials = read_trials(client, bucket, prefix)
+        trials = [t for t in read_trials(client, bucket, prefix) if t.get("index") is not None and t["index"] < a.budget]   # --budget 8 = the first 8 of the 16 (the draws are sequential)
         base = json.loads(client.get_object(Bucket=bucket, Key=f"{group_prefix(BASELINE_PREFIX, band)}/final/seed-42.json")["Body"].read())
         baseline = float(base["objective"])
         ok = [t for t in trials if t.get("ok") and t.get("objective") == t.get("objective")]
@@ -216,6 +217,32 @@ def cmd_decide(a: argparse.Namespace) -> None:
         verdict["finals"] = [{"dataset": r.get("dataset"), "seed": r.get("seed"), "ok": r.get("ok"), "objective": r.get("objective"),
                               "mae_t12": r.get("test_mae_db_t12")} for r in results]
         client.put_object(Bucket=bucket, Key="analysis-outputs/dswin_search_verdict.json", Body=json.dumps(verdict, indent=1, default=str).encode())
+    improved = [b for b, e in verdict["bands"].items() if e.get("verdict") == "improves"]
+    if improved and not a.no_chain:
+        score_chain(improved, a, bucket)
+
+
+def score_chain(bands: list[str], a: argparse.Namespace, bucket: str) -> None:
+    """The existing scoring chain for the new finals (receivers, left-out/added, permuted x5, per-origin errors, neighbour ablation), all under NEW prefixes."""
+    import subprocess
+
+    seeds = [str(s) for s in a.final_seeds]
+    common = ["--tuning-prefix", a.prefix]
+    steps = []
+    for band in bands:
+        base = ["python", "-u", "-m", "training.ray.spatial15", "--tuned", "--experiments", "s2", "--variants", "core4-p2", "--models", MODEL, "--seeds", *seeds,
+                "--prefix", "spatial15-tuned-dswinsearch", "--memory-gb", "12", "--max-parallel", "5", "--gpu-fraction", "0.25", "--skip-done", "--band", band, *common]
+        steps.append(base + ["--eval-only", "--eval-from-tuning"])
+        steps.append(base + ["--permuted", "5"])
+    steps.append(["python", "-u", "-m", "training.ray.spatial15_origins", "--models", MODEL, "--variants", "core4-p2", "--bands", *bands, "--seeds", *seeds, "--skip-done",
+                  "--memory-gb", "12", "--max-parallel", "5", "--gpu-fraction", "0.25", "--prefix", "spatial15-tuned-dswinsearch",
+                  "--output-prefix", "spatial15-origin-errors-dswinsearch", *common])
+    steps.append(["python", "-u", "-m", "training.ray.neighbor_ablation", "--models", MODEL, "--bands", *bands, "--seeds", *seeds, "--skip-done", "--gpu-fraction", "0.5",
+                  "--max-parallel", "10", "--prefix", "neighbor-ablation-dswinsearch", *common])
+    for step in steps:
+        print("[dswin15] chain:", " ".join(step), flush=True)
+        code = subprocess.call(step, cwd=a.repo_root)
+        print(f"[dswin15] chain step exit {code}", flush=True)
 
 
 def cmd_bench(a: argparse.Namespace) -> None:
@@ -267,13 +294,14 @@ def main(argv=None) -> None:
         s = sub.add_parser(name)
         s.add_argument("--bands", nargs="+", default=list(BANDS), choices=BANDS)
         s.add_argument("--prefix", default=DEFAULT_PREFIX)
-        s.add_argument("--budget", type=int, default=8)
+        s.add_argument("--budget", type=int, default=16, help="candidates per band (16 = the standard search; 8 = the time-boxed fallback: the first 8 of the same list)")
         s.add_argument("--only-index", type=int, nargs="+")
         s.add_argument("--epochs", type=int, default=None, help="override the epochs (smoke tests only; use another --prefix)")
         s.add_argument("--gpu-fraction", type=float, default=0.5)
         s.add_argument("--memory-gb", type=float, default=12.0)
         s.add_argument("--max-parallel", type=int, default=12)
         s.add_argument("--no-finals", action="store_true")
+        s.add_argument("--no-chain", action="store_true", help="skip the scoring chain after the finals")
         s.add_argument("--final-seeds", type=int, nargs="+", default=list(FINAL_SEEDS))
         s.add_argument("--bucket", default=None)
         s.add_argument("--address", default="auto")
