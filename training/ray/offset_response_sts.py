@@ -106,7 +106,7 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     os.chdir(root)
     sys.path.insert(0, root)
     band, seed = spec["band"], int(spec["seed"])
-    MODEL = spec.get("model", globals()["MODEL"])
+    MODEL = spec.get("model", "stsprednet")
     from training.common.spatial_ablation_eval import _checkpoint_metadata, evaluate_condition
     from training.ray.powder15 import ensure_powder15
     from training.ray.spatial15 import CORE, HORIZONS, SIX, experiment_yaml, grid_for, model_config_for, six_receiver_frame
