@@ -93,7 +93,8 @@ def score_one(band: str, horizon: int, seed: int, args: dict) -> dict:
             predicted = (np.concatenate(preds) * std + mean).reshape(-1, 4, 200)[:, k, :]
             target = arrays[pos + horizon, k, :]
             frame = pd.DataFrame({"time": np.asarray(common[pos].strftime("%Y-%m-%dT%H:%M:%SZ")), "horizon": horizon,
-                                  "mae_db": np.abs(predicted - target).mean(axis=1)})
+                                  "mae_db": np.abs(predicted - target).mean(axis=1),
+                                  "mse_db2": ((predicted - target) ** 2).mean(axis=1)})
             outputs[r] = frame
             buf = io.StringIO()
             frame.to_csv(buf, index=False)

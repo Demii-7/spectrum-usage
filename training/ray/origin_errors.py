@@ -70,9 +70,12 @@ def load_source(root: str, res: str, band: str, receiver: str):
     return task, source
 
 
-def origin_frame(source, rows: np.ndarray, horizon: int, res: str, mae: np.ndarray, **extra) -> pd.DataFrame:
+def origin_frame(source, rows: np.ndarray, horizon: int, res: str, mae: np.ndarray, mse: np.ndarray | None = None, **extra) -> pd.DataFrame:
     times = pd.DatetimeIndex(source.timestamps[rows] - horizon * STEP[res]).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return pd.DataFrame({**extra, "time": np.asarray(times), "horizon": int(horizon), "mae_db": mae.astype(np.float64)})
+    columns = {**extra, "time": np.asarray(times), "horizon": int(horizon), "mae_db": mae.astype(np.float64)}
+    if mse is not None:                                  # optional (added 2026-11-12): mean squared error over the bins, dB^2
+        columns["mse_db2"] = mse.astype(np.float64)
+    return pd.DataFrame(columns)
 
 
 # --------------------------------------------------------------------------------------------------------- models
@@ -121,7 +124,7 @@ def model_origin_errors(task, source, res: str, name: str, checkpoint_path: Path
         prediction, target = np.asarray(prediction, dtype=np.float64), np.asarray(target, dtype=np.float64)
         if prediction.shape != target.shape or prediction.ndim != 2:
             raise ValueError(f"unexpected forecast shape {prediction.shape} vs {target.shape}")
-        frames.append(origin_frame(source, rows, h, res, np.abs(prediction - target).mean(axis=1)))
+        frames.append(origin_frame(source, rows, h, res, np.abs(prediction - target).mean(axis=1), mse=((prediction - target) ** 2).mean(axis=1)))
     return pd.concat(frames, ignore_index=True)
 
 
