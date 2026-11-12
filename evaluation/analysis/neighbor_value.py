@@ -32,7 +32,8 @@ SEEDS = (40, 41, 42, 43, 44)
 BANDS = ("600_800", "2400_2600")
 RECEIVERS = {"humanities": "humanities", "madsen": "madsen", "moran": "moran", "sage point": "sagepoint"}   # 4D name -> transfer15 name
 PER_RECEIVER_MODELS = (("2d", "residuallinearar2d"), ("2d", "linearar2d"), ("1d", "residuallinearar1d"), ("1d", "linearar1d"))
-FOUR_D = ("residuallinearar4d", "linearar4d", "stsprednet", "residualconvlstm")      # the neural models appear only once their per_origin.npz exist
+FOUR_D = ("residuallinearar4d", "linearar4d", "stsprednet", "residualconvlstm", "dswinlstm_i")      # the neural models appear only once their per_origin.npz exist
+SINGLE_SEED = ("lookbackmean4d", "dswinlstm_i")     # one seed (42) exists; rows of dswinlstm_i are labelled "dswinlstm_i (seed 42)"
 MODES = ("real", "shift96", "shift210", "level")
 RNG = np.random.default_rng(0)
 BLOCK, DRAWS = 96, 2000
@@ -57,7 +58,7 @@ def ablation_arrays(client, band: str, model: str, seed: int) -> dict[str, np.nd
 def four_d_series(client, band: str, model: str, mode: str, receiver: str) -> pd.DataFrame | None:
     """Seed-averaged per-origin MAE (mean over the four horizons) of one 4D model, indexed by origin time."""
     frames = []
-    for seed in (SEEDS if model != "lookbackmean4d" else (42,)):
+    for seed in (SEEDS if model not in SINGLE_SEED else (42,)):
         arrays = ablation_arrays(client, band, model, seed)
         if arrays is None:
             continue
@@ -145,7 +146,7 @@ def compare(client) -> pd.DataFrame:
                     if other is None:
                         continue
                     delta, n, mean_a, mean_b = paired(ours, other)
-                    rows.append({"band": band, "receiver": receiver, "model_4d": model, "versus": name, "n_origins": n, "mean_a": mean_a,
+                    rows.append({"band": band, "receiver": receiver, "model_4d": model + (" (seed 42)" if model == "dswinlstm_i" else ""), "versus": name, "n_origins": n, "mean_a": mean_a,
                                  "mean_b": mean_b, "delta": float(delta.mean()), "ci_low": np.percentile(b := block_bootstrap_delta(delta), 2.5),
                                  "ci_high": np.percentile(b, 97.5), "draws": b})
     table = summarize(rows, ["band", "model_4d", "versus"])
@@ -167,7 +168,7 @@ def ablation(client) -> pd.DataFrame:
                 for mode in MODES[1:]:
                     delta, n, mean_a, mean_b = paired(series[mode].loc[common], base)
                     draws = block_bootstrap_delta(delta)
-                    rows.append({"band": band, "receiver": receiver_4d, "model": model, "mode": mode, "n_origins": n, "mean_a": mean_a,
+                    rows.append({"band": band, "receiver": receiver_4d, "model": model + (" (seed 42)" if model == "dswinlstm_i" else ""), "mode": mode, "n_origins": n, "mean_a": mean_a,
                                  "mean_b": mean_b, "delta": float(delta.mean()), "ci_low": np.percentile(draws, 2.5),
                                  "ci_high": np.percentile(draws, 97.5), "draws": draws})
     table = summarize(rows, ["band", "model", "mode"])
