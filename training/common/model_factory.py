@@ -73,6 +73,7 @@ SUPPORTED_MODELS = {
     "stsprednet",
     "tss_lcd",
     "deepspred",
+    "deepspred2d",   # 3D-SwinSTB as a 2D forecaster: jet/gray frames in, colours inverted to dB out (models/DeepSPredForecaster.py)
 }
 
 
@@ -233,6 +234,19 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
             },
         }
         return ResidualVanillaLSTMForecaster(predictor_config)
+
+    if model_name == "deepspred2d":
+        from models.DeepSPredForecaster import DeepSPredForecaster
+
+        if train_data.ndim != 2:
+            raise ValueError(
+                "Error! deepspred2d expects training data shaped "
+                f"(time, features), got {train_data.shape}"
+            )
+        return DeepSPredForecaster(
+            {"model": {**dict(model_cfg), "input_size": int(train_data.shape[-1])}},
+            train_data=train_data,
+        )
 
     if model_name == "timeran":
         from models.TimeRAN import TimeRANForecaster

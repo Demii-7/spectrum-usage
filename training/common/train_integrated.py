@@ -345,26 +345,32 @@ def train_model(
                 print(f"[DEBUG] epoch1/batch0: calling forecast() ...")
                 import time as _time_bt
                 _bt0 = _time_bt.perf_counter()
-            pred = forecast(
-                model=model,
-                x=x,
-                prediction_horizon=prediction_horizon,
-                rollout_horizon=rollout_horizon,
-                targets=y,
-            )
-            if epoch == 1 and batch_idx == 0:
-                print(f"[DEBUG] epoch1/batch0: forecast() done ({_time_bt.perf_counter() - _bt0:.1f}s), pred.shape={pred.shape}")
-            
-            # Confirm that model output matches the target.
-            if pred.shape != y.shape:
-                raise RuntimeError(
-                    "Error! Training shape mismatch:\n"
-                    f"Prediction shape: {tuple(pred.shape)}\n"
-                    f"Target shape:     {tuple(y.shape)}"
+            native_loss = getattr(model, "training_loss", None)
+            if native_loss is not None and loss_frequency_indices is None:
+                # A model with its own training objective (DeepSPred: MSE between predicted and rendered colour frames). Validation,
+                # model selection and every reported metric still use the shared forward() path in dB.
+                data_loss = native_loss(x, y)
+            else:
+                pred = forecast(
+                    model=model,
+                    x=x,
+                    prediction_horizon=prediction_horizon,
+                    rollout_horizon=rollout_horizon,
+                    targets=y,
                 )
+                if epoch == 1 and batch_idx == 0:
+                    print(f"[DEBUG] epoch1/batch0: forecast() done ({_time_bt.perf_counter() - _bt0:.1f}s), pred.shape={pred.shape}")
 
-            # Measure prediction error.
-            data_loss = criterion(scored(pred), scored(y))
+                # Confirm that model output matches the target.
+                if pred.shape != y.shape:
+                    raise RuntimeError(
+                        "Error! Training shape mismatch:\n"
+                        f"Prediction shape: {tuple(pred.shape)}\n"
+                        f"Target shape:     {tuple(y.shape)}"
+                    )
+
+                # Measure prediction error.
+                data_loss = criterion(scored(pred), scored(y))
             loss = data_loss
             ridge_penalty = getattr(model, "ridge_penalty", None)
             if ridge_penalty is not None:

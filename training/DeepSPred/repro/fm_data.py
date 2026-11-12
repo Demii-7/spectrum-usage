@@ -284,13 +284,13 @@ def _spec_minmax(args):
 
 
 def _spec_render(args):
-    path, spec, lo, hi = args
+    path, spec, lo, hi, gray = args
     import rendering_probe as rp
     x, _ = read_iq(path)
-    return rp.render(rp.spectrogram_db(x, spec)[None], 'glob', 'raw', False, {'lo': lo, 'hi': hi})[0]
+    return rp.render(rp.spectrogram_db(x, spec)[None], 'glob', 'raw', gray, {'lo': lo, 'hi': hi})[0]
 
 
-def load_frames_spec(directory, spec, *, range_scope='full', cache_dir=None, workers=None):
+def load_frames_spec(directory, spec, *, range_scope='full', cache_dir=None, workers=None, gray=False):
     """Frames rendered with the probe's renderer. Returns (frames, meta) in the same layout as load_frames:
     frames (N, 256, 256, 3) uint8 with H = STFT time rows and W = frequency bins; meta has times, segments and db_range."""
     import hashlib
@@ -305,7 +305,8 @@ def load_frames_spec(directory, spec, *, range_scope='full', cache_dir=None, wor
     directory = Path(directory)
     seconds = list_seconds(directory)
     times, paths = [t for t, _ in seconds], [p for _, p in seconds]
-    tag = hashlib.sha1(f'{spec}|{range_scope}'.encode()).hexdigest()[:8]
+    # gray = the Appendix-A ablation: the same dB range, linear 1-channel uint8 (rendering_probe.render gray=True)
+    tag = hashlib.sha1(f'{spec}|{range_scope}{"|gray" if gray else ""}'.encode()).hexdigest()[:8]
     cache_dir = Path(cache_dir) if cache_dir else Path(__file__).resolve().parent.parents[2] / 'data' / 'datasets' / 'deepspred' / 'frames'
     stem = f'{directory.resolve().name}_frames_256x256_spec{tag}'
     npy, jsn = cache_dir / f'{stem}.npy', cache_dir / f'{stem}_meta.json'
@@ -323,11 +324,11 @@ def load_frames_spec(directory, spec, *, range_scope='full', cache_dir=None, wor
     lo = min(a for (a, _), k in zip(mm, sel) if k)
     hi = max(b for (_, b), k in zip(mm, sel) if k)
     with ctx.Pool(n_workers) as pool:
-        frames = np.stack(pool.map(_spec_render, [(str(p), spec, lo, hi) for p in paths], chunksize=16))
+        frames = np.stack(pool.map(_spec_render, [(str(p), spec, lo, hi, gray) for p in paths], chunksize=16))
     segs = contiguous_segments(times)
     meta = {'source': str(directory.resolve()), 'n_files': len(paths), 'first': _iso(times[0]), 'last': _iso(times[-1]),
             'times': [_iso(t) for t in times], 'segments': [[int(a), int(b)] for a, b in segs], 'db_range': [lo, hi],
-            'switches': {'render_spec': spec, 'range_scope': range_scope, 'size': 256, 'jpeg_quality': None, 'channels': 3},
+            'switches': {'render_spec': spec, 'range_scope': range_scope, 'size': 256, 'jpeg_quality': None, 'channels': 1 if gray else 3},
             'axes': 'H = STFT time rows, W = frequency bins [P:L 409-412]'}
     cache_dir.mkdir(parents=True, exist_ok=True)
     np.save(npy, frames)

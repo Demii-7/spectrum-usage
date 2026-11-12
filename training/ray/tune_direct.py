@@ -46,7 +46,9 @@ PIPELINE_NAME = {"ofa": "ofa", "timellm": "spectrumllm", "patchtst": "patchtst",
                  "revinmlp_mix": "revinmlp", "revinmlp_nbr": "revinmlp", "itransformer": "itransformer",
                  "patchtst_noinorm": "patchtst", "patchtst_joint": "patchtst", "patchtst_nopatch": "patchtst",
                  # TimeRAN (MOMENT continued-pretrained on RAN telemetry) and its controls; all MOMENT-1-small, 512-step padded context
-                 "timeran_lp": "timeran", "timeran_ff": "timeran", "moment_lp": "timeran", "moment_ff": "timeran", "moment_rand": "timeran"}
+                 "timeran_lp": "timeran", "timeran_ff": "timeran", "moment_lp": "timeran", "moment_ff": "timeran", "moment_rand": "timeran",
+                 # 3D-SwinSTB (DeepSPred) on colour frames of the same windows; colours are inverted to dB for validation and scoring
+                 "deepspred2d": "deepspred2d"}
 # Controls for what the pretrained language model contributes: the same OFA architecture, tuned with the same 16 candidates.
 #   ofa_rand    random initialization, only layer norms and positional embeddings train (OFA's rule, so the frozen rest is random)
 #   ofa_scratch random initialization, every backbone weight trains (a transformer trained from scratch, like PatchTST)
@@ -91,13 +93,17 @@ def family(model: str) -> str:
 RESOURCES = {"ofa": (4, 0.25), "ofa_rand": (4, 0.25), "ofa_scratch": (4, 0.25), "timellm": (4, 0.6), "patchtst": (4, 0.25), "dlinear": (2, 0.125),
              "residualnonlinear2d": (2, 0.125), "residuallinearar2d": (2, 0.125), "linearar2d": (2, 0.125), "nlinear": (2, 0.125),
              "revinmlp": (2, 0.125), "revinmlp_mix": (2, 0.125), "revinmlp_nbr": (2, 0.125), "itransformer": (2, 0.125), "patchtst_noinorm": (4, 0.25), "patchtst_joint": (4, 0.25), "patchtst_nopatch": (4, 0.25),
-             **{m: (4, 1.0) for m in ("timeran_lp", "timeran_ff", "moment_lp", "moment_ff", "moment_rand")}}  # one 24 GB RTX 6000 each
+             **{m: (4, 1.0) for m in ("timeran_lp", "timeran_ff", "moment_lp", "moment_ff", "moment_rand")},  # one 24 GB RTX 6000 each
+             "deepspred2d": (4, 0.25)}                                        # small frames: a quarter GPU (capped to that share by torch)
 EPOCHS = {"ofa": 10, "ofa_rand": 10, "ofa_scratch": 10, "timellm": 10, "patchtst": 20, "dlinear": 20, "residualnonlinear2d": 10,
           "residuallinearar2d": 10, "linearar2d": 10, "nlinear": 20, "revinmlp": 20, "revinmlp_mix": 20, "revinmlp_nbr": 20, "itransformer": 20, "patchtst_noinorm": 20, "patchtst_joint": 20,
-          "patchtst_nopatch": 20, **{m: 10 for m in ("timeran_lp", "timeran_ff", "moment_lp", "moment_ff", "moment_rand")}}
+          "patchtst_nopatch": 20, "deepspred2d": 20, **{m: 10 for m in ("timeran_lp", "timeran_ff", "moment_lp", "moment_ff", "moment_rand")}}
 PATIENCE = 5
 MODEL_KEYS = {"patch_length", "patch_stride", "d_model", "d_ff", "llm_layers", "n_heads", "e_layers", "dropout", "moving_avg",
-              "mlp_hidden", "mlp_layers", "mlp_dropout", "ridge_alpha", "head_dropout", "channel_mixing"}
+              "mlp_hidden", "mlp_layers", "mlp_dropout", "ridge_alpha", "head_dropout", "channel_mixing",
+              # deepspred2d: architecture plus the two image-construction choices (colormap and frame geometry); the rendering's
+              # normalization is fixed (the pipeline's per-frequency z-score), and selection is on validation MAE in dB
+              "embed_dim", "depths", "num_heads", "window_size", "drop_path_rate", "colormap", "input_frames"}
 TRAIN_KEYS = {"learning_rate": "learning_rate", "batch_size": "batch_size", "weight_decay": "weight_decay"}
 
 DEFAULTS: dict[str, dict[str, Any]] = {
@@ -116,6 +122,9 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "residualnonlinear2d": {"learning_rate": 1e-3, "ridge_alpha": 0.01, "mlp_hidden": 64, "mlp_layers": 2, "mlp_dropout": 0.0,
                             "batch_size": 64},
 }
+# The paper's 3D-SwinSTB settings (C 96, depths 2-4-2, heads 4-8-16, window 2-7-7, lr 1e-3) as the anchor; T = 4 frames per lookback.
+DEFAULTS["deepspred2d"] = {"learning_rate": 1e-3, "embed_dim": 96, "depths": [2, 4, 2], "num_heads": [4, 8, 16], "window_size": [2, 7, 7],
+                           "drop_path_rate": 0.0, "colormap": "jet", "input_frames": 4, "batch_size": 8, "weight_decay": 0.0}
 for _variant in ("timeran_lp", "timeran_ff", "moment_lp", "moment_ff", "moment_rand"):
     DEFAULTS[_variant] = {"learning_rate": 1e-4, "batch_size": 16, "head_dropout": 0.1, "weight_decay": 0.0}
 DEFAULTS["revinmlp_mix"] = dict(DEFAULTS["revinmlp"])
@@ -165,6 +174,12 @@ def draw(model: str, rng: random.Random) -> dict[str, Any]:
         return {"learning_rate": _loguniform(rng, 1e-4, 2e-3), "d_model": rng.choice([64, 128, 256]), "n_heads": rng.choice([4, 8]),
                 "e_layers": rng.choice([1, 2, 3]), "d_ff": rng.choice([128, 256, 512]), "dropout": rng.choice([0.0, 0.1, 0.2]),
                 "batch_size": rng.choice([8, 16, 32])}
+    if model == "deepspred2d":
+        size = rng.choice([(32, [2, 2, 2]), (48, [2, 2, 2]), (48, [2, 4, 2]), (96, [2, 2, 2]), (96, [2, 4, 2])])
+        return {"learning_rate": _loguniform(rng, 1e-4, 2e-3), "embed_dim": size[0], "depths": size[1], "num_heads": [4, 8, 16],
+                "window_size": rng.choice([[2, 4, 4], [2, 7, 7], [2, 8, 8]]), "drop_path_rate": rng.choice([0.0, 0.1, 0.2]),
+                "colormap": "jet", "input_frames": rng.choice([1, 2, 3, 4]), "batch_size": rng.choice([4, 8, 16]),
+                "weight_decay": rng.choice([0.0, 1e-5, 1e-4])}
     if model in ("revinmlp", "revinmlp_mix", "revinmlp_nbr"):
         return {"learning_rate": _loguniform(rng, 1e-4, 2e-3), "mlp_hidden": rng.choice([64, 128, 256]), "mlp_layers": rng.choice([1, 2, 3]),
                 "mlp_dropout": rng.choice([0.0, 0.1, 0.2]), "batch_size": rng.choice([16, 32, 64])}
@@ -184,6 +199,10 @@ def candidate_list(model: str, budget: int = BUDGET, seed: int = SEARCH_SEED) ->
         candidate = draw(model, rng)
         if model == "patchtst_nopatch":                              # patching is removed: the patch draws are replaced, the rest is PatchTST's
             candidate.update(patch_length=1, patch_stride=1)
+        if model == "deepspred2d":                                   # half the budget per colormap: candidate 1 is the paper anchor in gray
+            candidate["colormap"] = ("jet", "gray")[len(out) % 2]
+            if len(out) == 1:
+                candidate = {**DEFAULTS[model], "colormap": "gray"}
         key = json.dumps(candidate, sort_keys=True)
         if key not in seen:
             seen.add(key)

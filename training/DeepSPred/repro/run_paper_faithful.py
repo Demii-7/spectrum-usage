@@ -190,7 +190,7 @@ def main() -> int:
     args = ap.parse_args()
     key = run_key(args.dataset, args.horizon, args.seed, args.embed_dim, args.depths, args.lr, args.patch, args.window, PRIMARY_SPACE, args.jpeg_quality, args.init_from)
     if args.render_spec:  # the rendering is part of the run identity (results key and checkpoint hash)
-        key += f'|spec={args.render_spec}|{args.range_scope}'
+        key += f'|spec={args.render_spec}|{args.range_scope}' + ('|gray' if args.gray else '')
     if args.stop_rule != 'paper':  # diagnostic runs must not collide with paper-regime keys
         key += f'|rule={args.stop_rule}'
     if args.head != 'paper':
@@ -207,7 +207,7 @@ def main() -> int:
     np.random.seed(args.seed)
     channels = 1 if args.gray else 3
     if args.render_spec:
-        frames, fmeta = load_frames_spec(args.data, args.render_spec, range_scope=args.range_scope)
+        frames, fmeta = load_frames_spec(args.data, args.render_spec, range_scope=args.range_scope, gray=args.gray)
     else:
         frames, fmeta = load_frames(args.data, expect_hw=(H, W), jpeg_quality=args.jpeg_quality, channels=channels)
     (train, val, test), segs = chronological_split(frames, fmeta)
