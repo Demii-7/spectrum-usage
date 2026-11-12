@@ -1,0 +1,24 @@
+120 runs (model x band x seed x receiver)
+
+zero-offset reproduction check, max |difference| against the stored scores in dB (requirement <= 1e-4):
+model             band     
+dswinlstm_i       2400_2600    0.000164
+                  600_800      0.000018
+residualconvlstm  2400_2600    0.000066
+                  600_800           NaN
+tsslcd            2400_2600    0.000035
+                  600_800      0.000018
+
+2400_2600: mean gain of the forecast shift to an input offset of c dB at t+4 (columns: c); mean / min / max over receivers, seeds and offsets; 1 = level carried exactly
+                    -20    -10     -5     +5    +10    +20   mean    min    max  n_seeds
+model                                                                                   
+dswinlstm_i       0.049  0.097  0.193  0.124  0.066  0.034  0.094 -0.881  0.904        5
+residualconvlstm  1.000  1.000  1.000  1.000  1.000  1.000  1.000  1.000  1.000        5
+tsslcd            0.087  0.174  0.346  0.085  0.042  0.021  0.126 -0.010  1.104        5
+
+600_800: mean gain of the forecast shift to an input offset of c dB at t+4 (columns: c); mean / min / max over receivers, seeds and offsets; 1 = level carried exactly
+                    -20    -10     -5     +5    +10    +20   mean    min    max  n_seeds
+model                                                                                   
+dswinlstm_i       0.020  0.039  0.077  0.024  0.011  0.006  0.029 -0.325  0.376        5
+residualconvlstm  1.000  1.000  1.000  1.000  1.000  1.000  1.000  1.000  1.000        5
+tsslcd            0.063  0.126  0.253  0.107  0.053  0.027  0.105 -0.057  0.412        5
