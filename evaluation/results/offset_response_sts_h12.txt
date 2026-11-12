@@ -1,0 +1,11 @@
+24 runs
+
+2400_2600: mean gain of the forecast shift to an input offset of c dB at t+12 (columns: c); 1 = level carried exactly
+                  -20    -10     -5     +5    +10    +20  n_runs
+rep model                                                       
+4d  stsprednet  0.011  0.021  0.074 -0.096  0.004  0.021      12
+
+600_800: mean gain of the forecast shift to an input offset of c dB at t+12 (columns: c); 1 = level carried exactly
+                  -20    -10     -5     +5    +10    +20  n_runs
+rep model                                                       
+4d  stsprednet -0.007 -0.025 -0.026  0.009  0.029  0.022      12
