@@ -358,5 +358,10 @@
   "id": "claude-uc-rescore-timeran1min-1",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.rescore --sources direct --resolution 1min --models timeran_lp --skip-done --no-pin --max-parallel 10 --gpu-fraction 0.25\"",
   "max_restarts": 3
+ },
+ {
+  "id": "claude-uc-dswin-search-600_800-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_dswin15 all --bands 600_800 --max-parallel 40 --gpu-fraction 0.25 --memory-gb 12\"",
+  "max_restarts": 4
  }
 ]

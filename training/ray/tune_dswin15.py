@@ -207,19 +207,38 @@ def cmd_decide(a: argparse.Namespace) -> None:
                                                           "budget": 0, "fixed": fixed}))
     buffer = io.StringIO()
     pd.DataFrame(rows).to_csv(buffer, index=False)
-    for key, body in (("analysis-outputs/dswin_search_trials.csv", buffer.getvalue().encode()),
-                      ("analysis-outputs/dswin_search_verdict.json", json.dumps(verdict, indent=1, default=str).encode())):
+    tag = "_".join(a.bands) if len(a.bands) < len(BANDS) else ""
+    suffix = f"_{tag}" if tag else ""
+    for key, body in ((f"analysis-outputs/dswin_search_trials{suffix}.csv", buffer.getvalue().encode()),
+                      (f"analysis-outputs/dswin_search_verdict{suffix}.json", json.dumps(verdict, indent=1, default=str).encode())):
         client.put_object(Bucket=bucket, Key=key, Body=body)
+    merge_verdicts(client, bucket)
     print("[dswin15] verdict " + json.dumps(verdict, default=str)[:1500], flush=True)
     if final_calls:
         print(f"[dswin15] {len(final_calls)} final runs for improving winners", flush=True)
         results = run_calls(final_calls, a.max_parallel, a.address, {"repo_root": a.repo_root, "bucket": bucket}, "finals")
         verdict["finals"] = [{"dataset": r.get("dataset"), "seed": r.get("seed"), "ok": r.get("ok"), "objective": r.get("objective"),
                               "mae_t12": r.get("test_mae_db_t12")} for r in results]
-        client.put_object(Bucket=bucket, Key="analysis-outputs/dswin_search_verdict.json", Body=json.dumps(verdict, indent=1, default=str).encode())
+        client.put_object(Bucket=bucket, Key=f"analysis-outputs/dswin_search_verdict{suffix}.json", Body=json.dumps(verdict, indent=1, default=str).encode())
+        merge_verdicts(client, bucket)
     improved = [b for b, e in verdict["bands"].items() if e.get("verdict") == "improves"]
     if improved and not a.no_chain:
         score_chain(improved, a, bucket)
+
+
+def merge_verdicts(client, bucket: str) -> None:
+    """analysis-outputs/dswin_search_verdict.json = the per-band verdict files (written by one driver per band) merged."""
+    merged = {"improvement_threshold": IMPROVEMENT, "bands": {}}
+    for band in BANDS:
+        try:
+            part = json.loads(client.get_object(Bucket=bucket, Key=f"analysis-outputs/dswin_search_verdict_{band}.json")["Body"].read())
+        except Exception:
+            continue
+        merged["bands"][band] = part.get("bands", {}).get(band)
+        merged["budget"] = part.get("budget")
+        if part.get("finals"):
+            merged.setdefault("finals", []).extend(part["finals"])
+    client.put_object(Bucket=bucket, Key="analysis-outputs/dswin_search_verdict.json", Body=json.dumps(merged, indent=1, default=str).encode())
 
 
 def score_chain(bands: list[str], a: argparse.Namespace, bucket: str) -> None:
