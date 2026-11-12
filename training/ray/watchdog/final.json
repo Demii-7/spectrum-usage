@@ -78,5 +78,15 @@
   "id": "claude-final-momentzs-test-1",
   "entrypoint": "python -u -m training.ray.moment_zeroshot run --skip-done --gpu-fraction 0.05 --max-parallel 4",
   "max_restarts": 4
+ },
+ {
+  "id": "claude-final-offset-sts-1",
+  "entrypoint": "python -u -m training.ray.offset_response_sts --bands 600_800 2400_2600 --seeds 40 41 42 --device cuda --gpu-fraction 0.5 --skip-done --max-parallel 6",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-final-spectral15t-2",
+  "entrypoint": "python -u -m training.ray.spectral_context_fixed --resolution 15min --hyperparameters tuned15 --output-prefix oct2026-spectral-context-15min-tuned --seeds 43 44 --max-parallel 6 --gpu-fraction 0.25 --skip-done",
+  "max_restarts": 4
  }
 ]
