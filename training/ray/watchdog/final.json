@@ -288,5 +288,10 @@
   "id": "claude-final-tsslcd-abl-table-1",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-final-tsslcd-abl-1 --then 'bash training/ray/scripts/run_tsslcd_ablation_table.sh'\"",
   "max_restarts": 2
+ },
+ {
+  "id": "claude-final-rcl-chain-600-3",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/rcl_chain.py --band 600_800 --h100-prefix tuning-h100 --deadline-utc 2026-11-12T23:00Z\"",
+  "max_restarts": 3
  }
 ]
