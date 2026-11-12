@@ -173,5 +173,10 @@
   "id": "claude-uc-spectral15t-1",
   "entrypoint": "python -u -m training.ray.spectral_context_fixed --resolution 15min --hyperparameters tuned15 --output-prefix oct2026-spectral-context-15min-tuned --seeds 40 41 42 --max-parallel 6 --gpu-fraction 0.25 --skip-done",
   "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-offset15-llm-w2",
+  "entrypoint": "python -u -m training.ray.offset_response --source direct --models ofa ofa_rand ofa_scratch timeran_lp moment_lp timellm --bands 600_800 2400_2600 --horizons 12 48 --receivers humanities madsen moran sagepoint --seeds 40 41 42 43 44 --skip-done --gpu-fraction 1.0 --max-parallel 4",
+  "max_restarts": 4
  }
 ]

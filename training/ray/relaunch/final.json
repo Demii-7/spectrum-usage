@@ -1,0 +1,20 @@
+[
+ {
+  "base": "claude-final-spectral-seeds-1min-1",
+  "new_id": "claude-final-spectral-seeds-1min-w2",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.spectral_context_fixed --bucket spectrum --max-parallel 6 --seeds 43 44\"",
+  "trigger": "now"
+ },
+ {
+  "base": "claude-final-spectral-seeds-15min-1",
+  "new_id": "claude-final-spectral-seeds-15min-w2",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.spectral_context_fixed --bucket spectrum --resolution 15min --output-prefix oct2026-spectral-context-15min --max-parallel 6 --seeds 43 44\"",
+  "trigger": "now"
+ },
+ {
+  "base": "claude-final-rescore-timellm1min-2",
+  "new_id": "claude-final-rescore-timellm1min-w2",
+  "entrypoint": "python -u -m training.ray.rescore --sources direct --resolution 1min --models timellm --skip-done --no-pin --max-parallel 10 --gpu-fraction 0.15",
+  "trigger": "after_completion"
+ }
+]
