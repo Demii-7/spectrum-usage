@@ -3,7 +3,8 @@
 Use this page to reach the active clusters, update their source, sync data, and
 submit Ray jobs. Cluster-specific build, redeploy, and expansion details remain
 in [FINAL.md](docker/FINAL.md), [H100.md](docker/H100.md),
-[TACC.md](docker/TACC.md), and [UC.md](docker/UC.md).
+[TACC.md](docker/TACC.md), [UC.md](docker/UC.md), [NCAR.md](docker/NCAR.md),
+and [H100-THREE.md](docker/H100-THREE.md).
 `STANDALONE.md` and `CHAMELEON.md` document retired topologies; do not use their
 old head addresses or deployment overlays.
 
@@ -13,8 +14,70 @@ old head addresses or deployment overlays.
 |---|---|---|---|---|
 | New H100 (`final` sync selector) | `final` | `129.114.25.135` | 6 hosts | 6 H100s, 288 CPUs |
 | Older H100 (`mixed-gpu`, explicit sync only) | `standalone` | `129.114.27.86` | 6 configured hosts; 4 leases expired | See lease dates below |
-| TACC | `tacc` | `ray-tacc-1` | 4 hosts | 4 A100 40 GB, 1024 CPUs |
+| TACC (historical inventory, explicit only) | `tacc` | `ray-tacc-1` | Gateway IP reassigned | See historical notes below |
 | RTX/V100 (`uc` sync selector) | `uc` | `192.5.87.177` | 9 hosts | 8 RTX 6000 + 4 V100, 464 CPUs |
+| NCAR (`ncar` sync selector) | `ncar` | `128.117.250.76` | 2 hosts | 2 GH200s, 144 ARM CPUs |
+| Three-GPU H100 (`h100-three` sync selector) | `h100three` | `129.114.109.32` | 1 host | 3 H100s; 140 Ray CPUs + 4 control/storage CPUs |
+
+### Three-GPU H100 allocation
+
+`ray-h100-three-1` reaches `cc@129.114.109.32` (`h4-lm`, private `10.52.2.210`).
+It has a head and one three-GPU worker in its own `h100three` Swarm.
+**Physical GPU 0 belongs to the collaborator: use only physical GPUs 1–3.**
+The overlay exposes those GPUs by UUID; CUDA renumbers them 0–2 inside the
+worker. Do not replace that restriction with `NVIDIA_VISIBLE_DEVICES=all`.
+
+The total CPU budget is 144/192 logical CPUs: Ray worker 140, head 2, MinIO 2.
+All stack containers use cpuset `0-71,96-167`, leaving `72-95,168-191` outside
+the allocation. The enabled `h100-three-cpuset.service` applies this affinity
+to Swarm replacements; the Ray entrypoint waits for it before starting.
+Keep the guard enabled. See `H100-THREE.md` for the UUIDs and verified limits.
+
+```bash
+ssh -F training/ray/docker/h100-three-ssh.conf ray-h100-three-1
+```
+
+Always include `h100-three.yaml` alongside `stack.yaml` for this deployment.
+The worker has its own `pylibs`, `hf-cache`, and `pretrained` host mounts under
+`/home/cc/h100-three-runtime`. Data and model preparation passed before
+admission; no bulk checkpoint archive is present. The user has not supplied
+a lease end.
+
+### NCAR aarch64 cluster
+
+`ray-ncar-1` (`cc@128.117.250.76`, private `172.20.0.252`) runs the head and
+one worker in the independent `ncar` Swarm. The host has 72 ARM CPUs and one
+GH200 GPU reporting 97,871 MiB. Linux reports about 565 GiB host memory.
+
+```bash
+ssh -F training/ray/docker/ncar-ssh.conf ray-ncar-1
+ssh -F training/ray/docker/ncar-ssh.conf ray-ncar-2
+```
+
+Use **native aarch64 binaries**. `Dockerfile.ncar` uses Python 3.12, official
+ARM PyTorch 2.6.0/CUDA 12.6 and torchvision 0.21.0 wheels, Ray 2.54.0, and
+NumPy 2.1.3. The x86 image and its PyTorch 2.5.1/CUDA 12.4 libraries do not
+apply to this host. Build the isolated Transformers 4.44.2 install with the
+ARM image's Python; do not copy x86 `pylibs` directories. See `NCAR.md`.
+
+The worker mounts source/data at `/workspace/spectrum-usage`, and
+`/home/cc/ncar-runtime/{pylibs,hf-cache}` at `/workspace/{pylibs,hf-cache}`.
+It has 64 GiB `/dev/shm` and a 16 GiB object store. NCAR keeps code and data
+only, with no checkpoint archive. Its head and worker use the same ARM image.
+The user has not supplied a lease end.
+
+Node 2 is `172.20.0.132`, reached through the head with SSH agent forwarding.
+It runs `ncar_ray-worker-extra` with **`ray.ncar-extra=true`, and no
+`ray.gpu` label**. Do not add the generic GPU label there. Use `ncar-extra.yaml`
+alongside `stack.yaml` and `ncar.yaml` for an intended redeploy.
+
+We completed node-local `ncar_prep.setup_on_node` before joining it: isolated
+Transformers 4.44.2, momentfm 0.1.4, GPT-2/BERT/MOMENT caches, TimeRAN weights,
+and 81 converted data files. Fresh offline processes and a network-disabled
+replacement container loaded all backbones before admission. Node 2's
+`/home/cc/ncar-runtime/pretrained` also mounts at `/workspace/pretrained`, so
+its selected TimeRAN weights survive worker recreation. Its `pylibs` and
+`hf-cache` belong to that host. NCAR now advertises 2 GPUs and 144 CPUs.
 
 ### New six-host H100 cluster
 
@@ -90,6 +153,11 @@ workers. See `H100.md` for recovery directories and the MinIO backup restore.
 
 ### TACC cluster
 
+**Historical access:** `129.114.109.32` now belongs to `h4-lm`, the independent
+three-GPU H100 allocation above. Do not use the old TACC aliases against that
+host or include TACC in default source syncs. The addresses below preserve
+the former topology; they do not describe the new H100 host.
+
 | Hostname | Private IP | Public IP | GPUs |
 |---|---|---|---:|
 | `ray-tacc-1` | `10.52.2.186` | `129.114.108.20` (unreachable) | 1 |
@@ -158,9 +226,29 @@ redeploy; routine source sync needs no redeploy.
 
 ### Dashboards
 
+**Never expose 8265, 10001, or 9000/9001 to the internet.** The Ray Jobs API
+has no authentication, and anyone who can reach 8265 can run code as root in
+the head container. On 2026-11-12 an attacker did exactly that on `ray-uc-1`
+(cryptominer plus a scanner, which led to an abuse report). Every head with a
+floating IP must run `scripts/host-firewall.sh`, installed as
+`/usr/local/sbin/spectrum-firewall` with `scripts/spectrum-firewall.service`.
+It allows SSH from anywhere and everything from private addresses, and drops
+other inbound traffic, including Docker-published ports (through
+`DOCKER-USER`). This is installed on every public host: `ray-uc-1`, `ray-uc-extra-1` (the V100 worker has its own floating IP, 192.5.87.163) and `ray-ncar-1`. Check with
+`systemctl is-active spectrum-firewall`. Reach the dashboards only through
+the tunnels below.
+
 Use different local ports for each cluster:
 
 ```bash
+# Three-GPU H100: http://localhost:8271, MinIO console http://localhost:9007
+ssh -F training/ray/docker/h100-three-ssh.conf -N \
+  -L 8271:localhost:8265 -L 9007:localhost:9001 ray-h100-three-1
+
+# NCAR: http://localhost:8270 and MinIO console http://localhost:9006
+ssh -F training/ray/docker/ncar-ssh.conf -N \
+  -L 8270:localhost:8265 -L 9006:localhost:9001 ray-ncar-1
+
 # New H100: http://localhost:8269 and MinIO console http://localhost:9005
 ssh -F training/ray/docker/final-ssh.conf -N \
   -L 8269:localhost:8265 -L 9005:localhost:9001 ray-final-1
@@ -201,9 +289,10 @@ ssh -F training/ray/docker/uc-ssh.conf ray-uc-1 \
 ## Sync source code
 
 Run this from the repository root. It fetches `origin` and syncs committed
-source to nineteen hosts across the `final`, `tacc`, and `uc` clusters. The
+source to eighteen hosts across `final`, `uc`, `ncar`, and `h100-three`. The
 default excludes the older H100 inventory because four of its leases expired
-at 2026-11-09 13:40 UTC:
+at 2026-11-09 13:40 UTC. It also excludes TACC because its gateway IP now
+belongs to the three-GPU allocation:
 
 ```bash
 python3 training/ray/scripts/sync-cluster-code.py
@@ -212,6 +301,8 @@ python3 training/ray/scripts/sync-cluster-code.py
 Options:
 
 ```bash
+python3 training/ray/scripts/sync-cluster-code.py --cluster h100-three --revision HEAD
+python3 training/ray/scripts/sync-cluster-code.py --cluster ncar --revision HEAD
 python3 training/ray/scripts/sync-cluster-code.py --cluster final --revision HEAD
 python3 training/ray/scripts/sync-cluster-code.py --cluster mixed-gpu
 python3 training/ray/scripts/sync-cluster-code.py --cluster tacc
@@ -261,6 +352,14 @@ the H100 manager share that host's copy.
 Processed power CSVs:
 
 ```bash
+# Three-GPU H100 allocation
+RAY_INVENTORY=training/ray/docker/h100-three-nodes.sh \
+  bash training/ray/scripts/sync-cluster-data.sh
+
+# NCAR ARM cluster
+RAY_INVENTORY=training/ray/docker/ncar-nodes.sh \
+  bash training/ray/scripts/sync-cluster-data.sh
+
 # New H100 cluster
 RAY_INVENTORY=training/ray/docker/final-nodes.sh \
   bash training/ray/scripts/sync-cluster-data.sh
@@ -463,7 +562,7 @@ substantial part of the older hosts' disk use and need review before cleanup.
 - Sync code with `sync-cluster-code.py`. Do not restart Ray to update source.
 - Do not run `docker service update`, `docker stack deploy`, or `--prune` unless
   the task specifically requires an image or configuration change.
-- Do not join hosts between clusters during routine work. `final`, `standalone`, `tacc`, and `uc` are independent
+- Do not join hosts between clusters during routine work. `final`, `standalone`, `tacc`, `uc`, `ncar`, and `h100three` are independent
   Swarms with separate MinIO stores and secrets.
 - Do not modify firewalld, Swarm membership, or node labels for routine work.
 - Use unique submission IDs and output directories. Jobs from multiple agents
@@ -472,11 +571,10 @@ substantial part of the older hosts' disk use and need review before cleanup.
   MinIO prefix; do not overwrite `data/` or `checkpoints/`.
 - Files written by job containers appear root-owned on the host. Clean them up
   on the manager with `sudo` if needed.
-- Check `ray status` and `ray job list` before resource-heavy work. The new H100
-  cluster has six GPU workers; TACC has four and UC has nine (12 GPUs). Check the older
-  H100 lease dates before attempting to use its explicit inventory.
-- The TACC manager's public IP is unreachable; use the SSH alias. Do not change
-  `tacc-ssh.conf` to connect directly.
+- Check `ray status` and `ray job list` before resource-heavy work. `final` has
+  six GPU workers, UC has nine (12 GPUs), NCAR has two, and `h100three` has one
+  three-GPU worker. TACC and the older H100 inventories require separate
+  current-access checks; their historical addresses are not active defaults.
 
 ## Troubleshooting
 

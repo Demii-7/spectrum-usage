@@ -1,0 +1,30 @@
+# Native ARM/SBSA CUDA runtime for Grace Hopper; no x86 images or wheels.
+ARG CUDA_BASE_IMAGE=nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04
+FROM ${CUDA_BASE_IMAGE}
+
+RUN test "$(uname -m)" = aarch64 \
+    && apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+       python3 python3-venv python3-pip curl ca-certificates libgomp1 libgl1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && python3 -m venv /opt/venv
+ENV PATH=/opt/venv/bin:$PATH
+RUN python -m pip install --no-cache-dir \
+      torch==2.6.0 torchvision==0.21.0 \
+      --index-url https://download.pytorch.org/whl/cu126
+
+COPY training/ray/requirements/core.txt /tmp/core-requirements.txt
+RUN python -m pip install --no-cache-dir -r /tmp/core-requirements.txt \
+    && rm /tmp/core-requirements.txt \
+    && python -c "import platform,ray,torch,torchvision,numpy; assert platform.machine() == 'aarch64'; assert ray.__version__ == '2.54.0'; assert torch.__version__.startswith('2.6.0'); assert torch.version.cuda == '12.6'"
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    RAY_USAGE_STATS_ENABLED=0 \
+    RAY_LOG_TO_STDERR=1
+WORKDIR /workspace/spectrum-usage
+COPY training/ray/docker/entrypoint-worker.sh /usr/local/bin/ray-worker
+COPY training/ray/docker/entrypoint-head.sh /usr/local/bin/ray-head
+COPY training/ray/docker/load-storage-env.sh /usr/local/bin/load-storage-env.sh
+RUN chmod 0755 /usr/local/bin/ray-worker /usr/local/bin/ray-head
+ENTRYPOINT ["/usr/local/bin/ray-worker"]

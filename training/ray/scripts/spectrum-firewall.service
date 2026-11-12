@@ -1,0 +1,15 @@
+[Unit]
+Description=Spectrum Ray host firewall (SSH-only from the internet)
+After=network-online.target docker.service
+Wants=network-online.target
+# Re-apply after Docker restarts and rebuilds its chains.
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/spectrum-firewall
+ExecStop=/usr/local/sbin/spectrum-firewall --remove
+
+[Install]
+WantedBy=multi-user.target docker.service

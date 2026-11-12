@@ -1,5 +1,10 @@
 # Independent TACC Ray cluster
 
+**Historical access:** the former gateway IP `129.114.109.32` now belongs to
+the independent allocation in [H100-THREE.md](H100-THREE.md). Do not use the
+old TACC SSH inventory to manage that host. TACC is excluded from default
+source sync targets; the topology below preserves its former setup.
+
 Stack `tacc` runs in its own Swarm. It has a CPU-only Ray head and one A100
 worker on each of four hosts, including the manager. Ray advertises four
 A100-PCIE-40GB GPUs and 1,024 logical CPUs across five Ray nodes.

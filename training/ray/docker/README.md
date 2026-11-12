@@ -1,5 +1,10 @@
 # Ray Docker and Swarm deployment
 
+For the restricted three-GPU H100 allocation at `129.114.109.32` (physical
+GPU 0 reserved for a collaborator), see [H100-THREE.md](H100-THREE.md).
+
+For the native aarch64 Grace Hopper cluster at NCAR, see [NCAR.md](NCAR.md).
+
 For the six-host H100 cluster at `129.114.25.135`, with its head leased until
 **2026-11-14 01:49 UTC**, see [FINAL.md](FINAL.md).
 

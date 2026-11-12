@@ -1,0 +1,15 @@
+[Unit]
+Description=CPU-set enforcement for the three-GPU H100 Ray stack
+After=docker.service
+Requires=docker.service
+PartOf=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/cc/spectrum-usage/training/ray/scripts/h100-three-cpuset.py
+Restart=always
+RestartSec=2
+AllowedCPUs=0-71,96-167
+
+[Install]
+WantedBy=multi-user.target docker.service

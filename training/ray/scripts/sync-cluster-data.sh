@@ -32,6 +32,7 @@ elif ((${#SELECTION[@]} == 0)); then
   fi
 fi
 HOSTS=("${RAY_NODE_SSH_HOSTS[@]}")
+((${#HOSTS[@]} > 0)) || { printf 'No SSH hosts in inventory\n' >&2; exit 2; }
 if [[ "$CHECKPOINTS" == true ]] && declare -p RAY_CHECKPOINT_SKIP_HOSTS >/dev/null 2>&1; then
   CHECKPOINT_HOSTS=()
   for host in "${HOSTS[@]}"; do
@@ -42,8 +43,11 @@ if [[ "$CHECKPOINTS" == true ]] && declare -p RAY_CHECKPOINT_SKIP_HOSTS >/dev/nu
     if [[ "$skip" == false ]]; then CHECKPOINT_HOSTS+=("$host"); fi
   done
   HOSTS=("${CHECKPOINT_HOSTS[@]}")
+  if ((${#HOSTS[@]} == 0)); then
+    printf 'Checkpoint sync is disabled for all hosts in this inventory.\n'
+    exit 0
+  fi
 fi
-((${#HOSTS[@]} > 0)) || { printf 'No SSH hosts in inventory\n' >&2; exit 2; }
 SSH_OPTIONS=(-o BatchMode=yes -o ConnectTimeout=15)
 if [[ -n "${RAY_SSH_CONFIG:-}" ]]; then
   SSH_OPTIONS+=(-F "$RAY_SSH_CONFIG")

@@ -1,0 +1,55 @@
+# Three GPUs and 144/192 CPUs total: Ray 140, head 2, MinIO 2.
+# The init service must finish before the worker-placement label is added.
+services:
+  ray-head:
+    entrypoint: ["/bin/bash", "/workspace/spectrum-usage/training/ray/docker/entrypoint-h100-three.sh"]
+    environment:
+      H100_THREE_ROLE: head
+      NVIDIA_VISIBLE_DEVICES: void
+    volumes:
+      - type: tmpfs
+        target: /dev/shm
+        tmpfs:
+          size: 2147483648
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+  ray-worker:
+    entrypoint: ["/bin/bash", "/workspace/spectrum-usage/training/ray/docker/entrypoint-h100-three.sh"]
+    environment:
+      H100_THREE_ROLE: worker
+      RAY_NUM_GPUS: "3"
+      NVIDIA_VISIBLE_DEVICES: GPU-4568a833-3e66-8937-71fb-a8ded13589fd,GPU-77efff73-64f0-41fb-0c7f-12818d7fcc5c,GPU-6f62c84a-184f-e2fe-8140-539d2e6164b8
+    volumes:
+      - type: bind
+        source: /home/cc/h100-three-runtime/pylibs
+        target: /workspace/pylibs
+      - type: bind
+        source: /home/cc/h100-three-runtime/hf-cache
+        target: /workspace/hf-cache
+      - type: bind
+        source: /home/cc/h100-three-runtime/pretrained
+        target: /workspace/pretrained
+      - type: tmpfs
+        target: /dev/shm
+        tmpfs:
+          size: 68719476736
+    deploy:
+      resources:
+        limits:
+          cpus: "140"
+  minio:
+    environment:
+      NVIDIA_VISIBLE_DEVICES: void
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+  minio-init:
+    environment:
+      NVIDIA_VISIBLE_DEVICES: void
+    deploy:
+      resources:
+        limits:
+          cpus: "2"

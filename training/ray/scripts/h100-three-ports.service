@@ -1,0 +1,13 @@
+[Unit]
+Description=SSH/private-network access to the three-GPU stack's Ray and MinIO ports
+After=docker.service firewalld.service
+Requires=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /home/cc/spectrum-usage/training/ray/scripts/h100-three-ports.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target docker.service

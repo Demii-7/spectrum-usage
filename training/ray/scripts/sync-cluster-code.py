@@ -15,6 +15,13 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 DOCKER_DIR = SCRIPT_DIR.parent / "docker"
 
 TARGETS = {
+    "h100-three": [
+        ("ray-h100-three-1", ["-F", str(DOCKER_DIR / "h100-three-ssh.conf")]),
+    ],
+    "ncar": [
+        (f"ray-ncar-{index}", ["-F", str(DOCKER_DIR / "ncar-ssh.conf")])
+        for index in range(1, 3)
+    ],
     "final": [
         (f"ray-final-{index}", ["-F", str(DOCKER_DIR / "final-ssh.conf")])
         for index in range(1, 7)
@@ -33,7 +40,9 @@ TARGETS = {
     ] + [("ray-uc-extra-1", ["-F", str(DOCKER_DIR / "uc-ssh.conf")])],
 }
 
-DEFAULT_CLUSTERS = ("final", "tacc", "uc")
+# The former TACC gateway IP now belongs to h100-three; retain its old
+# inventory only as an explicit historical selector.
+DEFAULT_CLUSTERS = ("final", "uc", "ncar", "h100-three")
 
 # Pending deployment helpers that are newer than the selected commit.
 OVERRIDES = {
