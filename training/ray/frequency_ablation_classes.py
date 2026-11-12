@@ -220,6 +220,18 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
                             e = np.abs(real_ext[h][0] - real_ext[h][1])[sel]
                             variants["C_valid_per_horizon"][h] = (e.sum(axis=0), np.full(200, int(sel.sum())))
                             probe_rows[receiver][f"n_C_h{h}"] = int(sel.sum())
+                    import pandas as pd  # noqa: F811
+
+                    d_starts = np.asarray(module.target_window_starts(
+                        source.timestamps, source.segments, lookback=parameters["lookback"], max_horizon=max(parameters["max_horizon"], 48),
+                        stride=parameters["test_stride"], target_start=task.target_start, target_end=task.target_end + pd.Timedelta(minutes=15)))
+                    probe_rows[receiver]["n_D_end_inclusive"] = int(len(d_starts))
+                    probe_rows[receiver]["last_timestamp"] = str(source.timestamps[-1])
+                    probe_rows[receiver]["target_end"] = str(task.target_end)
+                    if len(d_starts):
+                        real_d = predict(source, data, d_starts)
+                        sel = d_starts >= MAIN_MIN_START
+                        variants["D_end_inclusive"] = {h: (np.abs(real_d[h][0] - real_d[h][1])[sel].sum(axis=0), np.full(200, int(sel.sum()))) for h in horizons}
                     for vname, per_h in variants.items():
                         for h, (s, n) in per_h.items():
                             collected[f"probe|{vname}|{receiver}|h{h}|sum"] = np.asarray(s)
@@ -271,7 +283,7 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
             if stored is not None:
                 import pandas as pd  # noqa: F811
 
-                for vname in ("A_main", "B_all", "C_valid_per_horizon"):
+                for vname in ("A_main", "B_all", "C_valid_per_horizon", "D_end_inclusive"):
                     rows = []
                     for h in horizons:
                         key = f"probe|{vname}|{receivers[0]}|h{h}|sum"
@@ -370,7 +382,7 @@ def main(argv=None) -> None:
         extra = ""
         if row.get("probe"):
             pr = row["probe"]
-            extra = " PROBE " + json.dumps({k: pr[k] for k in pr if k.startswith(("A_", "B_", "C_"))}, default=str)[:600]
+            extra = " PROBE " + json.dumps({k: pr[k] for k in pr if k.startswith(("A_", "B_", "C_", "D_")) or k == "receivers"}, default=str)[:600]
         print(f"[freq-classes] {row.get('band')} {row.get('model')} seed{row.get('seed')} h{row.get('trained_horizon')} ok={row.get('ok')} "
               f"{row.get('error', '')} ({row.get('wall_seconds')}s) [{len(queue) + len(pending)} left]{extra}", flush=True)
     print(f"[freq-classes] done: {ok} ok", flush=True)
