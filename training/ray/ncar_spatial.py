@@ -20,6 +20,7 @@ Outputs (source bucket), per cell ``transfer-ncar-2026-11/item7/<band>/<variant>
   ``<condition>/eval/{result.json, metadata.json, region_metrics.csv}``  the evaluator's own files
 
     python -m training.ray.ncar_spatial consistency --out-key transfer-ncar-2026-11/step0/consistency_4d.csv
+    python -m training.ray.ncar_spatial table --out evaluation/results/spatial15_s3_neural.csv      # anywhere with S3 access
     python -m training.ray.ncar_spatial run --models residualconvlstm dswinlstm_i --seeds 40 41 42 43 44 --skip-done --poll-until 2026-11-14T00:00:00Z
 """
 
@@ -304,10 +305,62 @@ def cmd_consistency(a: argparse.Namespace) -> None:
         client.put_object(Bucket=a.bucket, Key=a.out_key, Body=table.to_csv(index=False).encode())
 
 
+def cmd_table(a: argparse.Namespace) -> None:
+    """``spatial15_s3_neural.csv``: per seed, per receiver (mean over seeds, SE across seeds) and per condition group (mean over receivers)."""
+    import pandas as pd
+
+    from training.ray import ncar_cells
+    from training.ray.storage import spectrum_s3_client
+
+    client = spectrum_s3_client()
+    rows = []
+    for band in a.bands:
+        for page in client.get_paginator("list_objects_v2").paginate(Bucket=a.bucket, Prefix=f"{a.prefix.strip('/')}/{band}/core4-p2/"):
+            for o in page.get("Contents", []):
+                if not o["Key"].endswith("/summary.json"):
+                    continue
+                r = json.loads(client.get_object(Bucket=a.bucket, Key=o["Key"])["Body"].read())
+                if not r.get("ok") or r["model"] not in a.models:
+                    continue
+                cell = o["Key"].rsplit("/", 1)[0]
+                for cond, by in r["metrics"].items():
+                    if cond.startswith("_"):
+                        continue
+                    for receiver, hm in by.items():
+                        for h, m in hm.items():
+                            rows.append({"band": band, "model": r["model"], "seed": r["seed"], "condition": cond, "receiver": receiver,
+                                         "horizon": int(h), "n_windows": m["n_windows"], "mae": m["mae_db"], "mse": m["mse_db2"], "rmse": m["rmse_db"],
+                                         "mape_linear_pct": m["mape_linear_pct"], "mape_dbm_pct": m["mape_dbm_pct"],
+                                         "weights_key": r.get("weights_key"), "peak_gpu_memory_gb": r.get("peak_gpu_memory_gb"),
+                                         "per_bin_key": f"{cell}/{cond}/{receiver}/per_bin.csv"})
+    seeds = pd.DataFrame(rows)
+    metrics = ["mae", "mse", "rmse", "mape_linear_pct", "mape_dbm_pct"]
+    seeds["level"] = "seed"
+    g = seeds.groupby(["band", "model", "condition", "receiver", "horizon"])
+    recv = g[metrics].mean().join(g[metrics].sem().add_suffix("_se_seeds")).join(g.seed.nunique().rename("n_seeds")) \
+        .join(g.seed.apply(lambda s: " ".join(map(str, sorted(s)))).rename("seeds")).join(g.n_windows.first()).reset_index()
+    recv["level"] = "receiver"
+    per_seed = seeds.groupby(["band", "model", "condition", "horizon", "seed"])[metrics].mean().reset_index()
+    gg = per_seed.groupby(["band", "model", "condition", "horizon"])
+    grp = gg[metrics].mean().join(gg[metrics].sem().add_suffix("_se_seeds")).join(gg.seed.nunique().rename("n_seeds")) \
+        .join(gg.seed.apply(lambda s: " ".join(map(str, sorted(s)))).rename("seeds")).reset_index()
+    grp["receiver"] = grp.condition.map({"insample": "core four", "absent": "guesthouse+law73", "added": "guesthouse+law73"})
+    grp["level"] = "group"
+    table = pd.concat([grp, recv, seeds], ignore_index=True)
+    for col in ("spectral_context", "spatial_context"):
+        table[col] = [ncar_cells.tags(m, "4d")[col] for m in table.model]
+    table["note"] = ["single seed (42); inherited 1-minute configuration" if m == "dswinlstm_i" and n == 1 else ""
+                     for m, n in zip(table.model, table.n_seeds.fillna(1))]
+    table.to_csv(a.out, index=False)
+    pd.set_option("display.width", 250)
+    pd.set_option("display.max_rows", 200)
+    print(table[table.level == "group"].pivot_table(index=["band", "model", "condition"], columns="horizon", values="mae").round(4).to_string())
+
+
 def main(argv=None) -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="command", required=True)
-    for name in ("run", "consistency"):
+    for name in ("run", "consistency", "table"):
         s = sub.add_parser(name)
         s.add_argument("--bands", nargs="+", default=["600_800", "2400_2600"])
         s.add_argument("--models", nargs="+", default=["residualconvlstm", "dswinlstm_i"])
@@ -321,6 +374,7 @@ def main(argv=None) -> None:
         s.add_argument("--poll-seconds", type=int, default=600)
         s.add_argument("--tag", default="run1", help="consistency: sub-prefix of this attempt (never reused)")
         s.add_argument("--out-key", default=None)
+        s.add_argument("--out", default="evaluation/results/spatial15_s3_neural.csv")
         s.add_argument("--prefix", default=PREFIX)
         s.add_argument("--bucket", default=None)
         s.add_argument("--code-revision", default=None)
@@ -330,7 +384,7 @@ def main(argv=None) -> None:
     sys.path.insert(0, a.repo_root)
     os.chdir(a.repo_root)
     a.bucket = a.bucket or os.environ.get("SPECTRUM_S3_BUCKET", "spectrum")
-    {"run": cmd_run, "consistency": cmd_consistency}[a.command](a)
+    {"run": cmd_run, "consistency": cmd_consistency, "table": cmd_table}[a.command](a)
 
 
 if __name__ == "__main__":
