@@ -428,7 +428,7 @@ def run_one(args: dict[str, Any]) -> dict[str, Any]:
     result["metrics"] = score_grid(pred_h, gt_model_h, gt_raw_h, segment_of_window, args["eval_smooth"],
                                    consecutive=args["test_stride"] == 1, horizons=HORIZONS)
     if args.get("source_metrics"):               # eval-only: the same data and sampler must give the source run's stored scores back
-        shared = [k for k in result["metrics"] if k in args["source_metrics"]]
+        shared = [k for k in result["metrics"] if k in args["source_metrics"] and "__mae_db_t" in k]      # MAE keys only (dB; the MSE keys are dB^2)
         result["zero_offset_max_abs_diff_db"] = float(max(abs(result["metrics"][k] - args["source_metrics"][k]) for k in shared)) if shared else None
     if args.get("input_offsets"):
         result["offset_rows"] = offset_sweep(args, build_partition, scaler, savgol, band, profile, score_partition, test_starts, batch, masked,
