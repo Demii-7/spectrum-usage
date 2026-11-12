@@ -18,16 +18,16 @@ K8 = 7
 
 # (label, sha12 of seed 0 [, seed 1]) in display order; FM, K = T = 20, full-range min-max, jet unless noted
 ROWS = [
-    ("Rectangular, hop 127, reflect pad (\\texttt{torch.stft} defaults)", ["2fa9ff9a3d9b"]),
-    ("Rectangular, hop 126", ["c58d32f53cad", "cc28f79072b2"]),
-    ("Tukey(0.25), hop 224, 90--110\\,MHz crop", ["187560732831", "1b987cdc5bb2"]),
-    ("Tukey(0.25), hop 224, detrend (\\texttt{scipy.signal.spectrogram} defaults)", ["3c96fc0dc0cd", "c5a4e4c918ca"]),
-    ("Hann, hop 128, padded (\\texttt{scipy.signal.stft} defaults)", ["1442b5d2022f"]),
+    ("Rect., hop 127 (\\texttt{torch.stft} defaults)", ["2fa9ff9a3d9b"]),
+    ("Rect., hop 126", ["c58d32f53cad", "cc28f79072b2"]),
+    ("Tukey, hop 224, 90--110\\,MHz crop", ["187560732831", "1b987cdc5bb2"]),
+    ("Tukey, hop 224 (\\texttt{scipy} spectrogram defaults)", ["3c96fc0dc0cd", "c5a4e4c918ca"]),
+    ("Hann, hop 128 (\\texttt{scipy} stft defaults)", ["1442b5d2022f"]),
     ("Hamming, hop 128", ["513bd5b54a8f"]),
     ("Hann, hop 126", ["0727eb8f06c1"]),
 ]
 GRAY = "gray"          # rows for the grayscale runs are added from dbspace JSONs whose run key ends in |gray
-LTE = [("LTE, trained from scratch", ["4dfd1d59c176"]), ("LTE, initialized from the FM model", ["dba70d28179a"])]
+LTE = [("LTE, from scratch", ["4dfd1d59c176"]), ("LTE, initialized from FM", ["dba70d28179a"])]
 
 
 def records():
@@ -52,9 +52,12 @@ def mean(xs):
 
 
 def row(shas, recs, dbs, k):
-    pix_m = mean([recs[s][1]["model"]["mse"]["uint8_mean_per_channel"][k] for s in shas if s in recs])
-    pix_l = mean([recs[s][1]["trivial_references"]["lookback_mean"]["mse"]["uint8_mean_per_channel"][k] for s in shas if s in recs])
     got = [dbs[s] for s in shas if s in dbs]
+    # pixel MSE: the collaborator's record where it exists, else the rescorer's (identical to 1e-7 where both exist)
+    pix_m = mean([recs[s][1]["model"]["mse"]["uint8_mean_per_channel"][k] if s in recs else dbs[s]["uint8_mse"]["model"][k]
+                  for s in shas if s in recs or s in dbs])
+    pix_l = mean([recs[s][1]["trivial_references"]["lookback_mean"]["mse"]["uint8_mean_per_channel"][k] if s in recs
+                  else dbs[s]["uint8_mse"]["lookback_mean"][k] for s in shas if s in recs or s in dbs])
 
     def db(name):
         return mean([g["db"][name]["mae_db"][k] for g in got]) if got else None
@@ -75,8 +78,9 @@ def main():
     lines, md = [], ["| rendering | seeds | model MSE@8 (px) | lookback mean, full (px) | lookback mean, tuned (px) | model MAE@8 (dB) | lookback mean, full | lookback mean, tuned | residual AR | persistence | inversion control (dB) |",
                      "|---|---|---|---|---|---|---|---|---|---|---|"]
     body = [(label, shas, K8) for label, shas in ROWS]
-    gray = [(f"Grayscale, C={recs[s][1]['arch']['embed_dim'] if s in recs else d['run_key'].split('|')[3][1:]}, "
-             f"{d['render_spec']}", [s], K8) for s, d in dbs.items() if d.get("gray") for d in [d]]
+    spec_name = {"rect127c~12": "rect., hop 127", "tukey224d": "Tukey, hop 224"}
+    gray = [(f"Gray, C={d['run_key'].split('|')[3][1:]}, {spec_name.get(d['render_spec'], d['render_spec'])}", [s], K8)
+            for s, d in sorted(dbs.items(), key=lambda kv: kv[1]['run_key']) if d.get("gray")]
     for label, shas, k in body + gray:
         r = row(shas, recs, dbs, k)
         lines.append(f"{label} & {r['n']} & {fmt(r['pix_model'])} & {fmt(r['pix_lbm'])} & {fmt(r['pix_lbm_t'])} & {fmt(r['db_model'], 2)} & {fmt(r['db_lbm'], 2)} & {fmt(r['db_lbm_t'], 2)} & "
@@ -96,11 +100,13 @@ def main():
         "\\centering",
         "\\caption{DeepSPred (3D-SwinSTB) trained on the authors' FM data under renderings the paper leaves unspecified, at frame 8. "
         "Pixel columns: MSE on 8-bit colormap images, the paper's metric (paper: 448.76). dB columns: MAE against the true spectrogram, with "
-        "the model's predicted colours converted back to dB; baselines computed directly in dB on the same windows. "
+        "the model's predicted colors converted back to dB; baselines computed directly in dB on the same windows. "
         "Lookback mean: the mean of all 20 input frames (full) or of the most recent $w$ frames, $w$ chosen per frame on the validation block (tuned). Residual AR: lookback mean plus a linear correction fitted on the validation block. "
         "Seeds: runs averaged. LTE rows: 16 input and 16 output frames, frame 8.}",
         "\\label{tab:deepspred-reproduction}",
-        "\\small",
+        "\\footnotesize",
+        "\\setlength{\\tabcolsep}{4pt}",
+        "\\resizebox{\\textwidth}{!}{%",
         "\\begin{tabular}{@{}lcrrrrrrrr@{}}",
         "\\toprule",
         "& & \\multicolumn{3}{c}{MSE (pixels)} & \\multicolumn{5}{c}{MAE (dB)} \\\\",
@@ -112,7 +118,7 @@ def main():
         "\\midrule",
         *lte,
         "\\bottomrule",
-        "\\end{tabular}",
+        "\\end{tabular}}",
         "\\end{table*}",
     ]
     (REPO / "latex" / "deepspred-reproduction-table.tex").write_text("\n".join(tex) + "\n")
