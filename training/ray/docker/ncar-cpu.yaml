@@ -1,0 +1,57 @@
+# Add with stack.yaml, ncar.yaml, and ncar-extra.yaml. GPU services are unchanged.
+services:
+  ray-worker-cpu:
+    image: ${NCAR_CPU_IMAGE:?set NCAR_CPU_IMAGE to the prepared x86_64 CPU image}
+    entrypoint: ["/usr/local/bin/ray-worker"]
+    hostname: "{{.Node.Hostname}}"
+    environment:
+      AWS_ACCESS_KEY_ID_FILE: /run/secrets/minio_root_user
+      AWS_SECRET_ACCESS_KEY_FILE: /run/secrets/minio_root_password
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_REGION: us-east-1
+      AWS_ENDPOINT_URL: http://minio:9000
+      MINIO_ENDPOINT: http://minio:9000
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_BUCKET: ${MINIO_BUCKET:-spectrum-usage}
+      SPECTRUM_AWS_ACCESS_KEY_ID_FILE: /run/secrets/spectrum_access_key
+      SPECTRUM_AWS_SECRET_ACCESS_KEY_FILE: /run/secrets/spectrum_secret_key
+      SPECTRUM_S3_ENDPOINT_URL: ${SPECTRUM_S3_ENDPOINT_URL:-https://chi.tacc.chameleoncloud.org:7480}
+      SPECTRUM_S3_BUCKET: ${SPECTRUM_S3_BUCKET:-spectrum}
+      RAY_ADDRESS: ray-head:6379
+      RAY_NUM_GPUS: "0"
+      RAY_MEMORY: "42949672960"
+      RAY_OBJECT_STORE_MEMORY: "8589934592"
+      NVIDIA_VISIBLE_DEVICES: void
+    volumes:
+      - type: bind
+        source: /home/cc/spectrum-usage
+        target: /workspace/spectrum-usage
+      - type: bind
+        source: /home/cc/ncar-runtime/pylibs
+        target: /workspace/pylibs
+      - type: bind
+        source: /home/cc/ncar-runtime/hf-cache
+        target: /workspace/hf-cache
+      - type: bind
+        source: /home/cc/ncar-runtime/pretrained
+        target: /workspace/pretrained
+      - type: tmpfs
+        target: /dev/shm
+        tmpfs:
+          size: 17179869184
+    secrets: [minio_root_user, minio_root_password, spectrum_access_key, spectrum_secret_key]
+    healthcheck:
+      test: ["CMD-SHELL", "ray health-check --address=ray-head:6379"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    deploy:
+      mode: global
+      placement:
+        constraints:
+          - node.labels.ray.ncar-cpu == true
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+    networks: [ray-overlay]

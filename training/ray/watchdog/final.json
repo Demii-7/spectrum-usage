@@ -348,5 +348,10 @@
   "id": "claude-final-freqcls-tsslcd-rest",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tsslcd_authors --eval-only --resolution 15min --band 600_800 --savgol off --weights-prefix tsslcd-authors-15min-tuned --output-prefix frequency-ablation-tsslcd-classes-records/tsslcd_tuned-600_800 --freq-classes-prefix frequency-ablation-2026-11-classes --freq-tag tsslcd_tuned --seeds 40 41 43 44 --gpu-fraction 0.25 && python -u -m training.ray.tsslcd_authors --eval-only --resolution 15min --band 600_800 --savgol off --weights-prefix tsslcd-authors-15min-default --output-prefix frequency-ablation-tsslcd-classes-records/tsslcd_default-600_800 --freq-classes-prefix frequency-ablation-2026-11-classes --freq-tag tsslcd_default --seeds 40 41 43 44 --gpu-fraction 0.25 && python -u -m training.ray.tsslcd_authors --eval-only --resolution 15min --band 2400_2600 --savgol off --weights-prefix tsslcd-authors-15min-tuned-2400 --output-prefix frequency-ablation-tsslcd-classes-records/tsslcd_tuned-2400_2600 --freq-classes-prefix frequency-ablation-2026-11-classes --freq-tag tsslcd_tuned --seeds 40 41 42 43 44 --gpu-fraction 0.25 && python -u -m training.ray.tsslcd_authors --eval-only --resolution 15min --band 2400_2600 --savgol off --weights-prefix tsslcd-authors-15min-default-2400 --output-prefix frequency-ablation-tsslcd-classes-records/tsslcd_default-2400_2600 --freq-classes-prefix frequency-ablation-2026-11-classes --freq-tag tsslcd_default --seeds 40 41 42 43 44 --gpu-fraction 0.25\"",
   "max_restarts": 2
+ },
+ {
+  "id": "claude-final-freqcls-table-final",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-final-freqcls-tsslcd-rest --then 'bash training/ray/scripts/run_frequency_ablation_classes_table.sh'\"",
+  "max_restarts": 1
  }
 ]

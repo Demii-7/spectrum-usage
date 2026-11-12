@@ -16,7 +16,7 @@ old head addresses or deployment overlays.
 | Older H100 (`mixed-gpu`, explicit sync only) | `standalone` | `129.114.27.86` | 6 configured hosts; 4 leases expired | See lease dates below |
 | TACC (historical inventory, explicit only) | `tacc` | `ray-tacc-1` | Gateway IP reassigned | See historical notes below |
 | RTX/V100 (`uc` sync selector) | `uc` | `192.5.87.177` | 9 hosts | 8 RTX 6000 + 4 V100, 464 CPUs |
-| NCAR (`ncar` sync selector) | `ncar` | `128.117.250.76` | 2 hosts | 2 GH200s, 144 ARM CPUs |
+| NCAR (`ncar` sync selector) | `ncar` | `128.117.250.76` | 4 hosts | 2 GH200s, 192 CPUs (144 ARM + 48 x86) |
 | Three-GPU H100 (`h100-three` sync selector) | `h100three` | `129.114.109.32` | 1 host | 3 H100s; 140 Ray CPUs + 4 control/storage CPUs |
 
 ### Three-GPU H100 allocation
@@ -43,7 +43,7 @@ The worker has its own `pylibs`, `hf-cache`, and `pretrained` host mounts under
 admission; no bulk checkpoint archive is present. The user has not supplied
 a lease end.
 
-### NCAR aarch64 cluster
+### NCAR mixed-architecture cluster
 
 `ray-ncar-1` (`cc@128.117.250.76`, private `172.20.0.252`) runs the head and
 one worker in the independent `ncar` Swarm. The host has 72 ARM CPUs and one
@@ -54,16 +54,17 @@ ssh -F training/ray/docker/ncar-ssh.conf ray-ncar-1
 ssh -F training/ray/docker/ncar-ssh.conf ray-ncar-2
 ```
 
-Use **native aarch64 binaries**. `Dockerfile.ncar` uses Python 3.12, official
+Use **native aarch64 binaries on the GH200 hosts**. `Dockerfile.ncar` uses Python 3.12, official
 ARM PyTorch 2.6.0/CUDA 12.6 and torchvision 0.21.0 wheels, Ray 2.54.0, and
 NumPy 2.1.3. The x86 image and its PyTorch 2.5.1/CUDA 12.4 libraries do not
-apply to this host. Build the isolated Transformers 4.44.2 install with the
-ARM image's Python; do not copy x86 `pylibs` directories. See `NCAR.md`.
+apply to the GH200 hosts. Build the isolated Transformers install with the
+matching node image's Python; do not copy `pylibs` across architectures. See `NCAR.md`.
 
 The worker mounts source/data at `/workspace/spectrum-usage`, and
 `/home/cc/ncar-runtime/{pylibs,hf-cache}` at `/workspace/{pylibs,hf-cache}`.
-It has 64 GiB `/dev/shm` and a 16 GiB object store. NCAR keeps code and data
-only, with no checkpoint archive. Its head and worker use the same ARM image.
+GPU workers have 64 GiB `/dev/shm` and a 16 GiB object store. NCAR keeps code
+and data only, with no bulk checkpoint archive. Its head and GPU workers use
+the same ARM image; CPU-only workers use a separate x86 image.
 The user has not supplied a lease end.
 
 Node 2 is `172.20.0.132`, reached through the head with SSH agent forwarding.
@@ -77,7 +78,22 @@ and 81 converted data files. Fresh offline processes and a network-disabled
 replacement container loaded all backbones before admission. Node 2's
 `/home/cc/ncar-runtime/pretrained` also mounts at `/workspace/pretrained`, so
 its selected TimeRAN weights survive worker recreation. Its `pylibs` and
-`hf-cache` belong to that host. NCAR now advertises 2 GPUs and 144 CPUs.
+`hf-cache` belong to that host.
+
+CPU-only hosts are `ray-ncar-cpu-3` (`172.20.0.136`, 16 CPUs) and
+`ray-ncar-cpu-4` (`172.20.0.196`, 32 CPUs). Reach them through the same SSH
+config with agent forwarding. They run **`ncar_ray-worker-cpu`**, with only
+**`ray.ncar-cpu=true`** and `RAY_NUM_GPUS=0`. Do not give them GPU placement
+labels. `Dockerfile.ncar-cpu` uses Python 3.12.3 / Ray 2.54.0 / cloudpickle
+3.1.2 matching the ARM nodes, with NumPy 2.1.3 and CPU-only PyTorch 2.6.0.
+They have 16 GiB shared memory, 8 GiB object stores, and 40 GiB logical memory.
+Their own x86 `pylibs` and cached backbones passed offline preparation before
+joining. Mixed-architecture NumPy/Torch/Arrow transfers and project baseline
+outputs passed. **`.195` (`ray-ncar-cpu-5`) is not ready and is not registered.**
+
+NCAR now advertises 2 GPUs and 192 CPUs. Include `ncar-cpu.yaml` and export
+`NCAR_CPU_IMAGE` from `/home/cc/ncar-cpu-image-tag` for an intended full stack
+redeploy; do not change the existing ARM services just to add CPU workers.
 
 ### New six-host H100 cluster
 
@@ -289,7 +305,7 @@ ssh -F training/ray/docker/uc-ssh.conf ray-uc-1 \
 ## Sync source code
 
 Run this from the repository root. It fetches `origin` and syncs committed
-source to eighteen hosts across `final`, `uc`, `ncar`, and `h100-three`. The
+source to twenty hosts across `final`, `uc`, `ncar`, and `h100-three`. The
 default excludes the older H100 inventory because four of its leases expired
 at 2026-11-09 13:40 UTC. It also excludes TACC because its gateway IP now
 belongs to the three-GPU allocation:

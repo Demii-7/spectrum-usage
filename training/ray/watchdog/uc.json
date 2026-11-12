@@ -483,5 +483,10 @@
   "id": "claude-uc-freqpred-1",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u evaluation/analysis/frequency_predictability.py --root . --out-dir /tmp/fp_full --upload\"",
   "max_restarts": 2
+ },
+ {
+  "id": "claude-uc-freqcls-table-final",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-uc-freqcls-600-2d-rest claude-uc-freqcls-direct-all claude-uc-freqcls-2400-2d --then 'bash training/ray/scripts/run_frequency_ablation_classes_table.sh'\"",
+  "max_restarts": 1
  }
 ]

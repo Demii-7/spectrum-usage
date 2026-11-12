@@ -21,6 +21,9 @@ TARGETS = {
     "ncar": [
         (f"ray-ncar-{index}", ["-F", str(DOCKER_DIR / "ncar-ssh.conf")])
         for index in range(1, 3)
+    ] + [
+        (f"ray-ncar-cpu-{index}", ["-F", str(DOCKER_DIR / "ncar-ssh.conf")])
+        for index in (3, 4)
     ],
     "final": [
         (f"ray-final-{index}", ["-F", str(DOCKER_DIR / "final-ssh.conf")])

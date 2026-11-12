@@ -1,0 +1,20 @@
+# UC's Python patch/Ray versions must match the existing GPU workers exactly.
+FROM python:3.11.10-slim-bookworm
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates libgomp1 libgl1 \
+    && rm -rf /var/lib/apt/lists/*
+RUN python -m pip install --no-cache-dir torch==2.5.1 torchvision==0.20.1 \
+      --index-url https://download.pytorch.org/whl/cpu
+COPY training/ray/requirements/core.txt /tmp/core-requirements.txt
+RUN python -m pip install --no-cache-dir -r /tmp/core-requirements.txt cloudpickle==3.1.2 \
+    && rm /tmp/core-requirements.txt \
+    && python -c "import platform,sys,ray,numpy,torch,torchvision; assert platform.machine() == 'x86_64'; assert sys.version_info[:3] == (3,11,10); assert ray.__version__ == '2.54.0'; assert numpy.__version__ == '2.1.3'; assert torch.__version__ == '2.5.1+cpu'; assert torch.version.cuda is None"
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    RAY_USAGE_STATS_ENABLED=0 \
+    RAY_LOG_TO_STDERR=1
+WORKDIR /workspace/spectrum-usage
+COPY training/ray/docker/entrypoint-worker.sh /usr/local/bin/ray-worker
+COPY training/ray/docker/load-storage-env.sh /usr/local/bin/load-storage-env.sh
+RUN chmod 0755 /usr/local/bin/ray-worker
+ENTRYPOINT ["/usr/local/bin/ray-worker"]
