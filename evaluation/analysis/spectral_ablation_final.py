@@ -25,6 +25,11 @@ from training.ray.storage import spectrum_s3_client  # noqa: E402
 
 STRONG_PREFIX = "oct2026-spectral-context-15min-strong/"                      # direct models (training.ray.spectral_context_direct)
 TUNED_2D = {"600_800": "oct2026-spectral-context-15min-tuned/", "2400_2600": "oct2026-spectral-context-15min-tuned-2400_2600/"}  # tuned 2D models
+TSSLCD_PREFIX = "oct2026-spectral-context-15min-tsslcd/"                      # TSS-LCD (training.ray.tsslcd_spectral_ablation): <band>/full_context/ and <band>/region_only/<region>/
+PLAN_FILES = {"600_800": "plan_regions_600_800.csv", "2400_2600": "plan_regions_2400_2600.csv"}
+NOTES = {"tsslcd": "TSS-LCD has no per-bin loss: full_context = the full-band default final (eval-only rescoring), region_only = a new run trained and scored with the "
+                   "out-of-region bins (inputs and targets) replaced by noise-floor noise; the loss spans all 800 columns, only the region's bins are scored; "
+                   "authors' default hyperparameters, savgol off, raw targets"}
 FINAL_HORIZONS = (4, 12, 24, 48)
 PREFIXES = {"1min": "oct2026-spectral-context/", "15min": "oct2026-spectral-context-15min/"}
 SEEDS = (40, 41, 42)
@@ -75,6 +80,30 @@ def load_strong(bucket: str = "spectrum") -> pd.DataFrame:
                 rows.append({"band": band, "source": "2d_tuned15", "model": r["model"], "region": r["band_id"], "condition": r["condition"],
                              "seed": int(r["seed"]), "start_mhz": float(r["start_mhz"]), "end_mhz": float(r["end_mhz"]),
                              "mae": float(r["test_mean_horizon_mae_db"])})
+    return pd.concat([pd.DataFrame(rows), load_tsslcd(bucket)], ignore_index=True)
+
+
+def load_tsslcd(bucket: str = "spectrum") -> pd.DataFrame:
+    """Per-cell test MAE (mean over the horizons 4/12/24/48) of the TSS-LCD ablation: the full-context record of a (band, seed) gives every region's MAE,
+    each region-only run its own region's."""
+    client = spectrum_s3_client()
+    rows = []
+    for band, plan_name in PLAN_FILES.items():
+        plan = pd.read_csv(Path(__file__).resolve().parent / plan_name).set_index("band_id")
+        keys = [o["Key"] for page in client.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=f"{TSSLCD_PREFIX}{band}/")
+                for o in page.get("Contents", []) if o["Key"].endswith(".json")]
+        with ThreadPoolExecutor(8) as pool:
+            records = list(pool.map(lambda k: (k, json.loads(client.get_object(Bucket=bucket, Key=k)["Body"].read())), keys))
+        for key, r in records:
+            if not r.get("ok") or not r.get("region_mae"):
+                continue
+            condition = "full_context" if "/full_context/" in key else "region_only"
+            for region, m in r["region_mae"].items():
+                if condition == "region_only" and region != r.get("mask_region", {}).get("band_id"):
+                    continue
+                rows.append({"band": band, "source": "tsslcd_default", "model": "tsslcd", "region": region, "condition": condition, "seed": int(r["seed"]),
+                             "start_mhz": float(plan.loc[region, "start_mhz"]), "end_mhz": float(plan.loc[region, "end_mhz"]),
+                             "mae": float(np.mean([m[f"mae_db_t{h}"] for h in FINAL_HORIZONS]))})
     return pd.DataFrame(rows)
 
 
@@ -125,6 +154,7 @@ def strong_main(out_path: str) -> None:
                                         delta=("delta", "mean"), input_only_minus_region_only=("input_only_minus_region_only", "mean"),
                                         n_seeds=("delta", "count")).reset_index())
     by_region = by_region[by_region["delta"].notna()]
+    by_region["note"] = by_region["model"].map(NOTES)
     indist = in_distribution()
     rows = []
     for (band, source, model), g in by_region.groupby(["band", "source", "model"]):
@@ -145,6 +175,7 @@ def strong_main(out_path: str) -> None:
     summary = pd.DataFrame(rows).merge(indist, on=["band", "model"], how="left")
     refs = indist[indist.model.isin(["revinmlp", "patchtst"])].pivot(index="band", columns="model", values="in_dist_mae").add_prefix("ref_in_dist_mae_")
     summary = summary.merge(refs.reset_index(), on="band", how="left").sort_values(["band", "source", "model"])
+    summary["note"] = summary["model"].map(NOTES)
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     by_region.to_csv(Path(out_path).with_name(Path(out_path).stem + "_by_region.csv"), index=False)
     summary.to_csv(out_path, index=False)

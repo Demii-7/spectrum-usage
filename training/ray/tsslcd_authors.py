@@ -157,8 +157,41 @@ def apply_input_offset(values: np.ndarray, offset_db: float) -> np.ndarray:
     return values if not offset_db else np.asarray(values, dtype=np.float64) + float(offset_db)
 
 
+def region_mask_params(train_values: np.ndarray, n_sites: int, n_bins: int, frequencies: np.ndarray, calibration_ranges,
+                       quantile: float = 0.05, minimum_std_db: float = 0.05) -> list[tuple[float, float]]:
+    """Per-receiver (centre, std) of the replacement noise, estimated on the training rows' calibration (noise-floor) bins: the same estimator as
+    ``training.common.data.apply_2d_spectral_mask`` ('low_tail_gaussian'), applied to each receiver's 200-column block."""
+    calibration = np.zeros(n_bins, dtype=bool)
+    for start, stop in calibration_ranges:
+        calibration |= (frequencies >= float(start)) & (frequencies <= float(stop))
+    if not calibration.any():
+        raise ValueError("the calibration ranges include no bin")
+    params = []
+    for site in range(n_sites):
+        samples = np.asarray(train_values[:, site * n_bins:(site + 1) * n_bins][:, calibration], dtype=np.float64).reshape(-1)
+        centre = float(np.quantile(samples, quantile))
+        tail = samples[samples <= np.quantile(samples, min(0.25, max(quantile * 4, quantile)))]
+        median = float(np.median(tail))
+        std = max(float(1.4826 * np.median(np.abs(tail - median))), float(minimum_std_db))
+        params.append((centre, std))
+    return params
+
+
+def apply_region_mask(values: np.ndarray, keep_bins: np.ndarray, params: list[tuple[float, float]], n_bins: int, seed: int) -> np.ndarray:
+    """Copy of ``values`` (T, sites * n_bins) dBm with every bin outside ``keep_bins`` (bool, n_bins) of every receiver replaced by Gaussian noise at
+    that receiver's noise floor (the same bins at all receivers). Masking is applied to the raw values, before the min-max scaler is fit, so the scaler
+    sees the masked series; the in-region columns are untouched."""
+    out = np.array(values, dtype=np.float64, copy=True)
+    rng = np.random.default_rng(int(seed))
+    dropped = np.flatnonzero(~np.asarray(keep_bins, dtype=bool))
+    for site, (centre, std) in enumerate(params):
+        columns = site * n_bins + dropped
+        out[:, columns] = rng.normal(centre, std, size=(len(out), len(columns)))
+    return out
+
+
 def build_partition(root: str, partition: str, scaler: MinMax | None, savgol: str, band: str = "600_800", profile: str = "1min",
-                    input_offset_db: float = 0.0):
+                    input_offset_db: float = 0.0, spectral_mask: dict | None = None):
     """Series for one partition: min-max normalized raw (``raw``) and filtered (``model``), concatenated over valid
     segments, plus the segment boundaries in that concatenated coordinate. The scaler is fit here on the training rows.
 
@@ -167,6 +200,9 @@ def build_partition(root: str, partition: str, scaler: MinMax | None, savgol: st
     prof = PROFILES[profile]
     values, _, valid = load_partition(root, partition, band, profile=profile)
     values = apply_input_offset(values, input_offset_db)
+    if spectral_mask:                      # region-only ablation: the other bins (inputs AND targets) become noise-floor noise, before the scaler is fit
+        values = apply_region_mask(values, spectral_mask["keep"], spectral_mask["params"], spectral_mask["n_bins"],
+                                   int(spectral_mask["seed"]) + int(spectral_mask["offsets"][partition]))
     segments = contiguous_segments(valid, prof["context"] + prof["future"])
     if not segments:
         raise ValueError(f"no gap-free run of {prof['context'] + prof['future']} steps in the {partition} partition")
@@ -314,8 +350,29 @@ def run_one(args: dict[str, Any]) -> dict[str, Any]:
     if profile != "1min":
         from training.ray.powder15 import ensure_powder15
         ensure_powder15(band, root, tuple(SITES))
-    train_raw, train_model, train_bounds, scaler = build_partition(root, "train", None, savgol, band=band, profile=profile)
-    test_raw, test_model, test_bounds, _ = build_partition(root, score_partition, scaler, savgol, band=band, profile=profile)
+    spectral_mask = None
+    if args.get("mask_region"):            # region-only ablation (opt-in; see training/ray/tsslcd_spectral_ablation.py)
+        region = args["mask_region"]
+        ref_values, _, ref_valid = load_partition(root, "train", band, profile=profile)
+        n_bins = ref_values.shape[1] // len(SITES)
+        frequencies = float(band.split("_")[0]) + 0.5 + np.arange(n_bins)
+        keep = (frequencies >= float(region["start_mhz"]) - 1e-6) & (frequencies <= float(region["end_mhz"]) + 1e-6)
+        params = region_mask_params(ref_values[ref_valid], len(SITES), n_bins, frequencies, region["calibration_ranges"])
+        spectral_mask = {"keep": keep, "params": params, "n_bins": n_bins, "seed": int(region.get("seed", seed)),
+                         "offsets": {"train": 0, "validation": 1, "test": 2}}
+        masked_ref = apply_region_mask(ref_values[ref_valid], keep, params, n_bins, spectral_mask["seed"])
+        out_cols = np.concatenate([site * n_bins + np.flatnonzero(~keep) for site in range(len(SITES))])
+        in_cols = np.concatenate([site * n_bins + np.flatnonzero(keep) for site in range(len(SITES))])
+        result["mask_region"] = {"band_id": region["band_id"], "start_mhz": float(region["start_mhz"]), "end_mhz": float(region["end_mhz"]),
+                                 "bins_kept": int(keep.sum()), "bins_replaced": int((~keep).sum()), "noise_params_db": params,
+                                 "calibration_ranges": region["calibration_ranges"], "targets_masked": True,
+                                 "mask_check": {"in_region_unchanged": bool(np.array_equal(masked_ref[:, in_cols], ref_values[ref_valid][:, in_cols])),
+                                                "out_of_region_mean_db": float(masked_ref[:, out_cols].mean()),
+                                                "out_of_region_std_db": float(masked_ref[:, out_cols].std()),
+                                                "original_out_of_region_mean_db": float(ref_values[ref_valid][:, out_cols].mean()),
+                                                "original_out_of_region_std_db": float(ref_values[ref_valid][:, out_cols].std())}}
+    train_raw, train_model, train_bounds, scaler = build_partition(root, "train", None, savgol, band=band, profile=profile, spectral_mask=spectral_mask)
+    test_raw, test_model, test_bounds, _ = build_partition(root, score_partition, scaler, savgol, band=band, profile=profile, spectral_mask=spectral_mask)
     n_cols = train_model.shape[1]
     train_starts = window_starts(train_bounds, CONTEXT + FUTURE)
     test_starts = window_starts(test_bounds, CONTEXT + FUTURE, args["test_stride"])
@@ -427,6 +484,22 @@ def run_one(args: dict[str, Any]) -> dict[str, Any]:
     segment_of_window = np.searchsorted([b for _, b in test_bounds], test_starts, side="right")
     result["metrics"] = score_grid(pred_h, gt_model_h, gt_raw_h, segment_of_window, args["eval_smooth"],
                                    consecutive=args["test_stride"] == 1, horizons=HORIZONS)
+    if args.get("per_bin_output") or args.get("score_regions"):       # opt-in: per-column MAE (raw target, no eval smoothing) and per-region MAE
+        column_mae = np.abs(pred_h - gt_raw_h).mean(axis=0)            # (horizons, columns) dB
+        n_bins_out = n_cols // len(SITES)
+        frequencies_out = float(band.split("_")[0]) + 0.5 + np.arange(n_bins_out)
+        if args.get("per_bin_output"):
+            result["per_column_mae"] = {"horizons": list(HORIZONS), "n_sites": len(SITES), "n_bins": n_bins_out,
+                                        "frequencies_mhz": frequencies_out.tolist(), "mae_db": np.round(column_mae, 6).tolist()}
+        if args.get("score_regions"):
+            result["region_mae"] = {}
+            for reg in args["score_regions"]:
+                inside = np.flatnonzero((frequencies_out >= float(reg["start_mhz"]) - 1e-6) & (frequencies_out <= float(reg["end_mhz"]) + 1e-6))
+                columns = np.concatenate([site * n_bins_out + inside for site in range(len(SITES))])
+                result["region_mae"][reg["band_id"]] = {"n_columns": int(len(columns)), "n_windows": int(len(pred_h)),
+                                                        **{f"mae_db_t{h}": float(column_mae[j, columns].mean()) for j, h in enumerate(HORIZONS)}}
+        if device.type == "cuda":
+            result["peak_gpu_mb"] = round(torch.cuda.max_memory_allocated() / 1e6, 1)
     if args.get("source_metrics"):               # eval-only: the same data and sampler must give the source run's stored scores back
         shared = [k for k in result["metrics"] if k in args["source_metrics"] and "__mae_db_t" in k]      # MAE keys only (dB; the MSE keys are dB^2)
         result["zero_offset_max_abs_diff_db"] = float(max(abs(result["metrics"][k] - args["source_metrics"][k]) for k in shared)) if shared else None
