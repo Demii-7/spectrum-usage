@@ -275,8 +275,8 @@
   "max_restarts": 3
  },
  {
-  "id": "claude-final-offsetx-poller-1",
-  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/offset_extra_poller.py --interval 600 --max-hours 24\"",
+  "id": "claude-final-offsetx-poller-2",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-final-offsetx-rcl-1 --then 'python -u training/ray/scripts/offset_extra_poller.py --interval 600 --max-hours 24'\"",
   "max_restarts": 2
  }
 ]
