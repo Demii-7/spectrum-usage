@@ -193,5 +193,15 @@
   "id": "claude-uc-paired-final-1",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && while [ $(date -u +%s) -lt $(date -u -d 2026-11-13T00:00:00Z +%s) ]; do sleep 300; done; bash training/ray/scripts/run_spatial_paired.sh\"",
   "max_restarts": 3
+ },
+ {
+  "id": "claude-uc-julyall-llm-w2",
+  "entrypoint": "python -u -m training.ray.transfer_all run --source direct --models ofa ofa_scratch ofa_rand timeran_lp moment_lp --groups powder --no-core-powder --intervals evaluation/analysis/transfer_july_intervals.csv --prefix transfer-all-july-2026 --skip-done --gpu-fraction 1.0 --max-parallel 6",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-julyall-timellm-w2",
+  "entrypoint": "python -u -m training.ray.transfer_all run --source direct --models timellm --seeds 40 41 42 --groups powder --no-core-powder --intervals evaluation/analysis/transfer_july_intervals.csv --prefix transfer-all-july-2026 --skip-done --gpu-fraction 1.0 --max-parallel 4",
+  "max_restarts": 4
  }
 ]

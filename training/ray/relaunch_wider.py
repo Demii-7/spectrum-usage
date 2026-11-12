@@ -2,7 +2,7 @@
 
     ray job submit --submission-id claude-<cluster>-relaunch-1 -- python -u -m training.ray.relaunch_wider --spec-file training/ray/relaunch/<cluster>.json
 
-Spec file: list of ``{"base": id, "new_id": id, "entrypoint": cmd, "trigger": "now" | "after_completion"}``. For each spec (one thread each) the
+Spec file: list of ``{"base": id, "new_id": id, "entrypoint": cmd, "trigger": "now" | "after_completion" | "gpus_free:N"}``. For each spec (one thread each) the
 newest submission of the chain ``base``, ``base-r1`` ... is found; with ``after_completion`` the job's log is polled until one more finished
 unit (a line containing " ok=") has appeared, so the restart lands right after a task finished (that slot loses nothing). The running driver is then
 stopped and ``new_id`` is submitted. Entrypoints must be resumable (``--skip-done``). If the old job has already ended nothing is stopped and
@@ -42,6 +42,16 @@ def handle(client, spec, interval):
     if cur is None:
         print(f"[relaunch] {tag}: no job in chain {spec['base']}, submitting directly", flush=True)
     else:
+        if str(spec.get("trigger", "")).startswith("gpus_free:"):
+            import ray
+            need, ok = float(spec["trigger"].split(":")[1]), 0
+            while status_of(client, cur) in ("PENDING", "RUNNING"):
+                free = ray.available_resources().get("GPU", 0.0)
+                ok = ok + 1 if free >= need else 0
+                print(f"[relaunch] {tag}: free GPU {free:.2f} (need {need}), {ok}/3", flush=True)
+                if ok >= 3:
+                    break
+                time.sleep(interval)
         if spec.get("trigger") == "after_completion":
             seen = client.get_job_logs(cur).count(" ok=")
             print(f"[relaunch] {tag}: waiting for a task to finish on {cur} ({seen} done)", flush=True)
@@ -75,6 +85,8 @@ def main():
     from ray.job_submission import JobSubmissionClient
 
     client = JobSubmissionClient(a.address)
+    import ray
+    ray.init(address="auto", logging_level="ERROR")
     specs = json.loads((Path(a.repo_root) / a.spec_file).read_text())
     ts = [threading.Thread(target=handle, args=(client, s, a.interval)) for s in specs]
     [t.start() for t in ts]

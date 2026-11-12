@@ -1,0 +1,14 @@
+[
+ {
+  "base": "claude-uc-julyall-llm-3",
+  "new_id": "claude-uc-julyall-llm-w2",
+  "entrypoint": "python -u -m training.ray.transfer_all run --source direct --models ofa ofa_scratch ofa_rand timeran_lp moment_lp --groups powder --no-core-powder --intervals evaluation/analysis/transfer_july_intervals.csv --prefix transfer-all-july-2026 --skip-done --gpu-fraction 1.0 --max-parallel 6",
+  "trigger": "gpus_free:4"
+ },
+ {
+  "base": "claude-uc-julyall-timellm-2",
+  "new_id": "claude-uc-julyall-timellm-w2",
+  "entrypoint": "python -u -m training.ray.transfer_all run --source direct --models timellm --seeds 40 41 42 --groups powder --no-core-powder --intervals evaluation/analysis/transfer_july_intervals.csv --prefix transfer-all-july-2026 --skip-done --gpu-fraction 1.0 --max-parallel 4",
+  "trigger": "gpus_free:4"
+ }
+]
