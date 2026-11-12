@@ -463,5 +463,20 @@
   "id": "claude-uc-solo-origins-3",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-uc-solo-sts-600-3 claude-uc-solo-sts-2400-3 --then 'python -u -m training.ray.spatial15_origins --bands 600_800 2400_2600 --models stsprednet --seeds 40 41 42 --prefix spatial15-solo-oct2026 --output-prefix spatial15-solo-origin-errors-oct2026 --skip-done --memory-gb 0 --max-parallel 8' && bash training/ray/scripts/run_solo_vs_core4.sh\"",
   "max_restarts": 2
+ },
+ {
+  "id": "claude-uc-freqcls-600-2d-rest",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.frequency_ablation_classes --models vanillalstm residualvanillalstm lstmattn linearar2d residuallinearar2d --seeds 40 41 43 44 --bands 600_800 --gpu-fraction 0.25 --max-parallel 6 --skip-done\"",
+  "max_restarts": 3
+ },
+ {
+  "id": "claude-uc-freqcls-direct-all",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.frequency_ablation_classes --models revinmlp revinmlp_mix patchtst patchtst_joint itransformer nlinear dlinear --seeds 40 41 42 43 44 --bands 600_800 2400_2600 --gpu-fraction 0.25 --max-parallel 8 --skip-done\"",
+  "max_restarts": 3
+ },
+ {
+  "id": "claude-uc-freqcls-2400-2d",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.frequency_ablation_classes --models vanillalstm residualvanillalstm lstmattn linearar2d residuallinearar2d --seeds 40 41 42 43 44 --bands 2400_2600 --gpu-fraction 0.25 --max-parallel 6 --skip-done\"",
+  "max_restarts": 3
  }
 ]
