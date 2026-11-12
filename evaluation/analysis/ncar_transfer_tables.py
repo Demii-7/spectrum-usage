@@ -387,6 +387,8 @@ def build(a) -> None:
     both = finish(pd.concat([rec_s, grp], ignore_index=True))
     put("ncar_transfer_all_levels.csv", both)
     put("ncar_transfer_target_level.csv", finish(tgt_s))
+    put("ncar_transfer_target_seed_level.csv", tgt[MODEL_KEYS + ["target", "receiver", "horizon", "seed", "n_windows", "mae_db", "mse_db2",
+                                                                  "rmse_pooled_db", "mape_linear_pct"]])
 
     # per-bin files (S3 only) per shift and model, with an index
     index = []
@@ -530,6 +532,47 @@ def merge(a) -> None:
     print(f"[merge] transfer_combined.csv: {len(comb)} model rows + {sum(len(x) for x in added)} rows from items 6/7")
 
 
+def check(a) -> None:
+    """Local: compare the new tables with stored values; print and save every |difference| > 0.01 dB (MAE).
+    Stored: ``transfer_all_raw.csv`` (per target and seed, A/B/C/Cm, transfer_all + transfer15) and ``transfer_july_all_regimes.csv``."""
+    d = Path(a.dir)
+    res = Path("evaluation/results")
+    rows = []
+    tgt = pd.read_csv(d / "ncar_transfer_target_seed_level.csv")
+    raw = pd.read_csv(res / "transfer_all_raw.csv")
+    raw = raw[raw.regime.isin(list(CONDITION))]
+    raw = raw[raw.apply(lambda r: r.seed in SEEDS.get(r.model, DEFAULT_SEEDS), axis=1)]
+    raw["source"] = np.where(raw.trained_horizon.isna(), "rolled", "direct")
+    raw = raw[(raw.source == "rolled") | (raw.trained_horizon == raw.horizon)]
+    old = raw.groupby(["target", "regime", "rep", "model", "source", "horizon", "seed"]).agg(stored=("mae", "mean")).reset_index()
+    old["target"] = old.target.str.replace("powder/guesthouse-nuc1/", "powder/guesthouse/").str.replace("powder/law73-nuc1/", "powder/law73/")
+    new = tgt[tgt.horizon.astype(str).isin([str(h) for h in HORIZONS])].copy()
+    new["horizon"] = new.horizon.astype(int)
+    new["regime"] = new.condition.map({v: k for k, v in CONDITION.items()})
+    m = new.merge(old, on=["target", "regime", "rep", "model", "source", "horizon", "seed"], how="inner")
+    m["diff"] = m.mae_db - m.stored
+    m["n_seeds"] = 1
+    print(f"[check] transfer_all_raw: {len(m)} matched (target, model, condition, horizon, seed) rows; max |diff| {m['diff'].abs().max():.2e}")
+    big = m[m["diff"].abs() > 0.01]
+    rows.append(big.assign(stored_table="transfer_all_raw.csv")[["stored_table", "target", "model", "rep", "source", "condition", "horizon",
+                                                                 "n_seeds", "stored", "mae_db", "diff"]])
+    jv = d / "transfer_july_all_regimes_v2.csv"
+    if jv.exists():
+        new_j = pd.read_csv(jv)
+        old_j = pd.read_csv(res / "transfer_july_all_regimes.csv")
+        mj = new_j[new_j.complete].merge(old_j[old_j.complete], on=["group", "band", "regime", "rep", "model"], suffixes=("", "_stored"))
+        mj["diff"] = mj.mae_t12 - mj.mae_t12_stored
+        print(f"[check] transfer_july_all_regimes: {len(mj)} matched complete rows; max |diff| {mj['diff'].abs().max() if len(mj) else float('nan'):.2e}")
+        bj = mj[mj["diff"].abs() > 0.01]
+        rows.append(bj.assign(stored_table="transfer_july_all_regimes.csv", target=bj.group, condition=bj.regime, horizon=12,
+                              stored=bj.mae_t12_stored, mae_db=bj.mae_t12)[["stored_table", "target", "model", "rep", "source", "condition",
+                                                                            "horizon", "stored", "mae_db", "diff"]])
+    out = pd.concat(rows, ignore_index=True)
+    out.to_csv(d / "ncar_transfer_check_differences.csv", index=False)
+    pd.set_option("display.width", 250)
+    print(out.to_string() if len(out) else "[check] no difference above 0.01 dB")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="command", required=True)
@@ -539,8 +582,10 @@ def main() -> None:
     b.add_argument("--stamp", default=None)
     b.add_argument("--out-dir", default="/workspace/spectrum-usage/runs/ncar-tables")
     sub.add_parser("merge")
+    c = sub.add_parser("check")
+    c.add_argument("--dir", required=True, help="a build output directory (copied locally)")
     a = p.parse_args()
-    {"build": build, "merge": merge}[a.command](a)
+    {"build": build, "merge": merge, "check": check}[a.command](a)
 
 
 if __name__ == "__main__":
