@@ -82,7 +82,8 @@ def targets(repo_root: str, groups: list[str], bands: list[str], intervals: str 
 
 
 def target_key(t: dict[str, Any]) -> str:
-    return f"{t['platform']}/{t['site']}/{t['run']}/{t['band']}"
+    window = f"-{t['window']}" if t.get("window") and t["window"] != "oct" else ""          # e.g. the core receivers on the second test week
+    return f"{t['platform']}/{t['site']}/{t['run']}{window}/{t['band']}"
 
 
 def prepare_target(root: str, t: dict[str, Any]):
@@ -94,7 +95,9 @@ def prepare_target(root: str, t: dict[str, Any]):
         from training.ray.powder15 import SPATIAL_NODES, ensure_powder15
 
         ensure_powder15(t["band"], root, SPATIAL_NODES)
-        return t15.target_task(t["band"], t["site"]), t15.target_file(root, t["band"], t["site"])
+        from training.ray.ncar_cells import week_task
+
+        return week_task(t15.target_task(t["band"], t["site"]), t.get("window")), t15.target_file(root, t["band"], t["site"])
     te.convert(root, t)
     return te.task_for(t), te.converted_path(root, t)
 
@@ -176,6 +179,10 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
                     base = output_base(args["prefix"], regime, t, rep, label, seed, horizon_tag)
                     client.put_object(Bucket=bucket, Key=f"{base}/summary.json", Body=json.dumps(summary, default=str, indent=1).encode())
                     client.put_object(Bucket=bucket, Key=f"{base}/per_origin.csv", Body=scored["per_origin"].to_csv(index=False).encode())
+                    if args.get("save_arrays"):          # NCAR batch: per-window arrays and per-bin metrics (training.ray.ncar_cells)
+                        from training.ray import ncar_cells
+
+                        ncar_cells.save_cell(client, bucket, base, ncar_cells.matrices(result, rep), ncar_cells.band_frequencies(t["band"]))
                     record["mae"].setdefault(regime, {}).update({str(h): scored["metrics"][str(h)]["mae_db"] for h in horizons})
         record["ok"] = True
     except Exception as error:
@@ -216,6 +223,10 @@ def cmd_run(a: argparse.Namespace) -> None:
         except Exception:
             revision = "unknown"
     tgts = targets(a.repo_root, a.groups, a.bands, getattr(a, "intervals", None) or EXTERNAL_INTERVALS, not getattr(a, "no_core_powder", False))
+    if getattr(a, "core_windows", None):                    # the four core receivers in distribution (oct) and/or on the second week (week2)
+        from training.ray.ncar_cells import core_targets
+
+        tgts += [t for w in a.core_windows for t in core_targets(a.bands, w)]
     if a.targets:
         tgts = [t for t in tgts if any(s in target_key(t) for s in a.targets)]
     if a.source == "rolled":
@@ -251,7 +262,8 @@ def cmd_run(a: argparse.Namespace) -> None:
     if a.skip_done:
         jobs = [j for j in jobs if not done(j)]
     print(f"[transfer-all] {len(tgts)} targets, {len(groups)} model groups, {len(jobs)} jobs, revision {revision[:12]}", flush=True)
-    shared = {"repo_root": a.repo_root, "bucket": bucket, "prefix": a.prefix, "code_revision": revision, "threads": a.threads}
+    shared = {"repo_root": a.repo_root, "bucket": bucket, "prefix": a.prefix, "code_revision": revision, "threads": a.threads,
+              "save_arrays": bool(getattr(a, "save_arrays", False))}
     ray.init(address=a.address, ignore_reinit_error=True)
     queue, pending, ok, failed = list(jobs), {}, 0, 0
 
@@ -295,6 +307,8 @@ def main(argv=None) -> None:
     r.add_argument("--reps", nargs="+", default=["1d", "2d"], choices=["1d", "2d"])
     r.add_argument("--seeds", type=int, nargs="+", default=[40, 41, 42, 43, 44])
     r.add_argument("--horizons", type=int, nargs="+", default=[1, 4, 12, 24, 48], help="trained horizons (direct source)")
+    r.add_argument("--core-windows", nargs="+", choices=["oct", "week2"], help="also score the four core receivers (in distribution) on these weeks")
+    r.add_argument("--save-arrays", action="store_true", help="also write forecasts.npz and per_bin.csv per cell (training.ray.ncar_cells)")
     r.add_argument("--regimes", nargs="+", choices=["A", "B", "C", "Cm"])
     r.add_argument("--gpu-fraction", type=float, default=None, help="override (default: 0 for the cheap models, per-model for the LLM ones)")
     r.add_argument("--memory-gb", type=float, default=8.0)

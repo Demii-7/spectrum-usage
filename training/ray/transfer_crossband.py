@@ -181,17 +181,21 @@ def cmd_run(a: argparse.Namespace) -> None:
         base_jobs = [j for j in base_jobs if not _baseline_done(client, bucket, a.prefix, j["target"])]
     print(f"[crossband] {len(tgts)} targets, {len(groups)} model groups, {len(jobs)} jobs + {len(base_jobs)} baseline jobs, revision {revision[:12]}",
           flush=True)
-    shared = {"repo_root": a.repo_root, "bucket": bucket, "prefix": a.prefix, "code_revision": revision, "threads": a.threads}
+    shared = {"repo_root": a.repo_root, "bucket": bucket, "prefix": a.prefix, "code_revision": revision, "threads": a.threads,
+              "save_arrays": bool(a.save_arrays)}
     ray.init(address=a.address, ignore_reinit_error=True)
     memory = int(a.memory_gb * 2 ** 30)
-    work = [("baseline", j) for j in base_jobs] + [("model", j) for j in jobs]
+    work = ([] if a.no_baselines else [("baseline", j) for j in base_jobs]) + [("model", j) for j in jobs]
     pending, ok, failed = {}, 0, 0
     queue = list(work)
     while queue or pending:
         while queue and len(pending) < a.max_parallel:
             kind, j = queue.pop(0)
             fn = baseline_job if kind == "baseline" else job
-            pending[ray.remote(num_cpus=2, num_gpus=0, memory=memory, max_retries=1)(fn).remote(j, shared)] = (kind, j)
+            model = j["entries"][0]["model"] if kind == "model" else None
+            gpu = (a.gpu_fraction if a.gpu_fraction is not None else ta.GPU_FRACTION.get(model, 0.0)) if kind == "model" else 0.0
+            mem = int(24 * 2 ** 30) if model in ta.GPU_FRACTION else memory
+            pending[ray.remote(num_cpus=2, num_gpus=gpu, memory=mem, max_retries=1)(fn).remote(j, shared)] = (kind, j)
         finished, _ = ray.wait(list(pending), num_returns=1)
         kind, j = pending.pop(finished[0])
         try:
@@ -236,6 +240,9 @@ def main(argv=None) -> None:
     r.add_argument("--regime-c", action="store_true", help="also run C and Cm (normalizer refit on the 24 h before the first origin)")
     r.add_argument("--intervals", default=INTERVALS_CSV)
     r.add_argument("--memory-gb", type=float, default=6.0)
+    r.add_argument("--gpu-fraction", type=float, default=None, help="GPU share per model job (default: 0, the per-model share for the LLM models)")
+    r.add_argument("--save-arrays", action="store_true", help="also write forecasts.npz and per_bin.csv per cell (training.ray.ncar_cells)")
+    r.add_argument("--no-baselines", action="store_true", help="skip the persistence/lookback-mean jobs (computed elsewhere)")
     r.add_argument("--threads", type=int, default=2)
     r.add_argument("--max-parallel", type=int, default=24)
     r.add_argument("--skip-done", action="store_true")
