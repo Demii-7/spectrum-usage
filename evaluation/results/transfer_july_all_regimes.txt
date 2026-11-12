@@ -1,0 +1,156 @@
+
+2400_2600: MAE at t+12 (dB), mean over the targets of a group, seeds averaged; baselines:
+group         core4  other
+model                     
+lookbackmean  1.049  1.744
+persistence   1.091  1.540
+group                           core4  other
+model               rep regime              
+autoformer_csa      2d  A       1.342  2.685
+                        B       1.342  2.685
+                        C       1.195  2.083
+                        Cm      1.342  2.685
+dlinear             2d  A       0.696  1.024
+                        B       0.662  1.027
+                        C       0.653  1.027
+                        Cm      0.662  1.027
+linearar1d          1d  A       0.684  1.032
+                        B       0.675  1.036
+                        C       0.665  1.036
+                        Cm      0.675  1.036
+linearar2d          2d  A       0.689  1.014
+                        B       0.680  1.009
+                        C       0.661  1.005
+                        Cm      0.680  1.012
+lstmattn            2d  A       1.297  3.022
+                        B       1.989  2.381
+                        C       1.332  2.356
+                        Cm      2.139  2.586
+moment_lp           2d  A       0.710  1.141
+nlinear             2d  A       0.672  1.044
+                        B       0.672  1.044
+                        C       0.662  1.044
+                        Cm      0.672  1.044
+ofa                 2d  A       0.651  1.004
+ofa_rand            2d  A       0.647  1.007
+ofa_scratch         2d  A       0.664  1.010
+patchtst            2d  A       0.646  1.002
+patchtst_joint      2d  A       0.723  1.091
+patchtst_noinorm    2d  A       0.644  1.047
+                        B       0.694  0.962
+                        C       0.689  1.066
+                        Cm      0.674  0.972
+patchtst_nopatch    2d  A       0.638  0.975
+residuallinearar1d  1d  A       0.684  1.049
+                        B       0.684  1.049
+                        C       0.669  1.048
+                        Cm      0.684  1.049
+residuallinearar2d  2d  A       0.656  0.953
+                        B       0.656  0.953
+                        C       0.636  0.943
+                        Cm      0.656  0.953
+residualnonlinear2d 2d  A       0.665  1.020
+                        B       0.665  1.020
+                        C       0.668  1.040
+                        Cm      0.665  1.020
+residualvanillalstm 1d  A       0.733  1.171
+                        B       0.733  1.171
+                        C       0.783  1.225
+                        Cm      0.733  1.171
+                    2d  A       1.138  1.853
+                        B       1.138  1.853
+                        C       1.003  1.588
+                        Cm      1.138  1.853
+revinmlp            2d  A       0.636  0.972
+temporalconvnet     2d  A       0.706  1.131
+                        B       0.827  1.128
+                        C       0.745  1.168
+                        Cm      0.813  1.143
+timellm             2d  A       0.639  0.949
+timeran_lp          2d  A       0.656  1.034
+vanillalstm         2d  A       1.325  4.323
+                        B       1.373  2.851
+                        C       1.211  1.945
+                        Cm      1.570  2.929
+vanillalstm1d       1d  A       0.775  1.457
+                        B       1.067  1.425
+                        C       1.013  1.510
+                        Cm      1.016  1.421
+
+600_800: MAE at t+12 (dB), mean over the targets of a group, seeds averaged; baselines:
+group         core4  other
+model                     
+lookbackmean  1.074  1.234
+persistence   1.043  1.131
+group                           core4  other
+model               rep regime              
+autoformer_csa      2d  A       1.238  2.099
+                        B       1.238  2.099
+                        C       1.199  1.436
+                        Cm      1.238  2.099
+dlinear             2d  A       0.789  0.810
+                        B       0.782  0.787
+                        C       0.779  0.785
+                        Cm      0.782  0.787
+linearar1d          1d  A       0.799  0.811
+                        B       0.794  0.805
+                        C       0.792  0.803
+                        Cm      0.794  0.804
+linearar2d          2d  A       0.806  0.838
+                        B       0.790  0.783
+                        C       0.786  0.779
+                        Cm      0.791  0.782
+lstmattn            2d  A       1.687  4.212
+                        B       1.729  1.937
+                        C       1.239  1.402
+                        Cm      1.740  1.900
+moment_lp           2d  A       0.786  0.739
+nlinear             2d  A       0.779  0.787
+                        B       0.779  0.787
+                        C       0.779  0.787
+                        Cm      0.779  0.787
+ofa                 2d  A       0.767  0.732
+ofa_rand            2d  A       0.784  0.758
+ofa_scratch         2d  A       0.763  0.709
+patchtst            2d  A       0.775  0.732
+patchtst_joint      2d  A       0.871  0.824
+patchtst_noinorm    2d  A       0.860  1.892
+                        B       0.829  0.807
+                        C       0.802  0.752
+                        Cm      0.833  0.802
+patchtst_nopatch    2d  A       0.776  0.744
+residuallinearar1d  1d  A       0.799  0.809
+                        B       0.799  0.809
+                        C       0.795  0.806
+                        Cm      0.799  0.809
+residuallinearar2d  2d  A       0.788  0.783
+                        B       0.788  0.783
+                        C       0.783  0.779
+                        Cm      0.788  0.783
+residualnonlinear2d 2d  A       0.767  0.722
+                        B       0.767  0.722
+                        C       0.773  0.734
+                        Cm      0.767  0.722
+residualvanillalstm 1d  A       0.805  0.787
+                        B       0.805  0.787
+                        C       0.833  0.780
+                        Cm      0.805  0.787
+                    2d  A       1.092  1.135
+                        B       1.092  1.135
+                        C       0.998  1.117
+                        Cm      1.092  1.135
+revinmlp            2d  A       0.754  0.720
+temporalconvnet     2d  A       0.955  0.863
+                        B       0.817  0.809
+                        C       0.811  0.779
+                        Cm      0.829  0.808
+timellm             2d  A       0.776  0.754
+timeran_lp          2d  A       0.797  0.782
+vanillalstm         2d  A       1.569  4.078
+                        B       1.224  1.629
+                        C       1.135  1.225
+                        Cm      1.341  1.705
+vanillalstm1d       1d  A       0.865  1.930
+                        B       0.830  0.830
+                        C       0.876  0.777
+                        Cm      0.843  0.819

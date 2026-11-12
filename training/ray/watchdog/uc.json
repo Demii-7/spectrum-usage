@@ -238,5 +238,10 @@
   "id": "claude-uc-dswin15s-tables-1",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-uc-dswin15s-score-1 --then 'bash training/ray/scripts/run_spatial15_tables.sh'\"",
   "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-rescore-tcn42-1",
+  "entrypoint": "python -u -m training.ray.rescore --sources p15tuned --models temporalconvnet --seeds 42 --skip-done --max-parallel 2 --gpu-fraction 0.5 --no-pin",
+  "max_restarts": 3
  }
 ]

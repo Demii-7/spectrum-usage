@@ -28,6 +28,7 @@ oct checkpoint autoformer_csa (2d)                    0.898  0.934  1.037     0.
 heuristic      persistence                            1.064  1.165  1.249     1.159
 TSS-LCD        tsslcd (tuned winner, savgol off)      1.145  1.170  1.170     1.162
                tsslcd (authors defaults, savgol off)  1.148  1.171  1.174     1.164
+direct         timellm                                0.846    NaN    NaN       NaN
 
 600_800: 1-minute, every test window MSE (dB^2), mean over seeds
 horizon                                                   1     15     60  mean_all
@@ -58,18 +59,20 @@ oct checkpoint lstmattn (2d)                          3.655  4.000  4.599     4.
 TSS-LCD        tsslcd (authors defaults, savgol off)  4.490  4.686  4.637     4.604
                tsslcd (tuned winner, savgol off)      4.543  4.741  4.674     4.652
 heuristic      persistence                            5.206  5.843  6.378     5.809
+direct         timellm                                2.963    NaN    NaN       NaN
 
 2400_2600: 1-minute, every test window MAE (dB), mean over seeds
 horizon                                              1     15     60  mean_all
 family    model                                                               
 heuristic median (tuned)                         0.663  0.716  0.824     0.734
-direct    ofa                                    0.665  0.720  0.829     0.738
+direct    timellm                                0.663  0.716  0.833     0.737
+          ofa                                    0.665  0.720  0.829     0.738
           revinmlp                               0.668  0.724  0.834     0.742
           patchtst                               0.670  0.725  0.833     0.743
 heuristic kalman                                 0.671  0.728  0.835     0.745
           mean (tuned)                           0.681  0.730  0.835     0.749
-direct    residualnonlinear2d                    0.683  0.732  0.834     0.750
-          residuallinearar2d                     0.681  0.730  0.838     0.750
+direct    residuallinearar2d                     0.681  0.730  0.838     0.750
+          residualnonlinear2d                    0.683  0.732  0.834     0.750
           nlinear                                0.674  0.732  0.849     0.752
 heuristic median (full 60 min)                   0.692  0.734  0.851     0.759
 direct    dlinear                                0.682  0.751  0.856     0.763
@@ -84,6 +87,7 @@ heuristic kalman                                 2.491  2.931  3.822     3.081
 direct    residualnonlinear2d                    2.523  2.926  3.824     3.091
           ofa                                    2.498  2.919  3.876     3.098
           patchtst                               2.517  2.928  3.853     3.099
+          timellm                                2.516  2.923  3.858     3.099
           residuallinearar2d                     2.547  2.943  3.842     3.111
           nlinear                                2.508  2.946  3.886     3.114
 heuristic mean (tuned)                           2.568  2.949  3.824     3.114

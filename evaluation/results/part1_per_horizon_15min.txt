@@ -38,7 +38,10 @@ TSS-LCD             tsslcd (authors defaults, savgol off)     1.118  1.130  1.16
 heuristic (untuned) mean (full lookback, 96)                  1.072  1.103  1.180  1.258  1.197     1.162
 rolled-out          autoformer_csa (2d)                       0.999  1.000  1.200  1.361  1.525     1.217
 heuristic           train_mean                                2.644  2.644  2.642  2.644  2.655     2.646
-direct              moment_lp                                   NaN  0.600  0.740  0.838  0.884       NaN
+direct              itransformer                                NaN  0.582  0.714  0.814  0.968       NaN
+                    moment_lp                                   NaN  0.600  0.740  0.838  0.884       NaN
+                    revinmlp_mix                                NaN  0.581  0.717  0.810  0.870       NaN
+                    revinmlp_nbr                                NaN  0.571  0.707  0.793  0.877       NaN
                     timeran_lp                                  NaN  0.624  0.765  0.856  0.914       NaN
 
 600_800: 15-minute MSE (dB^2), mean over seeds
@@ -80,7 +83,10 @@ TSS-LCD             tsslcd (authors defaults, savgol off)      3.811   4.163   4
 heuristic           persistence                                1.042   1.695   3.448   6.407   9.513     4.421
 rolled-out          autoformer_csa (2d)                        2.809   2.828   4.009   5.094   7.570     4.462
 heuristic           train_mean                                15.798  15.793  15.779  15.816  15.931    15.824
-direct              moment_lp                                    NaN   1.285   1.917   2.355   2.585       NaN
+direct              itransformer                                 NaN   1.241   1.810   2.262   3.040       NaN
+                    moment_lp                                    NaN   1.285   1.917   2.355   2.585       NaN
+                    revinmlp_mix                                 NaN   1.206   1.822   2.247   2.515       NaN
+                    revinmlp_nbr                                 NaN   1.187   1.794   2.205   2.558       NaN
                     timeran_lp                                   NaN   1.343   1.955   2.390   2.670       NaN
 
 2400_2600: 15-minute MAE (dB), mean over seeds
@@ -107,6 +113,7 @@ rolled-out          residuallinearar2d (2d)                   0.541  0.591  0.68
                     linearar2d (2d)                           0.550  0.603  0.684  0.733  0.750     0.664
 direct              linearar2d                                0.544  0.629  0.679  0.759  0.739     0.670
 rolled-out          vanillalstm1d (1d)                        0.448  0.571  0.728  0.842  0.907     0.699
+TSS-LCD             tsslcd (tuned winner, savgol off)         0.684  0.697  0.713  0.762  0.770     0.725
 heuristic           median (tuned)                            0.451  0.604  0.976  0.945  0.956     0.786
                     mean (tuned)                              0.440  0.603  0.963  1.049  0.968     0.805
                     ewma                                      0.457  0.616  0.957  1.327  1.005     0.872
@@ -121,7 +128,10 @@ TSS-LCD             tsslcd (authors defaults, savgol off)     0.928  0.898  0.95
 rolled-out          residualvanillalstm (2d)                  0.470  0.585  0.910  1.388  1.713     1.013
                     autoformer_csa (2d)                       0.961  1.255  1.094  1.170  1.101     1.116
 heuristic           train_mean                                2.861  2.863  2.863  2.850  2.847     2.857
-direct              moment_lp                                   NaN  0.576  0.645  0.681  0.699       NaN
+direct              itransformer                                NaN  0.562  0.635  0.688  0.749       NaN
+                    moment_lp                                   NaN  0.576  0.645  0.681  0.699       NaN
+                    revinmlp_mix                                NaN  0.524  0.602  0.648  0.680       NaN
+                    revinmlp_nbr                                NaN  0.526  0.604  0.647  0.669       NaN
                     timeran_lp                                  NaN  0.551  0.634  0.667  0.679       NaN
 
 2400_2600: 15-minute MSE (dB^2), mean over seeds
@@ -148,6 +158,7 @@ rolled-out          residuallinearar2d (2d)                    1.542   1.831   2
                     temporalconvnet (2d)                       1.142   1.757   2.377   2.726   2.857     2.172
                     linearar2d (2d)                            1.562   1.871   2.314   2.556   2.639     2.188
                     vanillalstm1d (1d)                         1.194   1.949   2.809   3.278   3.534     2.553
+TSS-LCD             tsslcd (tuned winner, savgol off)          2.218   2.332   2.460   2.892   2.921     2.564
 heuristic           mean (tuned)                               1.156   2.217   4.994   5.154   4.595     3.623
                     median (tuned)                             1.271   2.331   5.423   4.684   4.765     3.695
 rolled-out          vanillalstm (2d)                           1.824   2.223   3.730   6.536   7.184     4.299
@@ -162,5 +173,8 @@ heuristic           kalman                                     1.077   2.130   4
 rolled-out          autoformer_csa (2d)                        4.034   7.033   5.155   5.962   5.181     5.473
 heuristic           persistence                                1.282   2.356   4.999   8.908  10.565     5.622
                     train_mean                                24.712  24.696  24.536  24.138  24.109    24.438
-direct              moment_lp                                    NaN   1.762   2.226   2.413   2.439       NaN
+direct              itransformer                                 NaN   1.708   2.149   2.405   2.697       NaN
+                    moment_lp                                    NaN   1.762   2.226   2.413   2.439       NaN
+                    revinmlp_mix                                 NaN   1.510   1.899   2.150   2.302       NaN
+                    revinmlp_nbr                                 NaN   1.506   1.921   2.137   2.231       NaN
                     timeran_lp                                   NaN   1.721   2.164   2.280   2.280       NaN
