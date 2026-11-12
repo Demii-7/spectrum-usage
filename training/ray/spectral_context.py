@@ -51,17 +51,19 @@ def regional_config(
 ) -> dict[str, Any]:
     """Conditions: ``full_context`` (no mask, loss on the region's bins), ``region_only`` (other bins' INPUTS replaced by noise-floor values, loss on the region's bins:
     the existing ablation), ``input_only`` (the same input mask but the loss over ALL bins with the real targets: separates context as an input from a different
-    training target). ``noise_ranges`` = calibration ranges of the replacement noise (default: the 600-800 ``NOISE_RANGES``)."""
+    training target), ``region_only_fullloss`` (v2 of the rolled-out 2D ablation: the out-of-region bins are noise-floor values in the inputs AND the targets and the loss
+    spans ALL bins, so the model learns to emit noise-level values for the other bins and the autoregressive rollout feeds back values from the distribution it was trained on).
+    ``noise_ranges`` = calibration ranges of the replacement noise (default: the 600-800 ``NOISE_RANGES``)."""
     config = deepcopy(base_config)
     bounds = [[float(region["start_mhz"]), float(region["end_mhz"])]]
     config["data"]["loss_frequency_ranges"] = bounds
-    if condition in ("region_only", "input_only"):
-        if condition == "input_only":
+    if condition in ("region_only", "input_only", "region_only_fullloss"):
+        if condition in ("input_only", "region_only_fullloss"):
             config["data"].pop("loss_frequency_ranges", None)             # loss over every bin
         config["data"]["mask"] = {
             "frequency_ranges": bounds,
             "replacement": "low_tail_gaussian",
-            "real_targets": condition == "input_only",                    # inputs masked, targets the real series
+            "real_targets": condition == "input_only",                    # inputs masked; targets the real series (input_only) or the masked series (region_only_fullloss)
             "calibration_frequency_ranges": NOISE_RANGES if noise_ranges is None else noise_ranges,
             "low_tail_quantile": 0.05,
             "minimum_noise_std_db": 0.05,
@@ -72,6 +74,24 @@ def regional_config(
     else:
         raise ValueError(f"Unknown spectral-context condition: {condition}")
     return config
+
+
+def out_of_region_stats(config: dict[str, Any], output: Path, region: dict[str, Any]) -> dict[str, float]:
+    """Smoke/diagnostic numbers for the bins OUTSIDE the region (``region_only_fullloss``): per horizon the mean of the model's predictions, the mean of the
+    (masked, noise-floor) targets and the MAE between them, over every out-of-region bin, so one can check that the trained model emits noise-floor-level values there."""
+    metadata_path = next((output / "forecasts").glob("*_metadata.json"))
+    stem = metadata_path.name.removesuffix("_metadata.json")
+    frequencies = np.asarray(json.loads(metadata_path.read_text(encoding="utf-8"))["frequencies_mhz"], dtype=float)
+    outside = ~((frequencies >= float(region["start_mhz"]) - 1e-6) & (frequencies <= float(region["end_mhz"]) + 1e-6))
+    stats: dict[str, float] = {}
+    with np.load(output / "forecasts" / f"{stem}_predictions.npz") as predictions, np.load(output / "forecasts" / f"{stem}_targets.npz") as targets:
+        for horizon in sorted(int(value) for value in config["windowing"]["horizons"]):
+            prediction = np.asarray(predictions[f"t_plus_{horizon}"])[:, outside].astype(np.float64)
+            target = np.asarray(targets[f"t_plus_{horizon}"])[:, outside].astype(np.float64)
+            stats[f"oor_pred_mean_db_t{horizon}"] = float(prediction.mean())
+            stats[f"oor_target_mean_db_t{horizon}"] = float(target.mean())
+            stats[f"oor_mae_db_t{horizon}"] = float(np.abs(prediction - target).mean())
+    return stats
 
 
 def region_metrics_from_forecasts(

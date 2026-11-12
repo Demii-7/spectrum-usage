@@ -40,3 +40,19 @@ def test_input_only_masks_inputs_keeps_real_targets_and_full_loss_and_noise_rang
     assert only["data"]["mask"]["real_targets"] is True
     assert only["data"]["mask"]["calibration_frequency_ranges"] == [[2400.5, 2496.5]]
     assert regional_config(base, region, "region_only", 41)["data"]["mask"]["real_targets"] is False
+
+
+def test_region_only_fullloss_masks_inputs_and_targets_with_the_loss_over_all_bins_and_leaves_the_other_conditions_unchanged():
+    base = {"data": {"value": 1}}
+    region = {"band_id": "R3", "start_mhz": 622.5, "end_mhz": 641.5}
+    v2 = regional_config(base, region, "region_only_fullloss", 42, noise_ranges=[[2400.5, 2496.5]])
+    assert "loss_frequency_ranges" not in v2["data"]
+    assert v2["data"]["mask"]["real_targets"] is False                      # targets are the masked (noise-floor) series
+    assert v2["data"]["mask"]["frequency_ranges"] == [[622.5, 641.5]]
+    assert v2["data"]["mask"]["calibration_frequency_ranges"] == [[2400.5, 2496.5]]
+    assert v2["data"]["mask"]["seed"] == 42
+    # the existing conditions keep their meaning
+    ro = regional_config(base, region, "region_only", 42)
+    assert ro["data"]["loss_frequency_ranges"] == [[622.5, 641.5]] and ro["data"]["mask"]["real_targets"] is False
+    assert regional_config(base, region, "input_only", 42)["data"]["mask"]["real_targets"] is True
+    assert "mask" not in regional_config(base, region, "full_context", 42)["data"]

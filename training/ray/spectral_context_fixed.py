@@ -123,6 +123,10 @@ def ablation_entry(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
             eval_dir.mkdir()
             evaluate_one_model(config, model, eval_dir, checkpoint, skip_plots=True)
             result.update(region_metrics_from_forecasts(config, eval_dir, region))
+            if job["condition"] == "region_only_fullloss":
+                from training.ray.spectral_context import out_of_region_stats
+
+                result.update(out_of_region_stats(config, eval_dir, region))
         try:
             import torch
 
@@ -163,7 +167,7 @@ def launch(args: argparse.Namespace) -> None:
     regions = non_noise_regions(args.regions)
     if args.regions_only:
         regions = [r for r in regions if str(r["band_id"]) in set(args.regions_only)]
-    jobs = make_jobs(entries, regions, args.seeds)
+    jobs = make_jobs(entries, regions, args.seeds, tuple(args.conditions))
     done = set()
     if args.skip_done:
         for page in client.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=args.output_prefix.strip("/") + "/"):
@@ -220,6 +224,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--prefixes", nargs="+", default=["checkpoints-oct2026", "checkpoints-oct2026-r2"])
     parser.add_argument("--regions", type=Path, default=Path("evaluation/analysis/plan_regions_600_800.csv"))
     parser.add_argument("--regions-only", nargs="+", help="Only these band ids (e.g. R1 R3)")
+    parser.add_argument("--conditions", nargs="+", default=list(CONDITIONS), choices=("full_context", "region_only", "region_only_fullloss"),
+                        help="conditions to train (default: the original pair); region_only_fullloss = v2 of the rolled-out ablation: noise-floor bins in inputs and targets, loss over all bins")
     parser.add_argument("--noise-from-plan", action="store_true",
                         help="calibrate the replacement noise on the plan's noise-floor regions instead of the hardcoded 600-800 ranges (needed for 2400-2600)")
     parser.add_argument("--test-start", default=DEFAULT_TEST_START)
