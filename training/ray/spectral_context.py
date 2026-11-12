@@ -35,20 +35,33 @@ def non_noise_regions(path: Path) -> list[dict[str, Any]]:
     return frame.loc[~noise].to_dict(orient="records")
 
 
+def noise_ranges_from_plan(path: Path) -> list[list[float]]:
+    """The noise-floor regions of a region plan as calibration ranges (the 2400-2600 plan: R1; 600-800 keeps the hardcoded ``NOISE_RANGES``)."""
+    frame = pd.read_csv(path)
+    noise = frame["is_noise_floor"].astype(str).str.lower().isin({"true", "1"})
+    return [[float(r.start_mhz), float(r.end_mhz)] for r in frame.loc[noise].itertuples()]
+
+
 def regional_config(
     base_config: dict[str, Any],
     region: dict[str, Any],
     condition: str,
     seed: int,
+    noise_ranges: list[list[float]] | None = None,
 ) -> dict[str, Any]:
+    """Conditions: ``full_context`` (no mask, loss on the region's bins), ``region_only`` (other bins' INPUTS replaced by noise-floor values, loss on the region's bins:
+    the existing ablation), ``input_only`` (the same input mask but the loss over ALL bins with the real targets: separates context as an input from a different
+    training target). ``noise_ranges`` = calibration ranges of the replacement noise (default: the 600-800 ``NOISE_RANGES``)."""
     config = deepcopy(base_config)
     bounds = [[float(region["start_mhz"]), float(region["end_mhz"])]]
     config["data"]["loss_frequency_ranges"] = bounds
-    if condition == "region_only":
+    if condition in ("region_only", "input_only"):
+        if condition == "input_only":
+            config["data"].pop("loss_frequency_ranges", None)
         config["data"]["mask"] = {
             "frequency_ranges": bounds,
             "replacement": "low_tail_gaussian",
-            "calibration_frequency_ranges": NOISE_RANGES,
+            "calibration_frequency_ranges": NOISE_RANGES if noise_ranges is None else noise_ranges,
             "low_tail_quantile": 0.05,
             "minimum_noise_std_db": 0.05,
             "seed": int(seed),

@@ -83,7 +83,8 @@ def ablation_entry(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     result = {"model": model, "seed": job["seed"], "condition": job["condition"],
               "band_id": str(region["band_id"]), "start_mhz": float(region["start_mhz"]),
               "end_mhz": float(region["end_mhz"]), "source_prefix": job.get("source_prefix", ""),
-              "resolution": args.get("resolution", "1min"), "config_source": job.get("config_source", "inherited_1min_run_costs")}
+              "resolution": args.get("resolution", "1min"), "config_source": job.get("config_source", "inherited_1min_run_costs"),
+              "band": args.get("band")}
     started = time.time()
     try:
         if job.get("parameters") is not None:
@@ -112,7 +113,7 @@ def ablation_entry(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
             ensure_powder15(args["band"], args["repo_root"])
             config = apply_powder15(config, args["band"], args["repo_root"], list(HORIZONS))
             config = set_lookback_and_horizon(config, model, None)
-        config = regional_config(config, region, job["condition"], job["seed"])
+        config = regional_config(config, region, job["condition"], job["seed"], noise_ranges=args.get("noise_ranges"))
         config[model]["train"]["seed"] = job["seed"]
         with tempfile.TemporaryDirectory(prefix="spectral-ctx-") as scratch:
             run_dir = Path(scratch) / "run"
@@ -148,7 +149,7 @@ def launch(args: argparse.Namespace) -> None:
     import ray
 
     from .registry import get_model_spec
-    from .spectral_context import non_noise_regions
+    from .spectral_context import noise_ranges_from_plan, non_noise_regions
     from .storage import spectrum_s3_client
 
     client = spectrum_s3_client()
@@ -179,7 +180,8 @@ def launch(args: argparse.Namespace) -> None:
     ray.init(address=args.address, ignore_reinit_error=True)
     worker_args = {"repo_root": args.repo_root, "bucket": bucket, "output_prefix": args.output_prefix,
                    "test_start": args.test_start, "test_end": args.test_end, "test_stride": args.test_stride,
-                   "device": args.device, "resolution": args.resolution, "band": args.band}
+                   "device": args.device, "resolution": args.resolution, "band": args.band,
+                   "noise_ranges": noise_ranges_from_plan(args.regions) if args.noise_from_plan else None}
     def submit(job):
         spec = get_model_spec(job["model"])
         resources = dict(spec.resources.as_ray())
@@ -218,6 +220,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--prefixes", nargs="+", default=["checkpoints-oct2026", "checkpoints-oct2026-r2"])
     parser.add_argument("--regions", type=Path, default=Path("evaluation/analysis/plan_regions_600_800.csv"))
     parser.add_argument("--regions-only", nargs="+", help="Only these band ids (e.g. R1 R3)")
+    parser.add_argument("--noise-from-plan", action="store_true",
+                        help="calibrate the replacement noise on the plan's noise-floor regions instead of the hardcoded 600-800 ranges (needed for 2400-2600)")
     parser.add_argument("--test-start", default=DEFAULT_TEST_START)
     parser.add_argument("--test-end", default="2026-11-03T20:00:00Z")
     parser.add_argument("--test-stride", type=int, default=None, help="Override test stride (default: as selected)")
