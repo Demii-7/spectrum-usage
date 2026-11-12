@@ -258,5 +258,10 @@
   "id": "claude-uc-spec2d-v2-table-1",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-uc-spec2d-v2-1 --then 'bash training/ray/scripts/run_spectral_ablation_2d_v2_table.sh'\"",
   "max_restarts": 1
+ },
+ {
+  "id": "claude-uc-freqabl-42-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.frequency_ablation --models revinmlp linearar2d residuallinearar2d vanillalstm residualvanillalstm lstmattn temporalconvnet autoformer_csa revinmlp_mix patchtst patchtst_joint itransformer nlinear dlinear --seeds 42 --skip-done --gpu-fraction 0.1 --max-parallel 8\"",
+  "max_restarts": 4
  }
 ]
