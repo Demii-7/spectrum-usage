@@ -211,7 +211,8 @@ def baseline_tables(per_bin_base: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFr
 
 def group_baselines(model_rec: pd.DataFrame, base_rec: pd.DataFrame, keys: list[str]) -> pd.DataFrame:
     """Baseline metrics averaged over exactly the receivers each model row covers (receiver-weighted), per horizon."""
-    covered = model_rec[keys + ["receiver", "horizon"]].drop_duplicates()
+    cols = list(dict.fromkeys(keys + ["receiver", "horizon"]))
+    covered = model_rec[cols].drop_duplicates()
     rows = []
     for name in BASELINES:
         sub = base_rec[base_rec.baseline.str.startswith(name)].copy()
