@@ -18,7 +18,7 @@ delta without them. Models: the tuned 15-minute 2D rolled-out finals (``tuning/p
 per trained horizon); the four core receivers' October test week, stride 1.
 
 Output per (model, band, seed[, horizon]): ``<prefix>/<model>/<band>/seed-N[/h<h>]/per_origin.npz`` (per receiver, region and mode the per-origin, per-horizon
-mean absolute error over the region's bins; origin times; the real-mode per-bin errors for the identity check) and ``summary.json``.
+mean absolute error over the region's bins; origin times and start rows; the real-mode per-bin errors over the origins whose lookback lies inside the test week, for the identity check) and ``summary.json``.
 
     python -m training.ray.frequency_ablation --models revinmlp residuallinearar2d vanillalstm --seeds 42 --skip-done --gpu-fraction 0.1
 """
@@ -151,7 +151,9 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
                 collected[f"times|{receiver}"] = times
                 real = predict(source, data, starts)
                 targets = {h: real[h][1] for h in real}
-                collected[f"binmae|{receiver}"] = np.stack([np.abs(real[h][0] - real[h][1]).mean(axis=0) for h in horizons])      # (H, bins)
+                collected[f"starts|{receiver}"] = np.asarray(starts, dtype=np.int64)
+                main = np.asarray(starts) >= int(parameters["lookback"])        # the stored per-bin tables score windows whose whole lookback lies inside the test week
+                collected[f"binmae|{receiver}"] = np.stack([np.abs(real[h][0][main] - real[h][1][main]).mean(axis=0) for h in horizons])      # (H, bins), stored-comparable origins
                 for region_id, mask in masks.items():
                     collected[f"mae|{receiver}|{region_id}|real"] = np.stack(
                         [region_errors(real[h][0], targets[h], mask) for h in horizons], axis=1).astype(np.float32)

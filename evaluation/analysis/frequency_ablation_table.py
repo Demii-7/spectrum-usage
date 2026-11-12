@@ -27,6 +27,7 @@ BANDS = ("600_800", "2400_2600")
 MODES = ("shift96", "shift210")
 HORIZONS = (4, 12, 24, 48)
 BLOCK, DRAWS, WRAP = 96, 2000, 210
+LO_MAIN = 96          # origins whose whole lookback lies inside the test week (the origin set of the stored per-bin tables)
 RNG = np.random.default_rng(0)
 CONTROLS = ("revinmlp", "linearar2d", "residuallinearar2d")
 PLANS = {"600_800": "evaluation/analysis/plan_regions_600_800.csv", "2400_2600": "evaluation/analysis/plan_regions_2400_2600.csv"}
@@ -86,7 +87,10 @@ def block_bootstrap(delta):
 def identity_check(client, model, band, seed, data):
     """Largest and mean absolute difference between the recomputed real-mode per-bin errors (mean over receivers) and the stored rescored per-bin file."""
     diffs = []
+    direct = model in ("revinmlp", "revinmlp_mix", "patchtst", "patchtst_joint", "itransformer", "nlinear", "dlinear")
     for h in data["horizons"]:
+        if direct and h != 48:                     # a direct final is scored on the origins valid for ITS horizon in the stored table; only t+48 shares our origin set
+            continue
         keys = ([f"rescored/per-bin/direct/15min/{band}/2d/{model}/h{h}/seed-{seed}.csv"] if model in ("revinmlp", "revinmlp_mix", "patchtst", "patchtst_joint", "itransformer", "nlinear", "dlinear")
                 else [f"rescored/per-bin/p15tuned/{band}/2d/{model}/seed-{seed}.csv"])
         try:
@@ -98,6 +102,8 @@ def identity_check(client, model, band, seed, data):
         if len(stored) != len(mine):
             return None
         diffs.append(np.abs(stored.mae_db.to_numpy() - mine))
+    if not diffs:
+        return None
     d = np.concatenate(diffs)
     return float(d.max()), float(d.mean())
 
@@ -126,6 +132,13 @@ def main() -> None:
         horizons = first["horizons"]
         plan = plans[band].set_index("band_id")
         for s in seeds:
+            if model.startswith("tsslcd"):             # no stored per-bin file: the eval-only run records the largest difference to its source run's stored scores
+                try:
+                    diff = json.loads(get(client, f"{args.prefix.rstrip('/')}/{model}/{band}/seed-{s}/summary.json")).get("zero_shift_max_abs_diff_db")
+                except Exception:
+                    diff = None
+                checks.append({"model": model, "band": band, "seed": s, "identity_max_abs_diff_db": diff, "identity_mean_abs_diff_db": None, "control": False})
+                continue
             check = identity_check(client, model, band, s, loaded[s])
             checks.append({"model": model, "band": band, "seed": s, "identity_max_abs_diff_db": None if check is None else check[0],
                            "identity_mean_abs_diff_db": None if check is None else check[1], "control": model in CONTROLS})
@@ -135,7 +148,10 @@ def main() -> None:
             for mode in ("real", *MODES):
                 for h in horizons:
                     series[(region, mode, h)] = np.mean([loaded[s]["mae"][(r, region, mode, h)] for s in seeds for r in receivers], axis=0)
-        n = len(series[(regions[0], "real", horizons[0])])
+        n_all = len(series[(regions[0], "real", horizons[0])])
+        lo = 0 if model.startswith("tsslcd") else LO_MAIN          # TSS-LCD windows are scored as in the paper (all windows of its padded test partition)
+        series = {k: v[lo:] for k, v in series.items()}
+        n = n_all - lo
         for region in regions:
             for mode in MODES:
                 for label in (*horizons, "mean"):
@@ -145,7 +161,7 @@ def main() -> None:
                     delta = shifted - real
                     rows.append({"model": model, "band": band, "region": region, "start_mhz": plan.loc[region, "start_mhz"], "end_mhz": plan.loc[region, "end_mhz"],
                                  "n_bins": int(plan.loc[region, "bin_count"]), "horizon": label, "mode": mode, "mae_real": float(real.mean()), "mae_shifted": float(shifted.mean()),
-                                 "delta": float(delta.mean()), "delta_no_wrap": float(delta[WRAP:].mean()), "n_origins": n, "n_seeds": len(seeds), "seeds": " ".join(map(str, seeds)),
+                                 "delta": float(delta.mean()), "delta_no_wrap": float(delta[WRAP - lo:].mean()), "n_origins": n, "n_seeds": len(seeds), "seeds": " ".join(map(str, seeds)),
                                  "n_receivers": len(receivers)})
         frame = pd.DataFrame([r for r in rows if r["model"] == model and r["band"] == band])
         for mode in MODES:
@@ -157,7 +173,7 @@ def main() -> None:
                     b = block_bootstrap(d)
                     draws.append(b)
                     deltas.append(float(d.mean()))
-                    dnw.append(float(d[WRAP:].mean()))
+                    dnw.append(float(d[WRAP - lo:].mean()))
                     lo, hi = np.percentile(b, [2.5, 97.5])
                     up_ci += lo > 0
                     down_ci += hi < 0
