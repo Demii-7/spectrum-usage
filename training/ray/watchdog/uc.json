@@ -243,5 +243,10 @@
   "id": "claude-uc-rescore-tcn42-1",
   "entrypoint": "python -u -m training.ray.rescore --sources p15tuned --models temporalconvnet --seeds 42 --skip-done --max-parallel 2 --gpu-fraction 0.5 --no-pin",
   "max_restarts": 3
+ },
+ {
+  "id": "claude-uc-july-tcn42-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.transfer_all run --source rolled --models temporalconvnet --reps 2d --seeds 42 --groups powder --no-core-powder --intervals evaluation/analysis/transfer_july_intervals.csv --prefix transfer-all-july-2026 --skip-done --gpu-fraction 0.25 --max-parallel 4 && bash training/ray/scripts/run_catchup_tables.sh\"",
+  "max_restarts": 3
  }
 ]
