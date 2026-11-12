@@ -109,6 +109,7 @@ def main(argv=None) -> None:
     p.add_argument("--skip-done", action="store_true")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--prefix", default=PREFIX)
+    p.add_argument("--code-revision", default=None, help="the commit synced to the cluster (recorded in every summary)")
     p.add_argument("--address", default="auto")
     p.add_argument("--repo-root", default="/workspace/spectrum-usage")
     a = p.parse_args(argv)
@@ -120,11 +121,7 @@ def main(argv=None) -> None:
     from training.ray.storage import spectrum_s3_client
 
     client, bucket = spectrum_s3_client(), os.environ.get("SPECTRUM_S3_BUCKET", "spectrum")
-    try:
-        revision = subprocess.run(["git", "-C", a.repo_root, "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
-    except Exception:
-        revision = open("/workspace/spectrum-usage/../spectrum-source-revision").read().strip() if os.path.exists(
-            "/workspace/spectrum-usage/../spectrum-source-revision") else "unknown"
+    revision = a.code_revision or "unknown"            # the NCAR snapshot is not a git clone: pass the synced commit
     sets = model_groups(client, bucket, a.stage, a.bands, a.models, a.horizons)
     jobs = build_jobs(a.repo_root, a.groups, sets, a.targets)
     overrides = {k: float(v) for k, v in (s.split("=") for s in a.gpu_share)}
