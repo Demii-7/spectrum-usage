@@ -36,6 +36,13 @@ TRAIN_RUNS = {                                                   # the Appendix-
     'gray32-rect127c': ['--render-spec', 'rect127c~12', '--gray', '--embed-dim', '32'],
     'gray96-rect127c': ['--render-spec', 'rect127c~12', '--gray', '--embed-dim', '96'],
 }
+# Transfer replicates on the authors' LTE data (paper Algorithm 4), scipy-spectrogram-default rendering, K = T = 16 as the existing pair
+# (scratch 4dfd1d59c176, FM-initialized dba70d28179a, both seed 0): name -> (seed, FM checkpoint to start from or None)
+LTE_RUNS = {
+    'lte-scratch-s1': (1, None), 'lte-scratch-s2': (2, None),
+    'lte-tl-s1': (1, 'c5a4e4c918ca'),                            # FM seed 1
+    'lte-tl-s2': (2, '3c96fc0dc0cd'),                            # no FM seed 2 exists: FM seed 0, fine-tuned with seed 2
+}
 
 
 def _lock(name: str):
@@ -140,13 +147,23 @@ def task(spec: dict) -> dict:
         if spec['kind'] == 'score':
             result = _score(client, bucket, prefix, spec['sha12'])
         else:
-            name, extra = spec['name'], TRAIN_RUNS[spec['name']]
-            ds_dir = stage_dataset(client, bucket, 'fm')
+            name = spec['name']
+            if name in LTE_RUNS:
+                seed, init = LTE_RUNS[name]
+                ds_dir = stage_dataset(client, bucket, 'lte')
+                extra = ['--render-spec', 'tukey224d', '--dataset', 'lte']
+                if init:
+                    init_rec = record_for(init)[1]
+                    extra += ['--init-from', str(stage_checkpoint(client, bucket, init, init_rec.get('checkpoint', {}).get('sha256')))]
+                horizon = '16'
+            else:
+                seed, extra, horizon = spec.get('seed', 0), TRAIN_RUNS[name], '20'
+                ds_dir = stage_dataset(client, bucket, 'fm')
             build_cache(ds_dir, extra[1], 'full', '--gray' in extra)
             results = OUT / 'campaign' / f'{name}.json'
             results.parent.mkdir(parents=True, exist_ok=True)
-            cmd = [sys.executable, '-u', 'training/DeepSPred/repro/run_paper_faithful.py', '--data', str(ds_dir), '--horizon', '20',
-                   '--seed', str(spec.get('seed', 0)), '--range-scope', 'full', '--results', str(results), *extra]
+            cmd = [sys.executable, '-u', 'training/DeepSPred/repro/run_paper_faithful.py', '--data', str(ds_dir), '--horizon', horizon,
+                   '--seed', str(seed), '--range-scope', 'full', '--results', str(results), *extra]
             proc = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True)
             log = proc.stdout[-20000:] + proc.stderr[-6000:]
             client.put_object(Bucket=bucket, Key=f'{prefix}/train/{name}/log.txt', Body=log.encode())
@@ -177,7 +194,8 @@ def main(argv=None) -> None:
     import ray
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--score', nargs='*', default=[], help='checkpoint sha12s to score in dB')
-    p.add_argument('--train', nargs='*', default=[], choices=sorted(TRAIN_RUNS), help='training runs (each scored in dB afterwards)')
+    p.add_argument('--train', nargs='*', default=[], choices=sorted(TRAIN_RUNS) + sorted(LTE_RUNS),
+                   help='training runs (each scored in dB afterwards)')
     p.add_argument('--prefix', default='deepspred-repro/2026-11-12')
     p.add_argument('--bucket', default=os.environ.get('SPECTRUM_S3_BUCKET', 'spectrum'))
     args = p.parse_args(argv)
