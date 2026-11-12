@@ -43,6 +43,7 @@ PIPELINE_NAME = {"ofa": "ofa", "timellm": "spectrumllm", "patchtst": "patchtst",
                  "residualnonlinear2d": "residualnonlinear2d", "ofa_rand": "ofa", "ofa_scratch": "ofa",
                  # simple baselines and PatchTST ablations (cheap tests of what makes OFA and PatchTST work)
                  "residuallinearar2d": "residuallinearar2d", "linearar2d": "linearar2d", "nlinear": "nlinear", "revinmlp": "revinmlp",
+                 "revinmlp_mix": "revinmlp", "itransformer": "itransformer",
                  "patchtst_noinorm": "patchtst", "patchtst_joint": "patchtst", "patchtst_nopatch": "patchtst",
                  # TimeRAN (MOMENT continued-pretrained on RAN telemetry) and its controls; all MOMENT-1-small, 512-step padded context
                  "timeran_lp": "timeran", "timeran_ff": "timeran", "moment_lp": "timeran", "moment_ff": "timeran", "moment_rand": "timeran"}
@@ -53,7 +54,8 @@ PIPELINE_NAME = {"ofa": "ofa", "timellm": "spectrumllm", "patchtst": "patchtst",
 #   patchtst_noinorm  no per-window normalization
 #   patchtst_joint    every patch token spans all channels (instead of one shared model per channel)
 #   patchtst_nopatch  one token per time step (patch length 1, stride 1)
-CONTROLS = {"ofa_rand": {"backbone_init": "random", "backbone_trainable": "ofa"},
+CONTROLS = {"revinmlp_mix": {"channel_mixing": True},      # RevIN-MLP plus one residual linear mixing across the bins
+            "ofa_rand": {"backbone_init": "random", "backbone_trainable": "ofa"},
             "ofa_scratch": {"backbone_init": "random", "backbone_trainable": "all"},
             "patchtst_noinorm": {"instance_norm": False},
             "patchtst_joint": {"channel_mode": "joint"},
@@ -80,19 +82,21 @@ def family(model: str) -> str:
         return "ofa"
     if model in TIMERAN_FAMILY:
         return "timeran"
+    if model == "revinmlp_mix":
+        return "revinmlp"
     return "patchtst" if model in PATCHTST_FAMILY else model
 # (CPUs, GPU share). Time-LLM peaks near 45-50 GB at the pipeline batch size, so it needs a share of 0.6 of a 93 GB H100; each task is also
 # capped to its share (torch memory fraction) so a task that outgrows it fails alone instead of starving its neighbours.
 RESOURCES = {"ofa": (4, 0.25), "ofa_rand": (4, 0.25), "ofa_scratch": (4, 0.25), "timellm": (4, 0.6), "patchtst": (4, 0.25), "dlinear": (2, 0.125),
              "residualnonlinear2d": (2, 0.125), "residuallinearar2d": (2, 0.125), "linearar2d": (2, 0.125), "nlinear": (2, 0.125),
-             "revinmlp": (2, 0.125), "patchtst_noinorm": (4, 0.25), "patchtst_joint": (4, 0.25), "patchtst_nopatch": (4, 0.25),
+             "revinmlp": (2, 0.125), "revinmlp_mix": (2, 0.125), "itransformer": (4, 0.25), "patchtst_noinorm": (4, 0.25), "patchtst_joint": (4, 0.25), "patchtst_nopatch": (4, 0.25),
              **{m: (4, 1.0) for m in ("timeran_lp", "timeran_ff", "moment_lp", "moment_ff", "moment_rand")}}  # one 24 GB RTX 6000 each
 EPOCHS = {"ofa": 10, "ofa_rand": 10, "ofa_scratch": 10, "timellm": 10, "patchtst": 20, "dlinear": 20, "residualnonlinear2d": 10,
-          "residuallinearar2d": 10, "linearar2d": 10, "nlinear": 20, "revinmlp": 20, "patchtst_noinorm": 20, "patchtst_joint": 20,
+          "residuallinearar2d": 10, "linearar2d": 10, "nlinear": 20, "revinmlp": 20, "revinmlp_mix": 20, "itransformer": 20, "patchtst_noinorm": 20, "patchtst_joint": 20,
           "patchtst_nopatch": 20, **{m: 10 for m in ("timeran_lp", "timeran_ff", "moment_lp", "moment_ff", "moment_rand")}}
 PATIENCE = 5
 MODEL_KEYS = {"patch_length", "patch_stride", "d_model", "d_ff", "llm_layers", "n_heads", "e_layers", "dropout", "moving_avg",
-              "mlp_hidden", "mlp_layers", "mlp_dropout", "ridge_alpha", "head_dropout"}
+              "mlp_hidden", "mlp_layers", "mlp_dropout", "ridge_alpha", "head_dropout", "channel_mixing"}
 TRAIN_KEYS = {"learning_rate": "learning_rate", "batch_size": "batch_size", "weight_decay": "weight_decay"}
 
 DEFAULTS: dict[str, dict[str, Any]] = {
@@ -107,11 +111,13 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "linearar2d": {"learning_rate": 1e-3, "ridge_alpha": 0.01, "batch_size": 64},
     "nlinear": {"learning_rate": 1e-3, "batch_size": 32, "weight_decay": 0.0},
     "revinmlp": {"learning_rate": 5e-4, "mlp_hidden": 128, "mlp_layers": 2, "mlp_dropout": 0.1, "batch_size": 32},
+    "itransformer": {"learning_rate": 5e-4, "d_model": 128, "n_heads": 8, "e_layers": 2, "d_ff": 256, "dropout": 0.1, "batch_size": 16},
     "residualnonlinear2d": {"learning_rate": 1e-3, "ridge_alpha": 0.01, "mlp_hidden": 64, "mlp_layers": 2, "mlp_dropout": 0.0,
                             "batch_size": 64},
 }
 for _variant in ("timeran_lp", "timeran_ff", "moment_lp", "moment_ff", "moment_rand"):
     DEFAULTS[_variant] = {"learning_rate": 1e-4, "batch_size": 16, "head_dropout": 0.1, "weight_decay": 0.0}
+DEFAULTS["revinmlp_mix"] = dict(DEFAULTS["revinmlp"])
 for _control in ("patchtst_noinorm", "patchtst_joint", "patchtst_nopatch"):
     DEFAULTS[_control] = dict(DEFAULTS["patchtst"])
     if _control == "patchtst_nopatch":
@@ -153,7 +159,11 @@ def draw(model: str, rng: random.Random) -> dict[str, Any]:
         # batch 16 already uses 20.6 GB of a 24 GB RTX 6000 under full fine-tuning (smoke test 2026-11-09), so 32 is not offered
         return {"learning_rate": _loguniform(rng, 1e-5, 1e-3), "batch_size": rng.choice([8, 16]),
                 "head_dropout": rng.choice([0.0, 0.1, 0.2]), "weight_decay": rng.choice([0.0, 1e-5, 1e-4])}
-    if model == "revinmlp":
+    if model == "itransformer":
+        return {"learning_rate": _loguniform(rng, 1e-4, 2e-3), "d_model": rng.choice([64, 128, 256]), "n_heads": rng.choice([4, 8]),
+                "e_layers": rng.choice([1, 2, 3]), "d_ff": rng.choice([128, 256, 512]), "dropout": rng.choice([0.0, 0.1, 0.2]),
+                "batch_size": rng.choice([8, 16, 32])}
+    if model in ("revinmlp", "revinmlp_mix"):
         return {"learning_rate": _loguniform(rng, 1e-4, 2e-3), "mlp_hidden": rng.choice([64, 128, 256]), "mlp_layers": rng.choice([1, 2, 3]),
                 "mlp_dropout": rng.choice([0.0, 0.1, 0.2]), "batch_size": rng.choice([16, 32, 64])}
     raise ValueError(f"unknown model {model!r}")

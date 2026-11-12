@@ -47,6 +47,7 @@ SUPPORTED_MODELS = {
     "patchtst",      # channel-independent PatchTST (models/PatchTST.py)
     "residualnonlinear2d",  # ResidualLinearAR + nonlinear MLP correction head
     "nlinear",       # linear forecaster with last-value normalization (models/NLinear.py)
+    "itransformer",  # iTransformer (Liu et al. 2024) port, variates as tokens (models/ITransformer.py)
     "revinmlp",      # instance-normalized channel-shared MLP (models/RevINMLP.py)
     "vanillalstm",
     "vanillalstm1d",
@@ -105,7 +106,7 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
         return SpectrumLLMForecaster(predictor_config)
 
 
-    if model_name in ("dlinear", "patchtst", "residualnonlinear2d", "nlinear", "revinmlp"):
+    if model_name in ("dlinear", "patchtst", "residualnonlinear2d", "nlinear", "revinmlp", "itransformer"):
         if train_data.ndim != 2:
             raise ValueError(
                 f"Error! {model_name} expects training data shaped "
@@ -125,6 +126,10 @@ def build_model( model_name: str, config: dict[str, Any], train_data: np.ndarray
             from models.NLinear import NLinearForecaster
 
             return NLinearForecaster(predictor_config)
+        if model_name == "itransformer":
+            from models.ITransformer import ITransformerForecaster
+
+            return ITransformerForecaster(predictor_config)
         if model_name == "revinmlp":
             from models.RevINMLP import RevINMLPForecaster
 
