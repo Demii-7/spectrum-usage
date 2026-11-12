@@ -213,5 +213,20 @@
   "id": "claude-uc-week2full-rolled-1",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.rescore --sources p15 p15tuned --max-parallel 6 --gpu-fraction 0.1 --test-start 2026-11-03T20:00:00Z --test-end 2026-11-10T20:00:00Z --output-prefix rescored-week2full --skip-done --no-pin\"",
   "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-tcn-seed42-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_fixed --source powder15 --datasets 600_800 2400_2600 --models temporalconvnet:2d --trials-prefix tuning --output-prefix tuning --final-seeds 42 --gpu-fraction 1.0 --max-parallel 2\"",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-tcn-trials-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_fixed --source powder15 --datasets 600_800 2400_2600 --models temporalconvnet:2d --trials-only --output-prefix tuning-tcn-full16 --gpu-fraction 1.0 --max-parallel 7\"",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-tcn-decide-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-uc-tcn-trials-1 --then 'python -u training/ray/scripts/tcn_full16_decide.py'\"",
+  "max_restarts": 4
  }
 ]
