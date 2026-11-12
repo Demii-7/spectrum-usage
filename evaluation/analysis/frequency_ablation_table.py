@@ -113,6 +113,8 @@ def main() -> None:
     ap.add_argument("--out", default="evaluation/results")
     ap.add_argument("--prefix", default="frequency-ablation-2026-11")
     ap.add_argument("--models", nargs="+")
+    ap.add_argument("--seeds", type=int, nargs="+", help="only these seeds (default: every seed found)")
+    ap.add_argument("--suffix", default="", help="output file suffix, e.g. _seed42 -> frequency_ablation_seed42*.csv")
     args = ap.parse_args()
     from training.ray.storage import spectrum_s3_client
 
@@ -125,7 +127,9 @@ def main() -> None:
     for (model, band), by_seed in sorted(runs.items()):
         if args.models and model not in args.models:
             continue
-        seeds = sorted(by_seed)
+        seeds = sorted(s for s in by_seed if not args.seeds or s in args.seeds)
+        if not seeds:
+            continue
         loaded = {s: load_seed(client, by_seed[s]) for s in seeds}
         first = loaded[seeds[0]]
         regions, receivers = first["regions"], first["receivers"]
@@ -185,11 +189,11 @@ def main() -> None:
                                 "regions_delta_pos": int(sum(x > 0 for x in deltas)), "regions_delta_neg": int(sum(x < 0 for x in deltas)),
                                 "regions_ci_above_zero": int(up_ci), "regions_ci_below_zero": int(down_ci), "n_seeds": len(seeds), "seeds": " ".join(map(str, seeds)),
                                 "n_origins": n, "control": model in CONTROLS})
-    pd.DataFrame(rows).to_csv(out / "frequency_ablation.csv", index=False)
+    pd.DataFrame(rows).to_csv(out / f"frequency_ablation{args.suffix}.csv", index=False)
     s = pd.DataFrame(summary)
-    s.to_csv(out / "frequency_ablation_summary.csv", index=False)
+    s.to_csv(out / f"frequency_ablation_summary{args.suffix}.csv", index=False)
     c = pd.DataFrame(checks)
-    c.to_csv(out / "frequency_ablation_checks.csv", index=False)
+    c.to_csv(out / f"frequency_ablation_checks{args.suffix}.csv", index=False)
     pd.set_option("display.width", 250)
     lines = ["Frozen-input frequency ablation (15 minutes). Nothing is retrained: the other bins' inputs are replaced by the same bins shifted in time and the region's bins are scored.",
              "delta = MAE(shifted) - MAE(real), dB, on the region's bins, mean over the four core receivers and seeds; delta > 0: breaking the other bins hurts (the model uses them).",
@@ -205,7 +209,7 @@ def main() -> None:
     for r in c.itertuples():
         lines.append(f"  {r.band:9s} {r.model:20s} seed {r.seed}: " + ("n/a" if pd.isna(r.identity_max_abs_diff_db) else f"max {r.identity_max_abs_diff_db:.2e} mean {r.identity_mean_abs_diff_db:.2e}"))
     text = "\n".join(lines)
-    (out / "frequency_ablation_report.txt").write_text(text + "\n")
+    (out / f"frequency_ablation_report{args.suffix}.txt").write_text(text + "\n")
     print(text)
 
 
