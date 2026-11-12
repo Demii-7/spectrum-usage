@@ -778,6 +778,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--eval-mask-ratio", type=float, default=0.0)
     p.add_argument("--gpu-fraction", type=float, default=0.5)
     p.add_argument("--device", default=None)
+    p.add_argument("--per-bin-output", action="store_true", help="opt-in: store the per-column test MAE (raw target, no eval smoothing; horizons x columns) in the record as ``per_column_mae``")
     p.add_argument("--eval-only", action="store_true", help="no training: score the saved weights of --weights-prefix (see the module docstring)")
     p.add_argument("--weights-prefix", default=None, help="eval-only: output prefix of the run whose saved weights and record (hyperparameters) are used")
     p.add_argument("--test-start", default=None, help="eval-only: start of the scored range (UTC), default the original test range")
@@ -867,7 +868,7 @@ def main(argv=None) -> None:
                           "epochs": {"ctx": args.epochs_ctx, "fut": args.epochs_fut, "diff": args.epochs_diff},
                           "test_stride": args.test_stride, "eval_mask_ratio": args.eval_mask_ratio, "resolution": args.resolution, "band": args.band,
                           "hparams": json.loads(args.hparams) if args.hparams else None,
-                          "eval_smooth": eval_smooth, **extra})
+                          "eval_smooth": eval_smooth, **({"per_bin_output": True} if args.per_bin_output else {}), **extra})
     print(f"[tsslcd-authors] {len(specs)} runs", flush=True)
     remote = ray.remote(num_cpus=4, num_gpus=args.gpu_fraction, max_retries=1)(job)
     pending = [remote.remote(s) for s in specs]

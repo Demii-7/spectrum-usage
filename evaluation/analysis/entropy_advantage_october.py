@@ -35,7 +35,7 @@ BASELINE_K = {"1min": 60, "15min": 96}
 # Direct finals (one model trained per horizon): every horizon is scored from its OWN checkpoint, so a model's per-bin table set is the union over horizons (and seeds)
 # of ``rescored/per-bin/direct/<res>/<band>/2d/<model>/h<h>/seed-N.csv`` (stride-1 rescoring); where the rescoring does not cover all horizons yet (Time-LLM at 1 minute) the
 # finals' own tables ``direct-tuning/<res>/<band>/<model>/per-bin/h<h>/seed-N.csv`` are used (1-minute test windows thinned 15x).
-DIRECT_MODELS = ("revinmlp", "patchtst", "ofa", "timellm", "nlinear", "dlinear", "deepspred2d")
+DIRECT_MODELS = ("revinmlp", "patchtst", "ofa", "timellm", "nlinear", "dlinear", "deepspred2d", "timeran_lp")
 # Collapsed finals left out, as in the per-horizon tables (seed MSE above 1.5x the cell median): 3D-SwinSTB, 15 minutes, 2400-2600, seed 43 at 3 h and 6 h.
 EXCLUDED = ("direct-tuning/15min/2400_2600/deepspred2d/per-bin/h12/seed-43.csv", "direct-tuning/15min/2400_2600/deepspred2d/per-bin/h24/seed-43.csv")
 
@@ -80,9 +80,16 @@ def direct_model_tables(client, resolution: str, band: str) -> dict[str, list[st
     return out
 
 
+def tsslcd_model_tables(client, resolution: str, band: str) -> dict[str, list[str]]:
+    """``tsslcd (tuned)`` -> per-bin tables (one per seed, all horizons, mean over the four receivers) of the TSS-LCD tuned finals, built by
+    ``tsslcd_per_bin_tables.py`` from the eval-only rescoring (``tsslcd_authors.py --eval-only --per-bin-output``)."""
+    keys = [k for k in listing(client, f"rescored/per-bin/tsslcd/{resolution}/{band}/tuned/") if k.endswith(".csv")]
+    return {"tsslcd (tuned)": sorted(keys)} if keys else {}
+
+
 def model_tables(client, resolution: str, band: str) -> dict[str, list[str]]:
-    """model label -> per-bin table keys: the tuned 1D/2D models (one table per seed) and the direct finals (one table per horizon and seed)."""
-    return {**rolled_model_tables(client, resolution, band), **direct_model_tables(client, resolution, band)}
+    """model label -> per-bin table keys: the tuned 1D/2D models (one table per seed), the direct finals (one table per horizon and seed) and TSS-LCD."""
+    return {**rolled_model_tables(client, resolution, band), **direct_model_tables(client, resolution, band), **tsslcd_model_tables(client, resolution, band)}
 
 
 def probe_keys(label: str, keys: list[str]) -> list[str]:
