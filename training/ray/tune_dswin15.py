@@ -218,10 +218,52 @@ def cmd_decide(a: argparse.Namespace) -> None:
         client.put_object(Bucket=bucket, Key="analysis-outputs/dswin_search_verdict.json", Body=json.dumps(verdict, indent=1, default=str).encode())
 
 
+def cmd_bench(a: argparse.Namespace) -> None:
+    """Sharing benchmark: N copies of the inherited candidate (2-3 epochs) concurrently on ONE node's card, N from ``--groups ip:N ...``.
+
+    Each copy gets a 1/N GPU share and is pinned to the node by its custom resource ``node:<ip>``; reports the average epoch time of each copy,
+    so the slowdown caused by sharing a card can be read before the real launch."""
+    import ray
+
+    from .candidate import candidate_id
+    from .registry import get_model_spec
+    from .storage import spectrum_s3_client
+
+    client, bucket = spectrum_s3_client(), a.bucket or os.environ.get("SPECTRUM_S3_BUCKET", "spectrum")
+    inherited = json.loads(Path(a.repo_root, INHERITED).read_text())
+    spec = get_model_spec(MODEL, require_executable=True)
+    cand = candidates_for(spec, a.bands[0], 8)[2]                      # candidate 2 = the inherited configuration
+    ray.init(address=a.address, ignore_reinit_error=True)
+    refs = []
+    for group in a.groups:
+        ip, n = group.split(":")
+        n = int(n)
+        base = ray_options(spec, 1.0 / n, a.memory_gb)
+        for i in range(n):
+            cid = f"{candidate_id(MODEL, cand)}-bench{n}-{ip}-{i}"
+            job = {"band": a.bands[0], "prefix": group_prefix(a.prefix, a.bands[0]) + f"/n{n}-{ip}", "index": 2, "cid": cid, "parameters": cand,
+                   "fixed": fixed_from_candidate(cand, inherited, cid, a.epochs)}
+            refs.append((ip, n, ray.remote(**base, resources={f"node:{ip}": 0.001})(trial_job).remote(job, {"repo_root": a.repo_root, "bucket": bucket})))
+    rows = []
+    for ip, n, ref in refs:
+        r = ray.get(ref)
+        costs = r.get("run_costs") or {}
+        rows.append((ip, n, r.get("ok"), costs.get("cost_average_epoch_time_sec"), costs.get("cost_gpu_name"), r.get("wall_seconds"), r.get("peak_gpu_mb"), costs.get("cost_hostname")))
+        print(f"[dswin15-bench] node {ip} n={n} ok={r.get('ok')} epoch_s={costs.get('cost_average_epoch_time_sec')} gpu={costs.get('cost_gpu_name')} "
+              f"host={costs.get('cost_hostname')} wall={r.get('wall_seconds')} peak={r.get('peak_gpu_mb')} err={r.get('error')}", flush=True)
+    import statistics as st
+
+    for group in a.groups:
+        ip, n = group.split(":")
+        v = [r[3] for r in rows if r[0] == ip and r[3]]
+        if v:
+            print(f"[dswin15-bench] SUMMARY node {ip} n={n}: mean epoch {st.mean(v):.1f}s (min {min(v):.1f}, max {max(v):.1f}) -> 50 epochs {st.mean(v) * 50 / 3600:.2f} h", flush=True)
+
+
 def main(argv=None) -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
-    for name in ("run", "decide", "all"):
+    for name in ("run", "decide", "all", "bench"):
         s = sub.add_parser(name)
         s.add_argument("--bands", nargs="+", default=list(BANDS), choices=BANDS)
         s.add_argument("--prefix", default=DEFAULT_PREFIX)
@@ -236,7 +278,12 @@ def main(argv=None) -> None:
         s.add_argument("--bucket", default=None)
         s.add_argument("--address", default="auto")
         s.add_argument("--repo-root", default="/workspace/spectrum-usage")
+        s.add_argument("--groups", nargs="+", default=[], help="bench only: node_ip:N pairs")
     a = p.parse_args(argv)
+    if a.cmd == "bench":
+        a.epochs = a.epochs or 3
+        a.prefix = a.prefix if a.prefix != DEFAULT_PREFIX else "tuning-dswin-search-bench"
+        return cmd_bench(a)
     if a.cmd in ("run", "all"):
         cmd_run(a)
     if a.cmd in ("decide", "all"):
