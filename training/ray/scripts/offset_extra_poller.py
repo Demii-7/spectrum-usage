@@ -90,6 +90,7 @@ def main() -> None:
     a = p.parse_args()
     client = spectrum_s3_client()
     deadline = time.time() + a.max_hours * 3600
+    last_built = None             # (cells done at the last table build): rebuild whenever cells appeared, also from drivers started elsewhere
     while True:
         todo, done = status(client, a.bucket)
         total = len(MODELS) * len(BANDS) * len(SEEDS)        # 4D cells (the TSS-LCD cells are counted separately)
@@ -125,9 +126,11 @@ def main() -> None:
                     print("[offset-extra-poller] run tsslcd", band, flush=True)
                     subprocess.run(tsslcd_command(band), cwd="/workspace/spectrum-usage", check=False)
                 ran = True
-        if ran:
-            subprocess.run(["bash", "training/ray/scripts/run_offset_extra_table.sh"], cwd="/workspace/spectrum-usage", check=False)
         todo, done = status(client, a.bucket)
+        built_for = (len(done), len(tsslcd_todo(client, a.bucket)))
+        if ran or built_for != last_built:
+            subprocess.run(["bash", "training/ray/scripts/run_offset_extra_table.sh"], cwd="/workspace/spectrum-usage", check=False)
+            last_built = built_for
         if len(done) == len(MODELS) * len(BANDS) * len(SEEDS) and not tsslcd_todo(client, a.bucket):
             print("[offset-extra-poller] all cells done", flush=True)
             return
