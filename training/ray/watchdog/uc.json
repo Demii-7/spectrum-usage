@@ -360,8 +360,8 @@
   "max_restarts": 3
  },
  {
-  "id": "claude-uc-dswin-search-600_800-2",
-  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_dswin15 all --bands 600_800 --max-parallel 40 --gpu-fraction 0.25 --memory-gb 0\"",
+  "id": "claude-uc-dswin-search-600_800-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_dswin15 all --bands 600_800 --max-parallel 40 --gpu-fraction 0.25 --memory-gb 12\"",
   "max_restarts": 4
  },
  {
