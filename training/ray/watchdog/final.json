@@ -323,5 +323,10 @@
   "id": "claude-final-freqcls-600-autoformer-42",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.frequency_ablation_classes --models autoformer_csa --seeds 42 --bands 600_800 --only-conditions all_shift96 all_shift210 P_only_shift210 N_only_shift210 noise_only_shift210 all_level --gpu-fraction 0.5 --max-parallel 1 --skip-done\"",
   "max_restarts": 2
+ },
+ {
+  "id": "claude-final-freqcls-tsslcd-600-42",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tsslcd_authors --eval-only --resolution 15min --band 600_800 --savgol off --weights-prefix tsslcd-authors-15min-tuned --output-prefix frequency-ablation-tsslcd-classes-records/tsslcd_tuned-600_800 --freq-classes-prefix frequency-ablation-2026-11-classes --freq-tag tsslcd_tuned --seeds 42 --gpu-fraction 0.25 && python -u -m training.ray.tsslcd_authors --eval-only --resolution 15min --band 600_800 --savgol off --weights-prefix tsslcd-authors-15min-default --output-prefix frequency-ablation-tsslcd-classes-records/tsslcd_default-600_800 --freq-classes-prefix frequency-ablation-2026-11-classes --freq-tag tsslcd_default --seeds 42 --gpu-fraction 0.25\"",
+  "max_restarts": 2
  }
 ]
