@@ -1,0 +1,51 @@
+Smoothing diagnostics of the s2 map constructions (15 minutes; four core receivers; model-free). MAE in dB, pooled over receivers and bins.
+
+== 600_800
+                 rt_asEval  rt_nearest  rt_sharp  own_w  var_all  var_near  dRatio_all  dRatio_near  persMap_h4  persMap_h48  persRec_h4  persRec_h48  persRaw_h4  persRaw_h48
+core4-p2             0.477       0.022     0.022  0.845    0.721     0.989       0.787        0.993       0.550        1.858       0.809        1.932       0.667        1.905
+core4-p1             1.933       0.385     0.385  0.412    0.589     0.842       0.684        0.893       0.490        1.793       2.009        2.592       0.667        1.905
+core4-p4             0.005       0.000     0.000  0.998    0.890     1.000       0.908        1.000       0.621        1.935       0.667        1.904       0.667        1.905
+core4-p16            0.000       0.000     0.000  1.000    1.043     1.000       1.010        1.000       0.681        1.999       0.667        1.905       0.667        1.905
+core4-p2-linear      0.597       0.059     0.059  0.845    0.888     0.985       0.974        0.986       0.652        1.937       0.928        1.980       0.667        1.905
+core4-p2-g5          1.167       0.281     0.282  0.638    0.702     0.886       0.776        0.925       0.543        1.842       1.315        2.151       0.667        1.905
+core4-p2-g20         0.342       0.005     0.005  0.887    0.727     0.997       0.790        0.998       0.552        1.865       0.754        1.925       0.667        1.905
+core4-krige          2.316       2.285     2.285  0.298    0.513     0.511       0.619        0.620       0.451        1.749       2.370        2.857       0.667        1.905
+
+Proposed panel (b) columns (round-trip MAE as evaluated | variance retained, all cells, test week):
+  core4-p1     1.933 dB | 0.589
+  core4-p2     0.477 dB | 0.721
+  core4-p4     0.005 dB | 0.890
+  core4-p16    0.000 dB | 1.043
+  core4-krige  2.316 dB | 0.513
+
+== 2400_2600
+                 rt_asEval  rt_nearest  rt_sharp  own_w  var_all  var_near  dRatio_all  dRatio_near  persMap_h4  persMap_h48  persRec_h4  persRec_h48  persRaw_h4  persRaw_h48
+core4-p2             0.685       0.040     0.040  0.845    0.647     0.978       0.860        0.988       0.565        1.572       0.922        1.672       0.638        1.583
+core4-p1             2.319       0.550     0.550  0.412    0.493     0.761       0.792        0.875       0.525        1.483       2.388        2.724       0.638        1.583
+core4-p4             0.011       0.000     0.000  0.998    0.833     1.000       0.951        1.000       0.615        1.669       0.637        1.581       0.638        1.583
+core4-p16            0.000       0.000     0.000  1.000    1.015     1.000       1.037        1.000       0.664        1.757       0.638        1.583       0.638        1.583
+core4-p2-linear      0.969       0.126     0.126  0.845    1.269     1.000       1.902        1.042       1.181        2.486       1.274        1.979       0.638        1.583
+core4-p2-g5          1.487       0.414     0.416  0.638    0.626     0.860       0.851        0.938       0.559        1.548       1.615        2.125       0.638        1.583
+core4-p2-g20         0.571       0.011     0.011  0.887    0.650     0.994       0.861        0.997       0.565        1.580       0.858        1.663       0.638        1.583
+core4-krige          1.016       0.368     0.368  0.768    0.543     0.841       0.820        0.917       0.542        1.514       1.184        1.811       0.638        1.583
+
+Proposed panel (b) columns (round-trip MAE as evaluated | variance retained, all cells, test week):
+  core4-p1     2.319 dB | 0.493
+  core4-p2     0.685 dB | 0.647
+  core4-p4     0.011 dB | 0.833
+  core4-p16    0.000 dB | 1.015
+  core4-krige  1.016 dB | 0.543
+
+Checks:
+[600_800] core4-p2 as_evaluated round-trip MAE 0.477 dB vs 4D lookback mean at the receivers 1.215 dB: clearly below
+[600_800] core4-krige as_evaluated round-trip MAE 2.316 dB (600-800: every model scores 2.4-2.5 dB on this map)
+[600_800] core4-p2: nearest_cell 0.022 vs sharp (power 16) 0.022 dB, difference -0.000
+[600_800] core4-p16: nearest_cell 0.000 vs sharp (power 16) 0.000 dB, difference +0.000
+[600_800] READOUT EFFECT on the default map core4-p2: as_evaluated - nearest_cell = +0.455 dB  (> 0.05 dB: the paper's receiver errors include a readout penalty)
+[600_800] time steps: test week 673 (673 with all bins finite), training run 666; persistence origins per horizon {4: 669, 12: 661, 24: 649, 48: 625}; same for every construction
+[2400_2600] core4-p2 as_evaluated round-trip MAE 0.685 dB vs 4D lookback mean at the receivers 1.216 dB: clearly below
+[2400_2600] core4-krige as_evaluated round-trip MAE 1.016 dB (600-800: every model scores 2.4-2.5 dB on this map)
+[2400_2600] core4-p2: nearest_cell 0.040 vs sharp (power 16) 0.040 dB, difference -0.000
+[2400_2600] core4-p16: nearest_cell 0.000 vs sharp (power 16) 0.000 dB, difference +0.000
+[2400_2600] READOUT EFFECT on the default map core4-p2: as_evaluated - nearest_cell = +0.645 dB  (> 0.05 dB: the paper's receiver errors include a readout penalty)
+[2400_2600] time steps: test week 673 (673 with all bins finite), training run 666; persistence origins per horizon {4: 669, 12: 661, 24: 649, 48: 625}; same for every construction
