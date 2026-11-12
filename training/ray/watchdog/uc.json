@@ -228,5 +228,25 @@
   "id": "claude-uc-tcn-decide-1",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-uc-tcn-trials-1 --then 'python -u training/ray/scripts/tcn_full16_decide.py'\"",
   "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-dswin15s-600_800-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_fixed --source powder15_4d --datasets 600_800 --models dswinlstm_i:4d --fixed-config training/configs/fixed/dswinlstm_i_inherited_1min_r2.json --fixed-seeds 40 41 43 44 --output-prefix tuning --gpu-fraction 0.5 --memory-gb 12\"",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-dswin15s-2400_2600-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_fixed --source powder15_4d --datasets 2400_2600 --models dswinlstm_i:4d --fixed-config training/configs/fixed/dswinlstm_i_inherited_1min_r2.json --fixed-seeds 40 41 43 44 --output-prefix tuning --gpu-fraction 0.5 --memory-gb 12\"",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-dswin15s-score-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-uc-dswin15s-600_800-1 claude-uc-dswin15s-2400_2600-1 --then 'python -u -m training.ray.spatial15 --tuned --experiments s2 --variants core4-p2 --models dswinlstm_i --seeds 40 41 43 44 --prefix spatial15-tuned-oct2026 --memory-gb 12 --max-parallel 4 --gpu-fraction 0.25 --skip-done --eval-only --eval-from-tuning --band 600_800' --then 'python -u -m training.ray.spatial15 --tuned --experiments s2 --variants core4-p2 --models dswinlstm_i --seeds 40 41 43 44 --prefix spatial15-tuned-oct2026 --memory-gb 12 --max-parallel 4 --gpu-fraction 0.25 --skip-done --permuted 5 --band 600_800' --then 'python -u -m training.ray.spatial15 --tuned --experiments s2 --variants core4-p2 --models dswinlstm_i --seeds 40 41 43 44 --prefix spatial15-tuned-oct2026 --memory-gb 12 --max-parallel 4 --gpu-fraction 0.25 --skip-done --eval-only --eval-from-tuning --band 2400_2600' --then 'python -u -m training.ray.spatial15 --tuned --experiments s2 --variants core4-p2 --models dswinlstm_i --seeds 40 41 43 44 --prefix spatial15-tuned-oct2026 --memory-gb 12 --max-parallel 4 --gpu-fraction 0.25 --skip-done --permuted 5 --band 2400_2600' --then 'python -u -m training.ray.spatial15_origins --models dswinlstm_i --variants core4-p2 --seeds 40 41 43 44 --skip-done --memory-gb 12 --max-parallel 4 --gpu-fraction 0.25'\"",
+  "max_restarts": 4
+ },
+ {
+  "id": "claude-uc-dswin15s-tables-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-uc-dswin15s-score-1 --then 'bash training/ray/scripts/run_spatial15_tables.sh'\"",
+  "max_restarts": 4
  }
 ]
