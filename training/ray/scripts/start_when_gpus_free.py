@@ -13,11 +13,15 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--min-free", type=float, required=True)
     p.add_argument("--id", required=True)
-    p.add_argument("--entrypoint", required=True)
+    p.add_argument("--entrypoint")
+    p.add_argument("--watchdog-file", help="read the entrypoint of --id from this jobs file (avoids shell quoting)")
     p.add_argument("--interval", type=int, default=300)
     p.add_argument("--consecutive", type=int, default=3)
     p.add_argument("--address", default="http://127.0.0.1:8265")
     a = p.parse_args()
+    if not a.entrypoint:
+        import json
+        a.entrypoint = next(j["entrypoint"] for j in json.load(open(a.watchdog_file)) if j["id"] == a.id)
     import ray
     from ray.job_submission import JobSubmissionClient
     ray.init(address="auto", logging_level="ERROR")
