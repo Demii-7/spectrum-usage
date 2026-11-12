@@ -53,7 +53,7 @@ def test_flatten_and_tables_on_a_tiny_synthetic_result_set():
     assert np.isclose(s4.iloc[0].permuted_mae, 2.5) and np.isclose(s4.iloc[0].delta, 1.4)
     cov = T.coverage(cells, rec[rec.condition == "permuted"])
     done = cov[(cov.band == "600_800") & (cov.model == "linearar4d")].iloc[0]
-    assert done.cells_done == 3 and done.cells_expected == 57 and done.permuted_cells == 1
+    assert done.cells_done == 3 and done.cells_expected == 60 and done.permuted_cells == 1
     assert cov[(cov.band == "600_800") & (cov.model == "residualconvlstm")].iloc[0].cells_done == 0
 
 
@@ -61,3 +61,17 @@ def test_mean_sd_and_format():
     assert T.fmt(*T.mean_sd(pd.Series([1.0, 3.0]))) == "2.000±1.414"
     assert T.fmt(*T.mean_sd(pd.Series([2.0]))) == "2.000"
     assert T.fmt(*T.mean_sd(pd.Series([], dtype=float))) == "-"
+
+
+def test_dswinlstm_i_is_single_seed_base_cell_and_marked():
+    P = T.PREFIX
+
+    raw = {f"{P}600_800/core4-p2/dswinlstm_i/seed-42/result.json": {
+        "ok": True, "map__test_mean_horizon_mae_db": 1.0,
+        "receivers": {"geometry_correct": {"mean_horizon_mae_db": 2.0, "n_origins": 5}}}}
+    cells, rec = T.flatten(raw)
+    cov = T.coverage(cells, rec[rec.condition == "permuted"])
+    row = cov[(cov.band == "600_800") & (cov.model == "dswinlstm_i")].iloc[0]
+    assert row.cells_done == 1 and row.cells_expected == 1          # one seed, the base map only
+    s2 = T.annotate(T.table_s2(cells, rec))
+    assert s2.iloc[0].n_seeds == 1 and "inherited:1min-r2" in s2.iloc[0].note

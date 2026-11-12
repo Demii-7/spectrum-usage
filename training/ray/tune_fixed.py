@@ -197,7 +197,7 @@ def train_prepared(config: dict[str, Any], model: str, trial_dir: Path) -> dict[
     reporter.complete(None)
     selected = reporter.selected_metrics
     return {"objective": float(selected["objective"]), "objective_name": selected["objective_name"],
-            "checkpoint": checkpoints[0]}
+            "checkpoint": checkpoints[0], "run_costs": reporter.run_costs}
 
 
 def _put(client, bucket: str, key: str, record: dict[str, Any]) -> None:
@@ -264,11 +264,13 @@ def final_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
             eval_dir.mkdir()
             evaluate_one_model(config, model, eval_dir, result["checkpoint"], skip_plots=True)
             record.update(metrics(eval_dir))
+            costs = result.get("run_costs") or {}
+            record["run_costs"] = {k: v for k, v in costs.items() if isinstance(v, (int, float, str, bool))}
             from training.ray.artifacts import save_artifact
 
             record.update(save_artifact(client, bucket, f"{job['prefix']}/weights/seed-{seed}", result["checkpoint"],
                                         {"config": config, "parameters": job["parameters"], "seed": seed,
-                                         "candidate_id": job["candidate_id"],
+                                         "candidate_id": job["candidate_id"], "run_costs": record["run_costs"],
                                          "kind": "fixed_final" if job.get("fixed") else "tuned_final",
                                          **({"hyperparameters": job["fixed"].get("label", "fixed")} if job.get("fixed") else {})}))
         record.update(ok=True, objective=result["objective"], objective_name=result["objective_name"])

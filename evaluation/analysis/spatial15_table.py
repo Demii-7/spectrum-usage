@@ -40,8 +40,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 BUCKET = "spectrum"
 PREFIX = "spatial15-tuned-oct2026/"
 BANDS = ("600_800", "2400_2600")
-MODELS = ("lookbackmean4d", "linearar4d", "residuallinearar4d", "stsprednet", "residualconvlstm")
-SEEDS = {"lookbackmean4d": (42,)}                 # every other model: 40, 41, 42
+MODELS = ("lookbackmean4d", "linearar4d", "residuallinearar4d", "stsprednet", "residualconvlstm", "dswinlstm_i")
+SEEDS = {"lookbackmean4d": (42,), "dswinlstm_i": (42,)}                 # every other model: 40, 41, 42
+# DSwinLSTM-I: one seed, the 1-minute round-2 winner configuration (no 15-minute search), base map only (no retrained spatial variants)
+VARIANTS_ONLY = {"dswinlstm_i": ("core4-p2",)}
+NOTES = {"dswinlstm_i": "single seed (42); inherited:1min-r2 configuration, no 15-minute search; base map and frozen-weight conditions only"}
 DEFAULT_SEEDS = (40, 41, 42)
 S2 = ("core4-p1", "core4-p2", "core4-p4", "core4-p16", "core4-p2-linear", "core4-p2-g5", "core4-p2-g20", "core4-krige")
 S3 = tuple(f"loo-{n}" for n in ("humanities", "madsen", "moran", "sagepoint", "guesthouse", "law73"))
@@ -132,14 +135,22 @@ def coverage(cells: pd.DataFrame, perm: pd.DataFrame) -> pd.DataFrame:
     for band in BANDS:
         for model in MODELS:
             expected_seeds = SEEDS.get(model, DEFAULT_SEEDS)
-            expected = len(ALL_VARIANTS) * len(expected_seeds)
+            variants = VARIANTS_ONLY.get(model, ALL_VARIANTS)
+            expected = len(variants) * len(expected_seeds)
             sub = cells[(cells.band == band) & (cells.model == model)] if len(cells) else cells
-            done = len(sub[sub.variant.isin(ALL_VARIANTS) & sub.seed.isin(expected_seeds)]) if len(sub) else 0
+            done = len(sub[sub.variant.isin(variants) & sub.seed.isin(expected_seeds)]) if len(sub) else 0
             p = perm[(perm.band == band) & (perm.model == model)] if len(perm) else perm
             rows.append({"band": band, "model": model, "cells_done": done, "cells_expected": expected,
                          "variants_started": int(sub.variant.nunique()) if len(sub) else 0,
                          "permuted_cells": len(p), "permutation_seeds": int(p.perm.nunique()) if len(p) else 0})
     return pd.DataFrame(rows)
+
+
+def annotate(frame: pd.DataFrame) -> pd.DataFrame:
+    """Add a ``note`` column that marks single-seed / inherited-configuration rows (empty for the tuned multi-seed models)."""
+    if len(frame) and "model" in frame:
+        frame = frame.assign(note=frame.model.map(NOTES).fillna(""))
+    return frame
 
 
 def own_history_references(client, receivers: list[str]) -> pd.DataFrame:
@@ -262,7 +273,8 @@ def main() -> None:
     perm_rows = rec[rec.condition == "permuted"]
     cov = coverage(cells, perm_rows)
     refs = pd.DataFrame() if args.no_references else own_history_references(client, ["humanities", "madsen", "moran", "sagepoint", "guesthouse", "law73"])
-    s2, s3, s5, s4 = table_s2(cells, rec), table_s3(rec, refs), table_s5(rec, refs), table_s4(rec)
+    s2, s3, s5, s4 = (annotate(f) for f in (table_s2(cells, rec), table_s3(rec, refs), table_s5(rec, refs), table_s4(rec)))
+    cov = annotate(cov)
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)

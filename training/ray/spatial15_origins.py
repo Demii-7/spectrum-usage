@@ -29,7 +29,8 @@ from typing import Any
 import numpy as np
 import yaml
 
-SEEDS_PER_MODEL = {"lookbackmean4d": (42,)}
+SEEDS_PER_MODEL = {"lookbackmean4d": (42,), "dswinlstm_i": (42,)}       # dswinlstm_i: one seed, inherited configuration
+GPU_MODELS = ("dswinlstm_i",)                                            # too slow to score 672 origins on the CPU
 
 
 def per_origin_errors(npz, receiver_index: int, normalization) -> dict[str, np.ndarray]:
@@ -102,7 +103,8 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
             try:
                 out = scratch / "out"
                 evaluate_condition(experiment_path=exp_path, model_config_path=model_config, checkpoint_path=checkpoint, model_name=model,
-                                   seed=seed, condition="geometry_correct", output_directory=out, batch_size=args["batch_size"], device="cpu")
+                                   seed=seed, condition="geometry_correct", output_directory=out, batch_size=args["batch_size"],
+                                   device="cuda" if model in GPU_MODELS else "cpu")
             finally:
                 exp_path.unlink(missing_ok=True)
             collected: dict[str, np.ndarray] = {}
@@ -156,6 +158,7 @@ def main(argv=None) -> None:
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--memory-gb", type=float, default=12.0)
     p.add_argument("--max-parallel", type=int, default=8)
+    p.add_argument("--gpu-fraction", type=float, default=0.25, help="GPU share of a cell of a GPU model (dswinlstm_i)")
     p.add_argument("--skip-done", action="store_true")
     p.add_argument("--bucket", default=None)
     p.add_argument("--prefix", default="spatial15-tuned-oct2026")
@@ -195,10 +198,12 @@ def main(argv=None) -> None:
               "output_prefix": args.output_prefix, "batch_size": args.batch_size}
     ray.init(address=args.address, ignore_reinit_error=True)
     remote = ray.remote(num_cpus=2, num_gpus=0, memory=int(args.memory_gb * 2 ** 30), max_retries=1)(job)
+    gpu_remote = ray.remote(num_cpus=2, num_gpus=args.gpu_fraction, memory=int(args.memory_gb * 2 ** 30), max_retries=1)(job)
     queue, pending, ok = list(specs), [], 0
     while queue or pending:
         while queue and len(pending) < args.max_parallel:
-            pending.append(remote.remote(queue.pop(0), shared))
+            spec = queue.pop(0)
+            pending.append((gpu_remote if spec['model'] in GPU_MODELS else remote).remote(spec, shared))
         finished, pending = ray.wait(pending, num_returns=1)
         try:
             row = ray.get(finished[0])

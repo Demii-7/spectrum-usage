@@ -35,6 +35,9 @@ ORIGIN_PREFIX = "spatial15-origin-errors-oct2026"
 BANDS = ("600_800", "2400_2600")
 VARIANTS = ("core4-p1", "core4-p2", "core4-p4", "core4-p16", "core4-p2-linear", "core4-p2-g5", "core4-p2-g20", "core4-krige")
 MODELS_4D = ("linearar4d", "residuallinearar4d")
+SINGLE_SEED = {"lookbackmean4d": (42,), "dswinlstm_i": (42,)}      # dswinlstm_i: one seed, inherited:1min-r2 configuration, base map only
+NOTES = {"dswinlstm_i": "single seed (42); inherited:1min-r2 configuration, no 15-minute search"}
+COMPARED = (*MODELS_4D, "dswinlstm_i")
 RECEIVERS = {"humanities": "humanities", "madsen": "madsen", "moran": "moran", "sage point": "sagepoint"}   # 4D name -> transfer15 name
 PER_RECEIVER = (("1d", "residuallinearar1d"), ("1d", "linearar1d"), ("2d", "residuallinearar2d"), ("2d", "linearar2d"))
 HORIZONS = (4, 12, 24, 48)
@@ -54,7 +57,7 @@ def utc(values) -> pd.DatetimeIndex:
 def four_d_series(client, band: str, variant: str, model: str, receiver: str) -> tuple[pd.DataFrame | None, int]:
     """Seed-averaged per-origin MAE (mean over the four horizons) of one 4D cell at one receiver, and the number of seeds."""
     frames = []
-    for seed in (SEEDS if model != "lookbackmean4d" else (42,)):
+    for seed in SINGLE_SEED.get(model, SEEDS):
         try:
             with np.load(io.BytesIO(read(client, f"{ORIGIN_PREFIX}/{band}/{variant}/{model}/seed-{seed}/per_origin.npz")), allow_pickle=True) as npz:
                 horizons = list(npz["horizons"])
@@ -115,7 +118,7 @@ def compare(client) -> pd.DataFrame:
                 references[(receiver_4d, f"{rep} {name}")] = per_receiver_series(client, band, receiver, rep, name)
             references[(receiver_4d, "persistence")] = persistence_series(client, band, receiver)
         for variant in VARIANTS:
-            for model in MODELS_4D:
+            for model in COMPARED:
                 per_receiver = {}
                 for receiver_4d in RECEIVERS:
                     ours, n_seeds = four_d_series(client, band, variant, model, receiver_4d)
@@ -136,6 +139,7 @@ def compare(client) -> pd.DataFrame:
                         continue                                         # pool only when all four receivers have both series
                     draws = np.mean(np.stack([e[4] for e in entries]), axis=0)
                     rows.append({"band": band, "variant": variant, "model_4d": model, "versus": name, "receiver": "pooled",
+                                 "note": NOTES.get(model, ""),
                                  "n_origins": int(sum(e[0] for e in entries)), "n_seeds_4d": int(entries[0][5]),
                                  "mae_4d": float(np.mean([e[1] for e in entries])), "mae_other": float(np.mean([e[2] for e in entries])),
                                  "delta_4d_minus_other": float(np.mean([e[3] for e in entries])),
@@ -148,9 +152,9 @@ def unpaired_cells(client) -> pd.DataFrame:
     rows = []
     for band in BANDS:
         for variant in VARIANTS:
-            for model in (*MODELS_4D, "lookbackmean4d"):
+            for model in (*COMPARED, "lookbackmean4d"):
                 values = []
-                for seed in (SEEDS if model != "lookbackmean4d" else (42,)):
+                for seed in SINGLE_SEED.get(model, SEEDS):
                     try:
                         r = json.loads(read(client, f"{SPATIAL_PREFIX}/{band}/{variant}/{model}/seed-{seed}/result.json"))
                         v = (r.get("receivers") or {}).get("geometry_correct", {}).get("mean_horizon_mae_db")
@@ -180,7 +184,7 @@ def main() -> None:
         d = paired_table[paired_table.band == band]
         print(f"\n{band}: paired comparison on identical origins, mean over horizons 4/12/24/48, pooled over the four receivers "
               f"(delta = 4D minus other, dB; negative = 4D better)")
-        for model in MODELS_4D:
+        for model in COMPARED:
             m = d[d.model_4d == model]
             if m.empty:
                 continue

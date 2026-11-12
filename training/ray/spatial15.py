@@ -197,6 +197,16 @@ def eval_only_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         if args.get("eval_from_tuning") and variant["name"] == "core4-p2":
             prefix = f"{args['tuning_prefix']}/powder15_4d/{band}/4d/{model}/weights/seed-{seed}/"
             result["hyperparameters"] = "tuned 15-minute 4D winner (tuning final of this seed; weights not retrained)"
+            try:      # the tuning final's own scoring on its map; a fixed-configuration final (--fixed-config) names its configuration
+                final = json.loads(client.get_object(Bucket=bucket, Key=f"{args['tuning_prefix']}/powder15_4d/{band}/4d/{model}/final/"
+                                                                        f"seed-{seed}.json")["Body"].read())
+            except Exception:
+                final = {}
+            if str(final.get("hyperparameters", "")).startswith("inherited:"):
+                result["hyperparameters"] = f"{final['hyperparameters']} (no 15-minute search; weights from the tuning-prefix final)"
+                result["single_seed"] = True
+            if "map__test_mean_horizon_mae_db" not in result:
+                result.update({f"map__{k}": v for k, v in final.items() if k.startswith(("test_", "validation_"))})
         else:
             prefix = f"{base}/weights/"
         keys = [o["Key"] for page in client.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=prefix)
