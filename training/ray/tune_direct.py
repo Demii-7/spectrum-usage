@@ -89,7 +89,7 @@ def family(model: str) -> str:
 # capped to its share (torch memory fraction) so a task that outgrows it fails alone instead of starving its neighbours.
 RESOURCES = {"ofa": (4, 0.25), "ofa_rand": (4, 0.25), "ofa_scratch": (4, 0.25), "timellm": (4, 0.6), "patchtst": (4, 0.25), "dlinear": (2, 0.125),
              "residualnonlinear2d": (2, 0.125), "residuallinearar2d": (2, 0.125), "linearar2d": (2, 0.125), "nlinear": (2, 0.125),
-             "revinmlp": (2, 0.125), "revinmlp_mix": (2, 0.125), "itransformer": (4, 0.25), "patchtst_noinorm": (4, 0.25), "patchtst_joint": (4, 0.25), "patchtst_nopatch": (4, 0.25),
+             "revinmlp": (2, 0.125), "revinmlp_mix": (2, 0.125), "itransformer": (2, 0.125), "patchtst_noinorm": (4, 0.25), "patchtst_joint": (4, 0.25), "patchtst_nopatch": (4, 0.25),
              **{m: (4, 1.0) for m in ("timeran_lp", "timeran_ff", "moment_lp", "moment_ff", "moment_rand")}}  # one 24 GB RTX 6000 each
 EPOCHS = {"ofa": 10, "ofa_rand": 10, "ofa_scratch": 10, "timellm": 10, "patchtst": 20, "dlinear": 20, "residualnonlinear2d": 10,
           "residuallinearar2d": 10, "linearar2d": 10, "nlinear": 20, "revinmlp": 20, "revinmlp_mix": 20, "itransformer": 20, "patchtst_noinorm": 20, "patchtst_joint": 20,
