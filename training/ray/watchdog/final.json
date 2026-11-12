@@ -263,5 +263,10 @@
   "id": "claude-final-tcn-decide-1",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-final-tcn-trials-1 --then 'python -u training/ray/scripts/tcn_full16_decide.py'\"",
   "max_restarts": 4
+ },
+ {
+  "id": "claude-final-spectral15t-tcn-1",
+  "entrypoint": "python -u -m training.ray.spectral_context_fixed --resolution 15min --hyperparameters tuned15 --output-prefix oct2026-spectral-context-15min-tuned --models temporalconvnet --seeds 40 41 42 --max-parallel 6 --gpu-fraction 0.25 --skip-done",
+  "max_restarts": 4
  }
 ]
