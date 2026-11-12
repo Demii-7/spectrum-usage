@@ -326,6 +326,12 @@ def run_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         if model == "lookbackmean4d":
             config = yaml.safe_load(Path(config_file_for(model, "4d")).read_text())
             config["training"] = {**config.get("training", {}), "models": [model], "device": "cpu"}
+        elif args.get("fixed_config"):       # a FIXED configuration (no search), e.g. DSwinLSTM-I's inherited:1min-r2 (training/configs/fixed/*.json)
+            from training.ray.tune_fixed import apply_fixed_config, tuning_base
+
+            fixed = json.loads(Path(args["fixed_config"]).read_text())
+            result["hyperparameters"] = f"{fixed.get('label', 'fixed')} (fixed configuration, no 15-minute search; {Path(args['fixed_config']).name})"
+            config = apply_fixed_config(tuning_base(model, "4d"), model, fixed, seed)
         elif args.get("tuned"):
             from training.ray.config import inject_parameters
             from training.ray.tune_fixed import tuning_base
@@ -345,7 +351,7 @@ def run_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
                                        device="cpu" if model in CPU_MODELS else None)
         map_name = f"p15_{band}_{variant['name']}"
         config = apply_powder15_4d(config, band, list(HORIZONS), variant["nodes"], job["grid"], map_name)
-        config = set_lookback_and_horizon(config, model, None)
+        config = set_lookback_and_horizon(config, model, max(HORIZONS) if args.get("fixed_config") else None)      # a direct multi-step model emits 48 steps
         if args.get("smoke_epochs"):          # a few minutes end to end (training, map scoring, all five physical-receiver evaluations)
             section = config[model]
             (section["train"] if "train" in section else section)["epochs"] = int(args["smoke_epochs"])
@@ -392,6 +398,7 @@ def main(argv=None) -> None:
     p.add_argument("--skip-done", action="store_true")
     p.add_argument("--tuned", action="store_true",
                    help="train with each model's tuned 15-minute 4D winner (tuning/powder15_4d) instead of the inherited 1-minute settings")
+    p.add_argument("--fixed-config", help="JSON of a fixed configuration (no search), e.g. training/configs/fixed/dswinlstm_i_inherited_1min_r2.json")
     p.add_argument("--tuning-prefix", default="tuning")
     p.add_argument("--permuted", type=int, default=0,
                    help="S4: score the frozen base models (tuning finals) with this many permutations of the four core receivers' coordinates")
@@ -435,7 +442,7 @@ def main(argv=None) -> None:
         jobs = [j for j in jobs if not done(j)]
     print(f"[spatial15] {len(jobs)} runs over {len(chosen)} variants; grid frame {frame}", flush=True)
     shared = {"repo_root": args.repo_root, "bucket": bucket, "prefix": args.prefix, "band": args.band, "batch_size": args.batch_size,
-              "tuned": args.tuned, "tuning_prefix": args.tuning_prefix, "smoke_epochs": args.smoke_epochs,
+              "tuned": args.tuned, "fixed_config": args.fixed_config, "tuning_prefix": args.tuning_prefix, "smoke_epochs": args.smoke_epochs,
               "eval_from_tuning": args.eval_from_tuning}
     ray.init(address=args.address, ignore_reinit_error=True)
     memory = int(args.memory_gb * 2**30)
