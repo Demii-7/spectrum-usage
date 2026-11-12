@@ -1,8 +1,7 @@
 band_id,start_mhz,end_mhz,bin_count,behavior_category,is_noise_floor
-R1,2400.5,2452.5,53,noise_floor,true
-R2,2453.5,2470.5,18,receiver_specific_activity,false
-R3,2471.5,2496.5,26,noise_floor,true
-R4,2497.5,2512.5,16,cellular_activity,false
-R5,2513.5,2594.5,82,cellular_activity,false
-R6,2595.5,2596.5,2,carrier_gap,false
-R7,2597.5,2599.5,3,cellular_activity,false
+R1,2400.5,2496.5,97,noise_floor,true
+R2,2497.5,2512.5,16,cellular_activity,false
+R3,2513.5,2529.5,17,cellular_activity,false
+R4,2530.5,2545.5,16,cellular_activity,false
+R5,2546.5,2594.5,49,cellular_activity,false
+R6,2595.5,2599.5,5,band_edge,false
