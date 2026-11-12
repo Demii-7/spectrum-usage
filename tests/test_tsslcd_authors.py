@@ -134,3 +134,20 @@ def test_job_overrides_and_restores_the_scored_range(monkeypatch):
     assert rec["ok"] is False and m.RANGES["test"] == original      # restored after a failure
     m.job(base)
     assert seen["range"] == original                                # no override without test_range
+
+
+def test_input_offset_is_added_before_the_scaler(monkeypatch):
+    """build_partition(input_offset_db=c) shifts the raw dBm values by c BEFORE the (training-fit) scaler; 0 changes nothing."""
+    from training.ray import tsslcd_authors as m
+
+    values = np.linspace(-100.0, -80.0, 4 * 400).reshape(400, 4)
+    monkeypatch.setattr(m, "load_partition", lambda *a, **k: (values.copy(), None, np.ones(400, dtype=bool)))
+    monkeypatch.setitem(m.PROFILES["15min"], "context", 10)
+    monkeypatch.setitem(m.PROFILES["15min"], "future", 5)
+    raw0, model0, bounds0, scaler = m.build_partition(".", "train", None, "off", profile="15min")
+    raw_same, _, _, _ = m.build_partition(".", "test", scaler, "off", profile="15min", input_offset_db=0.0)
+    raw_c, model_c, _, _ = m.build_partition(".", "test", scaler, "off", profile="15min", input_offset_db=10.0)
+    assert np.array_equal(raw_same, raw0)                                      # default off: identical series
+    assert np.allclose(scaler.inverse(raw_c) - scaler.inverse(raw0), 10.0)       # exactly +10 dB in the original units
+    assert np.allclose(scaler.inverse(model_c) - scaler.inverse(raw0), 10.0)     # savgol off: the model series carries it too
+    assert m.apply_input_offset(values, 0.0) is values and np.allclose(m.apply_input_offset(values, -5.0), values - 5.0)

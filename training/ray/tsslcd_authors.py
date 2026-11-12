@@ -152,11 +152,21 @@ def window_starts(segments: list[tuple[int, int]], length: int, stride: int = 1)
     return np.concatenate(starts) if starts else np.zeros(0, dtype=np.int64)
 
 
-def build_partition(root: str, partition: str, scaler: MinMax | None, savgol: str, band: str = "600_800", profile: str = "1min"):
+def apply_input_offset(values: np.ndarray, offset_db: float) -> np.ndarray:
+    """``values`` (dBm) plus a constant offset in dB; the identity (the same array) for 0."""
+    return values if not offset_db else np.asarray(values, dtype=np.float64) + float(offset_db)
+
+
+def build_partition(root: str, partition: str, scaler: MinMax | None, savgol: str, band: str = "600_800", profile: str = "1min",
+                    input_offset_db: float = 0.0):
     """Series for one partition: min-max normalized raw (``raw``) and filtered (``model``), concatenated over valid
-    segments, plus the segment boundaries in that concatenated coordinate. The scaler is fit here on the training rows."""
+    segments, plus the segment boundaries in that concatenated coordinate. The scaler is fit here on the training rows.
+
+    ``input_offset_db`` (default 0 = unchanged) adds a constant to every raw value (dBm) BEFORE the scaler, for the offset-response test of a
+    frozen model; the scaler must then be the one fit on the unshifted training partition (pass it in), never fit on shifted data."""
     prof = PROFILES[profile]
     values, _, valid = load_partition(root, partition, band, profile=profile)
+    values = apply_input_offset(values, input_offset_db)
     segments = contiguous_segments(valid, prof["context"] + prof["future"])
     if not segments:
         raise ValueError(f"no gap-free run of {prof['context'] + prof['future']} steps in the {partition} partition")
@@ -238,6 +248,39 @@ def score_grid(pred_h: np.ndarray, gt_model_h: np.ndarray, gt_raw_h: np.ndarray,
 
 
 # ------------------------------------------------------------------------------------------------------ training
+def offset_sweep(args, build, scaler, savgol, band, profile, partition, test_starts, batch, masked, nets, device, seed, base_pred, horizons, context):
+    """Offset response of a frozen model: add c dB to every raw input value (all four receivers, before the scaler), sample the forecasts with the
+    SAME sampler seed and origins as the unshifted run, and return {receiver: rows} (rows as ``training.ray.offset_response.response_rows``;
+    shift = forecast(c) - forecast(0) in dB per (window, bin), gain = shift / c) for the horizons 4/12/24/48."""
+    import torch
+
+    from training.ray.offset_response import response_rows
+
+    ae_ctx, ae_fut, diffusion, inference = nets
+    columns = base_pred.shape[2]
+    n_receivers = len(SITES)
+    width = columns // n_receivers
+    names = ["humanities", "madsen", "moran", "sage point"]
+    out = {name: [] for name in names}
+    root = args["repo_root"]
+    for offset in args["input_offsets"]:
+        _, shifted_model, _, _ = build(root, partition, scaler, savgol, band=band, profile=profile, input_offset_db=float(offset))
+        series = torch.as_tensor(shifted_model, dtype=torch.float32, device=device)
+        torch.manual_seed(seed + 1000)
+        preds = []
+        with torch.no_grad():
+            for lo in range(0, len(test_starts), BATCH):
+                idx = torch.as_tensor(test_starts[lo:lo + BATCH], device=device)
+                ctx, _ = batch(series, idx)
+                preds.append(inference(ae_ctx, ae_fut, diffusion, masked(ctx, args["eval_mask_ratio"]), device)[:, [h - 1 for h in horizons]])
+        shifted_pred = scaler.inverse(np.concatenate(preds))
+        for r, name in enumerate(names):
+            cols = slice(r * width, (r + 1) * width)
+            out[name].extend(response_rows({h: base_pred[:, horizons.index(h), cols] for h in (4, 12, 24, 48)},
+                                           {h: shifted_pred[:, horizons.index(h), cols] for h in (4, 12, 24, 48)}, float(offset), (4, 12, 24, 48)))
+    return out
+
+
 def run_one(args: dict[str, Any]) -> dict[str, Any]:
     """Train the authors' model with one savgol setting and score it under every eval-smoothing setting."""
     import torch
@@ -384,6 +427,12 @@ def run_one(args: dict[str, Any]) -> dict[str, Any]:
     segment_of_window = np.searchsorted([b for _, b in test_bounds], test_starts, side="right")
     result["metrics"] = score_grid(pred_h, gt_model_h, gt_raw_h, segment_of_window, args["eval_smooth"],
                                    consecutive=args["test_stride"] == 1, horizons=HORIZONS)
+    if args.get("source_metrics"):               # eval-only: the same data and sampler must give the source run's stored scores back
+        shared = [k for k in result["metrics"] if k in args["source_metrics"]]
+        result["zero_offset_max_abs_diff_db"] = float(max(abs(result["metrics"][k] - args["source_metrics"][k]) for k in shared)) if shared else None
+    if args.get("input_offsets"):
+        result["offset_rows"] = offset_sweep(args, build_partition, scaler, savgol, band, profile, score_partition, test_starts, batch, masked,
+                                             (ae_ctx, ae_fut, diffusion, inference), device, seed, pred_h, HORIZONS, CONTEXT)
     result["hparams"] = {"latent_dim": latent_dim, "learning_rate": learning_rate, "batch_size": batch_size,
                          "train_mask_ratio": train_mask}
     result["objective"] = result["metrics"].get("raw_target__off__mean_horizon_mae_db")    # tuning objective: raw-target MAE, no smoothing
@@ -412,6 +461,20 @@ def job(spec: dict[str, Any]) -> dict[str, Any]:
         record.update(ok=False, error=f"{type(error).__name__}: {error}"[:400], trace=traceback.format_exc()[-800:])
     finally:
         RANGES[part] = original_range
+    offset_rows = record.pop("offset_rows", None)       # per-receiver offset summaries go to their own keys, not into the run record
+    if offset_rows:
+        for receiver, rows in offset_rows.items():
+            summary = {"kind": "offset_response", "band": record.get("band"), "receiver": receiver, "rep": "4d", "model": "tsslcd", "seed": spec["seed"],
+                       "intrinsic_window_normalization": "none (min-max scaler fit on the training week; frozen)",
+                       "offsets_db": list(spec["input_offsets"]), "horizons": [4, 12, 24, 48], "origin_stride": spec["test_stride"], "rows": rows,
+                       "n_origins": record.get("test_windows"), "weights_prefix": spec.get("weights_prefix"), "savgol": spec["savgol"],
+                       "zero_offset_max_abs_diff_db": record.get("zero_offset_max_abs_diff_db"), "ok": bool(record.get("ok"))}
+            try:
+                spectrum_s3_client().put_object(
+                    Bucket=spec["bucket"], Key=f"{spec['offset_prefix'].strip('/')}/tsslcd/{record.get('band')}/{receiver}/seed-{spec['seed']}/summary.json",
+                    Body=json.dumps(summary, default=str).encode())
+            except Exception:
+                pass
     key = f"{spec['output_prefix'].strip('/')}/savgol-{spec['savgol']}/seed-{spec['seed']}.json"
     try:
         spectrum_s3_client().put_object(Bucket=spec["bucket"], Key=key, Body=json.dumps(record, default=str).encode())
@@ -440,6 +503,12 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--weights-prefix", default=None, help="eval-only: output prefix of the run whose saved weights and record (hyperparameters) are used")
     p.add_argument("--test-start", default=None, help="eval-only: start of the scored range (UTC), default the original test range")
     p.add_argument("--test-end", default=None, help="eval-only: end of the scored range (UTC)")
+    p.add_argument("--input-offsets", nargs="+", type=float, default=None,
+                   help="eval-only: offset-response test: add each constant (dB) to every raw input value before the scaler and record the forecast shift "
+                        "per receiver (needs --offset-prefix); default off")
+    p.add_argument("--offset-prefix", default=None,
+                   help="with --input-offsets: S3 prefix of the per-receiver offset summaries (<prefix>/tsslcd/<band>/<receiver>/seed-N/summary.json); "
+                        "must differ from --weights-prefix; existing ok summaries are kept (skip-done)")
     p.add_argument("--bucket", default=None)
     p.add_argument("--output-prefix", default="tsslcd-authors-results")
     p.add_argument("--address", default="auto")
@@ -463,6 +532,10 @@ def main(argv=None) -> None:
             raise SystemExit("--eval-only needs --weights-prefix and a different --output-prefix (October results are never overwritten)")
         if bool(args.test_start) != bool(args.test_end):
             raise SystemExit("--test-start and --test-end go together")
+        if args.input_offsets and (not args.offset_prefix or args.offset_prefix.strip("/") in (args.weights_prefix.strip("/"), args.output_prefix.strip("/"))):
+            raise SystemExit("--input-offsets needs --offset-prefix, different from --weights-prefix and --output-prefix")
+    elif args.input_offsets:
+        raise SystemExit("--input-offsets is an eval-only option")
     specs = []
     for savgol in args.savgol:
         for seed in args.seeds:
@@ -486,6 +559,8 @@ def main(argv=None) -> None:
                          "resolution": source.get("resolution", args.resolution), "band": source.get("band", args.band)}
                 if args.test_start:
                     extra["test_range"] = [args.test_start, args.test_end]
+                if args.input_offsets:
+                    extra.update(input_offsets=list(args.input_offsets), offset_prefix=args.offset_prefix, source_metrics=source.get("metrics"))
             specs.append({"savgol": savgol, "seed": seed, "repo_root": args.repo_root, "bucket": bucket,
                           "output_prefix": args.output_prefix, "device": args.device,
                           "epochs": {"ctx": args.epochs_ctx, "fut": args.epochs_fut, "diff": args.epochs_diff},
