@@ -27,6 +27,11 @@ with the eval-time GT smoothing applied; the authors' protocol) and the raw unfi
 only one that is comparable across settings).
 
     python -m training.ray.tsslcd_authors --savgol off centered --seeds 40 41 42 43 44
+
+Eval-only mode (``--eval-only --weights-prefix <source output prefix> --test-start T0 --test-end T1 --output-prefix <new prefix>``): no training;
+the three saved networks of each (savgol, seed) run of the source prefix (``<prefix>/weights/savgol-X/seed-N/{ae_ctx,ae_fut,diffusion}.pth``,
+hyperparameters from the source record) are loaded and scored on another test range with the same data pipeline (scaler fit on the same
+training partition), sampler (``manual_seed(seed + 1000)``) and scoring code, under a new output prefix.
 """
 
 from __future__ import annotations
@@ -291,59 +296,74 @@ def run_one(args: dict[str, Any]) -> dict[str, Any]:
     result["parameters"] = {"ae_ctx": sum(p.numel() for p in ae_ctx.parameters()),
                             "ae_fut": sum(p.numel() for p in ae_fut.parameters()),
                             "diffusion": sum(p.numel() for p in diffusion.parameters())}
-    starts_all = torch.as_tensor(train_starts, device=device)
+    if args.get("eval_only"):
+        import tempfile as _tf
 
-    def epochs_of(stage, model, step_fn, epochs, lr):
-        optimiser = torch.optim.Adam(model.parameters(), lr=lr)
-        t0, last = time.time(), float("nan")
-        for _ in range(epochs):
-            order = starts_all[torch.randperm(len(starts_all), device=device)]
-            total, count = 0.0, 0
-            for lo in range(0, len(order), batch_size):
-                ctx, fut = batch(train_series, order[lo:lo + batch_size])
-                loss = step_fn(masked(ctx, train_mask), fut)
-                optimiser.zero_grad()
-                loss.backward()
-                optimiser.step()
-                total, count = total + float(loss), count + 1
-            last = total / max(count, 1)
-        result[f"stage_{stage}"] = {"epochs": epochs, "seconds": round(time.time() - t0, 1),
-                                    "seconds_per_epoch": round((time.time() - t0) / max(epochs, 1), 2), "final_loss": last}
+        from training.ray.storage import spectrum_s3_client as _client
+        wp = f"{args['weights_prefix'].strip('/')}/weights/savgol-{savgol}/seed-{seed}"
+        with _tf.TemporaryDirectory(prefix="tsslcd-eval-only-") as scratch:
+            for part, module in (("ae_ctx", ae_ctx), ("ae_fut", ae_fut), ("diffusion", diffusion)):
+                local = Path(scratch) / f"{part}.pth"
+                _client().download_file(args["bucket"], f"{wp}/{part}.pth", str(local))
+                module.load_state_dict(torch.load(local, map_location=device))
+        result.update(eval_only=True, weights_prefix=wp)
+        ae_ctx.eval()
+        ae_fut.eval()
+        diffusion.eval()
+    else:
+        starts_all = torch.as_tensor(train_starts, device=device)
 
-    ae_ctx.train()
-    epochs_of("ctx", ae_ctx, lambda ctx, fut: F.mse_loss(ae_ctx(ctx)[0], ctx), args["epochs"]["ctx"], learning_rate)
-    ae_fut.train()
-    epochs_of("fut", ae_fut, lambda ctx, fut: F.mse_loss(ae_fut(fut)[0], fut), args["epochs"]["fut"], learning_rate)
-    ae_ctx.eval()
-    ae_fut.eval()
+        def epochs_of(stage, model, step_fn, epochs, lr):
+            optimiser = torch.optim.Adam(model.parameters(), lr=lr)
+            t0, last = time.time(), float("nan")
+            for _ in range(epochs):
+                order = starts_all[torch.randperm(len(starts_all), device=device)]
+                total, count = 0.0, 0
+                for lo in range(0, len(order), batch_size):
+                    ctx, fut = batch(train_series, order[lo:lo + batch_size])
+                    loss = step_fn(masked(ctx, train_mask), fut)
+                    optimiser.zero_grad()
+                    loss.backward()
+                    optimiser.step()
+                    total, count = total + float(loss), count + 1
+                last = total / max(count, 1)
+            result[f"stage_{stage}"] = {"epochs": epochs, "seconds": round(time.time() - t0, 1),
+                                        "seconds_per_epoch": round((time.time() - t0) / max(epochs, 1), 2), "final_loss": last}
 
-    def diffusion_loss(ctx, fut):
-        with torch.no_grad():
-            z_ctx, z_fut = ae_ctx(ctx)[1], ae_fut(fut)[1]
-        t = torch.randint(0, N_TIMESTEPS, (z_fut.size(0),), device=device)
-        noise = torch.randn_like(z_fut)
-        return F.mse_loss(diffusion(diffusion.q_sample(z_fut, t, noise), z_ctx, t), noise)
+        ae_ctx.train()
+        epochs_of("ctx", ae_ctx, lambda ctx, fut: F.mse_loss(ae_ctx(ctx)[0], ctx), args["epochs"]["ctx"], learning_rate)
+        ae_fut.train()
+        epochs_of("fut", ae_fut, lambda ctx, fut: F.mse_loss(ae_fut(fut)[0], fut), args["epochs"]["fut"], learning_rate)
+        ae_ctx.eval()
+        ae_fut.eval()
 
-    diffusion.train()
-    epochs_of("diff", diffusion, diffusion_loss, args["epochs"]["diff"], learning_rate)
-    diffusion.eval()
+        def diffusion_loss(ctx, fut):
+            with torch.no_grad():
+                z_ctx, z_fut = ae_ctx(ctx)[1], ae_fut(fut)[1]
+            t = torch.randint(0, N_TIMESTEPS, (z_fut.size(0),), device=device)
+            noise = torch.randn_like(z_fut)
+            return F.mse_loss(diffusion(diffusion.q_sample(z_fut, t, noise), z_ctx, t), noise)
 
-    import tempfile
+        diffusion.train()
+        epochs_of("diff", diffusion, diffusion_loss, args["epochs"]["diff"], learning_rate)
+        diffusion.eval()
 
-    from training.ray.artifacts import save_artifact
-    from training.ray.storage import spectrum_s3_client
+        import tempfile
 
-    with tempfile.TemporaryDirectory(prefix="tsslcd-authors-save-") as scratch:
-        for part, module in ((("ae_ctx", ae_ctx), ("ae_fut", ae_fut), ("diffusion", diffusion)) if args.get("save_weights", True) else ()):
-            path = Path(scratch) / f"{part}.pth"
-            torch.save(module.state_dict(), path)
-            saved = save_artifact(spectrum_s3_client(), args["bucket"],
-                                  f"{args['output_prefix'].strip('/')}/weights/savgol-{savgol}/seed-{seed}", path,
-                                  {"savgol": savgol, "seed": seed, "epochs": args["epochs"], "columns": n_cols,
-                                   "timing": {k: v for k, v in result.items() if k.startswith("stage_")}}, repo_root=root)
-            result.setdefault("artifact_keys", []).append(saved.get("weights_key"))
-            if "artifact_error" in saved:
-                result["artifact_error"] = saved["artifact_error"]
+        from training.ray.artifacts import save_artifact
+        from training.ray.storage import spectrum_s3_client
+
+        with tempfile.TemporaryDirectory(prefix="tsslcd-authors-save-") as scratch:
+            for part, module in ((("ae_ctx", ae_ctx), ("ae_fut", ae_fut), ("diffusion", diffusion)) if args.get("save_weights", True) else ()):
+                path = Path(scratch) / f"{part}.pth"
+                torch.save(module.state_dict(), path)
+                saved = save_artifact(spectrum_s3_client(), args["bucket"],
+                                      f"{args['output_prefix'].strip('/')}/weights/savgol-{savgol}/seed-{seed}", path,
+                                      {"savgol": savgol, "seed": seed, "epochs": args["epochs"], "columns": n_cols,
+                                       "timing": {k: v for k, v in result.items() if k.startswith("stage_")}}, repo_root=root)
+                result.setdefault("artifact_keys", []).append(saved.get("weights_key"))
+                if "artifact_error" in saved:
+                    result["artifact_error"] = saved["artifact_error"]
 
     # inference: one diffusion sample per test window; keep the three scored horizons
     torch.manual_seed(seed + 1000)
@@ -378,12 +398,20 @@ def job(spec: dict[str, Any]) -> dict[str, Any]:
     from training.ray.storage import spectrum_s3_client
 
     record: dict[str, Any] = {"savgol": spec["savgol"], "seed": spec["seed"], "kind": "tsslcd_authors"}
+    part = spec.get("score_partition", "test")
+    original_range = RANGES[part]
     try:
+        if spec.get("test_range"):                       # eval-only on another week: the same loader, a different range
+            RANGES[part] = tuple(spec["test_range"])
         record = run_one(spec)
+        if spec.get("test_range"):
+            record["test_range"] = list(spec["test_range"])
     except Exception as error:
         import traceback
 
         record.update(ok=False, error=f"{type(error).__name__}: {error}"[:400], trace=traceback.format_exc()[-800:])
+    finally:
+        RANGES[part] = original_range
     key = f"{spec['output_prefix'].strip('/')}/savgol-{spec['savgol']}/seed-{spec['seed']}.json"
     try:
         spectrum_s3_client().put_object(Bucket=spec["bucket"], Key=key, Body=json.dumps(record, default=str).encode())
@@ -408,6 +436,10 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--eval-mask-ratio", type=float, default=0.0)
     p.add_argument("--gpu-fraction", type=float, default=0.5)
     p.add_argument("--device", default=None)
+    p.add_argument("--eval-only", action="store_true", help="no training: score the saved weights of --weights-prefix (see the module docstring)")
+    p.add_argument("--weights-prefix", default=None, help="eval-only: output prefix of the run whose saved weights and record (hyperparameters) are used")
+    p.add_argument("--test-start", default=None, help="eval-only: start of the scored range (UTC), default the original test range")
+    p.add_argument("--test-end", default=None, help="eval-only: end of the scored range (UTC)")
     p.add_argument("--bucket", default=None)
     p.add_argument("--output-prefix", default="tsslcd-authors-results")
     p.add_argument("--address", default="auto")
@@ -426,6 +458,11 @@ def main(argv=None) -> None:
     eval_smooth = [parse_eval_smooth(s) for s in (args.eval_smooth or DEFAULT_EVAL_SMOOTH)]
     ray.init(address=args.address, ignore_reinit_error=True)
     client = spectrum_s3_client()
+    if args.eval_only:
+        if not args.weights_prefix or args.weights_prefix.strip("/") == args.output_prefix.strip("/"):
+            raise SystemExit("--eval-only needs --weights-prefix and a different --output-prefix (October results are never overwritten)")
+        if bool(args.test_start) != bool(args.test_end):
+            raise SystemExit("--test-start and --test-end go together")
     specs = []
     for savgol in args.savgol:
         for seed in args.seeds:
@@ -435,12 +472,26 @@ def main(argv=None) -> None:
                     continue
             except Exception:
                 pass
+            extra = {}
+            if args.eval_only:
+                try:
+                    source = json.loads(client.get_object(Bucket=bucket, Key=f"{args.weights_prefix.strip('/')}/savgol-{savgol}/seed-{seed}.json")["Body"].read())
+                except Exception as error:
+                    print(f"[tsslcd-authors] no source record for savgol={savgol} seed={seed}: {error}", flush=True)
+                    continue
+                if not source.get("ok") or not source.get("artifact_keys"):
+                    print(f"[tsslcd-authors] source run savgol={savgol} seed={seed} not ok or without saved weights, skipped", flush=True)
+                    continue
+                extra = {"eval_only": True, "weights_prefix": args.weights_prefix, "save_weights": False, "hparams": source.get("hparams"),
+                         "resolution": source.get("resolution", args.resolution), "band": source.get("band", args.band)}
+                if args.test_start:
+                    extra["test_range"] = [args.test_start, args.test_end]
             specs.append({"savgol": savgol, "seed": seed, "repo_root": args.repo_root, "bucket": bucket,
                           "output_prefix": args.output_prefix, "device": args.device,
                           "epochs": {"ctx": args.epochs_ctx, "fut": args.epochs_fut, "diff": args.epochs_diff},
                           "test_stride": args.test_stride, "eval_mask_ratio": args.eval_mask_ratio, "resolution": args.resolution, "band": args.band,
                           "hparams": json.loads(args.hparams) if args.hparams else None,
-                          "eval_smooth": eval_smooth})
+                          "eval_smooth": eval_smooth, **extra})
     print(f"[tsslcd-authors] {len(specs)} runs", flush=True)
     remote = ray.remote(num_cpus=4, num_gpus=args.gpu_fraction, max_retries=1)(job)
     pending = [remote.remote(s) for s in specs]

@@ -104,3 +104,33 @@ def test_load_partition_joins_receivers_on_common_minutes_and_fills_short_gaps(t
     values, grid, valid = T.load_partition(str(tmp_path), "train", sites=("a-nuc1", "b-nuc1"))
     assert values.shape[1] == 4                                                    # 2 receivers x 2 bins, receiver-major
     assert valid[:30].all() and not valid[30:].any()                               # filled inside, nothing outside the data
+
+
+def test_job_overrides_and_restores_the_scored_range(monkeypatch):
+    """Eval-only scoring on another week swaps the loader's test range for the run and always restores it."""
+    import sys
+    import types
+
+    from training.ray import tsslcd_authors as m
+
+    stub = types.ModuleType("training.ray.storage")
+    stub.spectrum_s3_client = lambda: types.SimpleNamespace(put_object=lambda **kw: None)
+    monkeypatch.setitem(sys.modules, "training.ray.storage", stub)
+    seen = {}
+
+    def fake_run_one(spec):
+        seen["range"] = m.RANGES["test"]
+        if spec.get("boom"):
+            raise RuntimeError("boom")
+        return {"ok": True}
+
+    monkeypatch.setattr(m, "run_one", fake_run_one)
+    original = m.RANGES["test"]
+    base = {"repo_root": ".", "savgol": "off", "seed": 40, "bucket": "b", "output_prefix": "p"}
+    rec = m.job({**base, "test_range": ["2026-11-03T20:00:00Z", "2026-11-09T02:00:00Z"]})
+    assert rec["ok"] and rec["test_range"][0] == "2026-11-03T20:00:00Z"
+    assert seen["range"] == ("2026-11-03T20:00:00Z", "2026-11-09T02:00:00Z") and m.RANGES["test"] == original
+    rec = m.job({**base, "test_range": ["2026-11-03T20:00:00Z", "2026-11-09T02:00:00Z"], "boom": True})
+    assert rec["ok"] is False and m.RANGES["test"] == original      # restored after a failure
+    m.job(base)
+    assert seen["range"] == original                                # no override without test_range
