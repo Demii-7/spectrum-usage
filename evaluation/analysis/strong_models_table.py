@@ -1,6 +1,6 @@
 """15-minute test-week MAE (dB) of the four strong direct models side by side: revinmlp, revinmlp_mix, itransformer, patchtst.
 
-Uses ``part1_per_horizon.collect()`` (same sources, same conventions: October test week, all test windows, mean over seeds with seed sd), keeps the direct finals of
+Reads the direct finals like ``part1_per_horizon.collect()`` (same conventions: October test week, all test windows, mean over seeds with seed sd), keeps the direct finals of
 the four models and adds the mean over horizons t+4/12/24/48. Writes ``<out>`` (long CSV with a ``mean_4_12_24_48`` pseudo-horizon 0) and ``<out>.txt``; the optional
 ``--upload`` puts both in s3://spectrum/analysis-outputs/.
 """
@@ -12,7 +12,7 @@ import os
 import pandas as pd
 
 import part1_per_horizon as p1
-from part1_common import summarize
+from part1_common import listing, read_all, record_rows, summarize
 
 MODELS = ("revinmlp", "revinmlp_mix", "itransformer", "patchtst")
 HS = (4, 12, 24, 48)
@@ -23,8 +23,13 @@ def main() -> None:
     ap.add_argument("--out", default="evaluation/results/strong_models_15min.csv")
     ap.add_argument("--upload", action="store_true")
     a = ap.parse_args()
-    f = p1.collect()
-    f = f[(f.family == "direct") & f.model.isin(MODELS)]
+    c = p1.client()
+    rows = []
+    for k, d in read_all(c, [k for k in listing(c, "direct-tuning/15min/") if "/finals/" in k and k.split("/")[3] in MODELS]):
+        if d.get("ok"):
+            q = k.split("/")
+            rows += record_rows(d, int(q[5][1:]), {"family": "direct", "band": q[2], "model": q[3], "seed": int(d["seed"])})
+    f = pd.DataFrame(rows)
     s = summarize(f, ["band", "model"])
     mae = s[(s.metric == "mae") & s.horizon.isin(HS)]
     lines = []
