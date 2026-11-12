@@ -197,6 +197,7 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
                 nowrap = starts >= NOWRAP_MIN_START
                 collected[f"binmae_main|{receiver}"] = np.stack([err_real[h][main].mean(axis=0) for h in horizons])
                 collected[f"binmae_all|{receiver}"] = np.stack([err_real[h].mean(axis=0) for h in horizons])
+                collected[f"allbin|{receiver}"] = np.stack([err_real[h].mean(axis=1) for h in horizons], axis=1).astype(np.float32)     # per-origin MAE over all 200 bins
                 if probe:
                     # origin-set variants for the identity check: (A) main, (B) all, (C) per-horizon-valid origins (windows whose own horizon target exists),
                     # (D) main plus the origin whose last target row is the end of the test range
