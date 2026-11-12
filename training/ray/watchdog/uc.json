@@ -293,5 +293,20 @@
   "id": "claude-uc-freqabl-s44-1",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.frequency_ablation --models revinmlp linearar2d residuallinearar2d vanillalstm residualvanillalstm lstmattn temporalconvnet autoformer_csa revinmlp_mix patchtst patchtst_joint itransformer nlinear dlinear --seeds 44 --skip-done --gpu-fraction 0.1 --max-parallel 8\"",
   "max_restarts": 3
+ },
+ {
+  "id": "claude-uc-freqcls-600-2d-42",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.frequency_ablation_classes --models vanillalstm residualvanillalstm lstmattn linearar2d residuallinearar2d --seeds 42 --bands 600_800 --gpu-fraction 0.25 --max-parallel 6 --skip-done\"",
+  "max_restarts": 3
+ },
+ {
+  "id": "claude-uc-freqcls-600-direct-42",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.frequency_ablation_classes --models revinmlp revinmlp_mix patchtst patchtst_joint itransformer nlinear dlinear --seeds 42 --bands 600_800 --gpu-fraction 0.25 --max-parallel 8 --skip-done\"",
+  "max_restarts": 3
+ },
+ {
+  "id": "claude-uc-freqcls-tcn-control",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.frequency_ablation_classes --models temporalconvnet --seeds 42 --bands 600_800 --max-regions 2 --prefix frequency-ablation-2026-11-classes-tcncontrol --gpu-fraction 0.25 --max-parallel 2 --skip-done\"",
+  "max_restarts": 2
  }
 ]
