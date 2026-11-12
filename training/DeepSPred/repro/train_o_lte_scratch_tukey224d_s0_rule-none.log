@@ -1,0 +1,14 @@
+loaded cache /home/cc/spectrum-usage/data/datasets/deepspred/frames/LTE-Spectrum-Dataset_frames_256x256_spec3f82998d.npy
+lte|K16|s0|C96|d2-4-2|lr0.001|p2-4-4|w2-7-7|raw|uint8_mean_per_channel|spec=tukey224d|full|rule=none
+  params 16,180,935 | train windows 1569 | val 369 | test 369
+  epoch 01 train 0.020562 val 0.019715
+  epoch 02 train 0.019803 val 0.019715
+  epoch 03 train 0.019805 val 0.019715
+  epoch 04 train 0.019809 val 0.019715
+  epoch 05 train 0.019803 val 0.019715
+  epoch 06 train 0.019803 val 0.019715
+  epoch 07 train 0.019803 val 0.019715
+  epoch 08 train 0.019803 val 0.019715
+  epoch 09 train 0.019803 val 0.019715
+
+# run truncated by server decommission (2026-11-12 ~06:30 UTC); no checkpoint saved -- trajectory only

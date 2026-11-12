@@ -62,7 +62,7 @@ def run_key(ds, horizon, seed, embed_dim, depths, lr, patch, window, space,
     return f'''{ds}|K{horizon}|s{seed}|C{embed_dim}|d{'-'.join(map(str, depths))}|lr{lr}|p{'-'.join(map(str, patch))}|w{'-'.join(map(str, window))}|{'jpeg' + str(jpeg_quality) if jpeg_quality else 'raw'}{tl}|{space}'''
 
 
-def build(embed_dim, depths, heads, patch, window, horizon, channels=3) -> SwinSTB3D:
+def build(embed_dim, depths, heads, patch, window, horizon, channels=3, drop_path=DROP_PATH) -> SwinSTB3D:
     return SwinSTB3D({
         'model': {
             'embed_dim': embed_dim,
@@ -73,7 +73,7 @@ def build(embed_dim, depths, heads, patch, window, horizon, channels=3) -> SwinS
             'mlp_ratio': 4.0,
             'drop_rate': 0.0,
             'attn_drop_rate': 0.0,
-            'drop_path_rate': DROP_PATH,
+            'drop_path_rate': drop_path,
             'in_chans': channels,
             'out_chans': channels,
             'head': 'paper'},
@@ -142,6 +142,19 @@ def trivial_references(test: np.ndarray, t: int, k: int, segs=None) -> dict:
         'seasonal_naive': f'''omitted deliberately — a 3 h capture at 1 s with a {t}-frame lookback exposes no period (DEEPSPRED_REFERENCE section 7)'''}
 
 
+class ResidualHead(nn.Module):
+    '''Diagnostic head: the network predicts the delta from the input lookback-mean -- the
+    strongest trivial reference on this data (uniform 20-frame average scores 482 vs the plain
+    model's 498.6 on tukey224d). forward = net(x) + lookback_mean(x). Tagged into the run key
+    as |head=residual; a deviation from the paper's eq. (22) head, run as a diagnostic.'''
+    def __init__(self, net):
+        super().__init__()
+        self.net = net
+
+    def forward(self, x):
+        return self.net(x) + x.mean(dim=1, keepdim=True)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument('--data', type=Path, required=True)
@@ -161,11 +174,31 @@ def main() -> int:
     ap.add_argument('--init-from', type=Path, default=None, help='Transfer learning (paper Algorithm 4): fine-tune from this checkpoint instead of training from scratch. Recorded in the run record.')
     ap.add_argument('--lpips', action='store_true', help='compute LPIPS if the package is present')
     ap.add_argument('--results', type=Path, default=HERE / 'results.json')
+    ap.add_argument('--stop-rule', choices=['paper', 'none'], default='paper',
+                    help='paper: early stop on <0.01%% over 4 epochs (the article\'s rule). '
+                         'none: train all EPOCHS (diagnostic for convergence limitation). '
+                         'Non-default values are tagged into the run key.')
+    ap.add_argument('--input-scale', choices=['unit', 'raw'], default='unit',
+                    help='unit: uint8/255 -> [0,1] (the repo pipeline). raw: feed 0..255 values '
+                         'directly -- diagnostic for the authors-implementation-slip hypothesis.')
+    ap.add_argument('--head', choices=['paper', 'residual'], default='paper',
+                    help='paper: eq. (22) head. residual: net(x) + lookback_mean(x) -- the model predicts the delta from the strongest trivial reference (diagnostic).')
+    ap.add_argument('--drop-path', type=float, default=0.0,
+                    help='stochastic depth rate (default 0.0 = the paper regime). '
+                         'Non-zero values are tagged into the run key.')
     ap.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu')
     args = ap.parse_args()
     key = run_key(args.dataset, args.horizon, args.seed, args.embed_dim, args.depths, args.lr, args.patch, args.window, PRIMARY_SPACE, args.jpeg_quality, args.init_from)
     if args.render_spec:  # the rendering is part of the run identity (results key and checkpoint hash)
         key += f'|spec={args.render_spec}|{args.range_scope}'
+    if args.stop_rule != 'paper':  # diagnostic runs must not collide with paper-regime keys
+        key += f'|rule={args.stop_rule}'
+    if args.head != 'paper':
+        key += f'|head={args.head}'
+    if args.input_scale != 'unit':
+        key += f'|iscale={args.input_scale}'
+    if args.drop_path != 0.0:
+        key += f'|dp{args.drop_path}'
     records = json.loads(args.results.read_text()) if args.results.exists() else {}
     if key in records:
         print(f'''already done, skipping: {key}''')
@@ -180,7 +213,10 @@ def main() -> int:
     (train, val, test), segs = chronological_split(frames, fmeta)
     T = K = args.horizon
     dev = torch.device(args.device)
-    model = build(args.embed_dim, args.depths, args.heads, args.patch, args.window, T, channels).to(dev)
+    model = build(args.embed_dim, args.depths, args.heads, args.patch, args.window, T, channels, args.drop_path)
+    if args.head == 'residual':
+        model = ResidualHead(model)
+    model = model.to(dev)
     n_par = sum(p.numel() for p in model.parameters() if p.requires_grad)
     init_note = None
     if args.init_from is not None:
@@ -188,6 +224,11 @@ def main() -> int:
         model.load_state_dict(state['model_state_dict'])
         init_note = {'checkpoint': str(args.init_from), 'run_key': state.get('run_key'), 'sha256_note': 'source run recorded in its own results file'}
         print(f'''  init from {args.init_from} (run_key {state.get('run_key')})''', flush=True)
+    if args.input_scale == 'raw':
+        def input_fn(b):
+            return torch.from_numpy(b.astype(np.float32)).permute(0, 1, 4, 2, 3).contiguous()
+    else:
+        input_fn = to_model
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=WEIGHT_DECAY)
     lossf = nn.MSELoss()
     tr_idx, va_idx = windows(train, T, K, segs['train']), windows(val, T, K, segs['val'])
@@ -199,7 +240,7 @@ def main() -> int:
         tot = 0.0
         order = np.random.permutation(len(tr_idx))
         for (a, b, cc) in (tr_idx[i] for i in order):
-            x, y = to_model(train[a:b][None]).to(dev), to_model(train[b:cc][None]).to(dev)
+            x, y = input_fn(train[a:b][None]).to(dev), to_model(train[b:cc][None]).to(dev)
             opt.zero_grad()
             l = lossf(model(x), y)
             l.backward()
@@ -210,7 +251,7 @@ def main() -> int:
         vtot = 0.0
         with torch.no_grad():
             for (a, b, cc) in va_idx:
-                x, y = to_model(val[a:b][None]).to(dev), to_model(val[b:cc][None]).to(dev)
+                x, y = input_fn(val[a:b][None]).to(dev), to_model(val[b:cc][None]).to(dev)
                 vtot += float(lossf(model(x), y))
         va_loss = vtot / max(len(va_idx), 1)
         history.append({'epoch': ep, 'train_loss': tr_loss, 'val_loss': va_loss})
@@ -219,7 +260,7 @@ def main() -> int:
         if va_loss < best:
             best, best_state = va_loss, {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
         stall = stall + 1 if rel < THETA_PER else 0
-        if stall >= N_EP or stall >= PATIENCE:
+        if args.stop_rule == 'paper' and (stall >= N_EP or stall >= PATIENCE):
             print(f'''  early stop at epoch {ep} (criterion: <{THETA_PER}% over {N_EP} epochs)''')
             break
     train_s = time.perf_counter() - t0
@@ -230,11 +271,16 @@ def main() -> int:
     preds = []
     with torch.no_grad():
         for (a, b, _) in te_idx:
-            preds.append(model(to_model(test[a:b][None]).to(dev)).cpu().numpy())
-    pred_u8 = (np.concatenate(preds).transpose(0, 1, 3, 4, 2) * 255.0).round().clip(0, 255).astype(np.uint8)
+            p = model(input_fn(test[a:b][None]).to(dev)).cpu().numpy()
+            # Convert to uint8 per window: keeps the accumulator at 6.8 GB instead of 27 GB of
+            # float32 (plus a same-size concatenate copy), so the test phase peaks ~20 GB
+            # instead of ~80 GB. scale/round/clip are elementwise and commute with the
+            # transpose, so the values are identical to the one-shot expression.
+            preds.append((p.transpose(0, 1, 3, 4, 2) * 255.0).round().clip(0, 255).astype(np.uint8))
+    pred_u8 = np.concatenate(preds)
     true_u8 = np.stack([test[b:cc] for (_, b, cc) in te_idx])
     ck_dir = REPO / 'checkpoints' / 'repro' / 'deepspred'
-    ck_dir.mkdir(exist_ok=True)
+    ck_dir.mkdir(parents=True, exist_ok=True)
     ck_path = ck_dir / f'''{hashlib.sha1(key.encode()).hexdigest()[:12]}.pt'''
     torch.save({
         'model_state_dict': model.state_dict(),
@@ -242,7 +288,9 @@ def main() -> int:
         'n_params': n_par,
         'normalization': {'scheme': 'uint8/255 -> [0,1]; sigmoid head; x255 to score', 'max_i': 255.0},
         'regime': {'H': H, 'W': W, 'T': T, 'K': K, 'epochs_run': len(history), 'lr': args.lr, 'weight_decay': WEIGHT_DECAY, 'batch_size': BATCH_SIZE},
-        'arch': {'embed_dim': args.embed_dim, 'depths': args.depths, 'heads': args.heads, 'patch': args.patch, 'window': args.window}}, ck_path)
+        'arch': {'embed_dim': args.embed_dim, 'depths': args.depths, 'heads': args.heads, 'patch': args.patch, 'window': args.window},
+        'head': args.head,
+        'input_scale': args.input_scale}, ck_path)
     sha = hashlib.sha256(ck_path.read_bytes()).hexdigest()
     records[key] = {
         'run_key': key,

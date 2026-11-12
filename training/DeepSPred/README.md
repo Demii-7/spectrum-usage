@@ -64,6 +64,8 @@ section 7.3 (in short: build frame caches with `load_frames(..., workers=1)` on 
 | `repro/run_paper_faithful.py` | training; paper regime hardcoded; writes the checkpoints |
 | `repro/verify_checkpoints.py` | evaluation; re-scores checkpoints; rebuilds results.json |
 | `repro/results.json` | the run records + probe payloads (single results file) |
+| `repro/campaign_tools/` | 2026-11 rendering-identification campaign: minimal train->record->plot chain (README with commands, `plot.py`, `regen_fast.py` record recovery) |
+| `repro/campaign_report.md`, `repro/campaign_trainlogs.tar.gz` | campaign report and training-log archive (findings: REPRODUCTION.md section 8; experiments live in `probe/`) |
 | `requirements.txt` | dependencies (repro + integrated tracks) |
 | `{dataset,model,utils,config_support,train_integrated,evaluate_integrated}.py` | integrated POWDER benchmark track — a separate regime wired into `training/common/` (loaded by `training/common/specialized_models.py`); its numbers are never mixed with the reproduction |
 

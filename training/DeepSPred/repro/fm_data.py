@@ -306,7 +306,7 @@ def load_frames_spec(directory, spec, *, range_scope='full', cache_dir=None, wor
     seconds = list_seconds(directory)
     times, paths = [t for t, _ in seconds], [p for _, p in seconds]
     tag = hashlib.sha1(f'{spec}|{range_scope}'.encode()).hexdigest()[:8]
-    cache_dir = Path(cache_dir) if cache_dir else Path(__file__).resolve().parents[2] / 'data' / 'datasets' / 'deepspred' / 'frames'
+    cache_dir = Path(cache_dir) if cache_dir else Path(__file__).resolve().parent.parents[2] / 'data' / 'datasets' / 'deepspred' / 'frames'
     stem = f'{directory.resolve().name}_frames_256x256_spec{tag}'
     npy, jsn = cache_dir / f'{stem}.npy', cache_dir / f'{stem}_meta.json'
     if npy.exists() and jsn.exists():

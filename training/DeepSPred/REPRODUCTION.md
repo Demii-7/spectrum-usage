@@ -71,7 +71,7 @@ lacks; **(D)** paper components that are unimplementable as published.
 | # | Item | Paper says | Code does | Why |
 |---|---|---|---|---|
 | A1 | STFT hop | window length 256 only; output must be 256x256 | hop = (N-256)/(256-1) = 126 (FM) | the only hop consistent with the stated shape `[O:repro/fm_data.py:spectrogram]` |
-| A2 | STFT window function | nothing | Hann | switch, recorded per run in `switches` |
+| A2 | STFT window function | nothing | Hann | switch, recorded per run in `switches`. Chosen as the field-standard default (scipy/MATLAB/librosa all default to tapered windows), but the *literal* eq. (2) reading — \|STFT\|² of unwindowed chunks — is rect, and the window's effect on the noise floor was underestimated: rect halves it (see the §3.2 correction). Rect is now the leading identification candidate, pending the rect training run |
 | A3 | one- vs two-sided FFT | nothing | two-sided (fftshift) | the only reading giving 256 frequency bins over the 31.25 MHz band |
 | A4 | dB vs linear scaling | eq. (2) is \|STFT\|^2 | 10*log10, then min-max to [0,1] | a ~122 dB linear span cannot map to 8 bits without compression |
 | A5 | Normalisation scope | nothing | dataset-wide dB min/max, sampled every 50th second | per-frame normalisation would destroy absolute level information |
@@ -166,6 +166,66 @@ irreducible floor `[M]`:
 Frame-to-frame differences are RF noise, not drift, so no seed, budget or hyperparameter can
 reach 449 under the literal pipeline — it is not a matter of tuning. This single measurement is
 what forces the rendering question.
+
+**Robustness of the floor to the transform choices** (probed 2026-11-10: 601 contiguous
+test-split seconds, T=20/K=20, `uint8_mean_per_channel`; the segment reproduces the full-split
+references — raw persistence 1573 vs 1615, codec 449 vs 465 — within a few %):
+
+| Rendering | floor sigma^2 | persistence @8 | lookback-mean @8 | the claimed 448.76 is... |
+|---|---|---|---|---|
+| hann, dataset-wide dB (ours) | 763 | 1573 | 839 | below the floor: impossible |
+| hamming, dataset-wide dB | 593 | 1229 | 659 | below the floor: impossible |
+| rect, dataset-wide dB | 186 | 379 | 212 | worse than persistence: trivial |
+| hann, per-frame dB | 1369 | 2821 | 1514 | below the floor: impossible |
+| rect, per-frame dB | 873 | 1804 | 965 | below the floor: impossible |
+| linear scale (per-frame max) | ~1 | ~1 | ~1 | degenerate rendering (brightness 43/255) |
+| hann, dataset-wide dB, JPEG q95 | 205 | 449 | 247 | equal to persistence; lookback-mean beats it 45 % |
+
+**Whiteness of the noise — tested, not assumed** (probed 2026-11-10, 660 contiguous test
+seconds): the lag curve MSE(x_t, x_{t+k}) is flat out to a minute (raw: 1537 at k=1 -> 1608 at
+k=60; jpeg95: 414 -> 469), so the frame-to-frame variation carries no persistent, trackable
+component — each second is a fresh I/Q realization whose single-look |STFT|^2 speckle (chi^2_2
+per pixel) is independent of the past. Three independent estimators agree on sigma^2 (769 / 767
+/ 799 raw; 207 / 206 / 230 after JPEG). Per-pixel temporal variance is V = 813 raw, so the
+ceiling on ANY predictor is R^2 = 1 - sigma^2/V ~ 5.6 %; the paper's 448.76 implies R^2 = 45 %,
+and is negative (worse than the static per-pixel mean) under the codec rendering. The mechanism
+is also why the floor and the trivial references move together under any smoothing: both are
+properties of the same fresh draw.
+
+**Correction (2026-11-10, window sweep with per-window dB ranges).** The rect row above reused
+hann's dB range; rendered fairly (its own dataset-wide range), the rect window measures floor
+400, persistence 808, lookback-mean 459 - the ONE constructible raw rendering under which the
+claimed 448.76 is both reachable (above the floor) and non-trivial (below persistence). Full
+sweep, 400 contiguous test seconds, per-window ranges:
+
+| window (own range) | floor sigma^2 | persistence @8 | lookback @8 | 448.76 is... |
+|---|---|---|---|---|
+| hann (ours) | 765 | 1579 | 846 | below the floor: impossible |
+| hamming | 633 | 1314 | 707 | below the floor: impossible |
+| **rect** | **400** | **808** | **459** | **reachable & non-trivial** |
+| blackman | 852 | 1754 | 941 | below the floor: impossible |
+| triang | 655 | 1357 | 730 | below the floor: impossible |
+| tukey(0.25) | 694 | 1441 | 781 | below the floor: impossible |
+| tukey(0.5) | 852 | 1770 | 954 | below the floor: impossible |
+| kaiser(5) | 647 | 1340 | 719 | below the floor: impossible |
+
+A literal implementation of the paper's eq. (2) - |STFT|^2 of unwindowed 256-sample chunks;
+the paper never names a window function [gap A2] - is exactly a rectangular window, so this is
+a live identification candidate, not just a curve fit: under it the paper's 440-480 cluster
+reads as at-the-floor model performance (their model at 1.12x floor), rather than the
+persistence-level reading of the jpeg95 hypothesis. The mechanism: rect's -13 dB sidelobes
+flood the quiet bins with static station leakage, suppressing the inter-second speckle. The
+definitive test - training the faithful model on rect-rendered frames, predicted to land at
+~440-520 (models run 1.1-1.3x floor here), i.e. on the paper's number - is PENDING; until it
+runs, both readings (jpeg95/persistence-level and rect/floor-level) stand. SSIM and LPIPS
+anchors under rect are unmeasured; if rect's windowed SSIM lands near the 0.7753 anchor it
+would explain two anchors at once.
+
+No other transform makes the claimed MSE both *reachable* and *good*: every other variant
+puts it either below the irreducible floor or at/below the level of a trivial reference. The
+rect-window row is the strongest alternative-STFT reading (its fully-weighted 130-sample frame
+overlap smooths the time axis, dropping the floor 4x) — and even there a *lookback mean* scores
+212 against the paper's 448.76. The verdict is rendering-independent.
 
 ### 3.3 The JPEG hypothesis — why a codec, and why q95
 
@@ -410,6 +470,13 @@ arch, regime, normalisation note); evaluation writes `repro/results.json`.
   — one `.xls` per second of raw I/Q (10,800 / 2,400 / 6,600 files; FM is missing 7 seconds
   inside its span, cross-validation 234 — hence C1). Upstream: the authors' Google Drive release
   via `github.com/pgl1234/Real-world-Spectrum`; no licence declared, so it is never committed.
+  **Object-store mirror** (2026-11-10, MD5-verified): `spectrum/datasets/deepspred/` holds FM and
+  LTE under their own names, and cross-validation under `Cross-Validation-Spectrum-Dataset-r2/`.
+  The original `Cross-Validation-Spectrum-Dataset/` prefix on the object store is faulty:
+  PUTs there are acknowledged (201) but the objects silently vanish, so the partial 2,939-file
+  copy under it is unreliable and `-r2` is the authoritative complete copy — worth raising with
+  Chameleon support, and worth re-checking with `rclone check` before relying on any object that
+  prefix claims to hold.
 - Frame caches (`data/datasets/deepspred/frames/`, gitignored) are built on first use and keyed
   on every preprocessing switch. They are regenerable (hours of CPU).
 - **Windows**: `fm_data.load_frames` renders via a `fork` multiprocessing pool, which does not
@@ -463,3 +530,104 @@ regime) -> retired with the standalone benchmark entry points; the integrated tr
 files (section 7.4). The probe scripts (`probe_metric_space.py`, `identify_rendering.py`) and
 the CSV exporter (`export_results_csv.py`) were removed with this consolidation; their outputs
 are preserved verbatim in `results.json` -> `_probes`, and their findings in sections 3.1-3.3.
+
+---
+
+## 8. The rendering-identification campaign (2026-11-11/12)
+
+Follow-up to the collaborator runs (`probe/COLLABORATOR_RUN.md`): train the paper-faithful
+3D-SwinSTB on the **full grid of library-default renderings** of the FM release and map every
+knob that could make the paper's published numbers (MSE@8 448.7628, @16 453.0376, @18 454.1826,
+curve rising ~+3.6 % k=1->20) consistent with a trained model. All runs: FM, K=T=20, C96 /
+d2-4-2 / patch 2-4-4 / window 2-7-7, AdamW lr 1e-3, batch 1, paper early stopping, chronological
+4:1:1, metric `uint8_mean_per_channel`, MSE-only records. Records merged into `results.json`
+(keys carry `|spec=<rendering>|<range-scope>` and diagnostic tags); tools in `campaign_tools/`;
+training-log archive `campaign_trainlogs.tar.gz`.
+
+### 8.1 The runs
+
+| rendering / variant | checkpoint (sha12) | ep | test MSE @8 |
+|---|---|---|---|
+| tukey224d (scipy.spectrogram defaults) | `3c96fc0dc0cd` | 8 | 498.64 |
+| tukey224d, seed 1 | `c5a4e4c918ca` | 496.83 |
+| tukey224d, drop-path 0.1 | `64f6b2d131a5` | 494.60 |
+| tukey224d, 20 epochs no early stop | `e7520c4cc040` | 20 | **498.64 — identical: not convergence-limited** |
+| tukey224d, residual head (net + lookback-mean) | `371f09a3d475` | 5 | 481.67 — lands exactly at its lookback-mean |
+| tukey224@54-218 (FM-band crop) | `187560732831` | 7 | 494.65 |
+| tukey224@54-218, seed 1 | `1b987cdc5bb2` | 491.17 |
+| tukey224 (no detrend) | `d0419b0f1311` | 590.42 |
+| tukey224d@54-218 (detrend + crop) | `b60bc8677c44` | 596.07 |
+| rect126 (torch-style rect, hop 126) | `c58d32f53cad` | 11 | 348.90 |
+| rect126, seed 1 | `cc28f79072b2` | 342.63 |
+| rect127c~12 (torch.stft defaults, hop 127) | `2fa9ff9a3d9b` | 302.12 |
+| hann126 | `0727eb8f06c1` | 8 | 829.94 |
+| hamm128 (MATLAB spectrogram default) | `513bd5b54a8f` | 590.22 |
+| hann128s (scipy.signal.stft default) | `1442b5d2022f` | 8 | 579.05 |
+| **LTE transfer pair** (tukey224d rendering, K=16, avg MSE over 16 frames, 369 test windows) | | | |
+| LTE from scratch | `4dfd1d59c176` | 5 | 1303.7 — stuck at persistence (1322.5) |
+| LTE, init from FM `3c96fc0dc0cd` (Algorithm 4) | `dba70d28179a` | 12 | **663.0 — below the lookback-mean (704.4), 49 % better than scratch** |
+
+Evaluation-only (no training): seed ensemble 493.7; **blend 0.5xensemble + 0.5xlookback-mean
+470.1 (best constructible predictor)**; fitted-weight lookback 481.5 (vs uniform 482 — the
+residual after the lookback-mean is pure noise); static train-mean image 605 (drift kills it).
+
+### 8.2 Sweeps (no training; trivial references on the test split)
+
+- **Hop** (tukey, detrend, lookback-mean @8): 32 -> 556, 64 -> 684, 128 -> 644, **224 -> 482**,
+  255 -> 551. The scipy default (224) is the unique minimum.
+- **Taper**: tukey alpha 0.25 -> 482 vs alpha 0.5 -> 583. The scipy default (0.25) wins.
+- **Normalization** (tukey224d, lookback-mean @8): **min-max dataset-wide 482**, p1-p99 clip
+  1686, per-frame z-score 2616, per-frame min-max 1177. MSE scales as (dB-noise / dB-range)^2 —
+  every range-narrowing amplifies pixel-scale speckle; min-max is optimal because it is widest.
+
+### 8.3 Findings
+
+1. **The scipy-default rendering is the argmin on every rendering axis** (window, hop, taper,
+   normalization) — and its irreducible floor (persistence/2 = 447.5) coincides with the paper's
+   448.76 to 0.3 %.
+2. **No honest predictor reaches 448.76.** The predictor hierarchy on tukey224d: floor 447.5
+   (unreachable) < blend 470.1 < weighted/uniform lookback 481.5/482 < ensemble 493.7 < single
+   models 494-499 < static mean 605 < persistence 895. The claim sits below everything
+   constructible — consistent with section 3.5's jpeg95 finding (it equals that rendering's
+   persistence level, 465).
+3. **The torch-default reading.** The paper states PyTorch 1.8.0 and writes eq. (2) as bare
+   |STFT|^2 — `torch.stft`'s default window is None = **rect**. Under rect, converged models
+   land at 302-349 and persistence at 504-635: the claim sits in the *mediocre band* between
+   the conditional mean and persistence, i.e. a reachable-but-sub-converged score. Supporting
+   evidence: the paper's +3.6 % rising curve — every converged model here is flat (+0.3-0.5 %),
+   pure persistence rises +7 %, and a model partway between the two rises in between.
+4. **The paper's protocol is initialization-fragile** (the LTE pair): same data, same recipe,
+   only the init differs — scratch early-stops at the persistence plateau, the FM-initialised
+   run descends past the conditional mean. The FM descent is a cliff (rect126 val: 18159 ->
+   2503 -> 358 across epochs 1-3), so *where a run stops* is not robust; this is the mechanism
+   by which the authors' FM run could legitimately land at 449 under the same protocol where
+   ours lands at 349.    The no-early-stop LTE scratch control settled this: its validation loss stayed
+   bit-identical at the persistence plateau for 9+ consecutive epochs (~14,000 steps)
+   before the run was truncated, so the 2x gap is NOT a premature-stop artefact —
+   from-scratch cannot approach the transfer arm within the paper's budget on this
+   rendering. Under jpeg95 (runs #12/#13) scratch converges and the arms are comparable:
+   the fragility is rendering-dependent.
+5. Diagnostics close the remaining knobs: 20 epochs == 8 epochs (convergence); drop-path 0.1
+   shaves 4 MSE; a lookback-mean-anchored head converges to the reference itself (481.67) —
+   the residual beyond the lookback-mean carries no learnable structure.
+6. A raw-uint8 input variant (0..255 into the sigmoid-headed model, `--input-scale raw`,
+   truncated at epoch 4 by server decommission) descends an order of magnitude more slowly
+   than the unit-scaled baseline (val 2503 -> 1031 -> 941 over epochs 2-4 vs the baseline's
+   one-epoch cliff 2503 -> 358): LayerNorm does not instantly absorb the 255x input scale
+   during descent. A scale-slip of this kind is a live mechanism for a same-protocol model
+   crossing the 449 band slowly — trajectory evidence, not a converged result.
+
+### 8.4 Operational notes (fresh-checkout hazards fixed in `run_paper_faithful.py`)
+
+- `checkpoints/repro/deepspred/` does not exist in a fresh checkout: `mkdir(parents=True)`.
+- The test-inference phase stacked float32 predictions (~27 GB) plus a concatenate copy before
+  the uint8 cast (~80 GB peak): predictions are now converted per window (~20 GB peak),
+  numerically identical.
+- The record phase (all-spaces MSE + PSNR + SSIM + trivial references in one pass) peaks at
+  ~75 GB and OOMs when two overlap; the campaign policy kills the runner once its checkpoint
+  is saved and regenerates MSE-only records with the streaming re-scorer (`campaign_tools/
+  regen_fast.py`, validated exact against a surviving runner record to 4e-8). Campaign records
+  carry `_recovered: true`, `ssim: null`; SSIM is recomputable via `verify_checkpoints.py`.
+- New diagnostic flags, all tagged into the run key (no checkpoint collisions):
+  `--stop-rule none`, `--drop-path`, `--head residual`, `--input-scale raw`,
+  plus `--render-spec` / `--range-scope` from the collaborator patch.

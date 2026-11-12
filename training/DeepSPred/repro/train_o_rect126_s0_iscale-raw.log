@@ -1,0 +1,9 @@
+loaded cache /home/cc/spectrum-usage/data/datasets/deepspred/frames/FM-Spectrum-Dataset_frames_256x256_specfb96f7e5.npy
+fm|K20|s0|C96|d2-4-2|lr0.001|p2-4-4|w2-7-7|raw|uint8_mean_per_channel|spec=rect126|full|iscale=raw
+  params 16,180,935 | train windows 7122 | val 1722 | test 1722
+  epoch 01 train 0.040616 val 0.038492
+  epoch 02 train 0.038584 val 0.038492
+  epoch 03 train 0.020187 val 0.015852
+  epoch 04 train 0.014354 val 0.014473
+
+# run truncated by server decommission (2026-11-12 ~06:30 UTC); no checkpoint saved -- trajectory only
