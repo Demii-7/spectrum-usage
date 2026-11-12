@@ -153,6 +153,39 @@ def sample_forecast_grid(
     return sampled.astype(np.float32), inside, np.hypot(dx, dy)
 
 
+READOUTS = ("as_evaluated", "nearest_cell", "sharp")
+SHARP_POWER = 16.0
+
+
+def read_forecast_maps(
+    maps: np.ndarray,
+    grid: FrozenGrid,
+    longitudes: Sequence[float],
+    latitudes: Sequence[float],
+    readout: str = "as_evaluated",
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Read frequency-last maps at the receivers; same return as ``sample_forecast_grid``.
+
+    ``as_evaluated`` (default) IS ``sample_forecast_grid`` (IDW over all grid cells with the grid's own power), so existing results keep their
+    meaning. ``nearest_cell`` takes the value of the grid node nearest to the receiver; ``sharp`` is ``sample_forecast_grid`` with power 16
+    whatever the map's power. The ``inside`` / ``outside_distance`` metadata is always the one of ``sample_forecast_grid``.
+    """
+    if readout not in READOUTS:
+        raise ValueError(f"readout must be one of {READOUTS}")
+    if readout == "as_evaluated":
+        return sample_forecast_grid(maps, grid, longitudes, latitudes)
+    if readout == "sharp":
+        import dataclasses
+
+        return sample_forecast_grid(maps, dataclasses.replace(grid, power=SHARP_POWER), longitudes, latitudes)
+    _, inside, outside_distance = sample_forecast_grid(maps, grid, longitudes, latitudes)
+    x, y = _local_xy(np.asarray(longitudes, dtype=np.float64), np.asarray(latitudes, dtype=np.float64), grid.origin_longitude, grid.origin_latitude)
+    index = [np.unravel_index(int(np.hypot(grid.x - sx, grid.y - sy).argmin()), grid.shape) for sx, sy in zip(x, y)]
+    values = np.asarray(maps)
+    sampled = np.stack([values[..., int(i), int(j), :] for i, j in index], axis=-2)
+    return sampled.astype(np.float32), inside, outside_distance
+
+
 def load_aligned_receiver_csvs(
     paths: Sequence[Path],
     checkpoint_frequencies: Sequence[float],

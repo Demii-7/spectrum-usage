@@ -338,5 +338,20 @@
   "id": "claude-uc-neural4d-collect-1",
   "entrypoint": "python -u training/ray/scripts/neural4d_collect.py --deadline-utc 2026-11-13T14:00Z --interval 900",
   "max_restarts": 3
+ },
+ {
+  "id": "claude-uc-s15nearest-asev-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.spatial15_origins --models linearar4d --skip-done --max-parallel 12 --readout as_evaluated --output-prefix spatial15-origin-errors-oct2026-asevaluated\"",
+  "max_restarts": 3
+ },
+ {
+  "id": "claude-uc-s15nearest-near-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.spatial15_origins --models linearar4d --skip-done --max-parallel 12 --readout nearest_cell --output-prefix spatial15-origin-errors-oct2026-nearest\"",
+  "max_restarts": 3
+ },
+ {
+  "id": "claude-uc-s15nearest-table-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-uc-s15nearest-asev-1 claude-uc-s15nearest-near-1 --then 'bash training/ray/scripts/run_spatial15_nearest.sh'\"",
+  "max_restarts": 2
  }
 ]

@@ -169,17 +169,25 @@ def unpaired_cells(client) -> pd.DataFrame:
 
 
 def main() -> None:
+    global ORIGIN_PREFIX, MODELS_4D, COMPARED
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", default="evaluation/results/map_construction_vs_per_receiver.csv")
+    parser.add_argument("--origin-prefix", default=ORIGIN_PREFIX, help="per-origin errors prefix of the 4D cells (default: the as_evaluated readout of the paper)")
+    parser.add_argument("--models", nargs="+", help="only these 4D models (default: all that exist)")
     args = parser.parse_args()
+    ORIGIN_PREFIX = args.origin_prefix
+    if args.models:
+        MODELS_4D = tuple(m for m in MODELS_4D if m in args.models)
+        COMPARED = tuple(m for m in COMPARED if m in args.models)
     client = spectrum_s3_client()
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     pd.set_option("display.width", 250)
     paired_table = compare(client)
     paired_table.to_csv(out, index=False)
-    unpaired = unpaired_cells(client)
-    unpaired.to_csv(out.with_name(out.stem + "_unpaired.csv"), index=False)
+    if ORIGIN_PREFIX == "spatial15-origin-errors-oct2026":        # the unpaired cross-check reads the as_evaluated cells' result.json: only for the default prefix
+        unpaired = unpaired_cells(client)
+        unpaired.to_csv(out.with_name(out.stem + "_unpaired.csv"), index=False)
     for band in BANDS:
         d = paired_table[paired_table.band == band]
         print(f"\n{band}: paired comparison on identical origins, mean over horizons 4/12/24/48, pooled over the four receivers "
@@ -198,8 +206,9 @@ def main() -> None:
                                 zip(wide[column], low[column], high[column])]
             print(f"\n{model}")
             print(pd.concat([mae.round(3), show], axis=1).to_string())
-    print("\nunpaired cross-check (physical-receiver MAE of the cells, result.json; mean over the four receivers, seed mean and sd)")
-    print(unpaired.pivot_table(index=["band", "variant"], columns="model", values="mae_mean").round(3).to_string())
+    if ORIGIN_PREFIX == "spatial15-origin-errors-oct2026":
+        print("\nunpaired cross-check (physical-receiver MAE of the cells, result.json; mean over the four receivers, seed mean and sd)")
+        print(unpaired.pivot_table(index=["band", "variant"], columns="model", values="mae_mean").round(3).to_string())
 
 
 if __name__ == "__main__":

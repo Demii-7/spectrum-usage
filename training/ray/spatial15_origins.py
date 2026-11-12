@@ -41,7 +41,8 @@ def per_origin_errors(npz, receiver_index: int, normalization) -> dict[str, np.n
         mean = np.asarray(normalization["mean_dbm"], dtype=np.float64).squeeze()
         std = np.asarray(normalization["std_dbm"], dtype=np.float64).squeeze()
         prediction = prediction * std + mean
-    return {"times": np.asarray(npz["origin_timestamps"]).astype(str), "mae": np.abs(prediction - target).mean(axis=2)}
+    error = prediction - target
+    return {"times": np.asarray(npz["origin_timestamps"]).astype(str), "mae": np.abs(error).mean(axis=2), "mse": (error ** 2).mean(axis=2)}
 
 
 def weights_for(client, bucket: str, prefix: str, tuning_prefix: str, band: str, variant: str, model: str, seed: int):
@@ -70,7 +71,8 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     client, bucket = spectrum_s3_client(), args["bucket"]
     band, variant_name, model, seed = spec["band"], spec["variant"], spec["model"], int(spec["seed"])
     base = f"{args['output_prefix'].strip('/')}/{band}/{variant_name}/{model}/seed-{seed}"
-    record: dict[str, Any] = {"band": band, "variant": variant_name, "model": model, "seed": seed}
+    readout = args.get("readout", "as_evaluated")
+    record: dict[str, Any] = {"band": band, "variant": variant_name, "model": model, "seed": seed, "readout": readout}
     started = time.time()
     try:
         import torch  # noqa: F401  (the evaluator imports torch lazily)
@@ -104,7 +106,7 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
                 out = scratch / "out"
                 evaluate_condition(experiment_path=exp_path, model_config_path=model_config, checkpoint_path=checkpoint, model_name=model,
                                    seed=seed, condition="geometry_correct", output_directory=out, batch_size=args["batch_size"],
-                                   device="cuda" if model in GPU_MODELS else "cpu")
+                                   device="cuda" if model in GPU_MODELS else "cpu", readout=readout)
             finally:
                 exp_path.unlink(missing_ok=True)
             collected: dict[str, np.ndarray] = {}
@@ -164,9 +166,13 @@ def main(argv=None) -> None:
     p.add_argument("--prefix", default="spatial15-tuned-oct2026")
     p.add_argument("--tuning-prefix", default="tuning")
     p.add_argument("--output-prefix", default="spatial15-origin-errors-oct2026")
+    p.add_argument("--readout", choices=("as_evaluated", "nearest_cell", "sharp"), default="as_evaluated",
+                   help="how the forecast map is read at the receivers (default: as in the paper; any other value needs its own --output-prefix)")
     p.add_argument("--address", default="auto")
     p.add_argument("--repo-root", default="/workspace/spectrum-usage")
     args = p.parse_args(argv)
+    if args.readout != "as_evaluated" and args.output_prefix.strip("/") == "spatial15-origin-errors-oct2026":
+        p.error("a non-default --readout needs its own --output-prefix (never write over the as_evaluated per-origin errors)")
     sys.path.insert(0, args.repo_root)
     from training.ray.spatial15 import variants as s2_variants
     from training.ray.storage import spectrum_s3_client
@@ -195,7 +201,7 @@ def main(argv=None) -> None:
         specs = [s for s in specs if not done(s)]
     print(f"[s15-origins] {len(specs)} cells", flush=True)
     shared = {"repo_root": args.repo_root, "bucket": bucket, "prefix": args.prefix, "tuning_prefix": args.tuning_prefix,
-              "output_prefix": args.output_prefix, "batch_size": args.batch_size}
+              "output_prefix": args.output_prefix, "batch_size": args.batch_size, "readout": args.readout}
     ray.init(address=args.address, ignore_reinit_error=True)
     remote = ray.remote(num_cpus=2, num_gpus=0, memory=int(args.memory_gb * 2 ** 30), max_retries=1)(job)
     gpu_remote = ray.remote(num_cpus=2, num_gpus=args.gpu_fraction, memory=int(args.memory_gb * 2 ** 30), max_retries=1)(job)

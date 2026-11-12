@@ -23,6 +23,7 @@ from training.common.spatial_checkpoint_evaluation import (
     infer_frozen_model,
     load_aligned_receiver_csvs,
     normalize_with_checkpoint,
+    read_forecast_maps,
     sample_forecast_grid,
     select_window_origins,
 )
@@ -285,6 +286,7 @@ def evaluate_condition(
     device: str = "cuda",
     series_transform=None,
     center_windows: str | None = None,
+    readout: str = "as_evaluated",
 ) -> dict[str, Any]:
     """Evaluate one frozen checkpoint and write physical-receiver metrics.
 
@@ -297,6 +299,9 @@ def evaluate_condition(
     level is restored after the forecast: ``"own"`` adds each receiver's OWN window mean to its sampled forecast, ``"map"`` adds the map's
     window mean back to the forecast map before it is read at the receivers. The main outputs follow the chosen mode; both readouts are also
     saved as ``predictions_normalized_center_own`` / ``_center_map``.
+
+    ``readout`` (default ``"as_evaluated"``: behaviour unchanged, ``sample_forecast_grid``) selects how the forecast map is read at the receivers:
+    ``"nearest_cell"`` (the nearest grid node) or ``"sharp"`` (IDW power 16); see ``spatial_checkpoint_evaluation.read_forecast_maps``.
     """
     started = time.perf_counter()
     experiment_path = experiment_path.resolve()
@@ -444,15 +449,15 @@ def evaluate_condition(
         lookback_rows = int(experiment.get("lookback", 60))
         own_values = normalize_with_checkpoint(series.values_dbm[:, target_indices], normalization)             # (T, R, F)
         own_level = own_window_levels(own_values, origins, lookback_rows)                                  # (N, R, F)
-        sampled_centered, inside, outside_distance = sample_forecast_grid(predictions, grid, target_lons, target_lats)
+        sampled_centered, inside, outside_distance = read_forecast_maps(predictions, grid, target_lons, target_lats, readout)
         centered_outputs["predictions_normalized_center_own"] = sampled_centered + own_level[:, None]
         predictions = predictions + level_map                                                              # restored forecast maps
-        sampled_map, _, _ = sample_forecast_grid(predictions, grid, target_lons, target_lats)
+        sampled_map, _, _ = read_forecast_maps(predictions, grid, target_lons, target_lats, readout)
         centered_outputs["predictions_normalized_center_map"] = sampled_map
         sampled = centered_outputs["predictions_normalized_center_own" if center_windows == "own" else "predictions_normalized_center_map"]
     else:
-        sampled, inside, outside_distance = sample_forecast_grid(
-            predictions, grid, target_lons, target_lats
+        sampled, inside, outside_distance = read_forecast_maps(
+            predictions, grid, target_lons, target_lats, readout
         )
     region_definitions = _regions(_resolve(experiment["regions"], root))
     metric_rows: list[dict[str, Any]] = []
@@ -611,6 +616,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--origin-limit", type=int)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--readout", choices=("as_evaluated", "nearest_cell", "sharp"), default="as_evaluated")
     parser.add_argument("--output-dir", type=Path, required=True)
     return parser.parse_args(argv)
 
@@ -630,6 +636,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         origin_limit=args.origin_limit,
         batch_size=args.batch_size,
         device=args.device,
+        readout=args.readout,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
 
