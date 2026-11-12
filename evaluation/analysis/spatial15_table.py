@@ -89,6 +89,22 @@ def fetch(client, cache: Path | None) -> dict[str, dict]:
     return out
 
 
+def fill_map_from_tuning_finals(client, raw: dict[str, dict]) -> dict[str, dict]:
+    """core4-p2 cells scored by an earlier version of ``spatial15.eval_only_job`` carry no map metrics (the table showed NaN, or one seed only).
+    The map-level test metrics of such a cell are the tuning final's own (same weights): copy them in memory (S3 is not modified) and label the source."""
+    for key, d in raw.items():
+        info = parse_key(key)
+        if info is None or info["variant"] != "core4-p2" or "map__test_mean_horizon_mae_db" in d or not d.get("ok", True):
+            continue
+        try:
+            final = json.loads(client.get_object(Bucket=BUCKET, Key=f"tuning/powder15_4d/{info['band']}/4d/{info['model']}/final/seed-{info['seed']}.json")["Body"].read())
+        except Exception:
+            continue
+        d.update({f"map__{k}": v for k, v in final.items() if k.startswith(("test_", "validation_"))})
+        d["map_source"] = "tuning final of the seed (cell result.json had no map metrics)"
+    return raw
+
+
 def flatten(raw: dict[str, dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
     """(one row per cell with its map metrics, one row per cell x physical-receiver condition)."""
     cells, receivers = [], []
@@ -101,7 +117,7 @@ def flatten(raw: dict[str, dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
             receivers.append({**base, "condition": "permuted", "receiver": "core four", "mae": float(d["mean_horizon_mae_db"]),
                               "n_origins": d.get("n_origins")})
             continue
-        cells.append({**base, "map_mae": d.get("map__test_mean_horizon_mae_db"),
+        cells.append({**base, "map_mae": d.get("map__test_mean_horizon_mae_db"), "map_source": d.get("map_source", "cell result.json"),
                       **{f"map_mae_t{h}": d.get(f"map__test_mae_db_t{h}") for h in (4, 12, 24, 48)}})
         for label, r in (d.get("receivers") or {}).items():
             condition, receiver = parse_condition(label)
@@ -269,7 +285,7 @@ def main() -> None:
     from training.ray.storage import spectrum_s3_client
 
     client = spectrum_s3_client()
-    cells, rec = flatten(fetch(client, args.cache))
+    cells, rec = flatten(fill_map_from_tuning_finals(client, fetch(client, args.cache)))
     perm_rows = rec[rec.condition == "permuted"]
     cov = coverage(cells, perm_rows)
     refs = pd.DataFrame() if args.no_references else own_history_references(client, ["humanities", "madsen", "moran", "sagepoint", "guesthouse", "law73"])
