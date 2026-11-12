@@ -1,0 +1,56 @@
+# Add with stack.yaml and h100.yaml when redeploying the six-host final cluster.
+# The original service keeps running on hosts 1-4. These workers mount the
+# prepared LLM runtime so queued jobs can run as soon as they join Ray.
+services:
+  ray-worker-extra:
+    image: ${RAY_IMAGE:?set RAY_IMAGE to the distributed image tag}
+    entrypoint: ["/usr/local/bin/ray-worker"]
+    hostname: "{{.Node.Hostname}}"
+    environment:
+      AWS_ACCESS_KEY_ID_FILE: /run/secrets/minio_root_user
+      AWS_SECRET_ACCESS_KEY_FILE: /run/secrets/minio_root_password
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_REGION: us-east-1
+      AWS_ENDPOINT_URL: http://minio:9000
+      MINIO_ENDPOINT: http://minio:9000
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_BUCKET: ${MINIO_BUCKET:-spectrum-usage}
+      SPECTRUM_AWS_ACCESS_KEY_ID_FILE: /run/secrets/spectrum_access_key
+      SPECTRUM_AWS_SECRET_ACCESS_KEY_FILE: /run/secrets/spectrum_secret_key
+      SPECTRUM_S3_ENDPOINT_URL: ${SPECTRUM_S3_ENDPOINT_URL:-https://chi.tacc.chameleoncloud.org:7480}
+      SPECTRUM_S3_BUCKET: ${SPECTRUM_S3_BUCKET:-spectrum}
+      RAY_ADDRESS: ray-head:6379
+      RAY_NUM_GPUS: "1"
+      RAY_OBJECT_STORE_MEMORY: "17179869184"
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    volumes:
+      - type: bind
+        source: /home/cc/spectrum-usage
+        target: /workspace/spectrum-usage
+      - type: bind
+        source: /home/cc/final-runtime/pylibs
+        target: /workspace/pylibs
+      - type: bind
+        source: /home/cc/final-runtime/hf-cache
+        target: /workspace/hf-cache
+      - type: tmpfs
+        target: /dev/shm
+        tmpfs:
+          size: 68719476736
+    secrets: [minio_root_user, minio_root_password, spectrum_access_key, spectrum_secret_key]
+    healthcheck:
+      test: ["CMD-SHELL", "ray health-check --address=ray-head:6379"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    deploy:
+      mode: global
+      placement:
+        constraints:
+          - node.labels.ray.final-extra == true
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+    networks: [ray-overlay]

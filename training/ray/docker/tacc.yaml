@@ -1,0 +1,23 @@
+# Merge with stack.yaml. One one-GPU worker per ray.gpu=true host.
+services:
+  ray-head:
+    environment:
+      NVIDIA_VISIBLE_DEVICES: void
+      RAY_HEAD_CPUS: "0"
+      RAY_MEMORY: "1073741824"
+      RAY_OBJECT_STORE_MEMORY: "1073741824"
+    volumes:
+      - type: tmpfs
+        target: /dev/shm
+        tmpfs:
+          size: 2147483648
+
+  ray-worker:
+    environment:
+      RAY_NUM_GPUS: "1"
+      RAY_OBJECT_STORE_MEMORY: "17179869184"
+    volumes:
+      - type: tmpfs
+        target: /dev/shm
+        tmpfs:
+          size: 68719476736
