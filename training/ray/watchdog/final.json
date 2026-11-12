@@ -293,5 +293,10 @@
   "id": "claude-final-rcl-chain-600-3",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/rcl_chain.py --band 600_800 --h100-prefix tuning-h100 --deadline-utc 2026-11-12T23:00Z\"",
   "max_restarts": 3
+ },
+ {
+  "id": "claude-final-spec2d-v2-tcn-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-final-spec2d-v2-smoke-tcn-1 --then 'python -u training/ray/scripts/spec2d_v2_gate.py --band 600_800 --models temporalconvnet --region R3 && python -u -m training.ray.spectral_context_fixed --models temporalconvnet --resolution 15min --hyperparameters tuned15 --band 600_800 --conditions region_only_fullloss --seeds 42 --noise-from-plan --regions evaluation/analysis/plan_regions_600_800.csv --output-prefix oct2026-spectral-context-15min-v2/600_800 --skip-done --max-parallel 4 --gpu-fraction 0.5 && python -u -m training.ray.spectral_context_fixed --models temporalconvnet --resolution 15min --hyperparameters tuned15 --band 2400_2600 --conditions region_only_fullloss --seeds 42 --noise-from-plan --regions evaluation/analysis/plan_regions_2400_2600.csv --output-prefix oct2026-spectral-context-15min-v2/2400_2600 --skip-done --max-parallel 4 --gpu-fraction 0.5'\"",
+  "max_restarts": 2
  }
 ]

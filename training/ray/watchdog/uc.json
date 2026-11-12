@@ -248,5 +248,10 @@
   "id": "claude-uc-july-tcn42-1",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.transfer_all run --source rolled --models temporalconvnet --reps 2d --seeds 42 --groups powder --no-core-powder --intervals evaluation/analysis/transfer_july_intervals.csv --prefix transfer-all-july-2026 --skip-done --gpu-fraction 0.25 --max-parallel 4 && bash training/ray/scripts/run_catchup_tables.sh\"",
   "max_restarts": 3
+ },
+ {
+  "id": "claude-uc-spec2d-v2-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-uc-spec2d-v2-smoke-1 --then 'python -u training/ray/scripts/spec2d_v2_gate.py --band 600_800 --models vanillalstm residualvanillalstm lstmattn --region R3 && python -u -m training.ray.spectral_context_fixed --models vanillalstm residualvanillalstm lstmattn --resolution 15min --hyperparameters tuned15 --band 600_800 --conditions region_only_fullloss --seeds 42 --noise-from-plan --regions evaluation/analysis/plan_regions_600_800.csv --output-prefix oct2026-spectral-context-15min-v2/600_800 --skip-done --max-parallel 6 --gpu-fraction 0.25 && python -u -m training.ray.spectral_context_fixed --models vanillalstm residualvanillalstm lstmattn --resolution 15min --hyperparameters tuned15 --band 2400_2600 --conditions region_only_fullloss --seeds 42 --noise-from-plan --regions evaluation/analysis/plan_regions_2400_2600.csv --output-prefix oct2026-spectral-context-15min-v2/2400_2600 --skip-done --max-parallel 6 --gpu-fraction 0.25 && python -u -m training.ray.spectral_context_fixed --models residuallinearar2d --resolution 15min --hyperparameters tuned15 --band 600_800 --conditions region_only_fullloss --seeds 42 --noise-from-plan --regions evaluation/analysis/plan_regions_600_800.csv --output-prefix oct2026-spectral-context-15min-v2/600_800 --skip-done --max-parallel 6 --gpu-fraction 0'\"",
+  "max_restarts": 2
  }
 ]
