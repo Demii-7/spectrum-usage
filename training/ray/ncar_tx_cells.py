@@ -60,6 +60,8 @@ def model_groups(client, bucket: str, stage: str, bands: list[str], models: list
                 out.append([{**e, "source_kind": "rolled"}])
     direct = [m for m in (DIRECT_CORE if stage == "core" else DIRECT_LLM) if not models or m in models]
     by: dict[tuple, dict[int, dict]] = {}
+    if not direct:                                     # an empty list would mean "every model" to discover_sources
+        return out
     for e in discover_sources(client, bucket, ["direct"], direct):
         if e["resolution"] == "15min" and e["band"] in bands and int(e["seed"]) in SEEDS.get(e["model"], DEFAULT_SEEDS) \
                 and int(e["horizon"]) in horizons:
