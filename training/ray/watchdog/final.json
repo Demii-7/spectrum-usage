@@ -1,92 +1,102 @@
 [
- {
-  "id": "claude-final-h1-timellm-1",
-  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_direct --resolution 15min --horizons 1 --models timellm --max-parallel 4\"",
-  "max_restarts": 4
- },
- {
-  "id": "claude-final-h1-ofa-1",
-  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_direct --resolution 15min --horizons 1 --models ofa ofa_rand ofa_scratch --max-parallel 8\"",
-  "max_restarts": 4
- },
- {
-  "id": "claude-final-h1-cheap-1",
-  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_direct --resolution 15min --horizons 1 --models residuallinearar2d linearar2d residualnonlinear2d nlinear dlinear revinmlp patchtst patchtst_noinorm patchtst_joint patchtst_nopatch --max-parallel 16\"",
-  "max_restarts": 4
- },
- {
-  "id": "claude-final-rescore-1dlstm-1",
-  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.rescore --bucket spectrum --sources oct band --models vanillalstm1d residualvanillalstm --thin-1d-lstm 1 --output-prefix rescored-stride1 --skip-done --max-parallel 8\"",
-  "max_restarts": 3
- },
- {
-  "id": "claude-final-es-repro-1",
-  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.es_repro_seeds --arms ofa_gpt2 timellm_gpt2 timellm_bert --seeds 0 1 2 3 4 --skip-done --max-parallel 8\"",
-  "max_restarts": 3
- },
- {
-  "id": "claude-final-tsslcd-tune-r1",
-  "entrypoint": "python -u -m training.ray.tune_tsslcd --budget 8 --trials-only --max-parallel 4",
-  "max_restarts": 4
- },
- {
-  "id": "claude-final-timellm1min-finals-3",
-  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_direct --resolution 1min --bucket spectrum --output-prefix direct-tuning --models timellm\"",
-  "max_restarts": 4
- },
- {
-  "id": "claude-final-s15sts-full-600-2",
-  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.spatial15 --tuned --skip-done --models stsprednet --band 600_800 --experiments s2 s3 s5 --seeds 40 --max-parallel 6 --gpu-fraction 0.4 --memory-gb 24 --prefix spatial15-tuned-oct2026\"",
-  "max_restarts": 4
- },
- {
-  "id": "claude-final-s15sts-full-2400-2",
-  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.spatial15 --tuned --skip-done --models stsprednet --band 2400_2600 --experiments s2 s3 s5 --seeds 40 --max-parallel 6 --gpu-fraction 0.4 --memory-gb 24 --prefix spatial15-tuned-oct2026\"",
-  "max_restarts": 4
- },
- {
-  "id": "claude-final-simple1min-revin-1",
-  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_direct --resolution 1min --bucket spectrum --output-prefix direct-tuning --models revinmlp nlinear --max-parallel 4\"",
-  "max_restarts": 4
- },
- {
-  "id": "claude-final-s15sts-seeds-1",
-  "entrypoint": "bash training/ray/scripts/sts_seeds_followup.sh",
-  "max_restarts": 4
- },
- {
-  "id": "claude-final-spectral-seeds-1min-1",
-  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.spectral_context_fixed --bucket spectrum --max-parallel 3 --seeds 43 44\"",
-  "max_restarts": 4
- },
- {
-  "id": "claude-final-spectral-seeds-15min-1",
-  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.spectral_context_fixed --bucket spectrum --resolution 15min --output-prefix oct2026-spectral-context-15min --max-parallel 3 --seeds 43 44\"",
-  "max_restarts": 4
- },
- {
-  "id": "claude-final-s15sts-krige-1",
-  "entrypoint": "bash training/ray/scripts/sts_krige_followup.sh",
-  "max_restarts": 4
- },
- {
-  "id": "claude-final-rescore-timellm1min-2",
-  "entrypoint": "python -u -m training.ray.rescore --sources direct --resolution 1min --models timellm --skip-done --no-pin --max-parallel 3 --gpu-fraction 0.15",
-  "max_restarts": 4
- },
- {
-  "id": "claude-final-momentzs-test-1",
-  "entrypoint": "python -u -m training.ray.moment_zeroshot run --skip-done --gpu-fraction 0.05 --max-parallel 4",
-  "max_restarts": 4
- },
- {
-  "id": "claude-final-offset-sts-1",
-  "entrypoint": "python -u -m training.ray.offset_response_sts --bands 600_800 2400_2600 --seeds 40 41 42 --device cuda --gpu-fraction 0.5 --skip-done --max-parallel 6",
-  "max_restarts": 4
- },
- {
-  "id": "claude-final-spectral15t-2",
-  "entrypoint": "python -u -m training.ray.spectral_context_fixed --resolution 15min --hyperparameters tuned15 --output-prefix oct2026-spectral-context-15min-tuned --seeds 43 44 --max-parallel 6 --gpu-fraction 0.25 --skip-done",
-  "max_restarts": 4
- }
+  {
+    "id": "claude-final-h1-timellm-1",
+    "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_direct --resolution 15min --horizons 1 --models timellm --max-parallel 4\"",
+    "max_restarts": 4
+  },
+  {
+    "id": "claude-final-h1-ofa-1",
+    "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_direct --resolution 15min --horizons 1 --models ofa ofa_rand ofa_scratch --max-parallel 8\"",
+    "max_restarts": 4
+  },
+  {
+    "id": "claude-final-h1-cheap-1",
+    "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_direct --resolution 15min --horizons 1 --models residuallinearar2d linearar2d residualnonlinear2d nlinear dlinear revinmlp patchtst patchtst_noinorm patchtst_joint patchtst_nopatch --max-parallel 16\"",
+    "max_restarts": 4
+  },
+  {
+    "id": "claude-final-rescore-1dlstm-1",
+    "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.rescore --bucket spectrum --sources oct band --models vanillalstm1d residualvanillalstm --thin-1d-lstm 1 --output-prefix rescored-stride1 --skip-done --max-parallel 8\"",
+    "max_restarts": 3
+  },
+  {
+    "id": "claude-final-es-repro-1",
+    "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.es_repro_seeds --arms ofa_gpt2 timellm_gpt2 timellm_bert --seeds 0 1 2 3 4 --skip-done --max-parallel 8\"",
+    "max_restarts": 3
+  },
+  {
+    "id": "claude-final-tsslcd-tune-r1",
+    "entrypoint": "python -u -m training.ray.tune_tsslcd --budget 8 --trials-only --max-parallel 4",
+    "max_restarts": 4
+  },
+  {
+    "id": "claude-final-timellm1min-finals-3",
+    "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_direct --resolution 1min --bucket spectrum --output-prefix direct-tuning --models timellm\"",
+    "max_restarts": 4
+  },
+  {
+    "id": "claude-final-s15sts-full-600-2",
+    "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.spatial15 --tuned --skip-done --models stsprednet --band 600_800 --experiments s2 s3 s5 --seeds 40 --max-parallel 6 --gpu-fraction 0.4 --memory-gb 24 --prefix spatial15-tuned-oct2026\"",
+    "max_restarts": 4
+  },
+  {
+    "id": "claude-final-s15sts-full-2400-2",
+    "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.spatial15 --tuned --skip-done --models stsprednet --band 2400_2600 --experiments s2 s3 s5 --seeds 40 --max-parallel 6 --gpu-fraction 0.4 --memory-gb 24 --prefix spatial15-tuned-oct2026\"",
+    "max_restarts": 4
+  },
+  {
+    "id": "claude-final-simple1min-revin-1",
+    "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_direct --resolution 1min --bucket spectrum --output-prefix direct-tuning --models revinmlp nlinear --max-parallel 4\"",
+    "max_restarts": 4
+  },
+  {
+    "id": "claude-final-s15sts-seeds-1",
+    "entrypoint": "bash training/ray/scripts/sts_seeds_followup.sh",
+    "max_restarts": 4
+  },
+  {
+    "id": "claude-final-spectral-seeds-1min-1",
+    "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.spectral_context_fixed --bucket spectrum --max-parallel 3 --seeds 43 44\"",
+    "max_restarts": 4
+  },
+  {
+    "id": "claude-final-spectral-seeds-15min-1",
+    "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.spectral_context_fixed --bucket spectrum --resolution 15min --output-prefix oct2026-spectral-context-15min --max-parallel 3 --seeds 43 44\"",
+    "max_restarts": 4
+  },
+  {
+    "id": "claude-final-s15sts-krige-1",
+    "entrypoint": "bash training/ray/scripts/sts_krige_followup.sh",
+    "max_restarts": 4
+  },
+  {
+    "id": "claude-final-rescore-timellm1min-2",
+    "entrypoint": "python -u -m training.ray.rescore --sources direct --resolution 1min --models timellm --skip-done --no-pin --max-parallel 3 --gpu-fraction 0.15",
+    "max_restarts": 4
+  },
+  {
+    "id": "claude-final-momentzs-test-1",
+    "entrypoint": "python -u -m training.ray.moment_zeroshot run --skip-done --gpu-fraction 0.05 --max-parallel 4",
+    "max_restarts": 4
+  },
+  {
+    "id": "claude-final-offset-sts-1",
+    "entrypoint": "python -u -m training.ray.offset_response_sts --bands 600_800 2400_2600 --seeds 40 41 42 --device cuda --gpu-fraction 0.5 --skip-done --max-parallel 6",
+    "max_restarts": 4
+  },
+  {
+    "id": "claude-final-spectral15t-2",
+    "entrypoint": "python -u -m training.ray.spectral_context_fixed --resolution 15min --hyperparameters tuned15 --output-prefix oct2026-spectral-context-15min-tuned --seeds 43 44 --max-parallel 6 --gpu-fraction 0.25 --skip-done",
+    "max_restarts": 4
+  },
+  {
+    "id": "claude-final-spectral15t-2400-lstm",
+    "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.spectral_context_fixed --resolution 15min --hyperparameters tuned15 --band 2400_2600 --regions evaluation/analysis/plan_regions_2400_2600.csv --noise-from-plan --output-prefix oct2026-spectral-context-15min-tuned-2400_2600 --seeds 42 --skip-done --models vanillalstm residualvanillalstm lstmattn --max-parallel 4 --gpu-fraction 0.25\"",
+    "max_restarts": 4
+  },
+  {
+    "id": "claude-final-spectral15t-2400-big",
+    "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.spectral_context_fixed --resolution 15min --hyperparameters tuned15 --band 2400_2600 --regions evaluation/analysis/plan_regions_2400_2600.csv --noise-from-plan --output-prefix oct2026-spectral-context-15min-tuned-2400_2600 --seeds 42 --skip-done --models temporalconvnet autoformer_csa --max-parallel 2 --gpu-fraction 0.5 --memory-gb 16\"",
+    "max_restarts": 4
+  }
 ]
