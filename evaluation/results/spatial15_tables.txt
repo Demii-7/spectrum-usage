@@ -1,0 +1,180 @@
+
+COVERAGE (cells finished of expected: 19 variants x seeds 40-42; lookback mean 19 variants x seed 42; permuted = cells found)
+     band              model  cells_done  cells_expected  variants_started  permuted_cells  permutation_seeds                                                                                                               note
+  600_800     lookbackmean4d          20              20                20               5                  5                                                                                                                   
+  600_800         linearar4d          60              60                20              25                  5                                                                                                                   
+  600_800 residuallinearar4d          60              60                20              25                  5                                                                                                                   
+  600_800         stsprednet          60              60                20               0                  0                                                                                                                   
+  600_800   residualconvlstm           0              60                 0               0                  0                                                                                                                   
+  600_800        dswinlstm_i           1               1                 1               5                  5 single seed (42); inherited:1min-r2 configuration, no 15-minute search; base map and frozen-weight conditions only
+2400_2600     lookbackmean4d          20              20                20               5                  5                                                                                                                   
+2400_2600         linearar4d          60              60                20              25                  5                                                                                                                   
+2400_2600 residuallinearar4d          60              60                20              25                  5                                                                                                                   
+2400_2600         stsprednet          60              60                20               0                  0                                                                                                                   
+2400_2600   residualconvlstm           3              60                 1              25                  5                                                                                                                   
+2400_2600        dswinlstm_i           1               1                 1               5                  5 single seed (42); inherited:1min-r2 configuration, no 15-minute search; base map and frozen-weight conditions only
+
+S2 map sensitivity (MAE dB mean over t+4/12/24/48, mean over seeds). map_mae = own interpolated map (NOT comparable with 1D/2D); insample/absent/added = physical receivers (core four in the input / guest house and law 73 left out of / added to the map)
+     band              model         variant  n_seeds  map_mae  insample_mae  absent_mae  added_mae
+  600_800     lookbackmean4d        core4-p1        1    1.123         2.184       5.431      4.109
+  600_800     lookbackmean4d        core4-p2        1    1.170         1.215       5.480      2.685
+  600_800     lookbackmean4d        core4-p4        1    1.227         1.140       5.717      1.582
+  600_800     lookbackmean4d       core4-p16        1    1.274         1.140       6.425      1.546
+  600_800     lookbackmean4d core4-p2-linear        1    1.264         1.295       4.805      2.068
+  600_800     lookbackmean4d     core4-p2-g5        1    1.161         1.581       5.454      2.967
+  600_800     lookbackmean4d    core4-p2-g20        1    1.173         1.186       5.494      2.732
+  600_800     lookbackmean4d     core4-krige        1    1.093         2.509       5.452      4.297
+  600_800         linearar4d        core4-p1        3    0.488         2.033       5.266      4.155
+  600_800         linearar4d        core4-p2        3    0.546         0.906       5.319      2.816
+  600_800         linearar4d        core4-p4        3    0.614         0.794       5.564      1.351
+  600_800         linearar4d       core4-p16        3    0.673         0.796       6.302      1.187
+  600_800         linearar4d core4-p2-linear        3    0.713         1.055       4.616      2.256
+  600_800         linearar4d     core4-p2-g5        3    0.544         1.372       5.296      3.103
+  600_800         linearar4d    core4-p2-g20        3    0.546         0.866       5.335      2.821
+  600_800         linearar4d     core4-krige        5    0.451         2.378       5.292      4.297
+  600_800 residuallinearar4d        core4-p1        3    0.490         2.034       5.259      3.855
+  600_800 residuallinearar4d        core4-p2        3    0.549         0.904       5.301      2.286
+  600_800 residuallinearar4d        core4-p4        3    0.616         0.785       5.558      0.983
+  600_800 residuallinearar4d       core4-p16        3    0.674         0.785       6.294      0.993
+  600_800 residuallinearar4d core4-p2-linear        3    0.698         1.034       4.648      1.621
+  600_800 residuallinearar4d     core4-p2-g5        3    0.540         1.372       5.276      2.605
+  600_800 residuallinearar4d    core4-p2-g20        3    0.550         0.863       5.315      2.315
+  600_800 residuallinearar4d     core4-krige        5    0.459         2.381       5.284      4.057
+  600_800         stsprednet        core4-p1        3    1.077         2.195       5.644      5.370
+  600_800         stsprednet        core4-p2        3      NaN         1.203       5.508      5.322
+  600_800         stsprednet        core4-p4        3    1.167         1.144       5.739      5.384
+  600_800         stsprednet       core4-p16        3    1.223         1.126       6.379      5.231
+  600_800         stsprednet core4-p2-linear        3    1.378         1.429       4.867      4.449
+  600_800         stsprednet     core4-p2-g5        3    1.001         1.526       5.475      5.316
+  600_800         stsprednet    core4-p2-g20        3    1.077         1.220       5.382      5.184
+  600_800         stsprednet     core4-krige        3    0.877         2.515       5.451      5.506
+  600_800        dswinlstm_i        core4-p2        1    0.904         1.291       5.453      5.154
+2400_2600     lookbackmean4d        core4-p1        1    0.904         2.504       3.253      2.586
+2400_2600     lookbackmean4d        core4-p2        1    0.964         1.216       3.443      2.009
+2400_2600     lookbackmean4d        core4-p4        1    1.034         0.952       3.654      1.547
+2400_2600     lookbackmean4d       core4-p16        1    1.096         0.950       4.523      1.528
+2400_2600     lookbackmean4d core4-p2-linear        1    1.521         1.475       2.209      1.673
+2400_2600     lookbackmean4d     core4-p2-g5        1    0.949         1.829       3.398      2.262
+2400_2600     lookbackmean4d    core4-p2-g20        1    0.969         1.167       3.525      1.982
+2400_2600     lookbackmean4d     core4-krige        1    0.924         1.437       3.291      2.100
+2400_2600         linearar4d        core4-p1        3    0.449         2.403       2.976      2.184
+2400_2600         linearar4d        core4-p2        3    0.481         0.933       3.249      1.407
+2400_2600         linearar4d        core4-p4        3    0.530         0.635       3.488      1.023
+2400_2600         linearar4d       core4-p16        3    0.578         0.637       4.427      1.015
+2400_2600         linearar4d core4-p2-linear        3    0.982         1.292       1.684      1.123
+2400_2600         linearar4d     core4-p2-g5        3    0.477         1.619       3.183      1.801
+2400_2600         linearar4d    core4-p2-g20        3    0.481         0.858       3.325      1.429
+2400_2600         linearar4d     core4-krige        5    0.461         1.194       3.025      1.561
+2400_2600 residuallinearar4d        core4-p1        3    0.455         2.412       2.974      2.136
+2400_2600 residuallinearar4d        core4-p2        3    0.498         0.935       3.217      1.337
+2400_2600 residuallinearar4d        core4-p4        3    0.549         0.639       3.468      0.862
+2400_2600 residuallinearar4d       core4-p16        3    0.599         0.641       4.408      0.880
+2400_2600 residuallinearar4d core4-p2-linear        3    0.985         1.292       1.677      1.000
+2400_2600 residuallinearar4d     core4-p2-g5        3    0.491         1.636       3.164      1.691
+2400_2600 residuallinearar4d    core4-p2-g20        3    0.499         0.869       3.311      1.305
+2400_2600 residuallinearar4d     core4-krige        5    0.472         1.201       3.028      1.461
+2400_2600         stsprednet        core4-p1        3    1.009         2.595       3.058      2.593
+2400_2600         stsprednet        core4-p2        3    0.959         1.194       3.455      2.375
+2400_2600         stsprednet        core4-p4        3    1.141         0.959       3.578      2.415
+2400_2600         stsprednet       core4-p16        3    1.158         0.959       4.574      2.756
+2400_2600         stsprednet core4-p2-linear        3    2.054         2.648       2.407      2.882
+2400_2600         stsprednet     core4-p2-g5        3    0.906         1.794       3.239      2.733
+2400_2600         stsprednet    core4-p2-g20        3    1.163         1.611       2.908      2.358
+2400_2600         stsprednet     core4-krige        3    1.021         1.563       3.066      2.547
+2400_2600   residualconvlstm        core4-p2        5    0.777         1.118       3.436      1.815
+2400_2600        dswinlstm_i        core4-p2        1    0.778         1.475       3.793      3.138
+
+S3 held-out receivers (physical-receiver MAE dB): absent = left out of the map, added = added without retraining, insample = the other receivers in the input; own-history references (frozen transfer for guesthouse and law73, in distribution for core receivers)
+     band   held_out              model  n_seeds  insample_mae  insample_mae_sd  absent_mae  absent_mae_sd  added_mae  added_mae_sd  1d residuallinearar1d  2d linearar2d  2d residuallinearar2d  persistence note
+  600_800 humanities     lookbackmean4d        1         1.688            0.000       3.818          0.000      1.542         0.000                  0.909          0.940                  0.925        1.507     
+  600_800 humanities         linearar4d        3         1.380            0.005       3.712          0.007      1.581         0.035                  0.909          0.940                  0.925        1.507     
+  600_800 humanities residuallinearar4d        3         1.364            0.002       3.734          0.001      1.216         0.004                  0.909          0.940                  0.925        1.507     
+  600_800 humanities         stsprednet        3         1.557            0.029       3.756          0.185      3.044         0.180                  0.909          0.940                  0.925        1.507     
+  600_800     madsen     lookbackmean4d        1         1.812            0.000       2.991          0.000      1.352         0.000                  0.769          0.801                  0.791        1.271     
+  600_800     madsen         linearar4d        3         1.515            0.004       2.915          0.007      1.427         0.030                  0.769          0.801                  0.791        1.271     
+  600_800     madsen residuallinearar4d        3         1.499            0.002       2.901          0.002      1.013         0.003                  0.769          0.801                  0.791        1.271     
+  600_800     madsen         stsprednet        3         1.728            0.038       2.970          0.069      2.931         0.043                  0.769          0.801                  0.791        1.271     
+  600_800      moran     lookbackmean4d        1         1.838            0.000       5.871          0.000      1.059         0.000                  0.563          0.591                  0.573        0.961     
+  600_800      moran         linearar4d        3         1.480            0.004       5.885          0.015      1.330         0.063                  0.563          0.591                  0.573        0.961     
+  600_800      moran residuallinearar4d        3         1.465            0.001       5.872          0.001      0.917         0.001                  0.563          0.591                  0.573        0.961     
+  600_800      moran         stsprednet        3         1.747            0.105       6.025          0.139      5.795         0.251                  0.563          0.591                  0.573        0.961     
+  600_800  sagepoint     lookbackmean4d        1         1.805            0.000       2.843          0.000      1.389         0.000                  0.878          0.881                  0.879        1.324     
+  600_800  sagepoint         linearar4d        3         1.470            0.006       2.748          0.005      1.375         0.007                  0.878          0.881                  0.879        1.324     
+  600_800  sagepoint residuallinearar4d        3         1.460            0.001       2.757          0.001      1.186         0.001                  0.878          0.881                  0.879        1.324     
+  600_800  sagepoint         stsprednet        3         1.702            0.046       2.879          0.112      2.889         0.097                  0.878          0.881                  0.879        1.324     
+  600_800 guesthouse     lookbackmean4d        1         1.670            0.000       4.465          0.000      1.940         0.000                  0.753          0.792                  0.746        1.459     
+  600_800 guesthouse         linearar4d        3         1.365            0.005       4.284          0.017      1.949         0.028                  0.753          0.792                  0.746        1.459     
+  600_800 guesthouse residuallinearar4d        3         1.354            0.002       4.298          0.002      1.545         0.003                  0.753          0.792                  0.746        1.459     
+  600_800 guesthouse         stsprednet        3         1.619            0.021       4.427          0.142      3.690         0.042                  0.753          0.792                  0.746        1.459     
+  600_800      law73     lookbackmean4d        1         1.436            0.000       5.807          0.000      3.283         0.000                  1.246          1.319                  1.221        2.075     
+  600_800      law73         linearar4d        3         1.136            0.003       5.591          0.003      3.288         0.014                  1.246          1.319                  1.221        2.075     
+  600_800      law73 residuallinearar4d        3         1.132            0.000       5.572          0.002      2.847         0.002                  1.246          1.319                  1.221        2.075     
+  600_800      law73         stsprednet        3         1.332            0.123       5.669          0.218      5.283         0.101                  1.246          1.319                  1.221        2.075     
+2400_2600 humanities     lookbackmean4d        1         1.557            0.000       2.741          0.000      1.180         0.000                  0.597          0.646                  0.614        1.126     
+2400_2600 humanities         linearar4d        3         1.131            0.014       2.859          0.009      1.130         0.062                  0.597          0.646                  0.614        1.126     
+2400_2600 humanities residuallinearar4d        3         1.119            0.004       2.831          0.004      0.937         0.005                  0.597          0.646                  0.614        1.126     
+2400_2600 humanities         stsprednet        3         1.503            0.090       3.020          0.189      1.712         0.399                  0.597          0.646                  0.614        1.126     
+2400_2600     madsen     lookbackmean4d        1         1.618            0.000       4.360          0.000      0.822         0.000                  0.272          0.302                  0.274        0.611     
+2400_2600     madsen         linearar4d        3         1.139            0.017       4.607          0.019      1.002         0.029                  0.272          0.302                  0.274        0.611     
+2400_2600     madsen residuallinearar4d        3         1.129            0.010       4.512          0.019      0.960         0.019                  0.272          0.302                  0.274        0.611     
+2400_2600     madsen         stsprednet        3         1.456            0.062       4.351          0.186      2.460         0.598                  0.272          0.302                  0.274        0.611     
+2400_2600      moran     lookbackmean4d        1         1.657            0.000       5.206          0.000      0.602         0.000                  0.127          0.146                  0.150        0.152     
+2400_2600      moran         linearar4d        3         1.170            0.017       5.405          0.025      0.701         0.081                  0.127          0.146                  0.150        0.152     
+2400_2600      moran residuallinearar4d        3         1.163            0.011       5.341          0.012      0.753         0.012                  0.127          0.146                  0.150        0.152     
+2400_2600      moran         stsprednet        3         1.507            0.119       5.476          0.236      5.520         0.340                  0.127          0.146                  0.150        0.152     
+2400_2600  sagepoint     lookbackmean4d        1         1.284            0.000       5.531          0.000      2.734         0.000                  1.598          1.635                  1.664        2.635     
+2400_2600  sagepoint         linearar4d        3         0.954            0.005       5.263          0.061      2.058         0.170                  1.598          1.635                  1.664        2.635     
+2400_2600  sagepoint residuallinearar4d        3         0.949            0.001       5.283          0.001      2.039         0.002                  1.598          1.635                  1.664        2.635     
+2400_2600  sagepoint         stsprednet        3         1.106            0.066       5.394          0.077      4.693         0.246                  1.598          1.635                  1.664        2.635     
+2400_2600 guesthouse     lookbackmean4d        1         1.381            0.000       3.821          0.000      2.056         0.000                  0.865          0.927                  0.881        1.830     
+2400_2600 guesthouse         linearar4d        3         1.036            0.004       3.619          0.004      1.507         0.122                  0.865          0.927                  0.881        1.830     
+2400_2600 guesthouse residuallinearar4d        3         1.042            0.004       3.615          0.004      1.327         0.004                  0.865          0.927                  0.881        1.830     
+2400_2600 guesthouse         stsprednet        3         1.501            0.152       3.673          0.466      3.027         0.579                  0.865          0.927                  0.881        1.830     
+2400_2600      law73     lookbackmean4d        1         1.463            0.000       2.548          0.000      1.835         0.000                  0.886          0.926                  0.896        1.782     
+2400_2600      law73         linearar4d        3         1.114            0.003       2.124          0.032      1.230         0.038                  0.886          0.926                  0.896        1.782     
+2400_2600      law73 residuallinearar4d        3         1.114            0.005       2.128          0.006      1.156         0.004                  0.886          0.926                  0.896        1.782     
+2400_2600      law73         stsprednet        3         1.465            0.096       2.657          0.426      1.928         0.177                  0.886          0.926                  0.896        1.782     
+
+S5 receiver count (physical-receiver MAE dB at guest house and law 73; 4 = the core-four model)
+     band              model  input_receivers  subsets  n_cells  guesthouse_absent  guesthouse_added  law73_absent  law73_added  insample  guesthouse_own_history_2d  law73_own_history_2d                                                                                                               note
+  600_800     lookbackmean4d                2        3        3              4.618             1.688         6.353        3.160     1.260                      0.746                 1.221                                                                                                                   
+  600_800     lookbackmean4d                3        3        3              4.654             1.855         6.278        3.270     1.229                      0.746                 1.221                                                                                                                   
+  600_800     lookbackmean4d                4        1        1              4.699             1.996         6.260        3.375     1.215                      0.746                 1.221                                                                                                                   
+  600_800         linearar4d                2        3        9              4.494             1.687         6.157        3.123     0.907                      0.746                 1.221                                                                                                                   
+  600_800         linearar4d                3        3        9              4.509             1.903         6.098        3.313     0.902                      0.746                 1.221                                                                                                                   
+  600_800         linearar4d                4        1        3              4.543             2.058         6.096        3.575     0.906                      0.746                 1.221                                                                                                                   
+  600_800 residuallinearar4d                2        3        9              4.481             1.201         6.161        2.708     0.896                      0.746                 1.221                                                                                                                   
+  600_800 residuallinearar4d                3        3        9              4.508             1.431         6.078        2.832     0.898                      0.746                 1.221                                                                                                                   
+  600_800 residuallinearar4d                4        1        3              4.544             1.621         6.057        2.951     0.904                      0.746                 1.221                                                                                                                   
+  600_800         stsprednet                2        3        9              4.613             4.613         6.260        6.277     1.218                      0.746                 1.221                                                                                                                   
+  600_800         stsprednet                3        3        9              4.708             4.480         6.315        6.312     1.204                      0.746                 1.221                                                                                                                   
+  600_800         stsprednet                4        1        3              4.692             4.299         6.324        6.344     1.203                      0.746                 1.221                                                                                                                   
+  600_800        dswinlstm_i                4        1        1              4.619             4.445         6.286        5.864     1.291                      0.746                 1.221 single seed (42); inherited:1min-r2 configuration, no 15-minute search; base map and frozen-weight conditions only
+2400_2600     lookbackmean4d                2        3        3              4.466             1.938         3.176        1.940     1.034                      0.881                 0.896                                                                                                                   
+2400_2600     lookbackmean4d                3        3        3              4.089             2.015         3.048        1.938     1.130                      0.881                 0.896                                                                                                                   
+2400_2600     lookbackmean4d                4        1        1              3.911             2.069         2.976        1.948     1.216                      0.881                 0.896                                                                                                                   
+2400_2600         linearar4d                2        3        9              4.228             1.570         2.953        1.475     0.689                      0.881                 0.896                                                                                                                   
+2400_2600         linearar4d                3        3        9              3.814             1.487         2.788        1.423     0.810                      0.881                 0.896                                                                                                                   
+2400_2600         linearar4d                4        1        3              3.730             1.432         2.768        1.382     0.933                      0.881                 0.896                                                                                                                   
+2400_2600 residuallinearar4d                2        3        9              4.206             1.256         2.932        1.345     0.686                      0.881                 0.896                                                                                                                   
+2400_2600 residuallinearar4d                3        3        9              3.803             1.314         2.780        1.324     0.813                      0.881                 0.896                                                                                                                   
+2400_2600 residuallinearar4d                4        1        3              3.714             1.348         2.719        1.327     0.935                      0.881                 0.896                                                                                                                   
+2400_2600         stsprednet                2        3        9              4.669             4.223         3.351        2.864     1.108                      0.881                 0.896                                                                                                                   
+2400_2600         stsprednet                3        3        9              4.168             3.540         2.971        2.433     1.174                      0.881                 0.896                                                                                                                   
+2400_2600         stsprednet                4        1        3              3.911             2.871         3.000        1.879     1.194                      0.881                 0.896                                                                                                                   
+2400_2600   residualconvlstm                4        1        5              3.890             1.857         2.983        1.773     1.118                      0.881                 0.896                                                                                                                   
+2400_2600        dswinlstm_i                4        1        1              4.367             3.917         3.219        2.358     1.475                      0.881                 0.896 single seed (42); inherited:1min-r2 configuration, no 15-minute search; base map and frozen-weight conditions only
+
+S4 permuted core-receiver coordinates (physical-receiver MAE dB at the four core receivers)
+     band              model  base_insample_mae  permuted_mae  permuted_sd_over_seeds  delta  permutations  seeds                                                                                                               note
+  600_800     lookbackmean4d              1.215         2.902                   0.000  1.687             5      1                                                                                                                   
+  600_800         linearar4d              0.906         2.636                   0.008  1.730             5      5                                                                                                                   
+  600_800 residuallinearar4d              0.904         2.761                   0.001  1.857             5      5                                                                                                                   
+  600_800        dswinlstm_i              1.291         2.643                   0.000  1.351             5      1 single seed (42); inherited:1min-r2 configuration, no 15-minute search; base map and frozen-weight conditions only
+2400_2600     lookbackmean4d              1.216         3.334                   0.000  2.117             5      1                                                                                                                   
+2400_2600         linearar4d              0.933         3.091                   0.110  2.158             5      5                                                                                                                   
+2400_2600 residuallinearar4d              0.935         3.245                   0.007  2.309             5      5                                                                                                                   
+2400_2600   residualconvlstm              1.118         3.314                   0.042  2.196             5      5                                                                                                                   
+2400_2600        dswinlstm_i              1.475         3.036                   0.000  1.561             5      1 single seed (42); inherited:1min-r2 configuration, no 15-minute search; base map and frozen-weight conditions only
+
+wrote evaluation/results/spatial15_*.csv

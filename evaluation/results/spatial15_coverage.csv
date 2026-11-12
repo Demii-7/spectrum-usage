@@ -1,11 +1,13 @@
-band,model,cells_done,cells_expected,variants_started,permuted_cells,permutation_seeds
-600_800,lookbackmean4d,20,20,20,5,5
-600_800,linearar4d,60,60,20,25,5
-600_800,residuallinearar4d,60,60,20,25,5
-600_800,stsprednet,21,60,19,0,0
-600_800,residualconvlstm,0,60,0,0,0
-2400_2600,lookbackmean4d,20,20,20,5,5
-2400_2600,linearar4d,60,60,20,25,5
-2400_2600,residuallinearar4d,60,60,20,25,5
-2400_2600,stsprednet,21,60,19,0,0
-2400_2600,residualconvlstm,0,60,0,0,0
+band,model,cells_done,cells_expected,variants_started,permuted_cells,permutation_seeds,note
+600_800,lookbackmean4d,20,20,20,5,5,
+600_800,linearar4d,60,60,20,25,5,
+600_800,residuallinearar4d,60,60,20,25,5,
+600_800,stsprednet,60,60,20,0,0,
+600_800,residualconvlstm,0,60,0,0,0,
+600_800,dswinlstm_i,1,1,1,5,5,"single seed (42); inherited:1min-r2 configuration, no 15-minute search; base map and frozen-weight conditions only"
+2400_2600,lookbackmean4d,20,20,20,5,5,
+2400_2600,linearar4d,60,60,20,25,5,
+2400_2600,residuallinearar4d,60,60,20,25,5,
+2400_2600,stsprednet,60,60,20,0,0,
+2400_2600,residualconvlstm,3,60,1,25,5,
+2400_2600,dswinlstm_i,1,1,1,5,5,"single seed (42); inherited:1min-r2 configuration, no 15-minute search; base map and frozen-weight conditions only"
