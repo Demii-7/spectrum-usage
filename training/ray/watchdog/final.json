@@ -178,5 +178,10 @@
   "id": "claude-final-rescore-timellm1min-w3",
   "entrypoint": "python -u -m training.ray.rescore --sources direct --resolution 1min --models timellm --skip-done --no-pin --max-parallel 10 --gpu-fraction 0.15",
   "max_restarts": 4
+ },
+ {
+  "id": "claude-final-rescore-timellm1min-w4",
+  "entrypoint": "python -u -m training.ray.rescore --sources direct --resolution 1min --models timellm --skip-done --no-pin --max-parallel 5 --gpu-fraction 0.5",
+  "max_restarts": 4
  }
 ]
