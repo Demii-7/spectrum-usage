@@ -186,6 +186,12 @@ def validate_config(config: dict[str, Any]) -> None:
                     )
             else:
                 raise ValueError(f"Unsupported data.mask.replacement: {replacement!r}")
+        if data.get("selection_frequency_ranges") is not None:
+            if representation != "2d":
+                raise ValueError("data.selection_frequency_ranges is currently supported only for 2d")
+            _validate_frequency_ranges(
+                data["selection_frequency_ranges"], "data.selection_frequency_ranges"
+            )
         if data.get("loss_frequency_ranges") is not None:
             if representation != "2d":
                 raise ValueError("data.loss_frequency_ranges is currently supported only for 2d")

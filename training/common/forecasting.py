@@ -81,10 +81,55 @@ def teacher_forced_rollout( model: nn.Module, x: torch.Tensor, y: torch.Tensor, 
     return torch.stack(predictions, dim=1)
 
     
-def autoregressive_rollout( model: nn.Module, x: torch.Tensor, rollout_horizon: int, ) -> torch.Tensor:
-    """Repeatedly use a one-step model to predict multiple future steps."""
+class RolloutRemask:
+    """Opt-in: before a predicted timestep is fed back as input, replace the columns OUTSIDE the target region by FRESH noise.
+
+    Used by the ``region_only_remask`` spectral-ablation condition (a model trained with the loss on the region's bins only never learns what to output for the other
+    bins, so feeding its own output there back in corrupts the window). The noise follows the calibration of the input mask by construction: its per-column mean and
+    standard deviation are those of the (masked, i.e. noise-floor) out-of-region columns of the lookback window itself, pooled over the batch and the window; it is drawn
+    from a generator that is re-seeded at the start of every rollout, so a given batch always gets the same noise. The returned forecast keeps the model's own output.
+    """
+
+    def __init__(self, columns: torch.Tensor, seed: int = 0) -> None:
+        self.columns = columns.long()
+        self.seed = int(seed)
+
+    def generator(self, device: torch.device) -> torch.Generator:
+        generator = torch.Generator(device=device)
+        generator.manual_seed(self.seed)
+        return generator
+
+    def apply(self, next_prediction: torch.Tensor, window: torch.Tensor, generator: torch.Generator) -> torch.Tensor:
+        if next_prediction.ndim != 2:
+            raise ValueError("RolloutRemask supports (batch, frequency) one-step outputs only")
+        columns = self.columns.to(next_prediction.device)
+        reference = window.index_select(2, columns)
+        mean = reference.mean(dim=(0, 1))
+        std = reference.std(dim=(0, 1)).clamp_min(1e-6)
+        noise = torch.randn((next_prediction.shape[0], len(columns)), generator=generator, device=next_prediction.device, dtype=next_prediction.dtype)
+        fed_back = next_prediction.clone()
+        fed_back[:, columns] = noise * std + mean
+        return fed_back
+
+
+def make_rollout_remask(config: dict, frequencies, device=None):
+    """The ``RolloutRemask`` of a config with ``data.mask.rollout_remask: true`` (the columns outside ``data.mask.frequency_ranges``), else None (default behaviour)."""
+    mask = (config.get("data") or {}).get("mask") or {}
+    if not mask.get("rollout_remask"):
+        return None
+    if frequencies is None:
+        raise ValueError("data.mask.rollout_remask needs the data frequencies")
+    from training.common.data import frequency_range_mask
+
+    keep = frequency_range_mask(np.asarray(frequencies), mask["frequency_ranges"])
+    return RolloutRemask(torch.as_tensor(np.flatnonzero(~keep), dtype=torch.long), seed=int(mask.get("seed", 0)) + 1)
+
+
+def autoregressive_rollout( model: nn.Module, x: torch.Tensor, rollout_horizon: int, remask: "RolloutRemask | None" = None, ) -> torch.Tensor:
+    """Repeatedly use a one-step model to predict multiple future steps (``remask``: opt-in fresh noise in the fed-back out-of-region columns)."""
 
     predictions = []
+    generator = remask.generator(x.device) if remask is not None else None
 
     # Begin with the ground-truth lookback window.
     window = x
@@ -110,7 +155,8 @@ def autoregressive_rollout( model: nn.Module, x: torch.Tensor, rollout_horizon: 
         predictions.append(next_prediction)
 
         # Add the time dimension back before appending to the window.
-        next_timestep = next_prediction.unsqueeze(1)
+        fed_back = next_prediction if remask is None else remask.apply(next_prediction, window, generator)
+        next_timestep = fed_back.unsqueeze(1)
 
         # Remove the oldest input and append the prediction.
         window = torch.cat(
@@ -128,6 +174,7 @@ def forecast(
     prediction_horizon: int,
     rollout_horizon: int,
     targets: torch.Tensor | None = None,
+    remask: "RolloutRemask | None" = None,
 ) -> torch.Tensor:
     """
     Apply the exact shared forecasting policy.
@@ -153,6 +200,7 @@ def forecast(
             model,
             x,
             rollout_horizon,
+            remask=remask,
         )
         return pred
 

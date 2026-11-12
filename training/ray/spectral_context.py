@@ -51,14 +51,15 @@ def regional_config(
 ) -> dict[str, Any]:
     """Conditions: ``full_context`` (no mask, loss on the region's bins), ``region_only`` (other bins' INPUTS replaced by noise-floor values, loss on the region's bins:
     the existing ablation), ``input_only`` (the same input mask but the loss over ALL bins with the real targets: separates context as an input from a different
-    training target), ``region_only_fullloss`` (v2 of the rolled-out 2D ablation: the out-of-region bins are noise-floor values in the inputs AND the targets and the loss
+    training target), ``region_only_remask`` (variant 2: region_only plus fresh noise fed back in the rollout), ``region_only_fullloss_regionsel`` (variant 3: region_only_fullloss with the
+    validation / epoch selection restricted to the region's bins), ``region_only_fullloss`` (v2 of the rolled-out 2D ablation: the out-of-region bins are noise-floor values in the inputs AND the targets and the loss
     spans ALL bins, so the model learns to emit noise-level values for the other bins and the autoregressive rollout feeds back values from the distribution it was trained on).
     ``noise_ranges`` = calibration ranges of the replacement noise (default: the 600-800 ``NOISE_RANGES``)."""
     config = deepcopy(base_config)
     bounds = [[float(region["start_mhz"]), float(region["end_mhz"])]]
     config["data"]["loss_frequency_ranges"] = bounds
-    if condition in ("region_only", "input_only", "region_only_fullloss"):
-        if condition in ("input_only", "region_only_fullloss"):
+    if condition in ("region_only", "input_only", "region_only_fullloss", "region_only_remask", "region_only_fullloss_regionsel"):
+        if condition in ("input_only", "region_only_fullloss", "region_only_fullloss_regionsel"):
             config["data"].pop("loss_frequency_ranges", None)             # loss over every bin
         config["data"]["mask"] = {
             "frequency_ranges": bounds,
@@ -69,6 +70,12 @@ def regional_config(
             "minimum_noise_std_db": 0.05,
             "seed": int(seed),
         }
+        if condition == "region_only_remask":
+            # variant 2: the loss stays on the region's bins (as region_only) but the autoregressive rollout (validation and test) feeds fresh noise-floor noise back in the other columns
+            config["data"]["mask"]["rollout_remask"] = True
+        if condition == "region_only_fullloss_regionsel":
+            # variant 3: region_only_fullloss, but validation / epoch selection are scored on the region's bins only
+            config["data"]["selection_frequency_ranges"] = bounds
     elif condition == "full_context":
         config["data"].pop("mask", None)
     else:

@@ -47,7 +47,7 @@ from training.common.results import prepare_output_dirs
 from training.common.data import chunk_specs, frequency_range_mask, load_chunk
 
 #Helper for Model forecasting
-from training.common.forecasting import forecast
+from training.common.forecasting import forecast, make_rollout_remask
 from training.common.run_costs import (
     INFERENCE_BATCH, collect_run_costs, reset_peak_memory, write_run_costs,
 )
@@ -182,6 +182,26 @@ def train_model(
             values.index_select(2, loss_frequency_indices)
             if loss_frequency_indices is not None else values
         )
+
+    # Opt-in (data.selection_frequency_ranges): validation and model selection are scored on these bins only while the TRAINING loss keeps its own bins
+    # (default: the validation scores the loss bins, unchanged).
+    selection_frequency_indices = loss_frequency_indices
+    selection_ranges = config.get("data", {}).get("selection_frequency_ranges")
+    if selection_ranges is not None:
+        if train_data.ndim != 2 or frequencies is None:
+            raise ValueError("Target-region selection requires 2D data frequencies")
+        selection_frequency_indices = torch.as_tensor(
+            np.flatnonzero(frequency_range_mask(np.asarray(frequencies), selection_ranges)), dtype=torch.long, device=device
+        )
+
+    def scored_val(values: torch.Tensor) -> torch.Tensor:
+        return (
+            values.index_select(2, selection_frequency_indices)
+            if selection_frequency_indices is not None else values
+        )
+
+    # Opt-in (data.mask.rollout_remask): the autoregressive validation rollout feeds fresh noise back in the out-of-region columns.
+    rollout_remask = make_rollout_remask(config, frequencies, device)
 
     pretraining_metadata = None
     if model_name == "convlstmfm":
@@ -446,6 +466,7 @@ def train_model(
                     prediction_horizon=prediction_horizon,
                     rollout_horizon=rollout_horizon,
                     targets=None,
+                    remask=rollout_remask,
                 )
 
                 if pred_ar.shape != y.shape:
@@ -455,8 +476,8 @@ def train_model(
                         f"Target shape:     {tuple(y.shape)}"
                     )
 
-                scored_pred_ar = scored(pred_ar)
-                scored_y = scored(y)
+                scored_pred_ar = scored_val(pred_ar)
+                scored_y = scored_val(y)
                 loss_ar = criterion(scored_pred_ar, scored_y)
                 if convlstm_guard_threshold is not None:
                     max_abs_target = max(max_abs_target, float(y.abs().max().item()))
@@ -479,8 +500,8 @@ def train_model(
                 if pred_ar.ndim == 3:
                     if std_dbm is not None:
                         scored_std = (
-                            std_dbm.index_select(0, loss_frequency_indices)
-                            if loss_frequency_indices is not None else std_dbm
+                            std_dbm.index_select(0, selection_frequency_indices)
+                            if selection_frequency_indices is not None else std_dbm
                         )
                         abs_error = abs_error * scored_std.view(1, 1, -1)
                 elif pred_ar.ndim == 5:
@@ -516,7 +537,7 @@ def train_model(
                         rollout_horizon=rollout_horizon,
                         targets=y,
                     )
-                    loss_tf = criterion(scored(pred_tf), scored_y)
+                    loss_tf = criterion(scored_val(pred_tf), scored_y)
                     val_teacher_sum += loss_tf.item() * batch_samples
                     val_teacher_count += batch_samples
                     _t_tf_acc += time.perf_counter() - _t_tf

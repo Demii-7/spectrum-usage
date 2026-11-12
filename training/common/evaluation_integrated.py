@@ -83,7 +83,7 @@ if str(ROOT) not in sys.path:
 # ---------------------------------------------------------------------------
 from training.common.config import load_config, model_names, resolve_path
 from training.common.data import ChunkSpec, chunk_specs, load_chunk
-from training.common.forecasting import forecast
+from training.common.forecasting import forecast, make_rollout_remask
 from training.common.forecast_export import export_map_forecasts
 from training.common.runtime import device_for, timestamp_utc
 from training.common.metrics import absolute_and_squared_errors_dbm
@@ -591,6 +591,7 @@ def evaluate_chunk(
                     prediction_horizon=prediction_horizon,
                     rollout_horizon=max_horizon,
                     targets=None,
+                    remask=make_rollout_remask(config, data.frequencies),
                 )
         
                 if batch_forecast.shape[1] != max_horizon:

@@ -56,3 +56,18 @@ def test_region_only_fullloss_masks_inputs_and_targets_with_the_loss_over_all_bi
     assert ro["data"]["loss_frequency_ranges"] == [[622.5, 641.5]] and ro["data"]["mask"]["real_targets"] is False
     assert regional_config(base, region, "input_only", 42)["data"]["mask"]["real_targets"] is True
     assert "mask" not in regional_config(base, region, "full_context", 42)["data"]
+
+
+def test_variant_conditions_region_only_remask_and_fullloss_regionsel():
+    base = {"data": {"value": 1}}
+    region = {"band_id": "R3", "start_mhz": 622.5, "end_mhz": 641.5}
+    remask = regional_config(base, region, "region_only_remask", 42)
+    assert remask["data"]["loss_frequency_ranges"] == [[622.5, 641.5]] and remask["data"]["mask"]["real_targets"] is False
+    assert remask["data"]["mask"]["rollout_remask"] is True and "selection_frequency_ranges" not in remask["data"]
+    sel = regional_config(base, region, "region_only_fullloss_regionsel", 42)
+    assert "loss_frequency_ranges" not in sel["data"] and sel["data"]["selection_frequency_ranges"] == [[622.5, 641.5]]
+    assert "rollout_remask" not in sel["data"]["mask"]
+    # the original conditions neither remask nor restrict the selection
+    for name in ("region_only", "region_only_fullloss", "input_only"):
+        cfg = regional_config(base, region, name, 42)
+        assert "selection_frequency_ranges" not in cfg["data"] and "rollout_remask" not in cfg["data"]["mask"]
