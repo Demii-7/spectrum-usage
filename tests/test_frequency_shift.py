@@ -68,3 +68,11 @@ def test_region_errors_only_region_bins():
     assert np.allclose(region_errors(p, t, m), 0.0)
     m2 = np.array([0, 0, 0, 0, 1, 1], bool)
     assert np.allclose(region_errors(p, t, m2), 10.0)
+
+
+def test_tsslcd_build_partition_has_input_shift_option():
+    import inspect
+    pytest.importorskip("pandas")
+    from training.ray import tsslcd_authors
+    assert "input_shift" in inspect.signature(tsslcd_authors.build_partition).parameters
+    assert "freq_sweep" in dir(tsslcd_authors)

@@ -191,7 +191,7 @@ def apply_region_mask(values: np.ndarray, keep_bins: np.ndarray, params: list[tu
 
 
 def build_partition(root: str, partition: str, scaler: MinMax | None, savgol: str, band: str = "600_800", profile: str = "1min",
-                    input_offset_db: float = 0.0, spectral_mask: dict | None = None):
+                    input_offset_db: float = 0.0, spectral_mask: dict | None = None, input_shift: dict | None = None):
     """Series for one partition: min-max normalized raw (``raw``) and filtered (``model``), concatenated over valid
     segments, plus the segment boundaries in that concatenated coordinate. The scaler is fit here on the training rows.
 
@@ -200,6 +200,9 @@ def build_partition(root: str, partition: str, scaler: MinMax | None, savgol: st
     prof = PROFILES[profile]
     values, _, valid = load_partition(root, partition, band, profile=profile)
     values = apply_input_offset(values, input_offset_db)
+    if input_shift:                        # frozen-input frequency ablation: the bins outside a region replaced by the same bins shifted in time (all receivers), before the scaler
+        from training.common.frequency_shift import shift_other_bins_multi_receiver
+        values = shift_other_bins_multi_receiver(values, input_shift["in_region"], int(input_shift["shift"]))
     if spectral_mask:                      # region-only ablation: the other bins (inputs AND targets) become noise-floor noise, before the scaler is fit
         values = apply_region_mask(values, spectral_mask["keep"], spectral_mask["params"], spectral_mask["n_bins"],
                                    int(spectral_mask["seed"]) + int(spectral_mask["offsets"][partition]))
@@ -314,6 +317,48 @@ def offset_sweep(args, build, scaler, savgol, band, profile, partition, test_sta
             cols = slice(r * width, (r + 1) * width)
             out[name].extend(response_rows({h: base_pred[:, horizons.index(h), cols] for h in (4, 12, 24, 48)},
                                            {h: shifted_pred[:, horizons.index(h), cols] for h in (4, 12, 24, 48)}, float(offset), (4, 12, 24, 48)))
+    return out
+
+
+def freq_sweep(args, build, scaler, savgol, band, profile, partition, test_starts, batch, masked, nets, device, seed, base_pred, gt_raw, horizons):
+    """Frozen-input frequency ablation (evaluation only): for each non-noise region of the band's plan, the raw inputs of every bin OUTSIDE the region (at all four
+    receivers) are replaced by the same bins shifted in time by 24 h (96 steps) and 52.5 h (210 steps) before the scaler (fit on the unshifted training partition),
+    the forecasts are sampled with the SAME sampler seed and origins as the unshifted run, and the region's columns are scored against the real raw targets.
+    Returns {name: array} with ``mae|all|<region>|<mode>`` (origins x horizons, mean over the region's columns at the four receivers), the origin count and the
+    real-mode per-bin errors (horizons x bins, mean over receivers) for the identity check."""
+    import pandas as pd
+    import torch
+
+    from training.common.frequency_shift import band_frequencies, region_mask
+
+    ae_ctx, ae_fut, diffusion, inference = nets
+    columns = base_pred.shape[2]
+    n_bins = columns // len(SITES)
+    frequencies = band_frequencies(band, n_bins)
+    plan = pd.read_csv(Path(args["repo_root"]) / args["freq_plan"])
+    plan = plan[~plan["is_noise_floor"].astype(str).str.lower().isin({"true", "1"})]
+    keep = [h for h in (4, 12, 24, 48)]
+    pick = [horizons.index(h) for h in keep]
+    out: dict[str, np.ndarray] = {}
+    err_real = np.abs(base_pred - gt_raw)                         # (N, H, columns)
+    out["binmae|all"] = err_real.mean(axis=0)[pick].reshape(len(keep), len(SITES), n_bins).mean(axis=1)
+    for region in plan.itertuples():
+        in_region = region_mask(frequencies, region.start_mhz, region.end_mhz)
+        cols = np.concatenate([site * n_bins + np.flatnonzero(in_region) for site in range(len(SITES))])
+        out[f"mae|all|{region.band_id}|real"] = err_real[:, pick][:, :, cols].mean(axis=2).astype(np.float32)
+        for mode, shift in (("shift96", 96), ("shift210", 210)):
+            _, shifted_model, _, _ = build(args["repo_root"], partition, scaler, savgol, band=band, profile=profile,
+                                           input_shift={"in_region": in_region, "shift": shift})
+            series = torch.as_tensor(shifted_model, dtype=torch.float32, device=device)
+            torch.manual_seed(seed + 1000)
+            preds = []
+            with torch.no_grad():
+                for lo in range(0, len(test_starts), BATCH):
+                    idx = torch.as_tensor(test_starts[lo:lo + BATCH], device=device)
+                    ctx, _ = batch(series, idx)
+                    preds.append(inference(ae_ctx, ae_fut, diffusion, masked(ctx, args["eval_mask_ratio"]), device)[:, [h - 1 for h in horizons]])
+            shifted_pred = scaler.inverse(np.concatenate(preds))
+            out[f"mae|all|{region.band_id}|{mode}"] = np.abs(shifted_pred - gt_raw)[:, pick][:, :, cols].mean(axis=2).astype(np.float32)
     return out
 
 
@@ -506,6 +551,10 @@ def run_one(args: dict[str, Any]) -> dict[str, Any]:
     if args.get("input_offsets"):
         result["offset_rows"] = offset_sweep(args, build_partition, scaler, savgol, band, profile, score_partition, test_starts, batch, masked,
                                              (ae_ctx, ae_fut, diffusion, inference), device, seed, pred_h, HORIZONS, CONTEXT)
+    if args.get("freq_shift_prefix"):
+        result["freq_arrays"] = freq_sweep(args, build_partition, scaler, savgol, band, profile, score_partition, test_starts, batch, masked,
+                                           (ae_ctx, ae_fut, diffusion, inference), device, seed, pred_h, gt_raw_h, HORIZONS)
+        result["freq_n_origins"] = int(len(test_starts))
     result["hparams"] = {"latent_dim": latent_dim, "learning_rate": learning_rate, "batch_size": batch_size,
                          "train_mask_ratio": train_mask}
     result["objective"] = result["metrics"].get("raw_target__off__mean_horizon_mae_db")    # tuning objective: raw-target MAE, no smoothing
@@ -548,6 +597,26 @@ def job(spec: dict[str, Any]) -> dict[str, Any]:
                     Body=json.dumps(summary, default=str).encode())
             except Exception:
                 pass
+    freq_arrays = record.pop("freq_arrays", None)         # frequency-ablation per-origin arrays go to their own key (layout of training.ray.frequency_ablation)
+    if freq_arrays:
+        import io as _io
+
+        n_origins = int(record.get("freq_n_origins") or 0)
+        regions = sorted({k.split("|")[2] for k in freq_arrays if k.startswith("mae|")})
+        buffer = _io.BytesIO()
+        np.savez_compressed(buffer, horizons=np.asarray([4, 12, 24, 48]), regions=np.asarray(regions), receivers=np.asarray(["all"]),
+                            **{"times|all": np.asarray([str(i) for i in range(n_origins)])}, **freq_arrays)
+        base = f"{spec['freq_shift_prefix'].strip('/')}/{spec['freq_tag']}/{record.get('band')}/seed-{spec['seed']}"
+        try:
+            client = spectrum_s3_client()
+            client.put_object(Bucket=spec["bucket"], Key=f"{base}/per_origin.npz", Body=buffer.getvalue())
+            client.put_object(Bucket=spec["bucket"], Key=f"{base}/summary.json", Body=json.dumps(
+                {"kind": "frequency_ablation", "model": f"tsslcd-{spec['freq_tag']}", "band": record.get("band"), "seed": spec["seed"], "savgol": spec["savgol"],
+                 "weights_prefix": spec.get("weights_prefix"), "n_origins": n_origins, "regions": regions, "modes": ["real", "shift96", "shift210"],
+                 "scored_columns": "region's bins at all four receivers (mean over receivers)", "zero_shift_max_abs_diff_db": record.get("zero_offset_max_abs_diff_db"),
+                 "wall_seconds": record.get("wall_seconds"), "ok": bool(record.get("ok"))}, default=str).encode())
+        except Exception:
+            pass
     key = f"{spec['output_prefix'].strip('/')}/savgol-{spec['savgol']}/seed-{spec['seed']}.json"
     try:
         spectrum_s3_client().put_object(Bucket=spec["bucket"], Key=key, Body=json.dumps(record, default=str).encode())
@@ -582,6 +651,11 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--offset-prefix", default=None,
                    help="with --input-offsets: S3 prefix of the per-receiver offset summaries (<prefix>/tsslcd/<band>/<receiver>/seed-N/summary.json); "
                         "must differ from --weights-prefix; existing ok summaries are kept (skip-done)")
+    p.add_argument("--freq-shift-prefix", default=None,
+                   help="eval-only: frozen-input frequency ablation (needs --freq-tag; default off): per region of the band's plan, the inputs of the other bins are "
+                        "replaced by the same bins shifted by 24 h / 52.5 h (all receivers, before the scaler) and the region is scored; per-origin arrays go to "
+                        "<prefix>/<tag>/<band>/seed-N/per_origin.npz")
+    p.add_argument("--freq-tag", default=None, help="with --freq-shift-prefix: label of the weights set (e.g. tuned, default)")
     p.add_argument("--bucket", default=None)
     p.add_argument("--output-prefix", default="tsslcd-authors-results")
     p.add_argument("--address", default="auto")
@@ -607,8 +681,10 @@ def main(argv=None) -> None:
             raise SystemExit("--test-start and --test-end go together")
         if args.input_offsets and (not args.offset_prefix or args.offset_prefix.strip("/") in (args.weights_prefix.strip("/"), args.output_prefix.strip("/"))):
             raise SystemExit("--input-offsets needs --offset-prefix, different from --weights-prefix and --output-prefix")
-    elif args.input_offsets:
-        raise SystemExit("--input-offsets is an eval-only option")
+        if args.freq_shift_prefix and (not args.freq_tag or args.freq_shift_prefix.strip("/") in (args.weights_prefix.strip("/"), args.output_prefix.strip("/"))):
+            raise SystemExit("--freq-shift-prefix needs --freq-tag, and must differ from --weights-prefix and --output-prefix")
+    elif args.input_offsets or args.freq_shift_prefix:
+        raise SystemExit("--input-offsets and --freq-shift-prefix are eval-only options")
     specs = []
     for savgol in args.savgol:
         for seed in args.seeds:
@@ -634,6 +710,10 @@ def main(argv=None) -> None:
                     extra["test_range"] = [args.test_start, args.test_end]
                 if args.input_offsets:
                     extra.update(input_offsets=list(args.input_offsets), offset_prefix=args.offset_prefix, source_metrics=source.get("metrics"))
+                if args.freq_shift_prefix:
+                    extra.update(freq_shift_prefix=args.freq_shift_prefix, freq_tag=args.freq_tag, source_metrics=source.get("metrics"),
+                                 freq_plan={"600_800": "evaluation/analysis/plan_regions_600_800.csv",
+                                            "2400_2600": "evaluation/analysis/plan_regions_2400_2600.csv"}[extra["band"]])
             specs.append({"savgol": savgol, "seed": seed, "repo_root": args.repo_root, "bucket": bucket,
                           "output_prefix": args.output_prefix, "device": args.device,
                           "epochs": {"ctx": args.epochs_ctx, "fut": args.epochs_fut, "diff": args.epochs_diff},
