@@ -195,7 +195,8 @@ def cmd_run(a: argparse.Namespace) -> None:
             model = j["entries"][0]["model"] if kind == "model" else None
             gpu = (a.gpu_fraction if a.gpu_fraction is not None else ta.GPU_FRACTION.get(model, 0.0)) if kind == "model" else 0.0
             mem = int(24 * 2 ** 30) if model in ta.GPU_FRACTION else memory
-            pending[ray.remote(num_cpus=2, num_gpus=gpu, memory=mem, max_retries=1)(fn).remote(j, shared)] = (kind, j)
+            extra = {"resources": {"accelerator_type:GH200": 0.001}} if a.arm_only else {}   # NCAR: keep CPU-scored cells off the x86 workers
+            pending[ray.remote(num_cpus=2, num_gpus=gpu, memory=mem, max_retries=1, **extra)(fn).remote(j, shared)] = (kind, j)
         finished, _ = ray.wait(list(pending), num_returns=1)
         kind, j = pending.pop(finished[0])
         try:
@@ -246,6 +247,7 @@ def main(argv=None) -> None:
     r.add_argument("--threads", type=int, default=2)
     r.add_argument("--max-parallel", type=int, default=24)
     r.add_argument("--skip-done", action="store_true")
+    r.add_argument("--arm-only", action="store_true", help="NCAR: schedule only on the GH200 (ARM) hosts, not the x86 CPU workers")
     r.add_argument("--bucket", default=None)
     r.add_argument("--prefix", default=PREFIX)
     r.add_argument("--code-revision", default=None)

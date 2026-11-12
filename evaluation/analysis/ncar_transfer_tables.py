@@ -3,6 +3,7 @@
 Inputs (``s3://spectrum``):
   ``transfer-ncar-2026-11/cells/<regime>/<platform>/<site>/<run>[-week2]/<band>/<rep>/<model>[/h<h>]/seed-<n>/``  (``training.ray.ncar_tx_cells``)
   ``transfer-ncar-2026-11/item5/from-<source band>/<regime>/powder/<node>/<run>/<band>/<rep>/<model>[/h<h>]/seed-<n>/``  (cross-band)
+  ``transfer-ncar-2026-11/item5-arm/...``  (same layout: ARM reruns of cross-band cells first scored on the x86 CPU workers; they replace the item5 cell)
   ``transfer-ncar-2026-11/item1/<target key>/<baseline>/``  (item-1 baselines, identical windows to the model cells)
   ``transfer-ncar-2026-11/item3/target-trained/<platform>/<site>/<run>/<band>/h<h>/seed-<n>/``  (``training.ray.ncar_target_trained``)
 each with ``per_bin.csv`` and ``forecasts.npz`` (``training.ray.ncar_cells``). A ``<model>/h<h>`` directory is a direct model trained for
@@ -78,7 +79,7 @@ def parse_cell(key: str) -> dict | None:
     parts = key.split("/")
     if parts[1] == "cells":
         source_band, rest = None, parts[2:]
-    elif parts[1] == "item5":
+    elif parts[1] in ("item5", "item5-arm"):              # item5-arm: ARM reruns of cells first scored on the x86 CPU workers
         source_band, rest = parts[2].removeprefix("from-"), parts[3:]
     else:
         return None
@@ -358,6 +359,13 @@ def build(a) -> None:
 
     t0 = time.time()
     cells_meta = [m for m in (parse_cell(k) for k in list_keys(client, f"{ROOT}/cells/") + list_keys(client, f"{ROOT}/item5/")) if m]
+    rerun = [m for m in (parse_cell(k) for k in list_keys(client, f"{ROOT}/item5-arm/")) if m]
+    if rerun:                                                  # an ARM rerun replaces the item5 cell with the same identity
+        ident = lambda m: (m["model"], m["rep"], m["trained_horizon"], m["regime"], m["source_band"], m["target"], m["seed"])
+        replaced = {ident(m) for m in rerun}
+        before = len(cells_meta)
+        cells_meta = [m for m in cells_meta if ident(m) not in replaced] + rerun
+        print(f"[tables] item5-arm: {len(rerun)} cells replace {before + len(rerun) - len(cells_meta)} item5 cells", flush=True)
     base_meta = [m for m in (parse_baseline(k) for k in list_keys(client, f"{ROOT}/item1/")) if m]
     tt_meta = [parse_tt(k) for k in list_keys(client, f"{ROOT}/item3/target-trained/")]
     print(f"[tables] {len(cells_meta)} model cells, {len(base_meta)} baseline cells, {len(tt_meta)} target-trained cells "
