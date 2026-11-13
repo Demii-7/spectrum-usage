@@ -18,16 +18,21 @@ K8 = 7
 
 # (label, sha12 of seed 0 [, seed 1]) in display order; FM, K = T = 20, full-range min-max, jet unless noted
 ROWS = [
-    ("Rect., hop 127 (\\texttt{torch.stft})", ["2fa9ff9a3d9b"]),
-    ("Rect., hop 126", ["c58d32f53cad", "cc28f79072b2"]),
+    ("Hann, hop 128 (\\texttt{scipy} stft)", ["1442b5d2022f"]),
+    ("Hann, hop 126", ["0727eb8f06c1"]),
+    ("Hamming, hop 128", ["513bd5b54a8f"]),
     ("Tukey, hop 224, 90--110\\,MHz", ["187560732831", "1b987cdc5bb2"]),
     ("Tukey, hop 224 (\\texttt{scipy} spectrogram)", ["3c96fc0dc0cd", "c5a4e4c918ca"]),
-    ("Hann, hop 128 (\\texttt{scipy} stft)", ["1442b5d2022f"]),
-    ("Hamming, hop 128", ["513bd5b54a8f"]),
-    ("Hann, hop 126", ["0727eb8f06c1"]),
+    ("Rect., hop 127 (\\texttt{torch.stft})", ["2fa9ff9a3d9b"]),
+    ("Rect., hop 126", ["c58d32f53cad", "cc28f79072b2"]),
 ]
 GRAY = "gray"          # rows for the grayscale runs are added from dbspace JSONs whose run key ends in |gray
-LTE = [("LTE, from scratch", ["4dfd1d59c176"]), ("LTE, from FM model", ["dba70d28179a"])]
+# LTE transfer (Tukey hop 224, K = T = 16): seed 0 from the collaborator's campaign, seeds 1-2 from ray_campaign.LTE_RUNS (2026-11-12)
+# runs whose model cells are printed as "--" in the LaTeX table (TABLE.md keeps the numbers): the LTE from-scratch run froze after epoch 1
+# (train_o_lte_scratch_tukey224d_s0_rule-none.log), so its error is not a result; remove once the replicates are in
+WITHHELD = {"4dfd1d59c176"}
+LTE = [("LTE, from scratch", ["4dfd1d59c176", "ef76c703ed96"]), ("LTE, from FM model", ["dba70d28179a"])]
+NUM = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five"}
 
 
 def records():
@@ -88,10 +93,14 @@ def main():
             lines.append(f"{label.replace(', C=32', '')} & {fmt(r['pix_model'])} & {fmt(r['pix_lbm'])} & {fmt(r['db_model'], 2)} & {fmt(r['db_med'], 2)} \\\\")
         md.append(f"| {label} | {r['n']} | {fmt(r['pix_model'])} | {fmt(r['pix_lbm'])} | {fmt(r['pix_lbm_t'])} | {fmt(r['db_model'], 3)} | {fmt(r['db_lbm'], 3)} | {fmt(r['db_lbm_t'], 3)} | "
                   f"{fmt(r['db_res'], 3)} | {fmt(r['db_pers'], 3)} | {fmt(r['ctrl'], 3)} |")
+    counts = [len(shas) for _, shas in ROWS] + [1] * len(gray) + [len(shas) for _, shas in LTE]
+    lo_n, hi_n = min(counts), max(counts)
+    runs = f"one run each" if hi_n == 1 else (f"{NUM[lo_n]} or {NUM[hi_n]} runs" if hi_n - lo_n == 1 else f"{NUM[lo_n]} to {NUM[hi_n]} runs")
     lte = []
     for label, shas in LTE:
         r = row(shas, recs, dbs, K8)
-        lte.append(f"{label} & {fmt(r['pix_model'])} & {fmt(r['pix_lbm'])} & {fmt(r['db_model'], 2)} & {fmt(r['db_med'], 2)} \\\\")
+        hide = bool(WITHHELD & set(shas))
+        lte.append(f"{label} & {'--' if hide else fmt(r['pix_model'])} & {fmt(r['pix_lbm'])} & {'--' if hide else fmt(r['db_model'], 2)} & {fmt(r['db_med'], 2)} \\\\")
         md.append(f"| {label} | {r['n']} | {fmt(r['pix_model'])} | {fmt(r['pix_lbm'])} | {fmt(r['pix_lbm_t'])} | {fmt(r['db_model'], 3)} | {fmt(r['db_lbm'], 3)} | {fmt(r['db_lbm_t'], 3)} | "
                   f"{fmt(r['db_res'], 3)} | {fmt(r['db_pers'], 3)} | {fmt(r['ctrl'], 3)} |")
     tex = [
@@ -100,7 +109,8 @@ def main():
         "\\centering",
         "\\caption{DeepSPred reproduction: 3D-SwinSTB (model) against the per-pixel mean or median of its input frames (lookback mean, lookback median) "
         "at frame 8, under spectrogram renderings the paper leaves unspecified. MSE on 8-bit images is the paper's metric (paper: 448.76 on FM); MAE in dB "
-        "is computed after converting predicted colors back to dB. Jet colormap unless marked gray. Mean over one or two runs.}",
+        "is computed after converting predicted colors back to dB. Jet colormap unless marked gray. Mean over "
+        f"{runs}.}}",
         "\\label{tab:deepspred-reproduction}",
         "\\scriptsize",
         "\\setlength{\\tabcolsep}{2pt}",
