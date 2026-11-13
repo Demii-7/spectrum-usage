@@ -476,6 +476,38 @@ def freq_sweep_classes(args, build, scaler, savgol, band, profile, partition, te
     return out
 
 
+def time_forecast_calls(inference, nets, series, starts, batch, masked, mask_ratio, device, batch_sizes, n_steps, warmup=3, calls=10) -> list[dict[str, Any]]:
+    """Median seconds of one ``inference`` call (ancestral sampler with ``n_steps`` denoising steps, then the decoder) per batch size, CUDA-synchronized."""
+    import statistics
+
+    import torch
+
+    ae_ctx, ae_fut, diffusion = nets
+    rows = []
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats()
+    for size in batch_sizes:
+        seconds = []
+        for call in range(warmup + calls):
+            lo = (call * size) % max(len(starts) - size, 1)
+            idx = torch.as_tensor(starts[lo:lo + size], device=device)
+            ctx, _ = batch(series, idx)
+            ctx = masked(ctx, mask_ratio)
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+            t0 = time.perf_counter()
+            inference(ae_ctx, ae_fut, diffusion, ctx, device)
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+            seconds.append(time.perf_counter() - t0)
+        median = statistics.median(seconds[warmup:])
+        rows.append({"batch": int(size), "median_s_per_call": median, "ms_per_window": 1000.0 * median / size, "n_timed_calls": calls,
+                     "sampling_steps": int(n_steps), "gpu": torch.cuda.get_device_name(0) if device.type == "cuda" else "cpu",
+                     "params": sum(p.numel() for m in nets for p in m.parameters()),
+                     "peak_gpu_mb": round(torch.cuda.max_memory_allocated() / 1e6, 1) if device.type == "cuda" else None})
+    return rows
+
+
 def run_one(args: dict[str, Any]) -> dict[str, Any]:
     """Train the authors' model with one savgol setting and score it under every eval-smoothing setting."""
     import torch
@@ -635,6 +667,9 @@ def run_one(args: dict[str, Any]) -> dict[str, Any]:
             ctx = masked(ctx, args["eval_mask_ratio"])
             preds.append(inference(ae_ctx, ae_fut, diffusion, ctx, device)[:, [h - 1 for h in HORIZONS]])
     result["inference_seconds"] = round(time.time() - t0, 1)
+    if args.get("time_inference"):      # opt-in inference-cost timing: one full forecast call (sampler loop + decoder), CUDA-synchronized, median after warm-up
+        result["timing"] = time_forecast_calls(inference, (ae_ctx, ae_fut, diffusion), test_series, test_starts, batch, masked, args["eval_mask_ratio"], device,
+                                               (1, 32), n_steps=N_TIMESTEPS)
     pred_h = scaler.inverse(np.concatenate(preds))                                    # (N, horizons, D) dB
 
     horizon_rows = test_starts[:, None] + CONTEXT + np.array([h - 1 for h in HORIZONS])[None, :]
@@ -798,6 +833,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--freq-classes-prefix", default=None,
                    help="eval-only: periodicity-crossed frozen-input frequency ablation (needs --freq-tag; default off): per region, disturbed set (all / P_only / N_only / "
                         "noise_only) and disturbance (shift96/192/144/210, level) the region's bins are scored per receiver; arrays go to <prefix>/<tag>/<band>/seed-N/per_origin.npz")
+    p.add_argument("--time-inference", action="store_true", help="opt-in: also time one forecast call at batch 1 and 32 (record key ``timing``); use with a whole GPU")
     p.add_argument("--bucket", default=None)
     p.add_argument("--output-prefix", default="tsslcd-authors-results")
     p.add_argument("--address", default="auto")
@@ -868,7 +904,8 @@ def main(argv=None) -> None:
                           "epochs": {"ctx": args.epochs_ctx, "fut": args.epochs_fut, "diff": args.epochs_diff},
                           "test_stride": args.test_stride, "eval_mask_ratio": args.eval_mask_ratio, "resolution": args.resolution, "band": args.band,
                           "hparams": json.loads(args.hparams) if args.hparams else None,
-                          "eval_smooth": eval_smooth, **({"per_bin_output": True} if args.per_bin_output else {}), **extra})
+                          "eval_smooth": eval_smooth, **({"per_bin_output": True} if args.per_bin_output else {}),
+                          **({"time_inference": True} if args.time_inference else {}), **extra})
     print(f"[tsslcd-authors] {len(specs)} runs", flush=True)
     remote = ray.remote(num_cpus=4, num_gpus=args.gpu_fraction, max_retries=1)(job)
     pending = [remote.remote(s) for s in specs]

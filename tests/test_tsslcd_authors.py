@@ -151,3 +151,22 @@ def test_input_offset_is_added_before_the_scaler(monkeypatch):
     assert np.allclose(scaler.inverse(raw_c) - scaler.inverse(raw0), 10.0)       # exactly +10 dB in the original units
     assert np.allclose(scaler.inverse(model_c) - scaler.inverse(raw0), 10.0)     # savgol off: the model series carries it too
     assert m.apply_input_offset(values, 0.0) is values and np.allclose(m.apply_input_offset(values, -5.0), values - 5.0)
+
+
+def test_time_forecast_calls_reports_median_per_batch_size():
+    import numpy as np
+    import pytest
+
+    torch = pytest.importorskip("torch")
+    from training.ray.tsslcd_authors import time_forecast_calls
+
+    nets = tuple(torch.nn.Linear(2, 2) for _ in range(3))
+    seen = []
+
+    def inference(a, b, c, ctx, device):
+        seen.append(ctx.shape[0])
+
+    rows = time_forecast_calls(inference, nets, torch.zeros(100, 2), np.arange(50), lambda series, idx: (series[idx], None),
+                               lambda ctx, ratio: ctx, torch.device("cpu"), (1, 4), n_steps=1000, warmup=1, calls=2)
+    assert [r["batch"] for r in rows] == [1, 4] and seen == [1, 1, 1, 4, 4, 4]
+    assert all(r["sampling_steps"] == 1000 and r["gpu"] == "cpu" and r["ms_per_window"] >= 0 for r in rows) and rows[0]["params"] == 18
