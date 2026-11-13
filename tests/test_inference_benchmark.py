@@ -43,3 +43,13 @@ def test_direct_keys_and_stride_choice():
     assert parse_direct_key("direct-tuning/15min/600_800/ofa/trials/c00_h4.json") is None
     assert stride_key({"source": "direct", "resolution": "1min"}) == "oct" and stride_key({"source": "direct", "resolution": "15min"}) == "p15"
     assert stride_key({"source": "band"}) == "band"
+
+
+def test_tuned_4d_source_is_opt_in_and_parses():
+    from training.ray.inference_benchmark import ALL_SOURCES, DEFAULT_SOURCES
+
+    assert "p15tuned4d" in ALL_SOURCES and "p15tuned4d" not in DEFAULT_SOURCES
+    e = parse_meta_key("tuning/powder15_4d/600_800/4d/stsprednet/weights/seed-42/powder15_600_800_stsprednet.pt")
+    assert e["prefix"] == "tuning/powder15_4d" and e["rep"] == "4d" and e["model"] == "stsprednet" and e["horizon"] is None
+    assert e["meta_key"].endswith(".pt.meta.json") and spectra_per_window(e["rep"]) == 4.0
+    assert stride_key({"source": "p15tuned4d"}) == "p15tuned4d"

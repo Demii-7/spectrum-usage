@@ -40,9 +40,10 @@ from typing import Any
 WARMUP_CALLS = 3
 BATCH_SIZES = (1, 32)
 PREFERRED_SEED = 42
-ALL_SOURCES = ("oct", "band", "p15", "p15tuned", "direct")
+ALL_SOURCES = ("oct", "band", "p15", "p15tuned", "direct", "p15tuned4d")
+DEFAULT_SOURCES = ("oct", "band", "p15", "p15tuned", "direct")   # p15tuned4d is opt-in (--sources p15tuned4d)
 TEST_RANGE = ("2026-10-27T20:00:00Z", "2026-11-03T20:00:00Z")
-DEFAULT_STRIDE = {"oct": 20, "band": 20, "p15": 1, "p15tuned": 1, "direct": 1}   # about 500 windows either way (direct: per resolution, see stride_key)
+DEFAULT_STRIDE = {"oct": 20, "band": 20, "p15": 1, "p15tuned": 1, "direct": 1, "p15tuned4d": 1}   # about 500 windows either way (direct: per resolution, see stride_key)
 
 META_KEY = re.compile(
     r"^(?P<prefix>.+?)/weights/(?P<band>\d+_\d+)/(?P<rep>[124]d)/(?P<model>[^/]+?)(?:/h(?P<horizon>\d+))?"
@@ -52,6 +53,8 @@ TUNED_KEY = re.compile(
 DIRECT_KEY = re.compile(
     r"^(?P<prefix>direct-tuning)/(?P<resolution>15min|1min)/(?P<band>\d+_\d+)/(?P<model>[^/]+)/weights/h(?P<horizon>\d+)"
     r"/seed-(?P<seed>\d+)/(?P<file>[^/]+\.pt)$")
+TUNED4D_KEY = re.compile(
+    r"^(?P<prefix>tuning/powder15_4d)/(?P<band>\d+_\d+)/(?P<rep>4d)/(?P<model>[^/]+)/weights/seed-(?P<seed>\d+)/(?P<file>[^/]+\.pt)$")
 BAND_PREFIX = re.compile(r"(\d+_\d+)$")
 BINS = 200                  # 1 MHz bins in each 200 MHz band
 ONE_D_STRIDE_FACTOR = 20    # a 1D "window" is one (receiver, bin) series, about 800 per time window, so thin the time windows 20x
@@ -91,7 +94,7 @@ def stride_key(entry: dict[str, Any]) -> str:
 
 def parse_meta_key(key: str) -> dict[str, Any] | None:
     """Weights uploaded by ``artifacts.save_run``/``save_artifact`` (15-minute runs) -> entry fields, else None."""
-    match = TUNED_KEY.match(key) or META_KEY.match(key)
+    match = TUNED_KEY.match(key) or TUNED4D_KEY.match(key) or META_KEY.match(key)
     if not match or "/site-" in key:
         return None
     fields = match.groupdict()
@@ -148,7 +151,7 @@ def discover_sources(client, bucket: str, sources: list[str], models: list[str] 
                 if entry and entry["meta_key"] in have and (not models or entry["model"] in models):
                     entries.append({**entry, "source": "direct", "kind": "meta"})
         else:
-            root = "powder15-results-w/weights/" if source == "p15" else "tuning/powder15/"
+            root = {"p15": "powder15-results-w/weights/", "p15tuned4d": "tuning/powder15_4d/"}.get(source, "tuning/powder15/")
             keys = [o["Key"] for page in client.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=root)
                     for o in page.get("Contents", [])]
             have = set(keys)
@@ -288,7 +291,7 @@ def manifest(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def main(argv=None) -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--sources", nargs="+", default=list(ALL_SOURCES), choices=list(ALL_SOURCES))
+    p.add_argument("--sources", nargs="+", default=list(DEFAULT_SOURCES), choices=list(ALL_SOURCES))
     p.add_argument("--models", nargs="+")
     p.add_argument("--max-per-source", type=int, help="smoke tests: keep only this many models per source (spread across models)")
     p.add_argument("--batch-sizes", type=int, nargs="+", default=list(BATCH_SIZES))
@@ -337,7 +340,7 @@ def main(argv=None) -> None:
     print(f"[bench] {len(entries)} checkpoints, batch sizes {args.batch_sizes}, idle={idle}, GPUs {total}", flush=True)
     remote = ray.remote(num_cpus=4, num_gpus=args.gpus_per_task, max_retries=0)(benchmark_entry)
     strides = {"oct": args.stride_1min, "band": args.stride_1min, "p15": args.stride_15min, "p15tuned": args.stride_15min,
-               "direct": args.stride_15min}
+               "direct": args.stride_15min, "p15tuned4d": args.stride_15min}
     worker_args = {"repo_root": args.repo_root, "bucket": bucket, "batch_sizes": args.batch_sizes, "test_start": args.test_start,
                    "test_end": args.test_end, "strides": strides, "device": args.device, "idle": idle}
     pending = [remote.remote(e, worker_args) for e in entries]
