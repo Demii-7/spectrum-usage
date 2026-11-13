@@ -29,6 +29,30 @@ def combine(frames: list[pd.DataFrame]) -> pd.DataFrame:
     return table.sort_values(["model", "rep", "band", "horizon", "run", "requested_batch"], na_position="first").reset_index(drop=True)
 
 
+def tsslcd_rows(record: dict, prefix: str) -> list[dict]:
+    """Rows from a ``tsslcd_authors --eval-only --time-inference`` record (key ``timing``): one per batch size, sampler steps in ``error``-free ``prefix`` note."""
+    rows = []
+    for t in record.get("timing") or []:
+        rows.append({"run": "h100three", "file": prefix, "source": "tsslcd", "prefix": prefix, "resolution": record.get("resolution"), "band": record.get("band"),
+                     "rep": "4d", "model": "tsslcd_" + prefix.rsplit("-", 1)[-1], "horizon": None, "seed": record.get("seed"), "requested_batch": t["batch"],
+                     "ok": bool(record.get("ok")), "ms_per_window": t["ms_per_window"], "ms_per_spectrum": t["ms_per_window"] / 4.0, "spectra_per_window": 4.0,
+                     "median_s_per_call": t["median_s_per_call"], "forward_passes_per_call": t["sampling_steps"], "params": t["params"],
+                     "peak_gpu_mb": t["peak_gpu_mb"], "gpu": t["gpu"], "idle": True, "task_seconds": record.get("wall_seconds")})
+    return rows
+
+
+def tsslcd_frames(client, bucket: str) -> list[pd.DataFrame]:
+    import json
+
+    rows = []
+    for page in client.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix="inference-benchmark/h100three-tsslcd-"):
+        for obj in page.get("Contents", []):
+            if obj["Key"].endswith(".json") and "/weights/" not in obj["Key"]:
+                record = json.loads(client.get_object(Bucket=bucket, Key=obj["Key"])["Body"].read())
+                rows += tsslcd_rows(record, obj["Key"].split("/")[1])
+    return [pd.DataFrame(rows)] if rows else []
+
+
 def main(argv=None) -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--runs", nargs="+", default=list(RUNS))
@@ -50,6 +74,7 @@ def main(argv=None) -> None:
                     frame.insert(1, "file", obj["Key"].rsplit("/", 1)[-1])
                     frames.append(frame)
                     print(f"[table] {obj['Key']}: {len(frame)} rows", flush=True)
+    frames += tsslcd_frames(client, bucket)
     table = combine(frames)
     table.to_csv(args.out, index=False)
     client.put_object(Bucket=bucket, Key=f"analysis-outputs/{args.out}", Body=table.to_csv(index=False).encode())
