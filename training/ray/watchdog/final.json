@@ -368,5 +368,10 @@
   "id": "claude-final-freqcls-af36-2400-42",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.frequency_ablation_classes --models autoformer_csa --seeds 42 --bands 2400_2600 --only-conditions all_shift96 all_shift144 --prefix frequency-ablation-2026-11-classes-af36 --gpu-fraction 0.5 --max-parallel 1 --skip-done\"",
   "max_restarts": 2
+ },
+ {
+  "id": "claude-final-spectral36-table-final",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-final-freqcls-af36-600-42 claude-final-freqcls-af36-2400-42 --then 'bash training/ray/scripts/run_spectral_context_table_36h.sh'\"",
+  "max_restarts": 1
  }
 ]
