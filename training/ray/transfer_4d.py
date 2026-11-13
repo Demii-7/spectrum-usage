@@ -36,7 +36,81 @@ MODELS = ("linearar4d", "residuallinearar4d", "residualconvlstm", "stsprednet", 
 BANDS = ("600_800", "2400_2600")
 WEEK2 = {"start": "2026-11-03T20:00:00Z", "end": "2026-11-10T20:00:00Z"}
 JULY_RUNS = {"20260628": "july-20260628", "20260703": "july-20260703"}
-REGIMES = {"frozen": None, "centered": "own"}
+REGIMES = {"frozen": None, "centered": "own", "refit": None}
+DEFAULT_REGIMES = ("frozen", "centered")
+STD_FLOOR_FRACTION = 0.25                                  # as training.common.transfer_regimes (regime C)
+
+
+def summary_name(regimes) -> str:
+    return "summary.json" if tuple(regimes) == DEFAULT_REGIMES else f"summary-{'-'.join(regimes)}.json"
+
+
+def refit_checkpoint(checkpoint: Path, exp: dict[str, Any], root: str, out: Path) -> dict[str, Any] | None:
+    """A copy of ``checkpoint`` whose per-bin normalization is re-estimated on the target: mean and standard deviation over the map cells and
+    the 96 blocks (24 h) up to the first scored origin, standard deviation floored at 0.25 x the source's; weights unchanged (regime C)."""
+    import pandas as pd
+    import torch
+
+    from training.common import spatial_ablation_eval as sae
+
+    ckpt = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    norm = ckpt.get("normalization")
+    if norm is None:
+        return None
+    rootp = Path(root)
+    names = list(exp["baseline_receivers"])
+    coords = sae._coordinates(sae._resolve(exp["locations"], rootp), str(exp.get("collection_key", "endpoints")), names)
+    series, _, _ = sae._condition_data(exp, "geometry_correct", np.asarray(ckpt["frequencies"], dtype=np.float32), coords, rootp)
+    g = exp.get("grid", {})
+    grid = sae.derive_frozen_grid([coords[n][0] for n in names], [coords[n][1] for n in names], height=int(g.get("height", 10)),
+                                  width=int(g.get("width", 10)), power=float(g.get("power", 2.0)), width_meters=g.get("width_meters"),
+                                  height_meters=g.get("height_meters"), origin_lon=g.get("origin_lon"), origin_lat=g.get("origin_lat"),
+                                  power_domain=str(g.get("power_domain", "db")), method=str(g.get("method", "idw")), variogram=g.get("variogram"))
+    start = pd.Timestamp(exp["geometry_timing"]["start"])
+    mask = np.asarray((series.timestamps > start - pd.Timedelta(hours=24)) & (series.timestamps <= start))
+    if mask.sum() < 48:
+        raise RuntimeError(f"only {int(mask.sum())} calibration rows before {start}")
+    maps = sae.build_idw_maps(series.values_dbm[mask], series.longitudes, series.latitudes, grid)
+    flat = np.asarray(maps, dtype=np.float64).reshape(-1, maps.shape[-1])
+    src_mean, src_std = np.asarray(norm["mean_dbm"], dtype=np.float64), np.asarray(norm["std_dbm"], dtype=np.float64)
+    mean = np.nanmean(flat, axis=0)
+    std = np.maximum(np.nanstd(flat, axis=0), STD_FLOOR_FRACTION * src_std.squeeze())
+    new = {**norm, "mean_dbm": mean.reshape(src_mean.shape).astype(np.float32), "std_dbm": std.reshape(src_std.shape).astype(np.float32)}
+    ckpt["normalization"] = new
+    torch.save(ckpt, out)
+    return {"normalization": new, "calibration_rows": int(mask.sum()), "mean_shift_db": float(np.mean(mean - src_mean.squeeze())),
+            "std_ratio": float(np.mean(std / src_std.squeeze()))}
+
+
+def heuristics(root: str, files: dict[str, str], npz, ks: dict[str, dict[int, int]], band: str) -> dict[str, dict[str, dict]]:
+    """Persistence, 24 h lookback mean, same time yesterday and the tuned lookback median at each receiver, on exactly the evaluator's origins.
+    Returns heuristic -> receiver -> ncar_cells matrices. Windows whose targets do not match the evaluator's are dropped (counted)."""
+    import pandas as pd
+
+    from training.ray.ncar_baselines import LOOKBACK, baseline_forecasts
+    from training.ray.spatial15 import HORIZONS
+
+    origins = pd.to_datetime(np.asarray(npz["origin_timestamps"]).astype(str), utc=True)
+    targets = npz["targets_dbm"].astype(np.float64)                         # (N, H, R, F)
+    out: dict[str, dict[str, dict]] = {}
+    for r, name in enumerate(np.asarray(npz["receivers"]).astype(str)):
+        frame = pd.read_csv(Path(root) / files[str(name)])
+        frame["timestamp_utc"] = pd.to_datetime(frame["timestamp_utc"], utc=True)
+        frame = frame.set_index("timestamp_utc").sort_index()
+        frame = frame.reindex(pd.date_range(frame.index[0], frame.index[-1], freq="15min")).interpolate(limit=16, limit_area="inside")
+        data = frame.to_numpy(dtype=np.float32)
+        last = frame.index.get_indexer(origins)                             # the origin is the last observed step
+        ok = (last >= LOOKBACK - 1) & (last + max(HORIZONS) < len(data))
+        for i, h in enumerate(HORIZONS):
+            ok &= np.nanmax(np.abs(data[np.clip(last + h, 0, len(data) - 1)] - targets[:, i, r, :]), axis=1) < 1e-2
+        starts = last[ok] - (LOOKBACK - 1)
+        preds = baseline_forecasts(data, starts, {"tuned_median": ks[band]})
+        for hname, by_h in preds.items():
+            out.setdefault(hname, {})[str(name)] = {int(h): {"origin": (origins[ok].asi8 // 10 ** 9).astype(np.int64), "pred": by_h[h].astype(np.float32),
+                                                              "target": targets[ok, i, r, :].astype(np.float32)}
+                                                    for i, h in enumerate(HORIZONS) if h in by_h}
+        out.setdefault("_dropped", {})[str(name)] = int((~ok).sum())
+    return out
 
 
 def set_names() -> list[str]:
@@ -110,8 +184,9 @@ def cell_job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     started = time.time()
     device = "cpu" if model in CPU_MODELS else "cuda"
     try:
-        key = weights_key(client, bucket, band, "core4-p2", model, seed)
-        if key is None:
+        regimes = ["frozen"] if model == "lookbackmean4d" else list(args.get("regimes") or DEFAULT_REGIMES)
+        key = None if model == "lookbackmean4d" else weights_key(client, bucket, band, "core4-p2", model, seed)
+        if key is None and model != "lookbackmean4d":
             raise FileNotFoundError("no saved weights for this cell")
         files, timing, tband = prepare(root, name, band)
         record.update(target_band=tband, timing=timing, files=files, weights_key=key)
@@ -120,14 +195,27 @@ def cell_job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         exp["geometry_timing"], exp["geometry_files"] = timing, files
         with tempfile.TemporaryDirectory(prefix="transfer4d-") as scratch_dir:
             scratch = Path(scratch_dir)
-            checkpoint = scratch / Path(key).name
-            client.download_file(bucket, key, str(checkpoint))
-            meta = json.loads(client.get_object(Bucket=bucket, Key=key + ".meta.json")["Body"].read())
-            _, normalization = _checkpoint_metadata(checkpoint)
             model_config = scratch / "models.yaml"
-            model_config.write_text(yaml.safe_dump(model_config_for(meta["config"], model)))
+            if model == "lookbackmean4d":
+                checkpoint, normalization = None, None
+                model_config.write_text(yaml.safe_dump({"windowing": {"lookback": 96, "horizons": [4, 12, 24, 48]}}))
+            else:
+                checkpoint = scratch / Path(key).name
+                client.download_file(bucket, key, str(checkpoint))
+                meta = json.loads(client.get_object(Bucket=bucket, Key=key + ".meta.json")["Body"].read())
+                _, normalization = _checkpoint_metadata(checkpoint)
+                model_config.write_text(yaml.safe_dump(model_config_for(meta["config"], model)))
+            source_checkpoint, source_normalization = checkpoint, normalization
             metrics: dict[str, Any] = {}
-            for regime, center in REGIMES.items():
+            for regime in regimes:
+                center = REGIMES[regime]
+                checkpoint, normalization = source_checkpoint, source_normalization
+                if regime == "refit":
+                    refit = refit_checkpoint(source_checkpoint, exp, root, scratch / "refit.pt")
+                    if refit is None:
+                        continue
+                    checkpoint, normalization = scratch / "refit.pt", refit.pop("normalization")
+                    record["refit"] = refit
                 exp_path = Path(root) / "training/configs" / f".transfer4d-{os.getpid()}-{name}-{band}-{model}-{seed}.yaml"
                 exp_path.write_text(yaml.safe_dump(exp))
                 out = scratch / regime
@@ -143,6 +231,17 @@ def cell_job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
                     rkey = receiver.replace(" ", "")
                     ncar_cells.save_cell(client, bucket, f"{base}/{regime}/{rkey}", mats, ncar_cells.band_frequencies(tband))
                     metrics.setdefault(regime, {})[rkey] = aggregate(mats)
+                if model == "lookbackmean4d":          # the per-receiver heuristics on exactly these origins
+                    from training.ray.ncar_baselines import selected_k
+
+                    with np.load(out / "receiver_forecasts.npz", allow_pickle=True) as npz:
+                        heur = heuristics(root, files, npz, selected_k(client, bucket), band)
+                    record["heuristic_windows_dropped"] = heur.pop("_dropped")
+                    for hname, by_r in heur.items():
+                        for receiver, mats in by_r.items():
+                            rkey = receiver.replace(" ", "")
+                            ncar_cells.save_cell(client, bucket, f"{base}/heuristic-{hname}/{rkey}", mats, ncar_cells.band_frequencies(tband))
+                            metrics.setdefault(f"heuristic-{hname}", {})[rkey] = aggregate(mats)
         record["metrics"] = metrics
         if device == "cuda":
             record["peak_gpu_memory_gb"] = round(torch.cuda.max_memory_allocated() / 2 ** 30, 3)
@@ -153,7 +252,7 @@ def cell_job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         record.update(ok=False, error=f"{type(error).__name__}: {error}"[:400], trace=traceback.format_exc()[-2500:])
     record["wall_seconds"] = round(time.time() - started, 1)
     if record["ok"] or "no saved weights" not in record.get("error", ""):
-        client.put_object(Bucket=bucket, Key=f"{base}/summary.json" if record["ok"] else f"{base}/errors/{int(time.time())}.json",
+        client.put_object(Bucket=bucket, Key=f"{base}/{summary_name(args.get('regimes') or DEFAULT_REGIMES)}" if record["ok"] else f"{base}/errors/{int(time.time())}.json",
                           Body=json.dumps(record, default=str, indent=1).encode())
     return record
 
@@ -168,17 +267,18 @@ def cmd_run(a: argparse.Namespace) -> None:
 
     def done(s):
         try:
-            return bool(json.loads(client.get_object(Bucket=a.bucket, Key=f"{a.prefix}/{s['set']}/from-{s['band']}/{s['model']}/seed-{s['seed']}/summary.json")["Body"].read()).get("ok"))
+            return bool(json.loads(client.get_object(Bucket=a.bucket, Key=f"{a.prefix}/{s['set']}/from-{s['band']}/{s['model']}/seed-{s['seed']}/{summary_name(a.regimes)}")["Body"].read()).get("ok"))
         except Exception:
             return False
 
-    specs = [{"set": n, "band": b, "model": m, "seed": s} for n in a.sets for b in a.bands for m in a.models for s in a.seeds]
+    specs = [{"set": n, "band": b, "model": m, "seed": s} for n in a.sets for b in a.bands for m in a.models
+             for s in ([42] if m == "lookbackmean4d" else a.seeds)]
     if a.skip_done:
         specs = [s for s in specs if not done(s)]
     print(f"[transfer4d] {len(specs)} cells", flush=True)
     ray.init(address=a.address, ignore_reinit_error=True)
     shared = {"repo_root": a.repo_root, "bucket": a.bucket, "prefix": a.prefix, "batch_size": a.batch_size, "code_revision": a.code_revision,
-              "origin_limit": a.origin_limit or None}
+              "origin_limit": a.origin_limit or None, "regimes": a.regimes}
     cpu = ray.remote(num_cpus=4, num_gpus=0, memory=int(a.memory_gb * 2 ** 30), max_retries=1)(cell_job)
     gpu = ray.remote(num_cpus=4, num_gpus=a.gpu_fraction, memory=int(a.memory_gb * 2 ** 30), max_retries=1)(cell_job)
     queue, pending, ok, failed, missing = list(specs), [], 0, 0, 0
@@ -213,7 +313,7 @@ def cmd_table(a: argparse.Namespace) -> None:
     rows = []
     for page in client.get_paginator("list_objects_v2").paginate(Bucket=a.bucket, Prefix=a.prefix + "/"):
         for o in page.get("Contents", []):
-            if not o["Key"].endswith("/summary.json"):
+            if not (o["Key"].rsplit("/", 1)[-1].startswith("summary") and o["Key"].endswith(".json")) or "/tables/" in o["Key"]:
                 continue
             d = json.loads(client.get_object(Bucket=a.bucket, Key=o["Key"])["Body"].read())
             for regime, by_r in d["metrics"].items():
@@ -244,7 +344,8 @@ def main(argv=None) -> None:
         if name == "run":
             s.add_argument("--sets", nargs="+", default=set_names(), choices=set_names())
             s.add_argument("--bands", nargs="+", default=list(BANDS))
-            s.add_argument("--models", nargs="+", default=list(MODELS))
+            s.add_argument("--models", nargs="+", default=list(MODELS), help="lookbackmean4d also writes the per-receiver heuristics")
+            s.add_argument("--regimes", nargs="+", default=list(DEFAULT_REGIMES), choices=list(REGIMES))
             s.add_argument("--seeds", type=int, nargs="+", default=[40, 41, 42, 43, 44])
             s.add_argument("--origin-limit", type=int, default=0, help="score only the first N origins (smoke tests)")
             s.add_argument("--gpu-fraction", type=float, default=0.25)
