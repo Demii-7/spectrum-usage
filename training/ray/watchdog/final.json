@@ -353,5 +353,10 @@
   "id": "claude-final-freqcls-table-final",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-final-freqcls-tsslcd-rest --then 'bash training/ray/scripts/run_frequency_ablation_classes_table.sh'\"",
   "max_restarts": 1
+ },
+ {
+  "id": "claude-final-dswin-hedge-600_800-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.tune_dswin15 run --bands 600_800 --keep-first --max-parallel 12 --gpu-fraction 0.25 --memory-gb 12 && python -u -m training.ray.tune_dswin15 decide --bands 600_800 --await-trials --max-parallel 12 --gpu-fraction 0.5 --memory-gb 12\"",
+  "max_restarts": 3
  }
 ]

@@ -98,8 +98,17 @@ def trial_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         pass
     record["wall_seconds"] = round(time.time() - started, 1)
+    key = f"{job['prefix']}/trial-{job['cid']}.json"
     try:
-        client.put_object(Bucket=bucket, Key=f"{job['prefix']}/trial-{job['cid']}.json", Body=json.dumps(record, default=str).encode())
+        if job.get("keep_first"):                     # hedge copy of a trial another driver also runs: never replace a finished (ok) record
+            try:
+                existing = json.loads(client.get_object(Bucket=bucket, Key=key)["Body"].read())
+                if existing.get("ok"):
+                    record["note"] = "duplicate not written: an ok record already existed"
+                    return record
+            except Exception:
+                pass
+        client.put_object(Bucket=bucket, Key=key, Body=json.dumps(record, default=str).encode())
     except Exception:
         pass
     return record
@@ -160,7 +169,7 @@ def cmd_run(a: argparse.Namespace) -> None:
             if cid in done:
                 continue
             fixed = fixed_from_candidate(cand, inherited, cid, a.epochs)
-            calls.append((trial_job, opts, {"band": band, "prefix": prefix, "index": index, "cid": cid, "parameters": cand, "fixed": fixed, "budget": a.budget}))
+            calls.append((trial_job, opts, {"band": band, "prefix": prefix, "index": index, "cid": cid, "parameters": cand, "fixed": fixed, "budget": a.budget, "keep_first": a.keep_first}))
     print(f"[dswin15] {len(calls)} trials to run (prefix {a.prefix})", flush=True)
     run_calls(calls, a.max_parallel, a.address, {"repo_root": a.repo_root, "bucket": bucket}, "search")
 
@@ -176,6 +185,15 @@ def cmd_decide(a: argparse.Namespace) -> None:
     inherited = json.loads(Path(a.repo_root, INHERITED).read_text())
     spec = get_model_spec(MODEL, require_executable=True)
     opts = ray_options(spec, a.gpu_fraction, a.memory_gb)
+    if a.await_trials:
+        deadline = time.time() + a.await_timeout_h * 3600
+        while True:
+            missing = {band: sorted(set(range(a.budget)) - {t.get("index") for t in read_trials(client, bucket, group_prefix(a.prefix, band)) if t.get("ok")})
+                       for band in a.bands}
+            print(f"[dswin15] waiting for trials, missing indices: {missing}", flush=True)
+            if not any(missing.values()) or time.time() > deadline:
+                break
+            time.sleep(120)
     rows, verdict, final_calls = [], {"improvement_threshold": IMPROVEMENT, "budget": a.budget, "bands": {}}, []
     for band in a.bands:
         prefix = group_prefix(a.prefix, band)
@@ -327,6 +345,9 @@ def main(argv=None) -> None:
         s.add_argument("--max-parallel", type=int, default=12)
         s.add_argument("--no-finals", action="store_true")
         s.add_argument("--no-chain", action="store_true", help="skip the scoring chain after the finals")
+        s.add_argument("--keep-first", action="store_true", help="run: never overwrite a finished (ok) trial record (hedge copies of trials another driver runs)")
+        s.add_argument("--await-trials", action="store_true", help="decide: wait until every candidate index below --budget has an ok record (from any driver)")
+        s.add_argument("--await-timeout-h", type=float, default=10.0)
         s.add_argument("--final-seeds", type=int, nargs="+", default=list(FINAL_SEEDS))
         s.add_argument("--bucket", default=None)
         s.add_argument("--address", default="auto")
