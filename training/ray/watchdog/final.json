@@ -418,5 +418,10 @@
   "id": "claude-final-spectral36-table-final-2",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-final-freqcls-af36-600-42 claude-final-freqcls-af36-2400-42 claude-final-freqcls-af36-600-40 claude-final-freqcls-af36-2400-40 claude-final-freqcls-af36-600-41 claude-final-freqcls-af36-2400-41 claude-final-freqcls-af36-600-43 claude-final-freqcls-af36-2400-43 claude-final-freqcls-af36-600-44 claude-final-freqcls-af36-2400-44 --then 'bash training/ray/scripts/run_spectral_context_table_36h.sh'\"",
   "max_restarts": 1
+ },
+ {
+  "id": "claude-final-freqds-600-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.frequency_ablation_deepspred --seeds 40 41 42 43 44 --only-conditions all_shift96 all_shift144 P_only_shift144 N_only_shift144 all_shift210 --max-parallel 6 --gpu-fraction 0.25 --skip-done\"",
+  "max_restarts": 3
  }
 ]
