@@ -34,6 +34,14 @@ def cells(client, prefix, band, model):
     out = {}
     for s in SEEDS:
         c = nr.read_cell(client, prefix, band, VARIANT, model, s)
+        if c is None and prefix == PREFIX_AS and model != "dswinlstm_i":
+            # the as-evaluated per-origin errors of STS-PredNet and ResidualConvLSTM are the 'real' mode of the neighbour ablation (same readout, same origins)
+            arrays = nv.ablation_arrays(client, band, model, s)
+            if arrays is not None:
+                c = {"horizons": arrays["horizons"]}
+                for receiver in nr.RECEIVERS:
+                    c[f"{receiver}|mae"] = arrays[f"{receiver}|real|mae"]
+                    c[f"{receiver}|times"] = arrays[f"{receiver}|real|times"]
         if c is not None:
             out[s] = c
     return out
