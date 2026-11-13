@@ -258,6 +258,9 @@ def final_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         config, metrics = base_config(source, dataset, model, rep, args["repo_root"], client, bucket)
         config = (apply_fixed_config(config, model, job["fixed"], seed) if job.get("fixed")
                   else prepared(config, source, model, job["parameters"], seed))
+        if args.get("train_start"):                                    # training-length study: a later start of the same training run
+            config["data"]["split"]["ranges"]["train"]["start"] = str(args["train_start"])
+            record["train_start"] = str(args["train_start"])
         with tempfile.TemporaryDirectory(prefix="tune-final-") as scratch:
             result = train_prepared(config, model, Path(scratch) / "trial")
             eval_dir = Path(scratch) / "eval"
@@ -312,7 +315,10 @@ def launch(args: argparse.Namespace) -> None:
     client = spectrum_s3_client()
     bucket = args.bucket or os.environ.get("SPECTRUM_S3_BUCKET", "spectrum")
     ray.init(address=args.address, ignore_reinit_error=True)
-    worker_args = {"repo_root": args.repo_root, "bucket": bucket}
+    worker_args = {"repo_root": args.repo_root, "bucket": bucket, "train_start": getattr(args, "train_start", None)}
+    if worker_args["train_start"] and (not args.trials_prefix or args.source == "electrosense"
+                                       or args.trials_prefix.strip("/") == args.output_prefix.strip("/")):
+        raise SystemExit("--train-start needs a POWDER source, --trials-prefix (finals of an existing winner) and its own --output-prefix")
 
     def options(model: str) -> dict[str, Any]:
         resources = dict(get_model_spec(model).resources.as_ray())
@@ -445,6 +451,9 @@ def parse_args(argv=None) -> argparse.Namespace:
                         help="read the finished search (trials, winner) from this output prefix and run only the finals, which go to --output-prefix "
                              "(a second cluster can train finals of an already searched winner without repeating or overwriting anything)")
     parser.add_argument("--final-seeds", type=int, nargs="+", default=None, help="seeds of the finals of a tuned winner (default: all FINAL_SEEDS)")
+    parser.add_argument("--train-start", default=None,
+                        help="ISO timestamp: start the training range here instead of at the start of the training run (training-length "
+                             "study; validation and test unchanged); finals only, so it requires --trials-prefix and its own --output-prefix")
     parser.add_argument("--gpu-fraction", type=float, default=0.25)
     parser.add_argument("--max-parallel", type=int, default=0, help="most tasks in flight at once (0 = all at once)")
     parser.add_argument("--memory-gb", type=float, default=0.0, help="host memory to reserve per task (0 = none)")

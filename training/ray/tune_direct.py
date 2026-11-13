@@ -250,8 +250,8 @@ def template(model: str, repo_root: str) -> tuple[dict[str, Any], dict[str, Any]
 
 
 def build_config(model: str, resolution: str, band: str, horizon: int, seed: int, params: dict[str, Any], repo_root: str, *,
-                 train_stride: int, test_stride: int, device: str | None = None, client=None, bucket: str | None = None
-                 ) -> tuple[dict[str, Any], str]:
+                 train_stride: int, test_stride: int, device: str | None = None, client=None, bucket: str | None = None,
+                 train_start: str | None = None) -> tuple[dict[str, Any], str]:
     """Pipeline config for one run of ``model``; returns (config, pipeline model name).
 
     ``resolution`` is "15min" or "1min" (POWDER, ``band`` = "600_800" or "2400_2600") or "electrosense" (``band`` = "spec4", "spec25" or
@@ -266,6 +266,10 @@ def build_config(model: str, resolution: str, band: str, horizon: int, seed: int
     config[name] = {"model": model_section, "train": train_section}
     config["training"] = {"models": [name], "device": device or "auto"}
     config["data"]["split"]["ranges"]["test"] = dict(FINAL_TEST)
+    if train_start:                                                    # training-length study: a later start of the same training run
+        if resolution == "electrosense":
+            raise ValueError("--train-start applies to the POWDER resolutions only")
+        config["data"]["split"]["ranges"]["train"]["start"] = str(train_start)
     if resolution == "electrosense":
         from training.ray.electrosense import apply_dataset, ensure_dataset
 
@@ -349,6 +353,8 @@ def job(spec: dict[str, Any]) -> dict[str, Any]:
     record: dict[str, Any] = {"kind": spec["kind"], "model": model, "resolution": resolution, "band": band, "horizon": horizon,
                               "seed": seed, "index": spec.get("index"), "params": spec["params"],
                               "train_stride": spec["train_stride"], "test_stride": spec["test_stride"]}
+    if spec.get("train_start"):
+        record["train_start"] = spec["train_start"]
     started = time.time()
     try:
         stats = None
@@ -361,7 +367,7 @@ def job(spec: dict[str, Any]) -> dict[str, Any]:
 
             _, stats = ensure_dataset(band, root, bucket, client)
         config, name = build_config(model, resolution, band, horizon, seed, spec["params"], root, train_stride=spec["train_stride"],
-                                    test_stride=spec["test_stride"], client=client, bucket=bucket)
+                                    test_stride=spec["test_stride"], client=client, bucket=bucket, train_start=spec.get("train_start"))
         with tempfile.TemporaryDirectory(prefix="tune-direct-") as scratch:
             result = train_prepared(config, name, Path(scratch) / "run")
             record.update(objective=result["objective"], objective_name=result["objective_name"])
@@ -498,6 +504,10 @@ def main(argv=None) -> None:
     p.add_argument("--fixed-params", help="JSON object of hyperparameters: skip the search and run the finals of every model with exactly these "
                    "settings (an equal-configuration comparison, or a pipeline check against a winner found elsewhere); use a separate "
                    "--output-prefix")
+    p.add_argument("--winners-prefix", help="skip the search and train the finals with each (band, model) winner already recorded under this "
+                   "output prefix (its winners.json); requires a different --output-prefix")
+    p.add_argument("--train-start", help="ISO timestamp: start the training range here instead of at the start of the training run "
+                   "(training-length study; validation and test ranges unchanged); requires --winners-prefix or --fixed-params")
     p.add_argument("--max-parallel", type=int, default=0, help="most tasks in flight at once (0 = no limit); keeps the queue short for other jobs")
     p.add_argument("--max-retries", type=int, default=3, help="Ray retries for a task whose node died (a lease ending mid-run)")
     p.add_argument("--bucket", default=None)
@@ -529,6 +539,10 @@ def main(argv=None) -> None:
     allowed = ES_DATASETS if args.resolution == "electrosense" else BANDS
     if any(b not in allowed for b in args.bands):
         p.error(f"--bands must be among {allowed} for {args.resolution}")
+    if args.winners_prefix and (args.fixed_params or args.winners_prefix.strip("/") == args.output_prefix.strip("/")):
+        p.error("--winners-prefix excludes --fixed-params and needs a different --output-prefix")
+    if args.train_start and (not (args.winners_prefix or args.fixed_params) or args.output_prefix.strip("/") == "direct-tuning"):
+        p.error("--train-start needs --winners-prefix or --fixed-params, and its own --output-prefix")
     sys.path.insert(0, args.repo_root)
     from training.ray.storage import spectrum_s3_client
 
@@ -540,7 +554,7 @@ def main(argv=None) -> None:
     tune_horizons = TUNE_HORIZONS[args.resolution]
     final_horizons = tuple(args.horizons) if args.horizons else FINAL_HORIZONS[args.resolution]
     base_spec = {"repo_root": args.repo_root, "bucket": bucket, "output_prefix": args.output_prefix, "resolution": args.resolution,
-                 "test_stride": test_stride}
+                 "test_stride": test_stride, "train_start": args.train_start}
 
     def stride(model: str) -> int:
         return overrides.get(model, default_train_stride(model, args.resolution))
@@ -574,6 +588,15 @@ def main(argv=None) -> None:
             index = "fixed"
             record = {"index": index, "params": json.loads(args.fixed_params), "tune_horizons": None, "budget": None,
                       "note": "no search: every model uses exactly these hyperparameters"}
+        elif args.winners_prefix:
+            source_key = f"{group(args.winners_prefix, args.resolution, band, model)}/winners.json"
+            try:
+                source = json.loads(client.get_object(Bucket=bucket, Key=source_key)["Body"].read())
+            except Exception as error:
+                print(f"[tune-direct] no winner at {source_key} ({type(error).__name__}); {model} {band} skipped", flush=True)
+                return
+            index = source["index"]
+            record = {**source, "note": f"no search: winner copied from {source_key}", "train_start": args.train_start}
         else:
             picked = pick_winner(table, tune_horizons)
             if picked is None:
@@ -601,7 +624,7 @@ def main(argv=None) -> None:
     for model in args.models:
         for band in args.bands:
             base = group(args.output_prefix, args.resolution, band, model)
-            for index, params in enumerate([] if args.fixed_params else candidate_list(model, args.budget)):
+            for index, params in enumerate([] if (args.fixed_params or args.winners_prefix) else candidate_list(model, args.budget)):
                 for horizon in tune_horizons:
                     record = _done(client, bucket, trial_key(base, index, horizon))
                     if record:
