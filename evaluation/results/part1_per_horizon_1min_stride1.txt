@@ -4,31 +4,32 @@ horizon                                                   1     15     60  mean_
 family         model                                                               
 heuristic      median (tuned)                         0.851  0.900  1.002     0.917
 direct         patchtst                               0.846  0.905  1.007     0.919
-               revinmlp                               0.849  0.906  1.006     0.920
+               timellm                                0.848  0.905  1.004     0.919
                ofa                                    0.846  0.907  1.007     0.920
+               revinmlp                               0.849  0.906  1.006     0.920
 oct checkpoint residualvanillalstm (1d)               0.849  0.905  1.004     0.920
                residuallinearar2d (2d)                0.852  0.910  1.009     0.924
                residuallinearar1d (1d)                0.855  0.912  1.010     0.926
+               linearar1d (1d)                        0.856  0.914  1.014     0.928
 heuristic      kalman                                 0.854  0.914  1.015     0.928
-oct checkpoint linearar1d (1d)                        0.856  0.914  1.014     0.928
-               temporalconvnet (2d)                   0.857  0.914  1.018     0.930
+oct checkpoint temporalconvnet (2d)                   0.857  0.914  1.018     0.930
                linearar2d (2d)                        0.854  0.915  1.021     0.930
-               vanillalstm1d (1d)                     0.854  0.915  1.028     0.932
 direct         residuallinearar2d                     0.862  0.917  1.017     0.932
+oct checkpoint vanillalstm1d (1d)                     0.854  0.915  1.028     0.932
 heuristic      median (full 60 min)                   0.873  0.912  1.017     0.934
-               mean (tuned)                           0.869  0.917  1.015     0.934
 direct         residualnonlinear2d                    0.859  0.921  1.020     0.934
-               nlinear                                0.860  0.923  1.023     0.935
+heuristic      mean (tuned)                           0.869  0.917  1.015     0.934
+direct         nlinear                                0.860  0.923  1.023     0.935
                dlinear                                0.861  0.931  1.039     0.944
 heuristic      mean (full 60 min)                     0.898  0.927  1.022     0.949
 oct checkpoint autoformer_csa (2d)                    0.898  0.934  1.037     0.956
-               residualvanillalstm (2d)               0.888  0.954  1.156     1.000
+direct         deepspred2d                            0.903  0.937  1.049     0.963
+oct checkpoint residualvanillalstm (2d)               0.888  0.954  1.156     1.000
                lstmattn (2d)                          1.016  1.076  1.174     1.089
                vanillalstm (2d)                       1.055  1.103  1.190     1.116
 heuristic      persistence                            1.064  1.165  1.249     1.159
 TSS-LCD        tsslcd (tuned winner, savgol off)      1.145  1.170  1.170     1.162
                tsslcd (authors defaults, savgol off)  1.148  1.171  1.174     1.164
-direct         timellm                                0.846    NaN    NaN       NaN
 
 600_800: 1-minute, every test window MSE (dB^2), mean over seeds
 horizon                                                   1     15     60  mean_all
@@ -37,6 +38,7 @@ oct checkpoint linearar2d (2d)                        2.928  3.229  3.774     3.
                residuallinearar2d (2d)                2.932  3.235  3.786     3.318
 direct         patchtst                               2.958  3.236  3.794     3.329
                residualnonlinear2d                    2.965  3.241  3.794     3.333
+               timellm                                2.963  3.242  3.802     3.336
 oct checkpoint linearar1d (1d)                        2.962  3.246  3.801     3.337
                residuallinearar1d (1d)                2.962  3.247  3.805     3.338
 direct         revinmlp                               2.977  3.239  3.799     3.338
@@ -49,7 +51,8 @@ direct         dlinear                                2.972  3.275  3.830     3.
 oct checkpoint vanillalstm1d (1d)                     2.970  3.274  3.846     3.363
 direct         nlinear                                2.973  3.293  3.841     3.369
 heuristic      mean (tuned)                           3.056  3.293  3.828     3.392
-               mean (full 60 min)                     3.132  3.302  3.825     3.420
+direct         deepspred2d                            3.108  3.292  3.848     3.416
+heuristic      mean (full 60 min)                     3.132  3.302  3.825     3.420
 oct checkpoint autoformer_csa (2d)                    3.135  3.336  3.906     3.459
                residualvanillalstm (2d)               3.058  3.342  4.381     3.594
 heuristic      median (tuned)                         3.472  3.683  4.234     3.797
@@ -59,26 +62,27 @@ oct checkpoint lstmattn (2d)                          3.655  4.000  4.599     4.
 TSS-LCD        tsslcd (authors defaults, savgol off)  4.490  4.686  4.637     4.604
                tsslcd (tuned winner, savgol off)      4.543  4.741  4.674     4.652
 heuristic      persistence                            5.206  5.843  6.378     5.809
-direct         timellm                                2.963    NaN    NaN       NaN
 
 2400_2600: 1-minute, every test window MAE (dB), mean over seeds
 horizon                                              1     15     60  mean_all
 family    model                                                               
 heuristic median (tuned)                         0.663  0.716  0.824     0.734
-direct    timellm                                0.663  0.716  0.833     0.737
+direct    timellm                                0.662  0.718  0.831     0.737
           ofa                                    0.665  0.720  0.829     0.738
           revinmlp                               0.668  0.724  0.834     0.742
           patchtst                               0.670  0.725  0.833     0.743
 heuristic kalman                                 0.671  0.728  0.835     0.745
           mean (tuned)                           0.681  0.730  0.835     0.749
-direct    residuallinearar2d                     0.681  0.730  0.838     0.750
-          residualnonlinear2d                    0.683  0.732  0.834     0.750
+direct    residualnonlinear2d                    0.683  0.732  0.834     0.750
+          residuallinearar2d                     0.681  0.730  0.838     0.750
           nlinear                                0.674  0.732  0.849     0.752
 heuristic median (full 60 min)                   0.692  0.734  0.851     0.759
 direct    dlinear                                0.682  0.751  0.856     0.763
 heuristic mean (full 60 min)                     0.714  0.743  0.847     0.768
+direct    deepspred2d                            0.718  0.747  0.870     0.778
 TSS-LCD   tsslcd (authors defaults, savgol off)  0.830  0.841  0.884     0.852
 heuristic persistence                            0.844  0.929  1.022     0.932
+direct    timeran_lp                             0.670  0.739    NaN       NaN
 
 2400_2600: 1-minute, every test window MSE (dB^2), mean over seeds
 horizon                                              1     15     60  mean_all
@@ -87,17 +91,19 @@ heuristic kalman                                 2.491  2.931  3.822     3.081
 direct    residualnonlinear2d                    2.523  2.926  3.824     3.091
           ofa                                    2.498  2.919  3.876     3.098
           patchtst                               2.517  2.928  3.853     3.099
-          timellm                                2.516  2.923  3.858     3.099
+          timellm                                2.521  2.926  3.860     3.102
           residuallinearar2d                     2.547  2.943  3.842     3.111
           nlinear                                2.508  2.946  3.886     3.114
 heuristic mean (tuned)                           2.568  2.949  3.824     3.114
 direct    revinmlp                               2.534  2.943  3.867     3.115
           dlinear                                2.526  2.989  3.881     3.132
+          deepspred2d                            2.709  2.975  3.797     3.160
 heuristic mean (full 60 min)                     2.783  3.028  3.888     3.233
           median (tuned)                         2.765  3.153  4.037     3.318
           median (full 60 min)                   2.931  3.253  4.210     3.465
 TSS-LCD   tsslcd (authors defaults, savgol off)  3.626  3.675  4.129     3.810
 heuristic persistence                            4.260  5.002  5.889     5.050
+direct    timeran_lp                             2.575  2.960    NaN       NaN
 
 600_800: 4D map-level (not comparable) MAE (dB), mean over seeds
 horizon                      1     15     60  mean_all

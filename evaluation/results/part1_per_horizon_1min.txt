@@ -7,17 +7,18 @@ direct    patchtst                               0.848  0.901  1.002     0.917
 heuristic median (tuned)                         0.851  0.900  1.002     0.917
 direct    revinmlp                               0.852  0.901  1.001     0.918
           ofa                                    0.849  0.903  1.002     0.918
-heuristic kalman                                 0.854  0.914  1.015     0.928
-          ewma                                   0.857  0.914  1.014     0.928
+heuristic ewma                                   0.857  0.914  1.014     0.928
+          kalman                                 0.854  0.914  1.015     0.928
 direct    residuallinearar2d                     0.863  0.913  1.011     0.929
           residualnonlinear2d                    0.860  0.917  1.015     0.931
-          timeran_lp                             0.861  0.921  1.014     0.932
           nlinear                                0.861  0.918  1.018     0.932
-heuristic median (full 60 min)                   0.873  0.912  1.017     0.934
-          mean (tuned)                           0.869  0.917  1.015     0.934
+          timeran_lp                             0.861  0.921  1.014     0.932
+heuristic mean (tuned)                           0.869  0.917  1.015     0.934
+          median (full 60 min)                   0.873  0.912  1.017     0.934
 direct    dlinear                                0.863  0.926  1.034     0.941
 heuristic mean (full 60 min)                     0.898  0.927  1.022     0.949
-          persistence                            1.064  1.165  1.249     1.159
+direct    deepspred2d                            0.903  0.932  1.045     0.960
+heuristic persistence                            1.064  1.165  1.249     1.159
 TSS-LCD   tsslcd (tuned winner, savgol off)      1.145  1.170  1.170     1.162
           tsslcd (authors defaults, savgol off)  1.148  1.171  1.174     1.164
 
@@ -35,6 +36,7 @@ heuristic ewma                                   2.972  3.246  3.802     3.340
           kalman                                 2.942  3.261  3.819     3.341
 direct    nlinear                                2.972  3.255  3.807     3.345
           timeran_lp                             3.015  3.308  3.837     3.387
+          deepspred2d                            3.091  3.255  3.820     3.389
 heuristic mean (tuned)                           3.056  3.293  3.828     3.392
           mean (full 60 min)                     3.132  3.302  3.825     3.420
           median (tuned)                         3.472  3.683  4.234     3.797
@@ -61,6 +63,7 @@ direct    timeran_lp                             0.682  0.745  0.851     0.759
           nlinear                                0.684  0.744  0.861     0.763
 heuristic mean (full 60 min)                     0.714  0.743  0.847     0.768
 direct    dlinear                                0.693  0.764  0.870     0.775
+          deepspred2d                            0.732  0.759  0.879     0.790
 TSS-LCD   tsslcd (authors defaults, savgol off)  0.830  0.841  0.884     0.852
 heuristic persistence                            0.844  0.929  1.022     0.932
 
@@ -81,6 +84,7 @@ direct    residualnonlinear2d                    2.641  3.105  3.975     3.240
           timeran_lp                             2.688  3.145  4.061     3.298
           dlinear                                2.654  3.174  4.069     3.299
 heuristic median (tuned)                         2.765  3.153  4.037     3.318
-          median (full 60 min)                   2.931  3.253  4.210     3.465
+direct    deepspred2d                            2.887  3.141  3.939     3.322
+heuristic median (full 60 min)                   2.931  3.253  4.210     3.465
 TSS-LCD   tsslcd (authors defaults, savgol off)  3.626  3.675  4.129     3.810
 heuristic persistence                            4.260  5.002  5.889     5.050

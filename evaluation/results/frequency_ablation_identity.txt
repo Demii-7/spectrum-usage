@@ -1,0 +1,20 @@
+     band    model  seed  horizon                                           check  max_abs_diff_db  mean_abs_diff_db  n_matched_origins  n_recomputed_origins  n_stored_origins
+  600_800 revinmlp    42        4 per-origin all-bin MAE vs stored per_origin.csv     5.197525e-07      9.078145e-08               2500                  2500              2676
+  600_800 revinmlp    42       12 per-origin all-bin MAE vs stored per_origin.csv     4.911423e-07      9.579515e-08               2500                  2500              2644
+  600_800 revinmlp    42       24 per-origin all-bin MAE vs stored per_origin.csv     3.743172e-07      7.870817e-08               2500                  2500              2596
+  600_800 revinmlp    42       48 per-origin all-bin MAE vs stored per_origin.csv     3.337860e-07      6.864166e-08               2500                  2500              2500
+  600_800  dlinear    42        4 per-origin all-bin MAE vs stored per_origin.csv     3.170967e-07      1.491976e-08               2500                  2500              2676
+  600_800  dlinear    42       12 per-origin all-bin MAE vs stored per_origin.csv     1.144409e-07      1.624680e-08               2500                  2500              2644
+  600_800  dlinear    42       24 per-origin all-bin MAE vs stored per_origin.csv     1.144409e-07      1.760006e-08               2500                  2500              2596
+  600_800  dlinear    42       48 per-origin all-bin MAE vs stored per_origin.csv     1.144409e-07      1.842785e-08               2500                  2500              2500
+2400_2600  dlinear    42        4 per-origin all-bin MAE vs stored per_origin.csv     3.623962e-07      1.446381e-08               2500                  2500              2676
+2400_2600  dlinear    42       12 per-origin all-bin MAE vs stored per_origin.csv     2.098083e-07      1.444978e-08               2500                  2500              2644
+2400_2600  dlinear    42       24 per-origin all-bin MAE vs stored per_origin.csv     2.288818e-07      1.490450e-08               2500                  2500              2596
+  600_800  nlinear    42        4 per-origin all-bin MAE vs stored per_origin.csv     2.789497e-07      4.761028e-08               2500                  2500              2676
+  600_800  nlinear    42       12 per-origin all-bin MAE vs stored per_origin.csv     1.049042e-07      1.591253e-08               2500                  2500              2644
+  600_800  nlinear    42       24 per-origin all-bin MAE vs stored per_origin.csv     1.716614e-07      1.767111e-08               2500                  2500              2596
+  600_800  nlinear    42       48 per-origin all-bin MAE vs stored per_origin.csv     1.144409e-07      1.799822e-08               2500                  2500              2500
+  600_800 patchtst    42        4 per-origin all-bin MAE vs stored per_origin.csv     6.763411e-04      8.678916e-05               2500                  2500              2676
+  600_800 patchtst    42       12 per-origin all-bin MAE vs stored per_origin.csv     2.568126e-04      4.536592e-05               2500                  2500              2644
+  600_800 patchtst    42       24 per-origin all-bin MAE vs stored per_origin.csv     1.629162e-04      2.696726e-05               2500                  2500              2596
+  600_800 patchtst    42       48 per-origin all-bin MAE vs stored per_origin.csv     2.814341e-04      3.197421e-05               2500                  2500              2500

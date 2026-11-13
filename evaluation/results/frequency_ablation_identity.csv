@@ -1,0 +1,20 @@
+band,model,seed,horizon,check,max_abs_diff_db,mean_abs_diff_db,n_matched_origins,n_recomputed_origins,n_stored_origins
+600_800,revinmlp,42,4,per-origin all-bin MAE vs stored per_origin.csv,5.197525024813743e-07,9.078145026881757e-08,2500,2500,2676
+600_800,revinmlp,42,12,per-origin all-bin MAE vs stored per_origin.csv,4.911422729625414e-07,9.579515456927812e-08,2500,2500,2644
+600_800,revinmlp,42,24,per-origin all-bin MAE vs stored per_origin.csv,3.7431716920499625e-07,7.870817184161272e-08,2500,2500,2596
+600_800,revinmlp,42,48,per-origin all-bin MAE vs stored per_origin.csv,3.3378601071998304e-07,6.864166259121785e-08,2500,2500,2500
+600_800,dlinear,42,4,per-origin all-bin MAE vs stored per_origin.csv,3.170967102228417e-07,1.4919757833653512e-08,2500,2500,2676
+600_800,dlinear,42,12,per-origin all-bin MAE vs stored per_origin.csv,1.1444091807533141e-07,1.624679564034004e-08,2500,2500,2644
+600_800,dlinear,42,24,per-origin all-bin MAE vs stored per_origin.csv,1.1444091807533141e-07,1.7600059498223963e-08,2500,2500,2596
+600_800,dlinear,42,48,per-origin all-bin MAE vs stored per_origin.csv,1.1444091807533141e-07,1.8427848800595116e-08,2500,2500,2500
+2400_2600,dlinear,42,4,per-origin all-bin MAE vs stored per_origin.csv,3.623962396837044e-07,1.4463812103654439e-08,2500,2500,2676
+2400_2600,dlinear,42,12,per-origin all-bin MAE vs stored per_origin.csv,2.0980834936068504e-07,1.444977520707047e-08,2500,2500,2644
+2400_2600,dlinear,42,24,per-origin all-bin MAE vs stored per_origin.csv,2.2888183615066282e-07,1.490449904471558e-08,2500,2500,2596
+600_800,nlinear,42,4,per-origin all-bin MAE vs stored per_origin.csv,2.7894973753106456e-07,4.761028289531621e-08,2500,2500,2676
+600_800,nlinear,42,12,per-origin all-bin MAE vs stored per_origin.csv,1.0490417468034252e-07,1.59125327939158e-08,2500,2500,2644
+600_800,nlinear,42,24,per-origin all-bin MAE vs stored per_origin.csv,1.716613766689079e-07,1.767110823147622e-08,2500,2500,2596
+600_800,nlinear,42,48,per-origin all-bin MAE vs stored per_origin.csv,1.1444091807533141e-07,1.7998218519466037e-08,2500,2500,2500
+600_800,patchtst,42,4,per-origin all-bin MAE vs stored per_origin.csv,0.0006763410568236816,8.678916406631637e-05,2500,2500,2676
+600_800,patchtst,42,12,per-origin all-bin MAE vs stored per_origin.csv,0.00025681257247922584,4.536592364311049e-05,2500,2500,2644
+600_800,patchtst,42,24,per-origin all-bin MAE vs stored per_origin.csv,0.00016291618347163972,2.6967255115509838e-05,2500,2500,2596
+600_800,patchtst,42,48,per-origin all-bin MAE vs stored per_origin.csv,0.00028143405914304864,3.197420597076366e-05,2500,2500,2500

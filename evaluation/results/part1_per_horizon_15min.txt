@@ -38,7 +38,8 @@ TSS-LCD             tsslcd (authors defaults, savgol off)     1.118  1.130  1.16
 heuristic (untuned) mean (full lookback, 96)                  1.072  1.103  1.180  1.258  1.197     1.162
 rolled-out          autoformer_csa (2d)                       0.999  1.000  1.200  1.361  1.525     1.217
 heuristic           train_mean                                2.644  2.644  2.642  2.644  2.655     2.646
-direct              itransformer                                NaN  0.582  0.714  0.814  0.968       NaN
+direct              deepspred2d                                 NaN  0.841  0.867  0.952  0.981       NaN
+                    itransformer                                NaN  0.582  0.714  0.814  0.968       NaN
                     moment_lp                                   NaN  0.600  0.740  0.838  0.884       NaN
                     revinmlp_mix                                NaN  0.581  0.717  0.810  0.870       NaN
                     revinmlp_nbr                                NaN  0.571  0.707  0.793  0.877       NaN
@@ -83,7 +84,8 @@ TSS-LCD             tsslcd (authors defaults, savgol off)      3.811   4.163   4
 heuristic           persistence                                1.042   1.695   3.448   6.407   9.513     4.421
 rolled-out          autoformer_csa (2d)                        2.809   2.828   4.009   5.094   7.570     4.462
 heuristic           train_mean                                15.798  15.793  15.779  15.816  15.931    15.824
-direct              itransformer                                 NaN   1.241   1.810   2.262   3.040       NaN
+direct              deepspred2d                                  NaN   2.216   2.439   2.904   3.076       NaN
+                    itransformer                                 NaN   1.241   1.810   2.262   3.040       NaN
                     moment_lp                                    NaN   1.285   1.917   2.355   2.585       NaN
                     revinmlp_mix                                 NaN   1.206   1.822   2.247   2.515       NaN
                     revinmlp_nbr                                 NaN   1.187   1.794   2.205   2.558       NaN
@@ -128,7 +130,8 @@ TSS-LCD             tsslcd (authors defaults, savgol off)     0.928  0.898  0.95
 rolled-out          residualvanillalstm (2d)                  0.470  0.585  0.910  1.388  1.713     1.013
                     autoformer_csa (2d)                       0.961  1.255  1.094  1.170  1.101     1.116
 heuristic           train_mean                                2.861  2.863  2.863  2.850  2.847     2.857
-direct              itransformer                                NaN  0.562  0.635  0.688  0.749       NaN
+direct              deepspred2d                                 NaN  0.717  0.964  1.183  0.759       NaN
+                    itransformer                                NaN  0.562  0.635  0.688  0.749       NaN
                     moment_lp                                   NaN  0.576  0.645  0.681  0.699       NaN
                     revinmlp_mix                                NaN  0.524  0.602  0.648  0.680       NaN
                     revinmlp_nbr                                NaN  0.526  0.604  0.647  0.669       NaN
@@ -173,7 +176,8 @@ heuristic           kalman                                     1.077   2.130   4
 rolled-out          autoformer_csa (2d)                        4.034   7.033   5.155   5.962   5.181     5.473
 heuristic           persistence                                1.282   2.356   4.999   8.908  10.565     5.622
                     train_mean                                24.712  24.696  24.536  24.138  24.109    24.438
-direct              itransformer                                 NaN   1.708   2.149   2.405   2.697       NaN
+direct              deepspred2d                                  NaN   2.080   3.934   6.572   2.462       NaN
+                    itransformer                                 NaN   1.708   2.149   2.405   2.697       NaN
                     moment_lp                                    NaN   1.762   2.226   2.413   2.439       NaN
                     revinmlp_mix                                 NaN   1.510   1.899   2.150   2.302       NaN
                     revinmlp_nbr                                 NaN   1.506   1.921   2.137   2.231       NaN

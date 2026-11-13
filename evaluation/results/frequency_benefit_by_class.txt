@@ -1,0 +1,16 @@
+356 rows
+   band     cross_bin_model per_bin_model target_class  mae_cross_bin  mae_per_bin  diff  ci_low  ci_high  n_seeds
+600_800        revinmlp_mix      revinmlp            P          0.792        0.779 0.013  -0.008    0.034        1
+600_800        revinmlp_mix      revinmlp            N          1.060        1.055 0.005  -0.017    0.024        1
+600_800      patchtst_joint      patchtst            P          0.895        0.792 0.103   0.064    0.134        1
+600_800      patchtst_joint      patchtst            N          1.135        1.049 0.086   0.051    0.111        1
+600_800         vanillalstm      revinmlp            P          1.176        0.779 0.397   0.298    0.491        1
+600_800         vanillalstm      revinmlp            N          1.362        1.055 0.307   0.237    0.367        1
+600_800 residualvanillalstm      revinmlp            P          1.193        0.779 0.414   0.345    0.503        1
+600_800 residualvanillalstm      revinmlp            N          1.604        1.055 0.549   0.450    0.660        1
+600_800            lstmattn      revinmlp            P          1.194        0.779 0.415   0.344    0.487        1
+600_800            lstmattn      revinmlp            N          1.717        1.055 0.662   0.421    0.963        1
+600_800      autoformer_csa      revinmlp            P          1.450        0.779 0.671   0.488    0.742        1
+600_800      autoformer_csa      revinmlp            N          1.476        1.055 0.421   0.325    0.467        1
+600_800        itransformer      revinmlp            P          0.817        0.779 0.038   0.003    0.062        1
+600_800        itransformer      revinmlp            N          1.059        1.055 0.004  -0.036    0.024        1

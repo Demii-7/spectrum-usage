@@ -1,0 +1,6 @@
+{
+ "rule": "run only if the search winner beats the inherited validation objective by >= 0.03 and is not the inherited anchor",
+ "bands": {},
+ "final": false,
+ "updated": "2026-11-13 01:00:17"
+}
