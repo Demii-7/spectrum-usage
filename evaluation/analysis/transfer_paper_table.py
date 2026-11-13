@@ -76,12 +76,17 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tables", required=True)
     ap.add_argument("--baselines", default="evaluation/results/transfer_baselines.csv")
+    ap.add_argument("--scope", default="evaluation/results/transfer_paper_scope.csv", help="AERPAW/ARA cells on the paper table's intervals (transfer_paper_scope.py)")
     ap.add_argument("--out", default="latex/transfer-table.tex")
     a = ap.parse_args()
     d = Path(a.tables)
     t = pd.read_csv(d / "ncar_transfer_target_level.csv")
     t = t[t.horizon.isin(H)]
-    t = t[(t.group != "ara") | t.target.isin(ARA_KEEP)]
+    sc = pd.read_csv(a.scope)
+    sc = sc[sc.horizon.isin(H)]
+    # AERPAW and ARA come from the interval-restricted rescoring only (seed mean per target first)
+    scm = sc[sc.rep != "baseline"].groupby(["model", "rep", "condition", "source_band", "target_band", "group", "target", "receiver", "horizon"], as_index=False).mae_db.mean()
+    t = pd.concat([t[~t.group.isin(["aerpaw", "ara"])], scm], ignore_index=True)
     # group value = mean over receivers of (mean over that receiver's targets), then mean over horizons
     g = (t.groupby(["model", "rep", "condition", "source_band", "target_band", "group", "receiver", "horizon"]).mae_db.mean()
          .groupby(["model", "rep", "condition", "source_band", "target_band", "group", "horizon"]).mean()
@@ -90,8 +95,10 @@ def main():
     bad = {(r.model, r.rep, r.group, r.source_band, r.target_band) for r in cov[~cov.complete].itertuples()}
     b = pd.read_csv(a.baselines)
     b = b[b.horizon.astype(str).isin([str(h) for h in H])]
-    ara = b[(b.level == "receiver") & (b.group == "ara") & b.target.isin(ARA_KEEP)]
-    b = pd.concat([b[(b.level == "group") & (b.group != "ara")], ara])
+    scb = sc[sc.rep == "baseline"].rename(columns={"model": "baseline", "target_band": "band"})[["group", "band", "baseline", "receiver", "horizon", "mae_db"]]
+    scb = scb.groupby(["group", "band", "baseline", "receiver", "horizon"], as_index=False).mae_db.mean()
+    scb = scb.groupby(["group", "band", "baseline", "horizon"], as_index=False).mae_db.mean()
+    b = pd.concat([b[(b.level == "group") & ~b.group.isin(["aerpaw", "ara"])], scb])
     bg = b.groupby(["group", "band", "baseline"]).mae_db.mean()
 
     def base(name, group, band, tband):
