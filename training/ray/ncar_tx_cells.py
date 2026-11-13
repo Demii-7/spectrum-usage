@@ -34,7 +34,7 @@ DIRECT_CORE = ("revinmlp", "revinmlp_mix", "patchtst", "patchtst_joint", "nlinea
 DIRECT_LLM = ("timellm", "ofa", "moment_lp", "timeran_lp", "ofa_rand", "ofa_scratch")
 SEEDS = {"temporalconvnet": (40, 41, 43, 44), "timellm": (40, 41, 42)}
 DEFAULT_SEEDS = (40, 41, 42, 43, 44)
-GROUP_ORDER = ("external", "heldout", "core4_oct", "july", "core4_week2")    # deadline order: the reference week before July, week 2 last
+GROUP_ORDER = ("external", "heldout", "core4_oct", "july", "core4_week2", "heldout_week2")    # deadline order: the reference week before July, week 2 last
 # brief item 9: the June-July gaps for the large models are OFA and MOMENT at 600-800, Time-LLM everywhere, TimeRAN in both bands
 JULY_ITEM9 = {"ofa": ("600_800",), "moment_lp": ("600_800",), "timellm": ("600_800", "2400_2600"), "timeran_lp": ("600_800", "2400_2600")}
 
@@ -51,6 +51,8 @@ def group_targets(root: str, group: str, bands: list[str]) -> list[dict[str, Any
         return ta.targets(root, ["powder"], bands, ta.JULY_INTERVALS, core=False)
     if group in ("core4_oct", "core4_week2"):
         return core_targets(bands, group.split("_")[1])
+    if group == "heldout_week2":                       # guesthouse, law73 on the second test week ("Later interval" row of the paper's table)
+        return core_targets(bands, "week2", receivers=("guesthouse", "law73"))
     raise ValueError(group)
 
 

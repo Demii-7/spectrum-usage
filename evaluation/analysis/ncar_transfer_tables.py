@@ -49,7 +49,7 @@ METRICS = ("mae_db", "mse_db2", "rmse_db", "rmse_pooled_db", "mape_linear_pct", 
 CORE_METRICS = ("mae_db", "mse_db2", "rmse_db", "mape_linear_pct")
 BASELINES = ("tuned_median", "same_time_yesterday", "lookbackmean24h", "persistence")
 LEVEL_KEEPING = ("revinmlp", "patchtst", "ofa", "timellm", "moment_lp", "timeran_lp", "nlinear", "residuallinearar1d", "residuallinearar2d")
-SHIFT = {"core4_week2": "later interval", "heldout_oct": "new collection points", "july_core4": "separate collection",
+SHIFT = {"core4_week2": "later interval", "heldout_week2": "later interval, new collection points", "heldout_oct": "new collection points", "july_core4": "separate collection",
          "july_other": "separate collection", "aerpaw": "AERPAW", "ara": "ARA", "cosmos": "COSMOS", "core4_oct": "in distribution (reference)",
          "crossband_800_1000": "new frequency", "crossband_5725_5925": "new frequency"}
 PAIRS = [(("linearar1d", "1d", "rolled"), ("linearar2d", "2d", "rolled")), (("residuallinearar1d", "1d", "rolled"), ("residuallinearar2d", "2d", "rolled")),
@@ -68,7 +68,7 @@ def group_of(platform: str, site: str, run: str, band: str) -> str:
     if band in ("800_1000", "5725_5925"):
         return f"crossband_{band}"
     if run.endswith("-week2"):
-        return "core4_week2"
+        return "heldout_week2" if receiver_of(site) in ("guesthouse", "law73") else "core4_week2"
     if run.startswith("20261025"):
         return "heldout_oct" if receiver_of(site) in ("guesthouse", "law73") else "core4_oct"
     return "july_core4" if receiver_of(site) in CORE4 else "july_other"

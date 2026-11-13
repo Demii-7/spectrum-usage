@@ -62,6 +62,7 @@ def all_targets(root: str) -> list[dict[str, Any]]:
         out.append({**t, "group": f"crossband_{t['band']}"})
     out += [{**t, "group": "core4_oct"} for t in nc.core_targets(bands, "oct")]
     out += [{**t, "group": "core4_week2"} for t in nc.core_targets(bands, "week2")]
+    out += [{**t, "group": "heldout_week2"} for t in nc.core_targets(bands, "week2", receivers=("guesthouse", "law73"))]
     return [{k: (None if isinstance(v, float) and np.isnan(v) else v) for k, v in t.items()} for t in out]
 
 
@@ -327,7 +328,7 @@ def verify(client, bucket: str, summaries) -> pd.DataFrame:
         if d["baseline"] != "persistence" or d["group"] in seen:
             continue
         tk = d["target"]
-        if d["group"] == "core4_week2":             # no stored transfer cell exists for week 2
+        if d["group"] in ("core4_week2", "heldout_week2"):             # no stored transfer cell exists for week 2
             continue
         if d["group"].startswith("crossband"):
             cand = f"transfer-crossband-july-2026/from-600_800/A/{tk}/2d/revinmlp/h4/seed-40/per_origin.csv"
