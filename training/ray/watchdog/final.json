@@ -423,5 +423,10 @@
   "id": "claude-final-freqds-600-1",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.frequency_ablation_deepspred --seeds 40 41 42 43 44 --only-conditions all_shift96 all_shift144 P_only_shift144 N_only_shift144 all_shift210 --max-parallel 6 --gpu-fraction 0.25 --skip-done\"",
   "max_restarts": 3
+ },
+ {
+  "id": "claude-final-nbr36-sts-rest-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.neighbor_ablation --models stsprednet --seeds 40 41 43 44 --prefix neighbor-ablation-oct2026-nearest --readout nearest_cell --modes shift96 shift144 --skip-done --gpu-fraction 0.25 --memory-gb 12 --max-parallel 8\"",
+  "max_restarts": 3
  }
 ]
