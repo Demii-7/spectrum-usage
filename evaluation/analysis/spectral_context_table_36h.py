@@ -191,6 +191,26 @@ def main() -> None:
                         v = cc["per_seed"][42]
                         checks.append({"check": f"reference (brief, seed 42): {qname}", "model": model, "band": band, "value": v["dis"] - v["real"], "reference": ref,
                                        "difference": v["dis"] - v["real"] - ref, "n_seeds": 1})
+    # reproduction of the existing frozen-input ablation (frequency_ablation.csv, per-region deltas): the brief's reference values are UNWEIGHTED region means; the
+    # class tables pool the target bins of all regions (weights = number of target bins), so the like-for-like reference is the same file weighted by n_bins
+    try:
+        old = pd.read_csv(io.BytesIO(ft.get(client, "analysis-outputs/frequency_ablation.csv")))
+        old["horizon"] = pd.to_numeric(old["horizon"], errors="coerce")
+        for r in [x for x in rows if x["quantity"] in ("all_24h", "all_52h")]:
+            mode = "shift96" if r["quantity"] == "all_24h" else "shift210"
+            sub = old[(old.model == r["model"]) & (old.band == r["band"]) & (old["mode"] == mode) & (old.horizon.isin(HORIZONS))]
+            if sub.empty:
+                continue
+            reg = sub.groupby("region").delta.mean()
+            nb = sub.groupby("region").n_bins.first()
+            seeds_old = int(sub.n_seeds.iloc[0])
+            checks.append({"check": f"existing ablation (frequency_ablation.csv), bin-weighted over regions: {r['quantity']}", "model": r["model"], "band": r["band"],
+                           "value": r["mean"], "reference": float((reg * nb).sum() / nb.sum()), "difference": r["mean"] - float((reg * nb).sum() / nb.sum()),
+                           "n_seeds": f"{r['n_seeds']} (existing {seeds_old})"})
+            checks.append({"check": f"existing ablation (frequency_ablation.csv), unweighted region mean: {r['quantity']}", "model": r["model"], "band": r["band"],
+                           "value": r["mean"], "reference": float(reg.mean()), "difference": r["mean"] - float(reg.mean()), "n_seeds": f"{r['n_seeds']} (existing {seeds_old})"})
+    except Exception as e:  # noqa: BLE001
+        print("existing-ablation reproduction skipped:", str(e)[:100])
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     table = pd.DataFrame(rows)
