@@ -1,0 +1,33 @@
+Neural 4D finals, core4-p2: nearest-cell minus as-evaluated receiver MAE (pooled, mean over t+4/12/24/48), and the gap to per-receiver models
+
+600_800 stsprednet         seeds 5: as_evaluated 1.143  nearest_cell 1.070  delta -0.072 [-0.088, -0.051]
+600_800 residualconvlstm   seeds 5: as_evaluated 1.325  nearest_cell 1.243  delta -0.083 [-0.095, -0.068]
+600_800 dswinlstm_i        seeds 1: as_evaluated 1.291  nearest_cell 1.188  delta -0.103 [-0.113, -0.094]
+2400_2600 stsprednet         seeds 5: as_evaluated 1.236  nearest_cell 1.042  delta -0.193 [-0.220, -0.142]
+2400_2600 residualconvlstm   seeds 5: as_evaluated 1.118  nearest_cell 0.867  delta -0.251 [-0.281, -0.201]
+2400_2600 dswinlstm_i        seeds 1: as_evaluated 1.475  nearest_cell 1.298  delta -0.177 [-0.195, -0.160]
+
+2400_2600 dswinlstm_i        vs 2d residuallinearar2d  as_evaluated : +0.799 [+0.735, +0.873]  (4D 1.474, other 0.676)
+2400_2600 dswinlstm_i        vs 2d residuallinearar2d  nearest_cell : +0.622 [+0.558, +0.699]  (4D 1.297, other 0.676)
+2400_2600 dswinlstm_i        vs persistence            as_evaluated : +0.344 [+0.284, +0.434]  (4D 1.474, other 1.131)
+2400_2600 dswinlstm_i        vs persistence            nearest_cell : +0.167 [+0.109, +0.257]  (4D 1.297, other 1.131)
+2400_2600 residualconvlstm   vs 2d residuallinearar2d  as_evaluated : +0.443 [+0.364, +0.484]  (4D 1.118, other 0.676)
+2400_2600 residualconvlstm   vs 2d residuallinearar2d  nearest_cell : +0.191 [+0.130, +0.232]  (4D 0.867, other 0.676)
+2400_2600 residualconvlstm   vs persistence            as_evaluated : -0.012 [-0.073, +0.034]  (4D 1.118, other 1.131)
+2400_2600 residualconvlstm   vs persistence            nearest_cell : -0.264 [-0.311, -0.214]  (4D 0.867, other 1.131)
+2400_2600 stsprednet         vs 2d residuallinearar2d  as_evaluated : +0.558 [+0.462, +0.626]  (4D 1.234, other 0.676)
+2400_2600 stsprednet         vs 2d residuallinearar2d  nearest_cell : +0.364 [+0.301, +0.428]  (4D 1.039, other 0.676)
+2400_2600 stsprednet         vs persistence            as_evaluated : +0.103 [+0.038, +0.165]  (4D 1.234, other 1.131)
+2400_2600 stsprednet         vs persistence            nearest_cell : -0.091 [-0.130, -0.039]  (4D 1.039, other 1.131)
+600_800 dswinlstm_i        vs 2d residuallinearar2d  as_evaluated : +0.498 [+0.434, +0.554]  (4D 1.290, other 0.792)
+600_800 dswinlstm_i        vs 2d residuallinearar2d  nearest_cell : +0.394 [+0.334, +0.444]  (4D 1.187, other 0.792)
+600_800 dswinlstm_i        vs persistence            as_evaluated : +0.025 [-0.010, +0.090]  (4D 1.290, other 1.265)
+600_800 dswinlstm_i        vs persistence            nearest_cell : -0.079 [-0.113, -0.013]  (4D 1.187, other 1.265)
+600_800 residualconvlstm   vs 2d residuallinearar2d  as_evaluated : +0.532 [+0.491, +0.583]  (4D 1.325, other 0.792)
+600_800 residualconvlstm   vs 2d residuallinearar2d  nearest_cell : +0.450 [+0.417, +0.491]  (4D 1.242, other 0.792)
+600_800 residualconvlstm   vs persistence            as_evaluated : +0.059 [+0.035, +0.132]  (4D 1.325, other 1.265)
+600_800 residualconvlstm   vs persistence            nearest_cell : -0.023 [-0.051, +0.054]  (4D 1.242, other 1.265)
+600_800 stsprednet         vs 2d residuallinearar2d  as_evaluated : +0.350 [+0.292, +0.389]  (4D 1.143, other 0.792)
+600_800 stsprednet         vs 2d residuallinearar2d  nearest_cell : +0.278 [+0.226, +0.312]  (4D 1.070, other 0.792)
+600_800 stsprednet         vs persistence            as_evaluated : -0.123 [-0.160, -0.059]  (4D 1.143, other 1.265)
+600_800 stsprednet         vs persistence            nearest_cell : -0.195 [-0.241, -0.116]  (4D 1.070, other 1.265)
