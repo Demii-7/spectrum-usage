@@ -29,17 +29,15 @@ COLS = [
 ]
 # (label, model, rep, condition) ; None = section rule
 ROWS = [
-    ("sec", "Level pathway, per-bin forecast"),
+    ("sec", "Level pathway: as trained"),
     ("RevIN-MLP", "revinmlp", "2d", "frozen"),
     ("PatchTST", "patchtst", "2d", "frozen"),
     ("OFA (GPT-2)", "ofa", "2d", "frozen"),
     ("Time-LLM (GPT-2)", "timellm", "2d", "frozen"),
     ("TimeRAN", "timeran_lp", "2d", "frozen"),
     ("Residual LinearAR 1D", "residuallinearar1d", "1d", "frozen"),
-    ("sec", "Level pathway, forecast uses other bins"),
     ("Residual LinearAR 2D", "residuallinearar2d", "2d", "frozen"),
-    ("PatchTST, joint", "patchtst_joint", "2d", "frozen"),
-    ("sec", "No level pathway or fixed scale: as trained, and refit"),
+    ("sec", "No level pathway, or fixed scale: as trained, and refit"),
     ("TCN", "temporalconvnet", "2d", "frozen"),
     ("\\quad refit", "temporalconvnet", "2d", "refit"),
     ("LSTM 1D", "vanillalstm1d", "1d", "frozen"),
@@ -53,6 +51,8 @@ ROWS = [
     ("Autoformer-CSA", "autoformer_csa", "2d", "frozen"),
     ("\\quad refit", "autoformer_csa", "2d", "refit"),
 ]
+# Only what the paper's evaluation-set table lists: ARA is ames and horticulture, July run, 600--800 MHz.
+ARA_KEEP = {"ara/ames-ue-000/20260702T1920Z/600_800", "ara/horticulture-ue-004/20260702T1920Z/600_800"}
 BASE = [("Lookback median", "tuned_median"), ("Same time yesterday", "same_time_yesterday")]
 
 
@@ -81,6 +81,7 @@ def main():
     d = Path(a.tables)
     t = pd.read_csv(d / "ncar_transfer_target_level.csv")
     t = t[t.horizon.isin(H)]
+    t = t[(t.group != "ara") | t.target.isin(ARA_KEEP)]
     # group value = mean over receivers of (mean over that receiver's targets), then mean over horizons
     g = (t.groupby(["model", "rep", "condition", "source_band", "target_band", "group", "receiver", "horizon"]).mae_db.mean()
          .groupby(["model", "rep", "condition", "source_band", "target_band", "group", "horizon"]).mean()
@@ -88,7 +89,9 @@ def main():
     cov = pd.read_csv(d / "ncar_transfer_coverage.csv")
     bad = {(r.model, r.rep, r.group, r.source_band, r.target_band) for r in cov[~cov.complete].itertuples()}
     b = pd.read_csv(a.baselines)
-    b = b[(b.level == "group") & b.horizon.astype(str).isin([str(h) for h in H])]
+    b = b[b.horizon.astype(str).isin([str(h) for h in H])]
+    ara = b[(b.level == "receiver") & (b.group == "ara") & b.target.isin(ARA_KEEP)]
+    b = pd.concat([b[(b.level == "group") & (b.group != "ara")], ara])
     bg = b.groupby(["group", "band", "baseline"]).mae_db.mean()
 
     def base(name, group, band, tband):
