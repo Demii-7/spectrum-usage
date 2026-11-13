@@ -498,5 +498,20 @@
   "id": "claude-uc-freqcls-table-final-2",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-uc-freqcls-600-2d-rest claude-uc-freqcls-direct-cpu-1 claude-uc-freqcls-2400-2d --then 'bash training/ray/scripts/run_frequency_ablation_classes_table.sh'\"",
   "max_restarts": 2
+ },
+ {
+  "id": "claude-uc-nbr36-cpu-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.neighbor_ablation --models linearar4d residuallinearar4d lookbackmean4d --seeds 40 41 42 43 44 --prefix neighbor-ablation-oct2026-nearest --readout nearest_cell --modes shift96 shift144 --skip-done --gpu-fraction 0 --node-ips 10.242.1.29 10.242.1.30 10.242.1.31 10.242.1.32 --memory-gb 8 --max-parallel 24\"",
+  "max_restarts": 3
+ },
+ {
+  "id": "claude-uc-nbr36-gpu42-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.neighbor_ablation --models stsprednet residualconvlstm dswinlstm_i --seeds 42 --dswin-seeds 42 --prefix neighbor-ablation-oct2026-nearest --readout nearest_cell --modes shift96 shift144 --skip-done --gpu-fraction 0.25 --memory-gb 12 --max-parallel 6\"",
+  "max_restarts": 3
+ },
+ {
+  "id": "claude-uc-nbr36-check-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.neighbor_ablation --models linearar4d --seeds 40 --bands 600_800 --prefix neighbor-ablation-oct2026-nearest-check --readout as_evaluated --modes shift96 --skip-done --gpu-fraction 0 --node-ips 10.242.1.29 --memory-gb 8 --max-parallel 1\"",
+  "max_restarts": 3
  }
 ]
