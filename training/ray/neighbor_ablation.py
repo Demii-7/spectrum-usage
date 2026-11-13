@@ -6,8 +6,13 @@ receivers' series changed:
     real      the measured series (the normal geometry_correct evaluation)
     shift96   each neighbour shifted in time by 24 hours (96 steps, wrapping): keeps its level and its daily phase, breaks its
               short-term co-movement with r
+    shift144  shifted by 36 hours (144 steps; half a day out of phase: breaks the time of day; opt-in via --modes)
     shift210  shifted by 52.5 hours (210 steps): breaks the daily phase too
     level     each neighbour replaced by its per-bin mean level (no dynamics at all)
+
+``--modes`` selects the modes (default: real shift96 shift210 level, as before; ``real`` is always scored). ``--readout`` (default
+``as_evaluated``: IDW over all grid cells, behaviour unchanged) selects how the forecast map is read at the receivers
+(``nearest_cell`` = the nearest grid node); a non-default readout needs its own ``--prefix``.
 
 The model is scored only at r. If the 4D models use neighbours' dynamics, the error at r rises when they are broken; if they forecast r
 from r's own history (r dominates the interpolated map around its own location), it does not. The parameter-free 4D lookback mean is
@@ -42,7 +47,9 @@ from typing import Any
 import numpy as np
 import yaml
 
-MODES = (("real", None, 0), ("shift96", "shift", 96), ("shift210", "shift", 210), ("level", "level", 0))
+MODES = (("real", None, 0), ("shift96", "shift", 96), ("shift210", "shift", 210), ("level", "level", 0))       # the default set (unchanged)
+ALL_MODES = {"real": ("real", None, 0), "shift96": ("shift96", "shift", 96), "shift144": ("shift144", "shift", 144),
+             "shift210": ("shift210", "shift", 210), "level": ("level", "level", 0)}
 NEURAL = ("stsprednet", "residualconvlstm", "convlstm", "dswinlstm_i")        # GPU models; everything else (linear 4D, lookback mean) runs on CPU
 SINGLE_SEED = {"lookbackmean4d": [42], "dswinlstm_i": [42]}      # the control has no weights; dswinlstm_i is one seed (inherited configuration)
 KNOWN_MODELS = ("linearar4d", "residuallinearar4d", "lookbackmean4d", *NEURAL)
@@ -53,11 +60,30 @@ def device_for(model: str, gpu_fraction: float) -> str:
     return "cuda" if model in NEURAL and gpu_fraction > 0 else "cpu"
 
 
+def selected_modes(names) -> tuple:
+    """The (name, mode, shift) triples for the requested mode names (``real`` first and always present); None = the default MODES."""
+    if names is None:
+        return MODES
+    unknown = [n for n in names if n not in ALL_MODES]
+    if unknown:
+        raise ValueError(f"unknown modes {unknown}; choose from {sorted(ALL_MODES)}")
+    ordered = ["real"] + [n for n in names if n != "real"]
+    return tuple(ALL_MODES[n] for n in ordered)
+
+
+def eval_kwargs(args: dict, model: str, seed: int, receiver_index: int, mode: str | None, shift: int) -> dict:
+    """The keyword arguments of one ``evaluate_condition`` call (kept in one place so the readout pass-through can be tested)."""
+    return {"model_name": model, "seed": seed, "condition": "geometry_correct", "batch_size": args["batch_size"],
+            "device": device_for(model, args["gpu_fraction"]), "origin_stride": args["origin_stride"],
+            "series_transform": make_transform(receiver_index, mode, shift), "readout": args.get("readout", "as_evaluated")}
+
+
 def make_transform(keep: int, mode: str | None, shift: int):
     """A series transform that leaves receiver ``keep`` untouched and changes the others as described."""
     def transform(series):
         if mode is None:
             return series
+        original = np.asarray(series.values_dbm)
         values = np.array(series.values_dbm, copy=True)
         for index in range(values.shape[1]):
             if index == keep:
@@ -68,6 +94,8 @@ def make_transform(keep: int, mode: str | None, shift: int):
                 values[:, index] = np.nanmean(values[:, index], axis=0, keepdims=True)
             else:
                 raise ValueError(mode)
+        if not np.array_equal(values[:, keep], original[:, keep], equal_nan=True):          # the scored receiver's own inputs must be untouched
+            raise AssertionError("the scored receiver's series was changed by the transform")
         return dataclasses.replace(series, values_dbm=values)
     return transform
 
@@ -98,7 +126,9 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     client, bucket, band = spectrum_s3_client(), args["bucket"], spec["band"]
     model, seed = spec["model"], int(spec["seed"])
     base = f"{args['prefix'].strip('/')}/{band}/{model}/seed-{seed}"
-    record: dict[str, Any] = {"band": band, "model": model, "seed": seed, "modes": [m[0] for m in MODES],
+    modes = selected_modes(args.get("modes"))
+    record: dict[str, Any] = {"band": band, "model": model, "seed": seed, "modes": [m[0] for m in modes],
+                              "readout": args.get("readout", "as_evaluated"),
                               "origin_stride": args["origin_stride"], "device": device_for(model, args["gpu_fraction"])}
     started = time.time()
     try:
@@ -133,13 +163,10 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
             collected: dict[str, np.ndarray] = {}
             try:
                 for receiver_index, receiver in enumerate(names):
-                    for mode_name, mode, shift in MODES:
+                    for mode_name, mode, shift in modes:
                         out = scratch / f"out-{receiver_index}-{mode_name}"
                         evaluate_condition(experiment_path=exp_path, model_config_path=model_config, checkpoint_path=checkpoint,
-                                           model_name=model, seed=seed, condition="geometry_correct", output_directory=out,
-                                           batch_size=args["batch_size"], device=device_for(model, args["gpu_fraction"]),
-                                           origin_stride=args["origin_stride"],
-                                           series_transform=make_transform(receiver_index, mode, shift))
+                                           output_directory=out, **eval_kwargs(args, model, seed, receiver_index, mode, shift))
                         with np.load(out / "receiver_forecasts.npz", allow_pickle=True) as npz:
                             errors = per_origin_errors(npz, receiver_index, normalization)
                         for name, array in errors.items():
@@ -154,11 +181,11 @@ def job(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
             summary = {}
             for receiver in names:
                 common = None
-                for mode_name, _, _ in MODES:
+                for mode_name, _, _ in modes:
                     t = set(collected[f"{receiver}|{mode_name}|times"].tolist())
                     common = t if common is None else common & t
                 row = {}
-                for mode_name, _, _ in MODES:
+                for mode_name, _, _ in modes:
                     times = collected[f"{receiver}|{mode_name}|times"].tolist()
                     keep = np.asarray([t in common for t in times])
                     row[mode_name] = {"n_common_origins": int(keep.sum()),
@@ -188,6 +215,12 @@ def main(argv=None) -> None:
     p.add_argument("--memory-gb", type=float, default=24.0)
     p.add_argument("--gpu-fraction", type=float, default=0.5, help="GPU share of each neural-model job (0 = CPU); the other models never use a GPU")
     p.add_argument("--origin-stride", type=int, default=1, help="1 for real results; larger only for smoke tests (use another --prefix)")
+    p.add_argument("--modes", nargs="+", choices=sorted(ALL_MODES), default=None,
+                   help="modes to score (default: real shift96 shift210 level); real is always scored; shift144 = 36 h")
+    p.add_argument("--readout", choices=("as_evaluated", "nearest_cell", "sharp"), default="as_evaluated",
+                   help="how the forecast map is read at the receivers (default: IDW over all grid cells, as before); a non-default readout needs its own --prefix")
+    p.add_argument("--dswin-seeds", type=int, nargs="+", default=None, help="seeds of dswinlstm_i (default: seed 42 only, as before)")
+    p.add_argument("--node-ips", nargs="+", default=None, help="pin the CPU-only cells round-robin to these Ray nodes (opt-in, e.g. the UC CPU-only nodes)")
     p.add_argument("--max-parallel", type=int, default=10)
     p.add_argument("--skip-done", action="store_true")
     p.add_argument("--bucket", default=None)
@@ -196,13 +229,18 @@ def main(argv=None) -> None:
     p.add_argument("--address", default="auto")
     p.add_argument("--repo-root", default="/workspace/spectrum-usage")
     args = p.parse_args(argv)
+    if args.readout != "as_evaluated" and args.prefix.strip("/") == "neighbor-ablation-oct2026":
+        p.error("a non-default --readout needs its own --prefix (never write over the as_evaluated neighbour-ablation results)")
+    if args.modes is not None:
+        selected_modes(args.modes)
     sys.path.insert(0, args.repo_root)
     from training.ray.storage import spectrum_s3_client
 
     bucket = args.bucket or os.environ.get("SPECTRUM_S3_BUCKET", "spectrum")
     client = spectrum_s3_client()
+    single = {**SINGLE_SEED, **({"dswinlstm_i": args.dswin_seeds} if args.dswin_seeds else {})}
     specs = [{"band": b, "model": m, "seed": s} for b in args.bands for m in args.models
-             for s in (SINGLE_SEED.get(m) or args.seeds)]
+             for s in (single.get(m) or args.seeds)]
     if args.skip_done:
         def done(spec):
             try:
@@ -213,15 +251,20 @@ def main(argv=None) -> None:
         specs = [sp for sp in specs if not done(sp)]
     print(f"[neighbor-ablation] {len(specs)} jobs", flush=True)
     shared = {"repo_root": args.repo_root, "bucket": bucket, "prefix": args.prefix, "tuning_prefix": args.tuning_prefix,
-              "batch_size": args.batch_size, "gpu_fraction": args.gpu_fraction, "origin_stride": args.origin_stride}
+              "batch_size": args.batch_size, "gpu_fraction": args.gpu_fraction, "origin_stride": args.origin_stride,
+              "modes": args.modes, "readout": args.readout}
     ray.init(address=args.address, ignore_reinit_error=True)
     remote = ray.remote(num_cpus=4, num_gpus=0, memory=int(args.memory_gb * 2 ** 30), max_retries=1)(job)
-    queue, pending, ok = list(specs), [], 0
+    queue, pending, ok, submitted = list(specs), [], 0, 0
     while queue or pending:
         while queue and len(pending) < args.max_parallel:
             spec = queue.pop(0)
             gpus = args.gpu_fraction if device_for(spec["model"], args.gpu_fraction) == "cuda" else 0
-            pending.append(remote.options(num_gpus=gpus).remote(spec, shared))
+            opts = {"num_gpus": gpus}
+            if args.node_ips and gpus == 0:         # opt-in node pinning (custom resource node:<ip>) for CPU-only cells
+                opts["resources"] = {f"node:{args.node_ips[submitted % len(args.node_ips)]}": 0.001}
+            submitted += 1
+            pending.append(remote.options(**opts).remote(spec, shared))
         finished, pending = ray.wait(pending, num_returns=1)
         try:
             row = ray.get(finished[0])

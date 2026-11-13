@@ -68,3 +68,61 @@ def test_dswinlstm_i_is_a_gpu_model_with_one_seed():
     assert N.device_for("dswinlstm_i", 0.5) == "cuda" and N.device_for("dswinlstm_i", 0) == "cpu"
     assert N.SINGLE_SEED["dswinlstm_i"] == [42] and N.SINGLE_SEED["lookbackmean4d"] == [42]
     assert "residualconvlstm" not in N.SINGLE_SEED                                    # five seeds
+
+
+def test_shift144_is_an_opt_in_mode_and_the_default_modes_are_unchanged():
+    assert [m[0] for m in N.MODES] == ["real", "shift96", "shift210", "level"]                      # defaults keep their meaning
+    assert N.selected_modes(None) == N.MODES
+    modes = N.selected_modes(["shift96", "shift144"])
+    assert [m[0] for m in modes] == ["real", "shift96", "shift144"] and modes[2] == ("shift144", "shift", 144)
+    assert [m[0] for m in N.selected_modes(["shift144", "real"])] == ["real", "shift144"]
+    with pytest.raises(ValueError):
+        N.selected_modes(["shift7"])
+
+
+def test_shift144_transform_rolls_the_neighbours_by_36_hours_and_keeps_the_scored_receiver():
+    rng = np.random.default_rng(1)
+    values = rng.normal(size=(400, 4, 3))
+    out = N.make_transform(3, "shift", 144)(Series(values)).values_dbm
+    np.testing.assert_array_equal(out[:, 3], values[:, 3])
+    for r in (0, 1, 2):
+        np.testing.assert_array_equal(out[:, r], np.roll(values[:, r], 144, axis=0))
+    nan_values = values.copy()
+    nan_values[5, 3, 0] = np.nan
+    out_nan = N.make_transform(3, "shift", 144)(Series(nan_values)).values_dbm            # NaNs in the scored receiver pass the own-series check
+    assert np.isnan(out_nan[5, 3, 0])
+
+
+def test_own_series_assertion_fires_if_the_scored_receiver_is_changed(monkeypatch):
+    values = np.zeros((300, 4, 2))
+    def broken(series):
+        out = np.array(series.values_dbm, copy=True)
+        out[:, 1] += 1.0
+        return out
+    # a transform that would modify the kept receiver must be caught by the guard: emulate by monkeypatching np.roll to touch every column
+    real_roll = np.roll
+    monkeypatch.setattr(N.np, "roll", lambda a, shift, axis=0: real_roll(a, shift, axis=axis) + 1.0)
+    monkeypatch.setattr(N.np, "array_equal", lambda a, b, equal_nan=False: False)
+    with pytest.raises(AssertionError):
+        N.make_transform(1, "shift", 96)(Series(values))
+
+
+def test_readout_is_passed_through_to_the_evaluation_and_defaults_to_as_evaluated():
+    args = {"batch_size": 8, "gpu_fraction": 0.5, "origin_stride": 1}
+    kw = N.eval_kwargs(args, "stsprednet", 40, 2, "shift", 144)
+    assert kw["readout"] == "as_evaluated" and kw["device"] == "cuda" and kw["condition"] == "geometry_correct"
+    kw = N.eval_kwargs({**args, "readout": "nearest_cell"}, "linearar4d", 41, 0, None, 0)
+    assert kw["readout"] == "nearest_cell" and kw["device"] == "cpu" and kw["seed"] == 41
+
+
+def test_cli_refuses_a_non_default_readout_on_the_default_prefix():
+    pytest.importorskip("ray")
+    import sys
+
+    old = sys.argv
+    try:
+        sys.argv = ["x", "--models", "linearar4d", "--readout", "nearest_cell"]
+        with pytest.raises(SystemExit):
+            N.main()
+    finally:
+        sys.argv = old
