@@ -488,5 +488,15 @@
   "id": "claude-uc-freqcls-table-final",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-uc-freqcls-600-2d-rest claude-uc-freqcls-direct-all claude-uc-freqcls-2400-2d --then 'bash training/ray/scripts/run_frequency_ablation_classes_table.sh'\"",
   "max_restarts": 1
+ },
+ {
+  "id": "claude-uc-freqcls-direct-cpu-1",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.frequency_ablation_classes --models revinmlp revinmlp_mix patchtst patchtst_joint itransformer nlinear dlinear --seeds 40 41 42 43 44 --bands 600_800 2400_2600 --gpu-fraction 0 --node-ips 10.242.1.29 10.242.1.30 10.242.1.31 10.242.1.32 --memory-gb 4 --max-parallel 48 --skip-done\"",
+  "max_restarts": 3
+ },
+ {
+  "id": "claude-uc-freqcls-table-final-2",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-uc-freqcls-600-2d-rest claude-uc-freqcls-direct-cpu-1 claude-uc-freqcls-2400-2d --then 'bash training/ray/scripts/run_frequency_ablation_classes_table.sh'\"",
+  "max_restarts": 2
  }
 ]
