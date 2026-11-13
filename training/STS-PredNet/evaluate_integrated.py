@@ -384,6 +384,11 @@ def evaluate_chunk(config: dict[str, Any], chunk, bands, out: Path, checkpoint_p
 
         for horizon in horizons:
             history = rollout_required_history(branches, horizon)
+            # optional floor (rows of history before the forecast origin), so variants with different branch lengths are scored on
+            # the same forecast origins; default off
+            floor = int((config.get("stsprednet") or {}).get("eval_min_history", 0))
+            if floor:
+                history = max(history, floor + int(horizon) - 1)
             target_rows = np.arange(history, len(split_x), dtype=np.int64)
             target_rows = filter_target_rows(target_rows, history, split.segments)
             if len(target_rows) == 0:

@@ -258,6 +258,15 @@ def final_job(job: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         config, metrics = base_config(source, dataset, model, rep, args["repo_root"], client, bucket)
         config = (apply_fixed_config(config, model, job["fixed"], seed) if job.get("fixed")
                   else prepared(config, source, model, job["parameters"], seed))
+        if args.get("sts_set"):                                        # STS-PredNet branch study: flat keys of its section, set last
+            if model != "stsprednet":
+                raise ValueError("--sts-set applies to stsprednet only")
+            overrides = dict(args["sts_set"])
+            test_end = overrides.pop("test_end", None)                 # smoke runs only: a shorter test range
+            if test_end:
+                config["data"]["split"]["ranges"]["test"]["end"] = str(test_end)
+            config[model].update(overrides)
+            record["sts_set"] = dict(args["sts_set"])
         if args.get("train_start"):                                    # training-length study: a later start of the same training run
             config["data"]["split"]["ranges"]["train"]["start"] = str(args["train_start"])
             record["train_start"] = str(args["train_start"])
@@ -316,6 +325,16 @@ def launch(args: argparse.Namespace) -> None:
     bucket = args.bucket or os.environ.get("SPECTRUM_S3_BUCKET", "spectrum")
     ray.init(address=args.address, ignore_reinit_error=True)
     worker_args = {"repo_root": args.repo_root, "bucket": bucket, "train_start": getattr(args, "train_start", None)}
+    if getattr(args, "sts_set", None):
+        if not args.trials_prefix or args.trials_prefix.strip("/") == args.output_prefix.strip("/"):
+            raise SystemExit("--sts-set needs --trials-prefix (finals of an existing winner) and its own --output-prefix")
+        def _value(text: str):
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                return text                                            # e.g. an ISO timestamp
+
+        worker_args["sts_set"] = {kv.split("=", 1)[0]: _value(kv.split("=", 1)[1]) for kv in args.sts_set}
     if worker_args["train_start"] and (not args.trials_prefix or args.source == "electrosense"
                                        or args.trials_prefix.strip("/") == args.output_prefix.strip("/")):
         raise SystemExit("--train-start needs a POWDER source, --trials-prefix (finals of an existing winner) and its own --output-prefix")
@@ -451,6 +470,9 @@ def parse_args(argv=None) -> argparse.Namespace:
                         help="read the finished search (trials, winner) from this output prefix and run only the finals, which go to --output-prefix "
                              "(a second cluster can train finals of an already searched winner without repeating or overwriting anything)")
     parser.add_argument("--final-seeds", type=int, nargs="+", default=None, help="seeds of the finals of a tuned winner (default: all FINAL_SEEDS)")
+    parser.add_argument("--sts-set", nargs="+", default=None, metavar="KEY=VALUE",
+                        help="stsprednet finals only: set flat keys of its section after the winner is applied, e.g. use_period=true lp=3 "
+                             "period_interval=96 eval_min_history=288 (values are JSON; test_end=<ISO time> shortens the test range for a smoke run)")
     parser.add_argument("--train-start", default=None,
                         help="ISO timestamp: start the training range here instead of at the start of the training run (training-length "
                              "study; validation and test unchanged); finals only, so it requires --trials-prefix and its own --output-prefix")
