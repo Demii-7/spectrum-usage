@@ -45,6 +45,7 @@ SEEDS = {"lookbackmean4d": (42,), "dswinlstm_i": (42,)}                 # every 
 # DSwinLSTM-I: one seed, the 1-minute round-2 winner configuration (no 15-minute search), base map only (no retrained spatial variants)
 VARIANTS_ONLY = {"dswinlstm_i": ("core4-p2",)}
 NOTES = {"dswinlstm_i": "single seed (42); inherited:1min-r2 configuration, no 15-minute search; base map and frozen-weight conditions only"}
+NOTES_MULTI = {"dswinlstm_i": "inherited:1min-r2 configuration (seeds as in n_seeds), no 15-minute search (a search is running); base map and frozen-weight conditions only"}
 DEFAULT_SEEDS = (40, 41, 42)
 S2 = ("core4-p1", "core4-p2", "core4-p4", "core4-p16", "core4-p2-linear", "core4-p2-g5", "core4-p2-g20", "core4-krige")
 S3 = tuple(f"loo-{n}" for n in ("humanities", "madsen", "moran", "sagepoint", "guesthouse", "law73"))
@@ -165,7 +166,12 @@ def coverage(cells: pd.DataFrame, perm: pd.DataFrame) -> pd.DataFrame:
 def annotate(frame: pd.DataFrame) -> pd.DataFrame:
     """Add a ``note`` column that marks single-seed / inherited-configuration rows (empty for the tuned multi-seed models)."""
     if len(frame) and "model" in frame:
-        frame = frame.assign(note=frame.model.map(NOTES).fillna(""))
+        if "n_seeds" in frame:      # single-seed wording only for rows that really have one seed
+            one = frame.model.map(NOTES).fillna("")
+            many = frame.model.map(NOTES_MULTI).fillna("")
+            frame = frame.assign(note=one.where(frame.n_seeds <= 1, many))
+        else:
+            frame = frame.assign(note=frame.model.map(NOTES_MULTI).fillna(""))
     return frame
 
 
