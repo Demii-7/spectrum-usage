@@ -29,8 +29,8 @@ from typing import Any
 import numpy as np
 import yaml
 
-SEEDS_PER_MODEL = {"lookbackmean4d": (42,), "dswinlstm_i": (42,)}       # dswinlstm_i: one seed, inherited configuration
-GPU_MODELS = ("dswinlstm_i",)                                            # too slow to score 672 origins on the CPU
+SEEDS_PER_MODEL = {"lookbackmean4d": (42,)}                             # every other model: seeds 40-44 (a seed without saved weights fails cleanly)
+GPU_MODELS = ("dswinlstm_i", "stsprednet", "residualconvlstm")           # too slow to score 672 origins on the CPU
 
 
 def per_origin_errors(npz, receiver_index: int, normalization) -> dict[str, np.ndarray]:
