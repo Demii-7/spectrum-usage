@@ -351,6 +351,7 @@ def main(argv=None) -> None:
     p.add_argument("--gpu-fraction", type=float, default=0.1)
     p.add_argument("--threads", type=int, default=2)
     p.add_argument("--memory-gb", type=float, default=8.0)
+    p.add_argument("--node-ips", nargs="+", default=None, help="pin the tasks round-robin to these Ray nodes (opt-in; e.g. the CPU-only nodes with --gpu-fraction 0)")
     p.add_argument("--max-parallel", type=int, default=8)
     p.add_argument("--skip-done", action="store_true")
     p.add_argument("--bucket", default=None)
@@ -395,10 +396,14 @@ def main(argv=None) -> None:
               "only_conditions": args.only_conditions, "same_region": args.same_region}
     ray.init(address=args.address, ignore_reinit_error=True)
     remote = ray.remote(num_cpus=2, max_retries=1)(job)
-    queue, pending, ok = list(jobs), [], 0
+    queue, pending, ok, submitted = list(jobs), [], 0, 0
     while queue or pending:
         while queue and len(pending) < args.max_parallel:
-            pending.append(remote.options(num_gpus=args.gpu_fraction, memory=int(args.memory_gb * 2 ** 30)).remote(queue.pop(0), shared))
+            opts = {"num_gpus": args.gpu_fraction, "memory": int(args.memory_gb * 2 ** 30)}
+            if args.node_ips:       # opt-in node pinning (custom resource node:<ip>), default behaviour unchanged
+                opts["resources"] = {f"node:{args.node_ips[submitted % len(args.node_ips)]}": 0.001}
+            submitted += 1
+            pending.append(remote.options(**opts).remote(queue.pop(0), shared))
         finished, pending = ray.wait(pending, num_returns=1)
         try:
             row = ray.get(finished[0])
