@@ -373,5 +373,50 @@
   "id": "claude-final-spectral36-table-final",
   "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-final-freqcls-af36-600-42 claude-final-freqcls-af36-2400-42 --then 'bash training/ray/scripts/run_spectral_context_table_36h.sh'\"",
   "max_restarts": 1
+ },
+ {
+  "id": "claude-final-freqcls-af36-600-40",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.frequency_ablation_classes --models autoformer_csa --seeds 40 --bands 600_800 --only-conditions all_shift96 all_shift144 N_only_shift144 P_only_shift144 --prefix frequency-ablation-2026-11-classes-af36 --gpu-fraction 0.5 --max-parallel 1 --skip-done\"",
+  "max_restarts": 2
+ },
+ {
+  "id": "claude-final-freqcls-af36-2400-40",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.frequency_ablation_classes --models autoformer_csa --seeds 40 --bands 2400_2600 --only-conditions all_shift96 all_shift144 --prefix frequency-ablation-2026-11-classes-af36 --gpu-fraction 0.25 --max-parallel 1 --skip-done\"",
+  "max_restarts": 2
+ },
+ {
+  "id": "claude-final-freqcls-af36-600-41",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.frequency_ablation_classes --models autoformer_csa --seeds 41 --bands 600_800 --only-conditions all_shift96 all_shift144 N_only_shift144 P_only_shift144 --prefix frequency-ablation-2026-11-classes-af36 --gpu-fraction 0.5 --max-parallel 1 --skip-done\"",
+  "max_restarts": 2
+ },
+ {
+  "id": "claude-final-freqcls-af36-2400-41",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.frequency_ablation_classes --models autoformer_csa --seeds 41 --bands 2400_2600 --only-conditions all_shift96 all_shift144 --prefix frequency-ablation-2026-11-classes-af36 --gpu-fraction 0.25 --max-parallel 1 --skip-done\"",
+  "max_restarts": 2
+ },
+ {
+  "id": "claude-final-freqcls-af36-600-43",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.frequency_ablation_classes --models autoformer_csa --seeds 43 --bands 600_800 --only-conditions all_shift96 all_shift144 N_only_shift144 P_only_shift144 --prefix frequency-ablation-2026-11-classes-af36 --gpu-fraction 0.5 --max-parallel 1 --skip-done\"",
+  "max_restarts": 2
+ },
+ {
+  "id": "claude-final-freqcls-af36-2400-43",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.frequency_ablation_classes --models autoformer_csa --seeds 43 --bands 2400_2600 --only-conditions all_shift96 all_shift144 --prefix frequency-ablation-2026-11-classes-af36 --gpu-fraction 0.25 --max-parallel 1 --skip-done\"",
+  "max_restarts": 2
+ },
+ {
+  "id": "claude-final-freqcls-af36-600-44",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.frequency_ablation_classes --models autoformer_csa --seeds 44 --bands 600_800 --only-conditions all_shift96 all_shift144 N_only_shift144 P_only_shift144 --prefix frequency-ablation-2026-11-classes-af36 --gpu-fraction 0.5 --max-parallel 1 --skip-done\"",
+  "max_restarts": 2
+ },
+ {
+  "id": "claude-final-freqcls-af36-2400-44",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u -m training.ray.frequency_ablation_classes --models autoformer_csa --seeds 44 --bands 2400_2600 --only-conditions all_shift96 all_shift144 --prefix frequency-ablation-2026-11-classes-af36 --gpu-fraction 0.25 --max-parallel 1 --skip-done\"",
+  "max_restarts": 2
+ },
+ {
+  "id": "claude-final-spectral36-table-final-2",
+  "entrypoint": "bash -c \"cd /workspace/spectrum-usage && python -u training/ray/scripts/run_after.py --wait-ids claude-final-freqcls-af36-600-42 claude-final-freqcls-af36-2400-42 claude-final-freqcls-af36-600-40 claude-final-freqcls-af36-2400-40 claude-final-freqcls-af36-600-41 claude-final-freqcls-af36-2400-41 claude-final-freqcls-af36-600-43 claude-final-freqcls-af36-2400-43 claude-final-freqcls-af36-600-44 claude-final-freqcls-af36-2400-44 --then 'bash training/ray/scripts/run_spectral_context_table_36h.sh'\"",
+  "max_restarts": 1
  }
 ]
