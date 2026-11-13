@@ -62,11 +62,13 @@ def npz_series(client, key: str, receiver: str, mode: str | None, metric: str = 
 
 
 def series_4d(client, band: str, model: str, receiver: str, metric: str = "mae", horizons: tuple = HORIZONS):
-    """MAE: spatial15 per-origin file, else the neighbour ablation's real mode. MSE (dB^2): the centred job's per-origin file, else the re-run ablation."""
+    """MAE: spatial15 per-origin file, else the centred job's as-trained scores, else the neighbour ablation's real mode. MSE (dB^2): the centred job's per-origin file, else the re-run ablation."""
     frames = []
     for seed in EXPECTED[model]:
         if metric == "mae":
             s = npz_series(client, f"{M.ORIGIN_PREFIX}/{band}/{BASE_VARIANT}/{model}/seed-{seed}/per_origin.npz", receiver, None, "mae", horizons)
+            if s is None:           # e.g. DSwinLSTM-I seeds 40, 41, 43, 44: the centred job's as-trained scores (same cells, same origins)
+                s = npz_series(client, f"{CENTERED_PREFIX}/{band}/{BASE_VARIANT}/{model}/seed-{seed}/per_origin.npz", receiver, None, "mae", horizons)
             if s is None:
                 s = npz_series(client, f"{NBR_PREFIX}/{band}/{model}/seed-{seed}/per_origin.npz", receiver, "real", "mae", horizons)
         else:
